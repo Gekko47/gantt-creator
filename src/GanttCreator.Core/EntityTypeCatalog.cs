@@ -454,23 +454,25 @@ public static class EntityTypeCatalog
 
     /// <summary>
     /// The ribbon item identifier that clears the row's
-    /// <c>DateLabelPosition</c> cell (blank), resolving to
-    /// <c>Auto</c> per R5.14 D3. It is the absence of a value,
-    /// not a catalogue choice, so it never appears in
+    /// <c>DateLabelPosition</c> cell (blank), resolving to the type
+    /// default — <c>None</c> since the 2026-11-13 ruling, the same as a
+    /// stored <c>Auto</c>. It is the absence of a value, not a catalogue
+    /// choice, so it never appears in
     /// <see cref="GetAllowedDateLabelPositions"/>.
     /// </summary>
     public const string DefaultDateLabelSelectionId = "Default";
 
     /// <summary>
-    /// Display order for ribbon date-label options: <c>Auto</c>
-    /// first, then the single-date choices in date order, then
-    /// the no-label choice. Every element is derived from the
-    /// row type's <see cref="EntityDateMode"/> — never a second
-    /// authority.
+    /// Display order for ribbon date-label options: <c>Auto</c> (the
+    /// clear/"Default" item) first, then <c>Both</c>, then the
+    /// single-date choices in date order, then the no-label choice.
+    /// Every element is derived from the row type's
+    /// <see cref="EntityDateMode"/> — never a second authority.
     /// </summary>
     private static readonly GanttDateLabelPosition[] _dateLabelDisplayOrder =
     [
         GanttDateLabelPosition.Auto,
+        GanttDateLabelPosition.Both,
         GanttDateLabelPosition.Start,
         GanttDateLabelPosition.Finish,
         GanttDateLabelPosition.None,
@@ -499,10 +501,12 @@ public static class EntityTypeCatalog
     /// type's <see cref="EntityDateMode"/>: a dateless type names
     /// none (the control is disabled), a <c>StartOnly</c> type names
     /// <c>Auto</c>, <c>Start</c>, and <c>None</c>, and a span names
-    /// all four. The delineator is the exception (owner ruling
-    /// 2026-10-14): its date label is positionable, not selectable
-    /// per date — it reads Start only, so <see
-    /// cref="GetAllowedDateLabelPlacements"/> projects its set
+    /// all five. <c>Finish</c> and <c>Both</c> are excluded for a
+    /// <c>StartOnly</c> type, which reads no finish date (owner
+    /// ruling 2026-11-13 added <c>Both</c>). The delineator is the
+    /// exception (owner ruling 2026-10-14): its date label is
+    /// positionable, not selectable per date — it reads Start only, so
+    /// <see cref="GetAllowedDateLabelPlacements"/> projects its set
     /// instead and the which-date set no longer applies to it.
     /// </summary>
     /// <param name="type">The entity type.</param>
@@ -521,7 +525,8 @@ public static class EntityTypeCatalog
             {
                 EntityDateMode.None => [],
                 EntityDateMode.StartOnly
-                    => [.. _dateLabelDisplayOrder.Where(p => p != GanttDateLabelPosition.Finish)],
+                    => [.. _dateLabelDisplayOrder.Where(
+                        p => p is not (GanttDateLabelPosition.Finish or GanttDateLabelPosition.Both))],
                 EntityDateMode.StartFinish => [.. _dateLabelDisplayOrder],
                 // An out-of-range date mode is a catalogue corruption; the
                 // safe default is to treat the type as dateless (no options).

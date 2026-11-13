@@ -186,12 +186,12 @@ public class GanttRowValidatorTests
     public void An_unknown_date_label_position_is_reported_and_never_coerced()
     {
         // Mirrors the LabelPosition precedent: an unparseable name is
-        // REPORTED, never defaulted to a neighbouring choice. "Both" is
-        // a valid LabelPosition but not a valid DateLabelPosition, so
+        // REPORTED, never defaulted to a neighbouring choice. "PlotCentre"
+        // is a splitter LabelPosition that is not a DateLabelPosition, so
         // this also pins that the two enumerations are distinct.
         GanttRowDto row = ValidSpan(
             typeText: "As-Planned Activity",
-            dateLabelPositionText: "Both");
+            dateLabelPositionText: "PlotCentre");
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
@@ -200,6 +200,32 @@ public class GanttRowValidatorTests
             outcome.Issues,
             issue => issue.Field == "DateLabelPosition"
                 && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
+    }
+
+    [Fact]
+    public void A_both_choice_is_accepted_for_a_span_and_refused_for_a_start_only_type()
+    {
+        // R5.18m (owner ruling 2026-11-13): Both is the explicit both-dates
+        // choice, so a span may name it. A milestone reads no finish date, so
+        // the capability set excludes Both and the refusal is the shared one.
+        GanttValidationOutcome span = GanttRowValidator.Validate(
+        [
+            ValidSpan(typeText: "As-Planned Activity", dateLabelPositionText: "Both"),
+        ]);
+
+        Assert.True(span.IsValid);
+        Assert.Equal(GanttDateLabelPosition.Both, Assert.Single(span.Events).DateLabelPosition);
+
+        GanttValidationOutcome milestone = GanttRowValidator.Validate(
+        [
+            ValidSpan(typeText: "As-Planned Milestone", dateLabelPositionText: "Both"),
+        ]);
+
+        Assert.False(milestone.IsValid);
+        Assert.Contains(
+            milestone.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
     }
 
     [Fact]

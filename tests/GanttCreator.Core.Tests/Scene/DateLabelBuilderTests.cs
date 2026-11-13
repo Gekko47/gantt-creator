@@ -41,6 +41,33 @@ public sealed class DateLabelBuilderTests
     }
 
     [Fact]
+    public void A_date_label_box_is_inset_one_point_from_its_row_at_each_edge()
+    {
+        // The bar is 12pt tall and the row metrics are 10pt, so the box is centred on
+        // the bar at 100 + (12 - 8) / 2 = 102 and is 8pt tall, not the whole 10pt row.
+        // The height comes from LabelPlanner.BoxHeightFor, so a date box and a
+        // description box on the same row cannot disagree.
+        SceneText start = Build().Result!.Primitives[0];
+
+        Assert.Equal(102.0, start.TextBounds.Top);
+        Assert.Equal(8.0, start.TextBounds.Height);
+    }
+
+    [Fact]
+    public void A_clipped_date_labels_fallback_box_carries_the_same_inset()
+    {
+        // The never-suppress fallback (a clipped bar) computes its own box rather than
+        // going through the planner, so it needs the same height authority. Without
+        // this pin the fallback would keep the full-row box and reintroduce the shared
+        // edge on exactly the rows that sit against a plot edge.
+        DateLabelResult result = Build(
+            visible: new RectD(200.0, 100.0, 12.0, 12.0),
+            full: new RectD(200.0, 100.0, 40.0, 12.0)).Result!;
+
+        Assert.All(result.Primitives, label => Assert.Equal(8.0, label.TextBounds.Height));
+    }
+
+    [Fact]
     public void The_dates_render_in_the_approved_invariant_format()
     {
         CultureInfo original = CultureInfo.CurrentCulture;

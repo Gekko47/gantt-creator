@@ -538,6 +538,8 @@ public class EntityTypeCatalogTests
     [Fact]
     public void GetAllowedDateLabelPositions_projects_span_set_in_date_order()
     {
+        // R5.18m (owner ruling 2026-11-13): Both is the explicit both-dates
+        // choice and sits directly after the Default (Auto) clear item.
         IReadOnlyList<GanttDateLabelPosition> choices =
             EntityTypeCatalog.GetAllowedDateLabelPositions(GanttEntityType.AsPlannedActivity);
 
@@ -545,6 +547,7 @@ public class EntityTypeCatalogTests
             new[]
             {
                 GanttDateLabelPosition.Auto,
+                GanttDateLabelPosition.Both,
                 GanttDateLabelPosition.Start,
                 GanttDateLabelPosition.Finish,
                 GanttDateLabelPosition.None,
@@ -554,7 +557,7 @@ public class EntityTypeCatalogTests
 
     [Theory]
     [InlineData(GanttEntityType.AsBuiltMilestone)]
-    public void GetAllowedDateLabelPositions_projects_start_only_types_without_finish(
+    public void GetAllowedDateLabelPositions_projects_start_only_types_without_finish_or_both(
         GanttEntityType type)
     {
         IReadOnlyList<GanttDateLabelPosition> choices =
@@ -713,6 +716,7 @@ public class EntityTypeCatalogTests
     [InlineData("Auto", GanttDateLabelPosition.Auto)]
     [InlineData("Start", GanttDateLabelPosition.Start)]
     [InlineData("Finish", GanttDateLabelPosition.Finish)]
+    [InlineData("Both", GanttDateLabelPosition.Both)]
     [InlineData("None", GanttDateLabelPosition.None)]
     public void TryParseDateLabelSelection_parses_defined_choices(
         string selectionId, GanttDateLabelPosition expected)
@@ -725,9 +729,11 @@ public class EntityTypeCatalogTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("Widget")]
-    // "Both" is a valid LabelPosition but NOT a valid DateLabelPosition,
-    // so this pins that the two enumerations are distinct authorities.
-    [InlineData("Both")]
+    // "PlotCentre" is a splitter LabelPosition that is NOT a DateLabelPosition
+    // value, so this pins that the two enumerations are distinct authorities.
+    // ("Both" is no longer a discriminator: it is a member of both since
+    // R5.18m added the explicit both-dates choice.)
+    [InlineData("PlotCentre")]
     public void TryParseDateLabelSelection_refuses_unknown_text(string? selectionId)
     {
         Assert.False(EntityTypeCatalog.TryParseDateLabelSelection(selectionId, out GanttDateLabelPosition? position));

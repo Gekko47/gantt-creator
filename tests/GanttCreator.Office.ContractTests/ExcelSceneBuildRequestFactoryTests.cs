@@ -1518,11 +1518,20 @@ public class ExcelSceneBuildRequestFactoryTests
     /// split - so this asserts the OBSERVABLE outcome rather than the input. It is
     /// what would have caught the original defect, and it fails if a future change
     /// nulls the style again somewhere downstream of the factory.
+    ///
+    /// The row names <c>Both</c> explicitly: since R5.18m (owner ruling 2026-11-13) a
+    /// blank cell resolves to the type default (<c>None</c>), so a fixture that wants
+    /// §23 date labels on the scene must ask for them.
     /// </remarks>
     [Fact]
     public void A_built_live_scene_emits_date_labels_for_an_activity()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid(), new Dictionary<string, double>());
+        SceneBuildRequestOutcome outcome = new ExcelSceneBuildRequestFactory(Metrics()).Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)) with { DateLabelPosition = GanttDateLabelPosition.Both }],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         SceneBuildOutcome built = SceneBuilder.TryBuild(outcome.Request!);

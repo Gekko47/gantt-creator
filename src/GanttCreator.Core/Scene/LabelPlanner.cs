@@ -115,9 +115,11 @@ public sealed record LabelRequest(
 /// <param name="ChartBounds">The chart bounds enclosing panels, headers, and plot.</param>
 /// <param name="LabelGapPt">The gap between a shape bound and an external label.</param>
 /// <param name="RowHeightPt">
-/// The height of the label box, which is one worksheet row (owner ruling). It was
+/// The row height every label box is derived from (owner ruling). It was
 /// <c>LabelHeightPt</c>, a 10pt single-line height, which produced a box shorter
-/// than the 18pt row it sat in.
+/// than the 18pt row it sat in. The box itself is
+/// <see cref="LabelPlanner.BoxHeightFor"/>: this row height less
+/// <see cref="LabelPlanner.BoxVerticalInsetPt"/> at each edge.
 /// </param>
 /// <remarks>
 /// The former <c>MaximumExternalLabelWidthPt</c> member is <b>removed</b> (ADR-0035
@@ -207,6 +209,41 @@ public static class LabelPlanner
 
     /// <summary>The warning code emitted when no measured gap can hold even an ellipsis.</summary>
     public const string SuppressedNoSpaceCode = "LabelSuppressedNoSpace";
+
+    /// <summary>
+    /// How far a label box is inset from its row's top and bottom edge, in points.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the box is not the row.</b> A box exactly one row tall shares its top
+    /// and bottom edges with the rows above and below it, so Excel's row rounding can
+    /// anchor the shape to the neighbouring row. The observed symptom is a label left
+    /// behind on screen after an outline group is expanded and before the coalesced
+    /// refresh runs: the row it belongs to moved, and the box did not. One point of
+    /// clearance at each edge removes the shared boundary without moving the text,
+    /// because the box stays centred on its row.
+    /// </para>
+    /// <para>
+    /// It is a code-owned constant rather than a metric token on purpose: the value is
+    /// a structural clearance, not a tunable design default, and a token would require
+    /// a workbook-schema bump for a one-point inset.
+    /// </para>
+    /// </remarks>
+    public const double BoxVerticalInsetPt = 1.0;
+
+    /// <summary>
+    /// Resolves the label box height for a row height: the row less the inset at each
+    /// edge, never negative.
+    /// </summary>
+    /// <param name="rowHeightPt">The row height the box is centred in.</param>
+    /// <returns>The box height in points.</returns>
+    /// <remarks>
+    /// This is the single authority for the box height. <see cref="DateLabelBuilder"/>
+    /// calls it too, so the description box and a date box on the same row cannot
+    /// disagree; before it existed, each path computed the height itself.
+    /// </remarks>
+    public static double BoxHeightFor(double rowHeightPt) =>
+        Math.Max(0d, rowHeightPt - (2d * BoxVerticalInsetPt));
 
     /// <summary>
     /// The span <c>Auto</c> order after ADR-0015: the external sides are tried
@@ -681,14 +718,20 @@ public static class LabelPlanner
         bounds = default;
         freeWidth = 0;
 
-        // The box is one row tall and vertically centred on the shape's own band
-        // (owner ruling). It was a 10pt single-line box centred on an 8pt bar, so
-        // the text sat slightly high and the box was shorter than the row it
-        // belonged to. Centring on the SHAPE rather than the lane is deliberate and
-        // still correct: a bar, a milestone, and a critical overlay are each built
-        // centred on their own slot, so the shape's centre IS the row's centre, and
-        // a stacked event still centres on its own slot rather than the whole lane.
-        double height = metrics.RowHeightPt;
+        // The box is one row tall, less the inset at each edge, and vertically
+        // centred on the shape's own band (owner ruling). It was a 10pt single-line
+        // box centred on an 8pt bar, so the text sat slightly high and the box was
+        // shorter than the row it belonged to. Centring on the SHAPE rather than the
+        // lane is deliberate and still correct: a bar, a milestone, and a critical
+        // overlay are each built centred on their own slot, so the shape's centre IS
+        // the row's centre, and a stacked event still centres on its own slot rather
+        // than the whole lane.
+        //
+        // The inset is what stops the box sharing an edge with the rows above and
+        // below it; without it Excel can anchor the shape to the neighbouring row and
+        // leave the label behind when an outline group is expanded before the
+        // coalesced refresh runs.
+        double height = BoxHeightFor(metrics.RowHeightPt);
         double top = ClampInsideChart(
             shape.Top + ((shape.Height - height) / 2),
             height,

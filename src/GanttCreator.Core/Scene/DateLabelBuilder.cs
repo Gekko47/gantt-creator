@@ -361,9 +361,10 @@ public static class DateLabelBuilder
             measured = new TextMeasurement(text.Length * 4.0, request.Metrics.RowHeightPt);
         }
 
-        // One row tall, matching LabelPlanner's box, so the two paths cannot disagree
-        // about the height of a date label (owner ruling).
-        double height = request.Metrics.RowHeightPt;
+        // One row tall less the inset at each edge, resolved by LabelPlanner so the two
+        // paths cannot disagree about the height of a date label (owner ruling). The
+        // inset is why a date box does not share an edge with the rows around it.
+        double height = LabelPlanner.BoxHeightFor(request.Metrics.RowHeightPt);
         double gap = request.Metrics.LabelGapPt;
         RectD visible = request.VisibleBounds;
         RectD chart = request.Metrics.ChartBounds;

@@ -26,6 +26,7 @@
     },
     {
       "labelPosition": null,
+      "dateLabelPosition": "Both",
       "stackIndex": 0,
       "rowNumber": 3,
       "type": "As-Planned Activity",
@@ -130,6 +131,7 @@
     },
     {
       "labelPosition": null,
+      "dateLabelPosition": "Start",
       "stackIndex": 0,
       "rowNumber": 11,
       "type": "As-Planned Milestone",

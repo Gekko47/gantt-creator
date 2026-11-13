@@ -198,13 +198,47 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void Auto_date_label_selection_renders_both_date_labels()
+    public void A_blank_date_label_selection_renders_no_date_labels()
     {
-        // R5.14 D3: a blank DateLabelPosition cell (Auto, null) keeps
-        // every existing row's behaviour -- both section-23 date labels.
-        // The label pass (description and date) requires a resolved
-        // LabelStyle, so the request supplies one, exactly as the
+        // R5.18m (owner ruling 2026-11-13): a blank DateLabelPosition cell, and a
+        // stored `Auto`, both resolve to the type default, which is None -- a bar
+        // shows no dates until the user asks for them. The label pass requires a
+        // resolved LabelStyle, so the request supplies one exactly as the
         // description-label tests do.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21))
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Empty(DateLabels(outcome));
+    }
+
+    [Fact]
+    public void A_stored_auto_date_label_selection_renders_no_date_labels()
+    {
+        // The legacy stored text keeps parsing (no workbook is rewritten), and it
+        // now means the type default rather than "both labels".
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.Auto)
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Empty(DateLabels(outcome));
+    }
+
+    [Fact]
+    public void Both_date_label_selection_renders_both_date_labels()
+    {
+        // `Both` is the explicit both-dates choice (owner ruling 2026-11-13).
         //
         // The bar is centred mid-month with a blank description. Each date
         // label measures 80pt (10 chars x the 8pt per-character fake
@@ -216,7 +250,8 @@ public sealed class SceneBuilderTests
         GanttEvent centred = Event(
             1,
             start: new DateOnly(2024, 1, 11),
-            finish: new DateOnly(2024, 1, 21))
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.Both)
         with { Description = null };
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
@@ -1483,10 +1518,12 @@ public sealed class SceneBuilderTests
                 && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
 
         double rowHeightPt = GanttCatalogues.MetricDefault("GanttRowHeightPt");
-        RectD bounds = finalLabel.TextBounds;
 
-        // The height is preserved exactly; only the position moves.
-        Assert.Equal(rowHeightPt, bounds.Height);
+        // The box is the row less the inset at each edge, and that height is preserved
+        // exactly; only the position moves.
+        double boxHeightPt = LabelPlanner.BoxHeightFor(rowHeightPt);
+        RectD bounds = finalLabel.TextBounds;
+        Assert.Equal(boxHeightPt, bounds.Height);
 
         // Non-vacuity, as arithmetic rather than a hard-coded number: the UNCLAMPED
         // position is the box centred on its own bar, and on this final lane that box
@@ -1494,11 +1531,11 @@ public sealed class SceneBuilderTests
         // centred one — Y grows downwards, so containing an overhanging box moves its
         // top up — and the fixture must be one where the centred box really would have
         // been refused.
-        double centredTop = finalBar.Bounds.Top + ((finalBar.Bounds.Height - rowHeightPt) / 2);
+        double centredTop = finalBar.Bounds.Top + ((finalBar.Bounds.Height - boxHeightPt) / 2);
         Assert.True(
-            centredTop + rowHeightPt > scene.ChartBounds.Bottom,
+            centredTop + boxHeightPt > scene.ChartBounds.Bottom,
             $"fixture does not exercise the clamp: the centred box already fits "
-            + $"({centredTop}..{centredTop + rowHeightPt} within {scene.ChartBounds.Bottom}).");
+            + $"({centredTop}..{centredTop + boxHeightPt} within {scene.ChartBounds.Bottom}).");
         Assert.True(
             bounds.Top < centredTop,
             $"clamping must move the box UP into the chart, not down: {bounds.Top} vs centred {centredTop}.");
@@ -2146,7 +2183,12 @@ public sealed class SceneBuilderTests
         // would be suppressed for that reason rather than the one under test.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(
-                Event(1, GanttEntityType.AsPlannedMilestone, start: new DateOnly(2024, 1, 20), styleKey: "AsPlannedMilestone")
+                Event(
+                    1,
+                    GanttEntityType.AsPlannedMilestone,
+                    start: new DateOnly(2024, 1, 20),
+                    styleKey: "AsPlannedMilestone",
+                    dateLabelPosition: GanttDateLabelPosition.Start)
                 with { Description = null })
             with { LabelStyle = new SceneStyle("DefaultText") });
 
@@ -2179,7 +2221,7 @@ public sealed class SceneBuilderTests
         // failing text-metrics seam makes the planner refuse: it cannot measure the
         // text it is required to place.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
-            Request(Event(1))
+            Request(Event(1, dateLabelPosition: GanttDateLabelPosition.Both))
             with
             {
                 LabelStyle = new SceneStyle("DefaultText"),
@@ -2218,7 +2260,11 @@ public sealed class SceneBuilderTests
         // edge is genuinely clipped, and section 23 forbids suppressing its true
         // date. The fallback box is what guarantees the date is emitted at all.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
-            Request(Event(1, start: new DateOnly(2023, 12, 20), finish: new DateOnly(2024, 1, 10)))
+            Request(Event(
+                1,
+                start: new DateOnly(2023, 12, 20),
+                finish: new DateOnly(2024, 1, 10),
+                dateLabelPosition: GanttDateLabelPosition.Start))
             with { LabelStyle = new SceneStyle("DefaultText") });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);

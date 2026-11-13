@@ -1335,17 +1335,30 @@ public static class SceneBuilder
             // placed inside a body, so it always takes the outside style. Passing
             // the inside style here would put a delay event's DelayText beside its
             // bar, where white-on-white is unreadable.
-            // R5.14 D3: the row's date-label choice selects which of the
-            // two date labels the scene plans. A blank cell (Auto) keeps
-            // both, which is the behaviour every existing row already
-            // produces, so the default scene is unchanged. D5 (second
-            // owner ruling 2026-10-14): None names no date labels at
-            // all, so both flags clear and the builder plans an empty
-            // set -- it succeeds with no primitives rather than
-            // refusing, so a None row emits no date-label warning.
-            bool none = @event.DateLabelPosition == GanttDateLabelPosition.None;
-            bool showStart = !none && @event.DateLabelPosition != GanttDateLabelPosition.Finish;
-            bool showFinish = !none && @event.DateLabelPosition != GanttDateLabelPosition.Start;
+            // The row's date-label choice selects which of the two date labels
+            // the scene plans.
+            //
+            // R5.18m (owner ruling 2026-11-13): a blank cell and a stored `Auto`
+            // both resolve to the TYPE default, which is `None` for every
+            // date-bearing type -- a bar shows no dates until the user asks for
+            // them. `Auto` survives in the enum only so a workbook written when it
+            // meant "both labels" keeps parsing, and `Both` is now the explicit
+            // way to ask for both. None and the default clear both flags and the
+            // builder plans an empty set: it succeeds with no primitives rather
+            // than refusing, so such a row emits no date-label warning.
+            (bool showStart, bool showFinish) = @event.DateLabelPosition switch
+            {
+                GanttDateLabelPosition.Both => (true, true),
+                GanttDateLabelPosition.Start => (true, false),
+                GanttDateLabelPosition.Finish => (false, true),
+                GanttDateLabelPosition.None
+                or GanttDateLabelPosition.Auto
+                or null => (false, false),
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    @event.DateLabelPosition,
+                    "Undefined date-label choice."),
+            };
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,

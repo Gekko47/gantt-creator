@@ -194,25 +194,31 @@ public sealed class DateLabelRibbonTests : IDisposable
         // set already includes Auto, so the leading item carries the Default
         // clear-ID (selecting it clears the cell to blank = Auto) and there is
         // no separate leading clear item as the description-label dropdown has.
+        //
+        // R5.18m (owner ruling 2026-11-13): Both is an explicit choice, and the
+        // leading item is named Default because a blank cell now resolves to the
+        // type default (None) rather than to "both labels".
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.Equal(4, service.GetDateLabelCount());
+        Assert.Equal(5, service.GetDateLabelCount());
         Assert.Equal("Default", service.GetDateLabelItemID(0));
-        Assert.Equal("Start", service.GetDateLabelItemID(1));
-        Assert.Equal("Finish", service.GetDateLabelItemID(2));
-        Assert.Equal("None", service.GetDateLabelItemID(3));
-        Assert.Equal("Auto", service.GetDateLabelItemLabel(0));
-        Assert.Equal("Start", service.GetDateLabelItemLabel(1));
-        Assert.Equal("Finish", service.GetDateLabelItemLabel(2));
-        Assert.Equal("None", service.GetDateLabelItemLabel(3));
+        Assert.Equal("Both", service.GetDateLabelItemID(1));
+        Assert.Equal("Start", service.GetDateLabelItemID(2));
+        Assert.Equal("Finish", service.GetDateLabelItemID(3));
+        Assert.Equal("None", service.GetDateLabelItemID(4));
+        Assert.Equal("Default", service.GetDateLabelItemLabel(0));
+        Assert.Equal("Both", service.GetDateLabelItemLabel(1));
+        Assert.Equal("Start", service.GetDateLabelItemLabel(2));
+        Assert.Equal("Finish", service.GetDateLabelItemLabel(3));
+        Assert.Equal("None", service.GetDateLabelItemLabel(4));
     }
 
     [Fact]
     public void The_dropdown_omits_finish_for_a_start_only_type()
     {
         // A StartOnly type (milestone) has no Finish date, so
-        // Finish is not offered: only Auto, Start, and None, in
+        // Finish and Both are not offered: only Default, Start, and None, in
         // that order. The delineator is StartOnly too, but its
         // date label is positionable (owner ruling 2026-10-14),
         // so it projects the corner set instead — see
@@ -224,7 +230,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         Assert.Equal("Default", service.GetDateLabelItemID(0));
         Assert.Equal("Start", service.GetDateLabelItemID(1));
         Assert.Equal("None", service.GetDateLabelItemID(2));
-        Assert.Equal("Auto", service.GetDateLabelItemLabel(0));
+        Assert.Equal("Default", service.GetDateLabelItemLabel(0));
         Assert.Equal("Start", service.GetDateLabelItemLabel(1));
         Assert.Equal("None", service.GetDateLabelItemLabel(2));
     }
@@ -243,14 +249,35 @@ public sealed class DateLabelRibbonTests : IDisposable
     }
 
     [Fact]
-    public void A_blank_cell_reads_as_auto()
+    public void A_blank_cell_reads_as_default()
     {
-        // R5.14 D3: blank resolves to Auto (both date labels the type uses),
-        // so the dropdown selects the leading Auto item.
+        // R5.18m (owner ruling 2026-11-13): blank resolves to the type default
+        // (None), represented by the leading Default item. A stored Auto is the
+        // same choice, so both select index 0.
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(0, service.GetDateLabelSelectedIndex());
+    }
+
+    [Fact]
+    public void A_stored_auto_reads_as_default()
+    {
+        // The legacy stored text keeps parsing; it is now the same choice as a
+        // blank cell rather than "both labels".
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("As-Built Activity", "Auto"));
+
+        Assert.Equal(0, service.GetDateLabelSelectedIndex());
+    }
+
+    [Fact]
+    public void A_stored_both_selects_its_own_item()
+    {
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("As-Built Activity", "Both"));
+
+        Assert.Equal(1, service.GetDateLabelSelectedIndex());
     }
 
     [Fact]
@@ -259,7 +286,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Start"));
 
-        Assert.Equal(1, service.GetDateLabelSelectedIndex());
+        Assert.Equal(2, service.GetDateLabelSelectedIndex());
     }
 
     [Fact]
@@ -268,7 +295,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Finish"));
 
-        Assert.Equal(2, service.GetDateLabelSelectedIndex());
+        Assert.Equal(3, service.GetDateLabelSelectedIndex());
     }
 
     [Fact]
@@ -279,7 +306,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "None"));
 
-        Assert.Equal(3, service.GetDateLabelSelectedIndex());
+        Assert.Equal(4, service.GetDateLabelSelectedIndex());
     }
 
     [Fact]
@@ -303,6 +330,9 @@ public sealed class DateLabelRibbonTests : IDisposable
         Assert.Equal("BottomLeft", service.GetDateLabelItemID(3));
         Assert.Equal("BottomRight", service.GetDateLabelItemID(4));
         Assert.Equal("None", service.GetDateLabelItemID(5));
+        // The delineator's leading item is the description-label vocabulary's
+        // Auto, worded by LabelPositionDisplayText — R5.18m renamed only the
+        // which-date vocabulary's leading item to Default.
         Assert.Equal("Auto", service.GetDateLabelItemLabel(0));
         Assert.Equal("Top left", service.GetDateLabelItemLabel(1));
         Assert.Equal("Top right", service.GetDateLabelItemLabel(2));
@@ -379,7 +409,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DateLabel));
-        Assert.Equal(4, service.GetDateLabelCount());
+        Assert.Equal(5, service.GetDateLabelCount());
     }
 
     [Fact]
@@ -448,15 +478,17 @@ public sealed class DateLabelRibbonTests : IDisposable
         // which-date getters.
         var spanService = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.Equal(4, spanService.GetDateLabelCount());
+        Assert.Equal(5, spanService.GetDateLabelCount());
         Assert.Equal("Default", spanService.GetDateLabelItemID(0));
-        Assert.Equal("Start", spanService.GetDateLabelItemID(1));
-        Assert.Equal("Finish", spanService.GetDateLabelItemID(2));
-        Assert.Equal("None", spanService.GetDateLabelItemID(3));
-        Assert.Equal("Auto", spanService.GetDateLabelItemLabel(0));
-        Assert.Equal("Start", spanService.GetDateLabelItemLabel(1));
-        Assert.Equal("Finish", spanService.GetDateLabelItemLabel(2));
-        Assert.Equal("None", spanService.GetDateLabelItemLabel(3));
+        Assert.Equal("Both", spanService.GetDateLabelItemID(1));
+        Assert.Equal("Start", spanService.GetDateLabelItemID(2));
+        Assert.Equal("Finish", spanService.GetDateLabelItemID(3));
+        Assert.Equal("None", spanService.GetDateLabelItemID(4));
+        Assert.Equal("Default", spanService.GetDateLabelItemLabel(0));
+        Assert.Equal("Both", spanService.GetDateLabelItemLabel(1));
+        Assert.Equal("Start", spanService.GetDateLabelItemLabel(2));
+        Assert.Equal("Finish", spanService.GetDateLabelItemLabel(3));
+        Assert.Equal("None", spanService.GetDateLabelItemLabel(4));
         Assert.Equal(0, spanService.GetDateLabelSelectedIndex());
     }
 

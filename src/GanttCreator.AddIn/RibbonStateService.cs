@@ -2335,7 +2335,11 @@ internal class RibbonStateService
     private static string DateLabelDisplayText(GanttDateLabelPosition position) =>
         position switch
         {
-            GanttDateLabelPosition.Auto => "Auto",
+            // R5.18m (owner ruling 2026-11-13): the leading item clears the cell,
+            // and a blank cell resolves to the type default (None), so the item is
+            // named for what it does rather than for the legacy stored value.
+            GanttDateLabelPosition.Auto => "Default",
+            GanttDateLabelPosition.Both => "Both",
             GanttDateLabelPosition.Start => "Start",
             GanttDateLabelPosition.Finish => "Finish",
             GanttDateLabelPosition.None => "None",

@@ -33,6 +33,34 @@ public sealed class LabelPlannerTests
     }
 
     [Fact]
+    public void The_label_box_is_inset_one_point_from_the_row_at_each_edge()
+    {
+        // An 8pt bar sitting 5pt into an 18pt row. The box used to be the whole row
+        // (top 0, height 18), so it shared an edge with the rows above and below and
+        // Excel could anchor it to the neighbouring row - which is how a label was
+        // left behind when a group was expanded before the coalesced refresh ran.
+        // It is now the row less one point at each edge: top 1, height 16, bottom 17.
+        LabelPlanResult result = Plan(Shape(100, 5, 50), "abcde");
+
+        Assert.Equal(1.0, result.Bounds!.Value.Top);
+        Assert.Equal(16.0, result.Bounds!.Value.Height);
+        Assert.Equal(17.0, result.Bounds!.Value.Bottom);
+    }
+
+    // A row shorter than the two insets cannot produce a negative height. Zero is the
+    // honest answer: the containment and width rules refuse such a box exactly as they
+    // refused a zero-height row before, so the clamp invents nothing.
+    [Theory]
+    [InlineData(18, 16)]
+    [InlineData(10, 8)]
+    [InlineData(2, 0)]
+    [InlineData(1, 0)]
+    public void The_box_height_is_the_row_less_the_inset_and_is_never_negative(
+        double rowHeightPt,
+        double expected) =>
+        Assert.Equal(expected, LabelPlanner.BoxHeightFor(rowHeightPt));
+
+    [Fact]
     public void Auto_prefers_a_fitting_left_over_a_fitting_inside()
     {
         // ADR-0015 D1: a bar whose right edge is 7pt from the plot's right edge
@@ -595,25 +623,30 @@ public sealed class LabelPlannerTests
     private static RectD Shape(double x, double y, double width) => new(x, y, width, 8);
 
     /// <summary>
-    /// The label box is one worksheet row tall and centred on the row.
+    /// The label box is one worksheet row tall less the inset at each edge, and is
+    /// centred on the row.
     /// </summary>
     [Fact]
-    public void The_label_box_is_one_row_tall_and_centred_on_the_shape()
+    public void The_label_box_is_the_row_less_the_inset_and_is_centred_on_the_shape()
     {
         // A bar 8pt tall inside an 18pt row, offset so centring cannot pass by
         // coincidence. The owner ruled the box height is one row, not the 10pt
-        // single-line height it used to be.
+        // single-line height it used to be, and later ruled one point off the top and
+        // bottom: a box that shared an edge with the neighbouring rows could be
+        // anchored to one of them, which is how a label was left behind after a group
+        // was expanded before the coalesced refresh ran.
         RectD shape = new(100, 40, 50, 8);
+        const double boxHeight = 16;
 
         LabelPlanResult result = Plan(shape, "abcde", GanttLabelPosition.Right);
 
-        Assert.Equal(18, result.Bounds!.Value.Height);
-        Assert.Equal(shape.Top + ((shape.Height - 18) / 2), result.Bounds.Value.Top);
+        Assert.Equal(boxHeight, result.Bounds!.Value.Height);
+        Assert.Equal(shape.Top + ((shape.Height - boxHeight) / 2), result.Bounds.Value.Top);
 
-        // Centred on the shape, so it overhangs the 8pt bar by 5pt on each side.
+        // Centred on the shape, so it overhangs the 8pt bar by 4pt on each side.
         // This is the intent of a row-height box, not an error to be corrected.
-        Assert.Equal(shape.Top - 5, result.Bounds.Value.Top);
-        Assert.Equal(shape.Bottom + 5, result.Bounds.Value.Bottom);
+        Assert.Equal(shape.Top - 4, result.Bounds.Value.Top);
+        Assert.Equal(shape.Bottom + 4, result.Bounds.Value.Bottom);
     }
 
     /// <summary>
