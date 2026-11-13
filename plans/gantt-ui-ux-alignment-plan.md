@@ -154,13 +154,31 @@ Two capability facts that shape the design:
   `Finish`, `Duration` whose items carry a tick when the column is visible and a blank image when it
   is hidden (`showItemImage` plus `getItemImage`); selecting an item toggles the worksheet column
   behind it. Hiding the last visible authoring column is refused with an actionable message.
-  (Proposed) the choice is persisted in one strictly-parsed settings key, in the same schema bump as
-  R5.18k, so a Repair cannot silently un-hide a column the user hid.
+  **Owner rulings 2026-11-13 (supersede the "proposed" note):** the choice **is** persisted, so it
+  survives opening another workbook instance, and the item images come from **Lucide** via the icon
+  MCP. Two consequences follow and neither is free:
+  - *Persistence is schema 24, not 23.* The original plan put the key in R5.18k's bump, but that
+    landed as schema 23 with R5.18l riding on it. A new strictly-parsed settings key therefore takes
+    the workbook to **24** with its own catalogue-hash re-pin, and a Repair must not clobber it.
+  - *Lucide ships SVG, RibbonX wants `IPictureDisp`.* `imageMso` cannot vary per item state, so the
+    dropdown needs `getItemImage`, which is the custom-image host seam this repo has avoided until
+    now. The chosen glyphs are Lucide `check` (visible) and `minus` (hidden); they must be rasterised
+    (16 px and 32 px) and committed as assets so the runtime carries no SVG renderer and no new
+    production dependency, and the conversion to `IPictureDisp` needs a live-host check of its own.
+  Slicing, so each commit is reviewable and green:
+  1. Core visibility contract (toggleable columns, last-column refusal) + the schema 24 settings key
+     + the Office port that reads and writes it. No host seam, no ribbon surface.
+  2. The dropdown in `Ribbon.xml` and `RibbonStateService`, with **label** state first so the
+     behaviour is testable offline.
+  3. `getItemImage` with the rasterised Lucide tick/blank, an addition to the ribbon
+     callback-signature rules, and the live-host verification of the bitmap conversion.
   Files: new ids in [`RibbonControlIds`](src/GanttCreator.AddIn/RibbonControlIds.cs), a new dropdown
-  in `Ribbon.xml`, a thin Office port that reads and toggles a named table column's visibility, and
-  the item projection in `RibbonStateService`.
+  in `Ribbon.xml`, a thin Office port that reads and toggles a named table column's visibility, the
+  item projection in `RibbonStateService`, the settings key in `GanttChartSettings`/`GanttCatalogues`
+  and the `IPictureDisp` seam.
   Tests: item count/ids/labels; tick image for visible and blank for hidden; toggle writes and the
-  no-write path; last-column refusal positive test; a Repair that must not clobber a persisted choice.
+  no-write path; last-column refusal positive test; a Repair that must not clobber a persisted choice;
+  a stored key that does not parse is refused with a positive test rather than defaulted silently.
 
 - **R5.18i — Child indentation (proposed: indentation only).** Indent the `Description` cell by
   hierarchy depth (`IndentLevel = depth − 1`, capped at the host maximum) in the same pass that writes
