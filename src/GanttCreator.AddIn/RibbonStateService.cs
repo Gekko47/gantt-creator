@@ -1998,6 +1998,50 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// The wording the CHART toggle shows for a lock state (R5.18f, owner ruling 2026-11-13).
+    /// </summary>
+    /// <param name="locked">Whether the chart's shapes are locked.</param>
+    /// <returns>The control's label.</returns>
+    /// <remarks>
+    /// The label states the <em>current state</em> rather than an action, because the control is a
+    /// toggle whose pressed state already says what is true; an action label ("Lock chart" while
+    /// unlocked) would contradict it. It is a separate function so the wording has one authority and
+    /// can be pinned without a host.
+    /// </remarks>
+    internal static string ChartLockLabel(bool locked) => locked ? "Chart locked" : "Chart unlocked";
+
+    /// <summary>
+    /// The wording the CELL toggle shows for a lock state (R5.18f), the parallel of
+    /// <see cref="ChartLockLabel"/>.
+    /// </summary>
+    /// <param name="locked">Whether the cells outside the visible table are locked.</param>
+    /// <returns>The control's label.</returns>
+    internal static string CellLockLabel(bool locked) => locked ? "Cells locked" : "Cells unlocked";
+
+    /// <summary>
+    /// Gets the CHART toggle's current label, read from the same preference object the protection
+    /// port uses, so the wording cannot disagree with what the sheet enforces.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The label for the current state.</returns>
+    internal static string GetToggleChartLockLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return ChartLockLabel(ProtectionPreferences.Shared.ChartLocked);
+    }
+
+    /// <summary>
+    /// Gets the CELL toggle's current label, the parallel of <see cref="GetToggleChartLockLabel"/>.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The label for the current state.</returns>
+    internal static string GetToggleCellLockLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return CellLockLabel(!ProtectionPreferences.Shared.CellsUnlocked);
+    }
+
+    /// <summary>
     /// Returns how many items the description-label dropdown offers: the row's
     /// projected positions plus the leading <c>Default</c> item that clears the
     /// cell (R5.5 ruling 5 â€” blank resolves to the style default / Auto

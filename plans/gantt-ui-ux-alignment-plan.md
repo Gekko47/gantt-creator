@@ -52,8 +52,12 @@ Two capability facts that shape the design:
 
 - **RibbonX cannot swap a built-in icon at runtime.** `dropDown` supports `getItemImage` with
   `showItemImage`, and `button`/`toggleButton` support `getImage`, but `imageMso` is a static
-  attribute with no `getImageMso`. D2 therefore uses two controls whose visibility flips, which
-  keeps every glyph verifiable by [`check-ribbon-icons.ps1`](scripts/check-ribbon-icons.ps1).
+  attribute with no `getImageMso`. **Measured 2026-11-13:** the only padlock ids present in both
+  `.microsoft/Office2010IconsGallery.docx` and `[MS-CUSTOMUI]-250218.docx` are `Lock` and `LockCell`
+  — `ContainerLock` and `ApplyCoAuthoringLock` are in the gallery but absent from the idMso table,
+  so [`check-ribbon-icons.ps1`](scripts/check-ribbon-icons.ps1) rejects them and there is **no
+  open-padlock `imageMso` at all**. The owner therefore approved D2's label-only variant: one closed
+  padlock stays and `getLabel` carries the state, with embedded images deferred.
 - **The panel origin is the table's first column.** [`LiveDataPanelBounds`](src/GanttCreator.Core/Scene/SceneBuilder.cs:844)
   derives the panel rectangle from `grid.OriginLeftPt` and the measured column widths, and
   [`ExcelPanelGridMeasurement`](src/GanttCreator.Office/ExcelPanelGridMeasurement.cs:102) measures
@@ -120,11 +124,12 @@ Two capability facts that shape the design:
   Files: [`grpSheet`](src/GanttCreator.AddIn/RibbonResources/Ribbon.xml:165).
   Tests: one large control plus one vertical box in the group; keytip and icon uniqueness.
 
-- **R5.18f — Lock controls state themselves.** D1/D2: each lock becomes two mutually exclusive
-  controls — a "Chart locked" control with the closed padlock while locked, and a "Chart unlocked"
-  control with the open padlock while unlocked — swapped with `getVisible`, with the same shape for
-  the cell lock. Each control keeps the existing `onAction` semantics (it requests its own state) and
-  its pressed state.
+- **R5.18f — Lock controls state themselves.** D1/D2 as resolved by measurement: each toggle keeps
+  its single verified glyph (`Lock` / `LockCell`) and states its **current state** through
+  `getLabel` — "Chart locked"/"Chart unlocked" and "Cells locked"/"Cells unlocked" — because the
+  pressed state already says what is true and no open-padlock `imageMso` exists. The wording lives in
+  one function pair so it can be pinned without a host; the icon becomes an embedded image only when
+  that seam is approved.
   Files: [`RibbonControlIds`](src/GanttCreator.AddIn/RibbonControlIds.cs:101),
   [`GanttRibbon`](src/GanttCreator.AddIn/GanttRibbon.cs:289),
   [`RibbonStateService`](src/GanttCreator.AddIn/RibbonStateService.cs:1982), and the invalidation that

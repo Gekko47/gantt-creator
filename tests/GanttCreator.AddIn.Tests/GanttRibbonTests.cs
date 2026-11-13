@@ -175,6 +175,42 @@ public class GanttRibbonTests
             stacked);
     }
 
+    [Fact]
+    public void Both_lock_toggles_state_their_current_state_through_getLabel()
+    {
+        // R5.18f (owner ruling 2026-11-13): the label describes the state the toggle is in, because
+        // the pressed state already says what is true. The icon is deliberately unchanged: no
+        // open-padlock imageMso exists in the gallery and the idMso table, so an action-shaped
+        // label would contradict the glyph as well as the toggle.
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = doc.Root!.Name.Namespace;
+
+        foreach ((string id, string callback) in new[]
+        {
+            (RibbonControlIds.ToggleCellLock, nameof(GanttRibbon.GetToggleCellLockLabel)),
+            (RibbonControlIds.ToggleChartLock, nameof(GanttRibbon.GetToggleChartLockLabel)),
+        })
+        {
+            XElement toggle = Assert.Single(
+                doc.Descendants(ns + "toggleButton"),
+                element => (string?)element.Attribute("id") == id);
+            Assert.Null(toggle.Attribute("label"));
+            Assert.Equal(callback, (string?)toggle.Attribute("getLabel"));
+        }
+    }
+
+    [Theory]
+    [InlineData(true, "Chart locked")]
+    [InlineData(false, "Chart unlocked")]
+    public void The_chart_lock_label_states_the_current_state(bool locked, string expected) =>
+        Assert.Equal(expected, RibbonStateService.ChartLockLabel(locked));
+
+    [Theory]
+    [InlineData(true, "Cells locked")]
+    [InlineData(false, "Cells unlocked")]
+    public void The_cell_lock_label_states_the_current_state(bool locked, string expected) =>
+        Assert.Equal(expected, RibbonStateService.CellLockLabel(locked));
+
     private sealed class ThrowingVisibleStateService : RibbonStateService
     {
         internal override bool GetVisible(string? groupId) =>

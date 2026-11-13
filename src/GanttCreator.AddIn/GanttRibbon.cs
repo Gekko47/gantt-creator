@@ -685,6 +685,29 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService.GetToggleCellLockPressed(control);
 
     /// <summary>
+    /// Reports the CHART lock toggle's label for its current state (R5.18f, owner ruling
+    /// 2026-11-13): "Chart locked" while pressed, "Chart unlocked" while not.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label for the current state.</returns>
+    /// <remarks>
+    /// Public because RibbonX resolves <c>getLabel</c> to a public callback on this class. The icon is
+    /// deliberately unchanged: no open-padlock <c>imageMso</c> exists in the gallery and the idMso
+    /// table, so the state is carried by the wording until embedded images are approved.
+    /// </remarks>
+    public string GetToggleChartLockLabel(IRibbonControl control) =>
+        RibbonStateService.GetToggleChartLockLabel(control);
+
+    /// <summary>
+    /// Reports the CELL lock toggle's label for its current state (R5.18f), the parallel of
+    /// <see cref="GetToggleChartLockLabel"/>.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label for the current state.</returns>
+    public string GetToggleCellLockLabel(IRibbonControl control) =>
+        RibbonStateService.GetToggleCellLockLabel(control);
+
+    /// <summary>
     /// Runs <see cref="GetEnabled(IRibbonControl)"/> against an injected state
     /// service. Internal so contract tests can verify the routing without the
     /// session singleton. Never throws.
