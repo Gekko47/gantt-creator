@@ -52,6 +52,44 @@ public static class GanttTableAppearance
     /// <summary>The theme's body text size, in points, for table text.</summary>
     public static double BodyFontSizePt => GanttCatalogues.TypographyDefault("BodyFontSizePt");
 
+    /// <summary>The theme's header band fill.</summary>
+    public static ColourHex HeaderFill => Colour("HeaderFill");
+
+    /// <summary>The theme's header text size, in points.</summary>
+    public static double HeaderFontSizePt => GanttCatalogues.TypographyDefault("HeaderFontSizePt");
+
+    /// <summary>
+    /// The theme colour a live cell border takes.
+    /// </summary>
+    /// <remarks>
+    /// The owner's ruling (2026-11-13) leaves a live cell border's <em>style</em> to Excel's
+    /// table style and takes only the colour from the chart theme. The token chosen is the
+    /// minor grid stroke, the light boundary the chart already draws between time columns, so
+    /// a table border and a grid line are one boundary colour rather than two near-misses.
+    /// </remarks>
+    public static ColourHex BorderColour => Colour("MinorGridStroke");
+
+    /// <summary>Resolves a colour token by exact name.</summary>
+    /// <param name="tokenName">The token name from the colour catalogue.</param>
+    /// <returns>The parsed colour.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the catalogue has no token with that name — a missing token is a broken
+    /// catalogue, not a colour to guess.
+    /// </exception>
+    private static ColourHex Colour(string tokenName)
+    {
+        foreach (GanttColourToken token in GanttCatalogues.Colours)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return ColourHex.Parse(token.HexValue);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"The '{tokenName}' colour token is missing from the catalogue.");
+    }
+
     /// <summary>
     /// Returns the horizontal alignment for a column.
     /// </summary>

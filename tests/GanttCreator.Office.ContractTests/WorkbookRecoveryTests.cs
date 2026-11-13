@@ -163,6 +163,16 @@ public class WorkbookRecoveryTests
         internal override void SetHorizontalAlignment(Excel.Range range, Excel.XlHAlign alignment) =>
             HorizontalAlignments.Add(alignment);
 
+        /// <summary>How many times the header band was themed; it is table-wide, so once.</summary>
+        public int HeaderFormatWrites { get; private set; }
+
+        /// <summary>How many times the border colour was written; it is table-wide, so once.</summary>
+        public int BorderColourWrites { get; private set; }
+
+        internal override void ApplyHeaderFormat(Excel.ListObject table) => HeaderFormatWrites++;
+
+        internal override void ApplyBorderColour(Excel.ListObject table) => BorderColourWrites++;
+
         internal override Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
         {
             Mock<Excel.ListObject> table = new();
@@ -723,6 +733,10 @@ public class WorkbookRecoveryTests
             pattern => Assert.Equal(
                 GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy),
                 pattern));
+
+        // The header band and the border colour are table-wide, so one write each.
+        Assert.Equal(1, recovery.HeaderFormatWrites);
+        Assert.Equal(1, recovery.BorderColourWrites);
 
         Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.VerticalAlignments.Count);
         Assert.All(recovery.VerticalAlignments, alignment => Assert.Equal(Excel.XlVAlign.xlVAlignCenter, alignment));

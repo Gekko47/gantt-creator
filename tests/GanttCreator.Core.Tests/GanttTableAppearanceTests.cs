@@ -40,11 +40,24 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
-    public void The_font_family_and_size_come_from_the_typography_tokens()
+    public void The_font_family_and_sizes_come_from_the_typography_tokens()
     {
         // The catalogues are the authority, not a literal here: changing the token must move
         // the live table with the chart and the exported panel.
         Assert.Equal(GanttCatalogues.TypographyDefaultText("FontFamily"), GanttTableAppearance.FontFamily);
         Assert.Equal(GanttCatalogues.TypographyDefault("BodyFontSizePt"), GanttTableAppearance.BodyFontSizePt);
+        Assert.Equal(
+            GanttCatalogues.TypographyDefault("HeaderFontSizePt"),
+            GanttTableAppearance.HeaderFontSizePt);
+    }
+
+    [Fact]
+    public void The_header_fill_and_the_border_colour_are_catalogue_colours()
+    {
+        // The owner's ruling takes the fill and the border COLOUR from the chart theme while
+        // leaving the border style to Excel's table style, so both must resolve from the
+        // colour catalogue rather than from a literal in the writer.
+        Assert.Equal(ColourHex.Parse("#FFFFFF"), GanttTableAppearance.HeaderFill);
+        Assert.Equal(ColourHex.Parse("#D9D9D9"), GanttTableAppearance.BorderColour);
     }
 }

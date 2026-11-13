@@ -1169,6 +1169,39 @@ public class ExcelWorkbookRecovery(
             ApplyVerticalCentre(entireColumn);
             ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
         }
+
+        ApplyHeaderFormat(table);
+        ApplyBorderColour(table);
+    }
+
+    /// <summary>Applies the theme's header fill and header type to the table's header row.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// The header's bold flag and its border style stay with Excel's table style (owner
+    /// ruling 2026-11-13); the fill and the type are the chart theme's.
+    /// </remarks>
+    internal virtual void ApplyHeaderFormat(Excel.ListObject table)
+    {
+        Excel.Range header = table.HeaderRowRange;
+        Excel.Font font = header.Font;
+        font.Name = GanttTableAppearance.FontFamily;
+        font.Size = GanttTableAppearance.HeaderFontSizePt;
+        Excel.Interior interior = header.Interior;
+        interior.Color = GanttTableAppearance.HeaderFill.ARGB;
+    }
+
+    /// <summary>Recolours every border of the table from the chart theme.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// <c>Borders.Color</c> sets the colour of every border the range contains and leaves each
+    /// border's line style and weight alone: the table style owns the structure, the theme owns
+    /// the colour.
+    /// </remarks>
+    internal virtual void ApplyBorderColour(Excel.ListObject table)
+    {
+        Excel.Range range = table.Range;
+        Excel.Borders borders = range.Borders;
+        borders.Color = GanttTableAppearance.BorderColour.ARGB;
     }
 
     /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>

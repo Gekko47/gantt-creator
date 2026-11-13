@@ -582,6 +582,16 @@ public class WorkbookInitialiserTests
         internal override void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
             HorizontalAlignmentWrites.Add(alignment);
 
+        /// <summary>How many times the header band was themed; it is table-wide, so once.</summary>
+        public int HeaderFormatWrites { get; private set; }
+
+        /// <summary>How many times the border colour was written; it is table-wide, so once.</summary>
+        public int BorderColourWrites { get; private set; }
+
+        internal override void ApplyHeaderFormat(Excel.ListObject table) => HeaderFormatWrites++;
+
+        internal override void ApplyBorderColour(Excel.ListObject table) => BorderColourWrites++;
+
         private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
         private Func<Excel.Range, string> UsedRangeAddressAt { get; }
@@ -930,6 +940,11 @@ public class WorkbookInitialiserTests
                 Assert.Equal(GanttTableAppearance.FontFamily, write.Family);
                 Assert.Equal(GanttTableAppearance.BodyFontSizePt, write.Size);
             });
+
+        // The header band and the border colour are table-wide, so exactly one write each
+        // rather than one per column.
+        Assert.Equal(1, initialiser.HeaderFormatWrites);
+        Assert.Equal(1, initialiser.BorderColourWrites);
     }
 
     [Fact]
