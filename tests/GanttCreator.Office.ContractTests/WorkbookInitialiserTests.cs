@@ -565,6 +565,23 @@ public class WorkbookInitialiserTests
             ColumnAt = columnAt;
         }
 
+        /// <summary>The body font written to each column, in column order.</summary>
+        public List<(string Family, double Size)> BodyFontWrites { get; } = [];
+
+        /// <summary>The horizontal alignment written to each column, in column order.</summary>
+        public List<GanttCellAlignment> HorizontalAlignmentWrites { get; } = [];
+
+        /// <summary>How many columns were middle-aligned; every column must be.</summary>
+        public int VerticalCentreWrites { get; private set; }
+
+        internal override void ApplyBodyFont(Excel.Range entireColumn) =>
+            BodyFontWrites.Add((GanttTableAppearance.FontFamily, GanttTableAppearance.BodyFontSizePt));
+
+        internal override void ApplyVerticalCentre(Excel.Range entireColumn) => VerticalCentreWrites++;
+
+        internal override void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
+            HorizontalAlignmentWrites.Add(alignment);
+
         private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
         private Func<Excel.Range, string> UsedRangeAddressAt { get; }
@@ -886,6 +903,59 @@ public class WorkbookInitialiserTests
         Assert.Equal(
             new[] { (IndexOf("Start"), pattern), (IndexOf("Finish"), pattern) },
             active.NumberFormatWrites);
+    }
+
+    [Fact]
+    public void Initialise_applies_the_theme_font_and_middle_alignment_to_every_column()
+    {
+        // R5.18d, owner ruling D5: the visible table is presented from the same code-owned
+        // typography tokens the chart and its export use, so the live panel and the exported
+        // panel cannot drift apart. Every schema column is written, hidden engine columns
+        // included: hiding a column does not stop the row-height and read paths from using it.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        TestableInitialiser initialiser = graph.Build(active);
+        _ = initialiser.Initialise();
+
+        IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+        Assert.Equal(columns.Count, initialiser.BodyFontWrites.Count);
+        Assert.Equal(columns.Count, initialiser.VerticalCentreWrites);
+        Assert.All(
+            initialiser.BodyFontWrites,
+            write =>
+            {
+                Assert.Equal(GanttTableAppearance.FontFamily, write.Family);
+                Assert.Equal(GanttTableAppearance.BodyFontSizePt, write.Size);
+            });
+    }
+
+    [Fact]
+    public void Initialise_centres_the_value_columns_and_left_aligns_the_prose()
+    {
+        // Stated column-by-column rather than only derived, so a column moved between the
+        // two classes fails here instead of passing because both sides moved.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        TestableInitialiser initialiser = graph.Build(active);
+        _ = initialiser.Initialise();
+
+        Assert.Equal(GanttCellAlignment.Centre, initialiser.HorizontalAlignmentWrites[IndexOf("Start")]);
+        Assert.Equal(GanttCellAlignment.Centre, initialiser.HorizontalAlignmentWrites[IndexOf("Finish")]);
+        Assert.Equal(GanttCellAlignment.Centre, initialiser.HorizontalAlignmentWrites[IndexOf("Duration")]);
+        Assert.Equal(GanttCellAlignment.Left, initialiser.HorizontalAlignmentWrites[IndexOf("Description")]);
+        Assert.Equal(GanttCellAlignment.Left, initialiser.HorizontalAlignmentWrites[IndexOf("Type")]);
+
+        // And every column got exactly one decision, in schema order.
+        IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+        Assert.Equal(
+            columns.Select(column => GanttTableAppearance.AlignmentFor(column.Name)),
+            initialiser.HorizontalAlignmentWrites);
     }
 
     [Fact]

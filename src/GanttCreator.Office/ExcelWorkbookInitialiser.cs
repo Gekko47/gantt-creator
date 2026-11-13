@@ -982,8 +982,47 @@ public class ExcelWorkbookInitialiser(
             {
                 ApplyDateColumnFormat(entireColumn);
             }
+
+            // The theme's body typography and this column's alignment (R5.18d). Written on
+            // the same whole column as the date format, so a row that does not exist yet
+            // already carries the theme rather than inheriting whatever Excel decides.
+            ApplyBodyFont(entireColumn);
+            ApplyVerticalCentre(entireColumn);
+            ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
         }
     }
+
+    /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// One proxy is held locally rather than chained through <c>range.Font.Name</c>: the COM
+    /// rule in ADR-0011 is that no proxy expression is chained, and a chained set here would
+    /// also leak an un-released <c>Font</c> proxy on every column of every initialise.
+    /// </remarks>
+    internal virtual void ApplyBodyFont(Excel.Range entireColumn)
+    {
+        Font font = entireColumn.Font;
+        font.Name = GanttTableAppearance.FontFamily;
+        font.Size = GanttTableAppearance.BodyFontSizePt;
+    }
+
+    /// <summary>Middle-aligns a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// A table row is one worksheet row, so a top-aligned cell sits against the row above as
+    /// soon as that row grows — which is exactly what the row-height normaliser does on a
+    /// group expand. Middle is therefore the only alignment that stays correct.
+    /// </remarks>
+    internal virtual void ApplyVerticalCentre(Excel.Range entireColumn) =>
+        entireColumn.VerticalAlignment = XlVAlign.xlVAlignCenter;
+
+    /// <summary>Applies the column's horizontal alignment to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <param name="alignment">The column's alignment, from the Core appearance authority.</param>
+    internal virtual void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
+        entireColumn.HorizontalAlignment = alignment == GanttCellAlignment.Centre
+            ? XlHAlign.xlHAlignCenter
+            : XlHAlign.xlHAlignLeft;
 
     /// <summary>
     /// Reads <c>Range.Hidden</c> as a <see cref="bool"/>.
