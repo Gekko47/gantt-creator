@@ -230,6 +230,16 @@ Two capability facts that shape the design:
   Tests: schema order and count pins; layout derivations (anchor, title, origin); integrity positives
   for a correct sheet, a legacy sheet and a spacer holding user content; a full rebuild-from-missing
   repair onto column 2; reader/writer round trip; the whole Office contract suite.
+  **Traced 2026-11-13, part 1 landed as `0055d88`:** the schema order, the origin, the layout
+  offsets, the initialiser/recovery header ranges and the hash re-pin are in; the gutter's width and
+  the scene's use of it are not. The plumbing the remaining half needs, read from the code rather
+  than assumed: `SceneBuilder.LiveDataPanelBounds` is a private static taking only the grid, so the
+  gutter must arrive on the request (`SceneBuildRequest` gains a measured leading-gutter field, and
+  `LiveDataPanelBounds` subtracts it from `grid.OriginLeftPt`); `ExcelSceneBuildRequestFactory` is
+  stateless and holds no worksheet, so it cannot measure the column itself — the width has to be
+  measured where the grid already is (`ExcelPanelGridMeasurement`) and carried to
+  `Create(...)`. That is why this half is its own commit: it changes the scene, so it owns the
+  golden.
 
 - **R5.18l — Remove the Data panel description-label option (D4).** The Splitter's capability set
   becomes `Plot centre`/`Both`/`None`, and its default becomes `Plot centre`; `DataPanelLeft` remains
