@@ -420,21 +420,24 @@ public sealed class GanttSheetLayoutTests
         Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleStartColumnIndex);
         Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleEndColumnIndex);
 
-        // The derived reference is the single cell above Description.
+        // The derived reference is the single cell above Description. The table starts
+        // in column B and Description is the second schema column, so the title is C2.
         Assert.Equal(
-            "E2",
+            "C2",
             GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleRowIndex));
 
-        // It starts AFTER the engine columns: a title in column A would sit over
-        // hidden bookkeeping the user cannot see.
-        Assert.True(GanttSheetLayout.TitleColumnIndex > 1);
+        // It starts AFTER the leading gutter: a title in column A would sit over the
+        // add-in's own spacer rather than over the column the table is read by.
+        Assert.True(GanttSheetLayout.TitleColumnIndex > GanttSheetLayout.LeadingGutterColumnIndex);
 
-        // And it really is the Description column's own index, not a coincidence.
+        // And it really is the Description column's own schema position OFFSET by the
+        // table origin, not a coincidence.
         Assert.Equal(
-            GanttTableSchema.Default.Columns
-                .Select((column, index) => (column, index))
-                .Single(entry => string.Equals(entry.column.Name, "Description", StringComparison.Ordinal))
-                .index + 1,
+            GanttSheetLayout.TableOriginColumnIndex
+                + GanttTableSchema.Default.Columns
+                    .Select((column, index) => (column, index))
+                    .Single(entry => string.Equals(entry.column.Name, "Description", StringComparison.Ordinal))
+                    .index,
             GanttSheetLayout.TitleColumnIndex);
     }
 
@@ -516,32 +519,44 @@ public sealed class GanttSheetLayoutTests
     }
 
     [Theory]
-    [InlineData(3, 1, true)]
-    [InlineData(4, 1, false)]
-    [InlineData(3, 2, false)]
-    [InlineData(31, 1, false)]
-    public void The_contract_origin_is_the_header_row_in_column_a(int row, int column, bool expected) =>
+    [InlineData(3, 2, true)]
+    [InlineData(4, 2, false)]
+    [InlineData(3, 1, false)]
+    [InlineData(31, 2, false)]
+    public void The_contract_origin_is_the_header_row_in_column_b(int row, int column, bool expected) =>
         Assert.Equal(expected, GanttSheetLayout.IsAtContractOrigin(row, column));
 
+    /// <summary>
+    /// The table starts in column B and column A is the add-in's own spacer gutter
+    /// (R5.18k).
+    /// </summary>
+    /// <remarks>
+    /// Both values are asserted as literals for the same reason the header row is: the
+    /// checker compares a live table against this, so deriving it here would compare the
+    /// layout authority with itself. The pair is what matters — the gutter is one column
+    /// wide and the origin is one column right of it — so a future move has to change both.
+    /// </remarks>
     [Fact]
-    public void The_table_origin_column_is_column_a()
+    public void The_table_origin_leaves_column_a_for_the_leading_gutter()
     {
-        // Asserted as a literal for the same reason the header row is: the checker
-        // compares a live table against this, so deriving it here would compare the
-        // layout authority with itself.
-        Assert.Equal(1, GanttSheetLayout.TableOriginColumnIndex);
-        Assert.True(GanttSheetLayout.IsAtContractOrigin(GanttSheetLayout.HeaderRowIndex, 1));
+        Assert.Equal(1, GanttSheetLayout.LeadingGutterColumnIndex);
+        Assert.Equal(2, GanttSheetLayout.TableOriginColumnIndex);
+        Assert.Equal(
+            GanttSheetLayout.LeadingGutterColumnIndex + 1,
+            GanttSheetLayout.TableOriginColumnIndex);
+        Assert.True(GanttSheetLayout.IsAtContractOrigin(GanttSheetLayout.HeaderRowIndex, 2));
     }
 
     /// <summary>
     /// The anchor is the column one past the table's last column — the same rule the
-    /// pre-ADR-0030 code used, unchanged.
+    /// pre-ADR-0030 code used, now offset by the origin so it does not land ON the last
+    /// table column.
     /// </summary>
     [Fact]
     public void The_anchor_column_is_one_past_the_last_schema_column()
     {
         Assert.Equal(
-            GanttTableSchema.Default.Columns.Count + 1,
+            GanttSheetLayout.TableOriginColumnIndex + GanttTableSchema.Default.Columns.Count,
             GanttSheetLayout.PlotAnchorColumnIndex);
     }
 

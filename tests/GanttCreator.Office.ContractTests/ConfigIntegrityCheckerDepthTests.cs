@@ -462,16 +462,20 @@ public sealed class ConfigIntegrityCheckerDepthTests
     {
         // A sideways move is the same injury on the other axis, so the one finding
         // fires rather than a second kind existing for columns.
+        int movedTo = GanttSheetLayout.TableOriginColumnIndex + 3;
         ConfigIntegrityCheckOutcome outcome = Check([
             ConfigSheet(),
-            GanttSheet(firstColumn: GanttSheetLayout.TableOriginColumnIndex + 3),
+            GanttSheet(firstColumn: movedTo),
         ]);
 
         ConfigIntegrityFinding finding = Assert.Single(
             outcome.Findings,
             candidate => candidate.Kind == ConfigIntegrityFindingKind.TableOffContractOrigin);
 
-        Assert.Contains("column 4", finding.Detail, StringComparison.Ordinal);
+        // The reported column is the one the sheet actually shows, derived rather than
+        // written as a literal: the contract origin moved in R5.18k, and a literal here
+        // would have to be edited by hand on every layout change.
+        Assert.Contains($"column {movedTo}", finding.Detail, StringComparison.Ordinal);
         Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
     }
 

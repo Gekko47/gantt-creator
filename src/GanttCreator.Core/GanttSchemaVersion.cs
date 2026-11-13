@@ -200,6 +200,17 @@ public static class GanttSchemaVersion
     /// is Initialise.
     /// </para>
     /// <para>
+    /// <b>Version 23 is R5.18k's visible-columns-first table (owner-approved).</b>
+    /// <c>tblGanttData</c> now leads with <c>Type</c>, <c>Description</c>, <c>Start</c>,
+    /// <c>Finish</c> and <c>Duration</c>, and the engine columns follow them instead of
+    /// preceding them. The table also starts in column B so column A can hold the
+    /// add-in's spacer gutter, which is not a table column. Both changes are
+    /// schema-visible: the column order is part of the schema, and the origin moves
+    /// <see cref="GanttSheetLayout.PlotAnchorColumnIndex"/> with it. There is no
+    /// migration (ADR-0029 D6): a version-22 workbook reports a mismatch and the remedy
+    /// is Initialise, which is the only creation path and has no active users to migrate.
+    /// </para>
+    /// <para>
     /// <b>Version 22 is ADR-0055's add-in-owned worksheet protection.</b>
     /// <c>tblGanttSettings</c> gains <c>ProtectGanttSheet</c>, which records
     /// that the add-in owns the protection of the visible Gantt worksheet and
@@ -212,5 +223,5 @@ public static class GanttSchemaVersion
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 22;
+    public const int CurrentSchemaVersion = 23;
 }

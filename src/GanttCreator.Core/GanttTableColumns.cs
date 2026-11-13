@@ -216,39 +216,47 @@ public sealed class GanttTableSchema
     }
 
     /// <summary>
-    /// The first-release schema: the required columns in contract order, followed
-    /// by the optional <c>SortOrder</c> column. R4.7A added <c>SiblingOrder</c>
+    /// The first-release schema: the visible columns in authoring order, followed
+    /// by the engine columns in contract order. R4.7A added <c>SiblingOrder</c>
     /// immediately after <c>ParentId</c> and advanced the schema version 3 → 4.
     /// R4.7C added <c>Duration</c> immediately after <c>Finish</c>, classified
     /// every column, and advanced 4 → 5. R5.14 added <c>DateLabelPosition</c>
-    /// immediately after <c>LabelPosition</c> and advanced 14 → 15.
+    /// immediately after <c>LabelPosition</c> and advanced 14 → 15. R5.18k led the
+    /// table with the visible columns and advanced 22 → 23.
     /// </summary>
     /// <remarks>
-    /// The authoring columns are deliberately grouped in the middle of the
-    /// engine columns rather than leading the table: <c>Id</c>, <c>LaneId</c> and
-    /// <c>StackIndex</c> are hidden, so the first <em>visible</em> column the user
-    /// sees is <c>Type</c>. Moving them would have been a second, unrecorded
-    /// column-order change in the same schema bump.
-    ///
+    /// <para>
+    /// <b>The visible columns lead the table (R5.18k, owner-approved).</b> The
+    /// earlier remark argued they were "deliberately grouped in the middle" so that a
+    /// schema bump would not also be a column-order change. That reasoning is
+    /// reversed: the table starts at
+    /// <see cref="GanttSheetLayout.TableOriginColumnIndex"/> (column B), the leading
+    /// column is the add-in's spacer gutter and is NOT a table column at all, and the
+    /// engine columns follow the five the user reads and edits. A user who scrolls
+    /// right still finds them, hidden; a user who opens the table sees
+    /// <c>Type</c> first, which is the column the table is authored by.
+    /// </para>
+    /// <para>
     /// <c>DateLabelPosition</c> is OPTIONAL (the <c>SortOrder</c> precedent):
     /// a workbook saved before R5.14 legitimately lacks the column, and a
     /// missing optional column reads as a blank cell (= Auto) rather than
     /// failing the table read. Keeping it required would strand every
     /// pre-R5.14 workbook behind a <c>TableMissing</c> refusal — the
     /// ribbon-state gate keys on that read, so the whole Gantt group would
-    /// grey on open. Initialise still materialises the column and advances
-    /// the stored schema version to 15 (ADR-0029 D6: no migration).
+    /// grey on open. Initialise still materialises the column (ADR-0029 D6: no
+    /// migration).
+    /// </para>
     /// </remarks>
     public static GanttTableSchema Default { get; } = new(
     [
-        new GanttTableColumn("Id", isRequired: true, GanttColumnAccess.EngineHidden),
-        new GanttTableColumn("LaneId", isRequired: true, GanttColumnAccess.EngineHidden),
-        new GanttTableColumn("StackIndex", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("Type", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Description", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Start", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Finish", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Duration", isRequired: true, GanttColumnAccess.ReadOnlyVisible),
+        new GanttTableColumn("Id", isRequired: true, GanttColumnAccess.EngineHidden),
+        new GanttTableColumn("LaneId", isRequired: true, GanttColumnAccess.EngineHidden),
+        new GanttTableColumn("StackIndex", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("ParentId", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("SiblingOrder", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("StyleKey", isRequired: true, GanttColumnAccess.EngineHidden),

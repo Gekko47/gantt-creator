@@ -817,8 +817,15 @@ public class GanttRowInserterTests
         Assert.Equal(1, outcome.BodyIndex);
         Assert.Equal(0, graph.AddRowCalls);
         var matrix = Assert.IsType<object[,]>(graph.WrittenValue);
-        Assert.Equal(id.Value, matrix[0, 0]);
-        Assert.Equal("As-Planned Activity", matrix[0, 3]);
+
+        // Positions come from the schema, not from literals: R5.18k reordered the
+        // columns, and a written index here would pin the order instead of the write.
+        Assert.Equal(
+            id.Value,
+            matrix[0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Id")]);
+        Assert.Equal(
+            "As-Planned Activity",
+            matrix[0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Type")]);
         Assert.Equal(0, graph.ClearRangeCalls);
     }
 

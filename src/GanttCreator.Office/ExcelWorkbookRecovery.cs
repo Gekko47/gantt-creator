@@ -1342,10 +1342,24 @@ public class ExcelWorkbookRecovery(
     internal virtual void SetColumnHidden(Excel.Range range, bool value) => range.Hidden = value;
 
     internal virtual object? GetHeaderValue(Excel.Worksheet target, int columnIndex) =>
-        target.Cells[GanttSheetLayout.HeaderRowIndex, columnIndex].Value2;
+        target.Cells[GanttSheetLayout.HeaderRowIndex, HeaderColumn(columnIndex)].Value2;
 
     internal virtual void SetHeaderValue(Excel.Worksheet target, int columnIndex, string? value) =>
-        target.Cells[GanttSheetLayout.HeaderRowIndex, columnIndex].Value2 = value;
+        target.Cells[GanttSheetLayout.HeaderRowIndex, HeaderColumn(columnIndex)].Value2 = value;
+
+    /// <summary>
+    /// Maps a one-based schema position to the worksheet column it occupies.
+    /// </summary>
+    /// <param name="columnIndex">The one-based schema position.</param>
+    /// <returns>The one-based worksheet column.</returns>
+    /// <remarks>
+    /// The table starts at <see cref="GanttSheetLayout.TableOriginColumnIndex"/>, so
+    /// column 1 of the schema is column B, not column A. Writing the schema position
+    /// directly is what a repair would do to a sheet laid out under the current
+    /// contract, and it would land every header one column left of its own table.
+    /// </remarks>
+    private static int HeaderColumn(int columnIndex) =>
+        GanttSheetLayout.TableOriginColumnIndex + columnIndex - 1;
 
     private void SetHeaderValueOrBlank(Excel.Worksheet target, int columnIndex, string? value)
     {
@@ -1381,8 +1395,8 @@ public class ExcelWorkbookRecovery(
         int bodyRowCount,
         int columnCount) =>
         target.Range[
-            target.Cells[headerRow, 1],
-            target.Cells[headerRow + bodyRowCount, columnCount]];
+            target.Cells[headerRow, GanttSheetLayout.TableOriginColumnIndex],
+            target.Cells[headerRow + bodyRowCount, HeaderColumn(columnCount)]];
 
     internal virtual Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
     {

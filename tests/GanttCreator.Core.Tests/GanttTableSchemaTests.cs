@@ -4,8 +4,10 @@ public class GanttTableSchemaTests
 {
     private static readonly (string Name, bool IsRequired)[] s_columnContract =
     [
-        ("Id", true), ("LaneId", true), ("StackIndex", true), ("Type", true),
-        ("Description", true), ("Start", true), ("Finish", true), ("Duration", true),
+        // R5.18k: the five visible columns lead, and the engine columns follow.
+        ("Type", true), ("Description", true), ("Start", true), ("Finish", true),
+        ("Duration", true),
+        ("Id", true), ("LaneId", true), ("StackIndex", true),
         ("ParentId", true), ("SiblingOrder", true), ("StyleKey", true),
         ("LabelPosition", true), ("DateLabelPosition", false),
         ("FillColour", true), ("StrokeColour", true), ("Visible", true),
@@ -30,7 +32,10 @@ public class GanttTableSchemaTests
         // R5.14 legitimately lacks it, and a missing optional column
         // reads as a blank cell (= Auto) instead of failing the table
         // read, which would strand every pre-R5.14 workbook behind a
-        // TableMissing refusal.
+        // TableMissing refusal. R5.18k reordered the table — the visible
+        // columns first, the engine columns after — without adding or
+        // removing one, which is why the counts are unchanged and the
+        // sequence is not.
         Assert.Equal(s_columnContract.Length, columns.Count);
         for (var i = 0; i < s_columnContract.Length; i++)
         {

@@ -1212,7 +1212,8 @@ public class ExcelWorkbookInitialiser(
     /// <param name="columnCount">The header column count.</param>
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
-        => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
+        => target.Cells[GanttSheetLayout.HeaderRowIndex, GanttSheetLayout.TableOriginColumnIndex]
+            .Resize[1, columnCount];
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM

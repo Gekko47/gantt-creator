@@ -943,7 +943,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "67e350aa307eed5e768bbe6a57812d86b7352ad5c2f7ad3bb57877b5832f7087";
+        "2c29d868dd124db1a32a4831d30bd029c58b807d0f6da3f6694d6a19a6f99517";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

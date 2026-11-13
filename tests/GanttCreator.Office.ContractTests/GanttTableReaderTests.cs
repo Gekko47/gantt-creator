@@ -719,7 +719,10 @@ public class GanttTableReaderTests
             matrix.SetValue(null, 0, column);
         }
 
-        matrix.SetValue("G-zero", 0, 0);
+        matrix.SetValue(
+            "G-zero",
+            0,
+            GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Id"));
         matrix.SetValue("As-Planned Activity", 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Type"));
         matrix.SetValue(0.0, 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "StackIndex"));
         matrix.SetValue(44927.0, 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Start"));
@@ -838,13 +841,21 @@ public class GanttTableReaderTests
     [Fact]
     public void Read_maps_columns_by_header_name_not_position()
     {
+        // The swap names the columns rather than indexing them: R5.18k reordered the
+        // schema, and a positional pair would have swapped two unrelated columns while
+        // still claiming to test name-based mapping.
+        int idColumn = GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Id");
+        int startColumn = GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Start");
         var reordered = SchemaHeaders();
-        (reordered[0], reordered[5]) = (reordered[5], reordered[0]);
+        (reordered[idColumn], reordered[startColumn]) = (reordered[startColumn], reordered[idColumn]);
         var table = new TableGraph(GanttTableSchema.TableName, reordered);
         var sheet = new SheetGraph(table);
         var row = FullRow();
-        row[0] = 44927.0;
-        row[5] = "G-reordered";
+
+        // After the header swap the column that now reads "Start" carries the date serial
+        // and the column that now reads "Id" carries the id.
+        row[idColumn] = 44927.0;
+        row[startColumn] = "G-reordered";
         var matrix = BodyMatrix(row);
 
         var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => matrix);

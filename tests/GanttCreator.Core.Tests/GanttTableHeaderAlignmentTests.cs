@@ -26,23 +26,34 @@ public class GanttTableHeaderAlignmentTests
         Assert.Equal(live.Length, plan.CellsToWrite.Count);
     }
 
+    /// <summary>
+    /// The schema position of a column by name. The tests below are about how a plan
+    /// reacts to a damaged header row, not about where the schema puts a column: R5.18k
+    /// reordered the columns, and the literal indices these tests used to carry turned a
+    /// schema decision into a red test with no behavioural question behind it.
+    /// </summary>
+    /// <param name="name">The exact column name.</param>
+    /// <returns>The zero-based schema position.</returns>
+    private static int SchemaIndexOf(string name) => Array.IndexOf(SchemaNames(), name);
+
     [Fact]
     public void Plan_writes_only_the_blank_cell_when_the_rest_aligns()
     {
+        int description = SchemaIndexOf("Description");
         string?[] live = [.. SchemaNames()];
-        live[4] = null;
+        live[description] = null;
 
         GanttTableHeaderAlignmentPlan plan = GanttTableHeaderAlignment.Plan(live);
 
         Assert.Equal(GanttTableHeaderAlignmentOutcome.Writable, plan.Outcome);
-        Assert.Equal([4], plan.CellsToWrite);
+        Assert.Equal([description], plan.CellsToWrite);
     }
 
     [Fact]
     public void Plan_refuses_a_renamed_header()
     {
         string?[] live = [.. SchemaNames()];
-        live[4] = "Notes";
+        live[SchemaIndexOf("Description")] = "Notes";
 
         GanttTableHeaderAlignmentPlan plan = GanttTableHeaderAlignment.Plan(live);
 
@@ -55,39 +66,42 @@ public class GanttTableHeaderAlignmentTests
     [Fact]
     public void Structure_plan_inserts_a_deleted_required_column_at_its_schema_position()
     {
+        int type = SchemaIndexOf("Type");
         List<string> live = [.. SchemaNames()];
-        live.RemoveAt(3);
+        live.RemoveAt(type);
 
         GanttTableStructureRepairPlan plan = GanttTableStructureRepair.Plan(live);
 
         Assert.True(plan.Succeeded);
         GanttTableColumnRepair repair = Assert.Single(plan.Repairs);
         Assert.Equal(GanttTableColumnRepairKind.Insert, repair.Kind);
-        Assert.Equal(3, repair.SchemaIndex);
+        Assert.Equal(type, repair.SchemaIndex);
         Assert.Equal("Type", repair.Name);
     }
 
     [Fact]
     public void Structure_plan_renames_a_single_unknown_header_in_place()
     {
+        int description = SchemaIndexOf("Description");
         List<string> live = [.. SchemaNames()];
-        live[4] = "Notes";
+        live[description] = "Notes";
 
         GanttTableStructureRepairPlan plan = GanttTableStructureRepair.Plan(live);
 
         Assert.True(plan.Succeeded);
         GanttTableColumnRepair repair = Assert.Single(plan.Repairs);
         Assert.Equal(GanttTableColumnRepairKind.Rename, repair.Kind);
-        Assert.Equal(4, repair.SchemaIndex);
+        Assert.Equal(description, repair.SchemaIndex);
         Assert.Equal("Description", repair.Name);
     }
 
     [Fact]
     public void Structure_plan_refuses_a_reorder_combined_with_a_deletion()
     {
+        int type = SchemaIndexOf("Type");
         List<string> live = [.. SchemaNames()];
-        live.RemoveAt(3);
-        (live[3], live[4]) = (live[4], live[3]);
+        live.RemoveAt(type);
+        (live[type], live[type + 1]) = (live[type + 1], live[type]);
 
         GanttTableStructureRepairPlan plan = GanttTableStructureRepair.Plan(live);
 

@@ -87,16 +87,28 @@ public static class GanttSheetLayout
     public const int FirstBodyRowIndex = HeaderRowIndex + 1;
 
     /// <summary>
+    /// The one-based worksheet column the add-in's leading spacer gutter occupies. It is
+    /// <b>not</b> a column of <c>tblGanttData</c>.
+    /// </summary>
+    /// <remarks>
+    /// The gutter exists so the chart's frame can enclose a left margin of the same width
+    /// as the top and bottom padding rows: the frame starts at the table's first column, so
+    /// without a gutter the table's first column would sit flush against the frame. It is
+    /// add-in owned, must never be reported as an "extra user column" by the integrity
+    /// checker, and is measured rather than assumed when the scene is built (R5.18k).
+    /// </remarks>
+    public const int LeadingGutterColumnIndex = 1;
+
+    /// <summary>
     /// The one-based worksheet column the table's first column occupies.
     /// </summary>
     /// <remarks>
-    /// Column A: the hidden bookkeeping columns lead the table, and the chart's title
-    /// sits above <c>Description</c> rather than above the first engine column. A
-    /// table moved sideways moves the plot anchor with it while the title and the
-    /// period band stay put, which is why the integrity checker reports the move
-    /// instead of guessing a new origin.
+    /// Column B, since R5.18k moved the table one column right to leave
+    /// <see cref="LeadingGutterColumnIndex"/> free. A table moved sideways moves the plot
+    /// anchor with it while the title and the period band stay put, which is why the
+    /// integrity checker reports the move instead of guessing a new origin.
     /// </remarks>
-    public const int TableOriginColumnIndex = 1;
+    public const int TableOriginColumnIndex = 2;
 
     /// <summary>
     /// Whether a live table's top-left corner is the contract origin: the header on
@@ -128,9 +140,9 @@ public static class GanttSheetLayout
     /// read by.
     /// </para>
     /// <para>
-    /// Columns A-C are <see cref="GanttColumnAccess.EngineHidden"/> bookkeeping. They
-    /// are hidden but still occupy worksheet positions, so a title in column A would
-    /// sit above columns the user cannot see.
+    /// The index is the schema position OFFSET by the table's origin, so a table that
+    /// starts in column B titles column C rather than column B. Writing the bare schema
+    /// position here is what a schema-order change would otherwise get wrong silently.
     /// </para>
     /// </remarks>
     public static int TitleColumnIndex
@@ -142,7 +154,7 @@ public static class GanttSheetLayout
             {
                 if (string.Equals(columns[i].Name, "Description", StringComparison.Ordinal))
                 {
-                    return i + 1;
+                    return TableOriginColumnIndex + i;
                 }
             }
 
@@ -404,7 +416,13 @@ public static class GanttSheetLayout
     /// Gets the one-based worksheet column of the plot anchor: the column one to the
     /// right of the table's last column.
     /// </summary>
-    public static int PlotAnchorColumnIndex => GanttTableSchema.Default.Columns.Count + 1;
+    /// <remarks>
+    /// The count is offset by the origin. With the table starting in column B and 17
+    /// columns, the last column is R and the anchor is S; a bare <c>Count + 1</c> would
+    /// name R and place the anchor ON the last table column.
+    /// </remarks>
+    public static int PlotAnchorColumnIndex =>
+        TableOriginColumnIndex + GanttTableSchema.Default.Columns.Count;
 
     /// <summary>
     /// Builds the plot anchor's <c>refersTo</c> string: the cell one column right of

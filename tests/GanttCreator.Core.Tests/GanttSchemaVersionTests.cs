@@ -76,7 +76,9 @@ public class GanttSchemaVersionTests
         // appended at the end of the row, so every existing column index is
         // unchanged. No migration (ADR-0029 D6); Initialise is the remedy.
         // 22 adds `ProtectGanttSheet` (ADR-0055).
-        Assert.Equal(22, GanttSchemaVersion.CurrentSchemaVersion);
+        // 23 reorders tblGanttData to lead with the visible columns and moves the
+        // table to column B so column A can hold the spacer gutter (R5.18k).
+        Assert.Equal(23, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]
