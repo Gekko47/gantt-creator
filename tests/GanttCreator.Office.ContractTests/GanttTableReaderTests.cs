@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Moq;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -311,6 +312,122 @@ public class GanttTableReaderTests
 
         Assert.True(outcome.Succeeded);
         Assert.False(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    [Fact]
+    public void Read_reports_a_chart_sheet_active_sheet_as_not_the_gantt_sheet()
+    {
+        // State matrix, chart sheet active (2026-11-13). A chart sheet is a real
+        // non-worksheet sheet type, not merely "some object": the cast guard must
+        // refuse it so the whole ribbon stays gated on a chart sheet.
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        Mock<Excel.Chart> chartSheet = new();
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            _ => BodyMatrix(FullRow()),
+            activeSheet: _ => chartSheet.Object);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.False(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    [Fact]
+    public void Read_does_not_fall_back_to_the_gantt_label_when_a_chart_sheet_is_active_and_the_table_is_missing()
+    {
+        // State matrix, chart sheet active with a missing table (2026-11-13). The
+        // label fallback exists so the repair commands keep their context when the
+        // table is gone; a chart sheet must not borrow that context merely because
+        // a Gantt-labelled worksheet still exists.
+        var table = new TableGraph("SomeOtherTable", SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        Mock<Excel.Chart> chartSheet = new();
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            bodyValues: _ => throw new InvalidOperationException("body must not be read"),
+            activeSheet: _ => chartSheet.Object);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.False(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    [Fact]
+    public void Read_never_consults_sheet_or_workbook_protection()
+    {
+        // State matrix, protected sheet (2026-11-13). Protection blocks edits, not
+        // reads, so the read port must stay protection-independent -- Refresh and
+        // Validate run on protected Gantt sheets by design.
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        _ = graph.Worksheet.SetupGet(w => w.ProtectContents).Returns(true);
+        _ = graph.Worksheet.SetupGet(w => w.ProtectDrawingObjects).Returns(true);
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = workbook.SetupGet(w => w.ProtectStructure).Returns(true);
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            _ => BodyMatrix(FullRow()),
+            activeSheet: _ => ganttSheet);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        graph.Worksheet.VerifyGet(w => w.ProtectContents, Times.Never());
+        graph.Worksheet.VerifyGet(w => w.ProtectDrawingObjects, Times.Never());
+        workbook.VerifyGet(w => w.ProtectStructure, Times.Never());
+    }
+
+    [Fact]
+    public void Read_propagates_an_unexpected_com_failure_from_the_active_workbook_probe()
+    {
+        // State matrix, closed workbook (2026-11-13). IGanttTableReader is explicit:
+        // "unexpected COM failures propagate to the command boundary". This is the
+        // deliberate asymmetry with ISelectionIdentifier, which reports None: a read
+        // that cannot even name its workbook must fail loudly, not report an empty
+        // schedule that the renderer reconciles to nothing.
+        var application = new Mock<Excel.Application>();
+        _ = application.SetupGet(a => a.ActiveWorkbook)
+            .Throws(ComFailure(unchecked((int)0x80010108)));
+
+        var reader = new TestableReader(application.Object);
+
+        _ = Assert.Throws<COMException>(() => reader.Read());
+        _ = Assert.Throws<COMException>(() => reader.Read(Array.Empty<int>()));
     }
 
     [Fact]
@@ -1014,5 +1131,19 @@ public class GanttTableReaderTests
             bodyRowCount: 3);
 
         Assert.Empty(reader.Read([5]).Rows);
+    }
+
+    /// <summary>
+    /// Produces the exception a disconnected COM object raises, without
+    /// constructing the runtime-reserved <see cref="COMException"/> directly
+    /// (CA2201). The same production is used by the other Office contract tests.
+    /// </summary>
+    /// <param name="hresult">The HRESULT the host would report.</param>
+    /// <returns>A live <see cref="COMException"/> carrying that HRESULT.</returns>
+    private static COMException ComFailure(int hresult)
+    {
+        var exception = (COMException?)Marshal.GetExceptionForHR(hresult);
+        return exception ?? throw new InvalidOperationException(
+            $"The runtime did not produce a COMException for HRESULT 0x{hresult:X8}.");
     }
 }

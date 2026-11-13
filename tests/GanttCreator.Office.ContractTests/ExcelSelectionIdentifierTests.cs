@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Moq;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -26,7 +27,21 @@ public class ExcelSelectionIdentifierTests
         public Mock<Excel.Range> DataBody { get; } = new();
         public Mock<Excel.Range> ActiveCell { get; } = new();
         public Mock<Excel.Range> Selection { get; } = new();
+        public Mock<Excel.Chart> Chart { get; } = new();
         public bool HasSelection { get; set; } = true;
+
+        /// <summary>
+        /// False models a chart-sheet or shape selection: <c>Application.Selection</c>
+        /// returns a live object that is not a <c>Range</c>.
+        /// </summary>
+        public bool SelectionIsRange { get; set; } = true;
+
+        /// <summary>
+        /// True models a chart sheet being active. Excel has no active cell there,
+        /// so <c>Application.ActiveCell</c> raises a COM error instead of returning
+        /// a range (state matrix, 2026-11-13).
+        /// </summary>
+        public bool ActiveCellProbeFails { get; set; }
 
         public Graph()
         {
@@ -81,11 +96,28 @@ public class ExcelSelectionIdentifierTests
 
         internal override Excel.Range? GetDataBodyRange(Excel.ListObject table) => _graph.DataBody.Object;
 
-        internal override Excel.Range? GetActiveCell(Excel.Application application) =>
-            _graph.ActiveCell.Object;
+        internal override Excel.Range? GetActiveCell(Excel.Application application)
+        {
+            if (_graph.ActiveCellProbeFails)
+            {
+                // COMException is constructed through Marshal, never with `new`
+                // (CA2201 reserves it): a chart sheet has no active cell, so the
+                // live host raises an application-defined error here.
+                throw ComFailure(unchecked((int)0x800A03EC));
+            }
 
-        internal override object? GetSelection(Excel.Application application) =>
-            _graph.HasSelection ? _graph.Selection.Object : null;
+            return _graph.ActiveCell.Object;
+        }
+
+        internal override object? GetSelection(Excel.Application application)
+        {
+            if (!_graph.HasSelection)
+            {
+                return null;
+            }
+
+            return _graph.SelectionIsRange ? _graph.Selection.Object : _graph.Chart.Object;
+        }
 
         internal override int GetRangeRow(Excel.Range range) => _graph.Span(range).Row;
 
@@ -216,5 +248,99 @@ public class ExcelSelectionIdentifierTests
         var identifier = new ExcelSelectionIdentifier(null);
 
         Assert.Throws<ArgumentNullException>(() => identifier.SubscribeSelectionChanged(null!));
+    }
+
+    [Fact]
+    public void Identify_reports_none_when_the_active_workbook_is_closed()
+    {
+        // State matrix, closed workbook (2026-11-13). Excel reports "no active
+        // workbook" as null, not as a stale proxy.
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 3, selectionRow: 3, selectionCount: 1);
+        _ = graph.Application.SetupGet(a => a.ActiveWorkbook).Returns((Excel.Workbook)null!);
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.Equal(SelectionFacts.None, facts);
+    }
+
+    [Fact]
+    public void Identify_reports_none_when_the_active_workbook_probe_fails()
+    {
+        // State matrix, closed workbook (2026-11-13). A workbook that is closing
+        // can make ActiveWorkbook throw rather than return null; the port is
+        // documented total ("Never throws"), so the catch must absorb it.
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 3, selectionRow: 3, selectionCount: 1);
+        _ = graph.Application.SetupGet(a => a.ActiveWorkbook)
+            .Throws(ComFailure(unchecked((int)0x80010108)));
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.Equal(SelectionFacts.None, facts);
+    }
+
+    [Fact]
+    public void Identify_reports_none_when_a_chart_sheet_is_active()
+    {
+        // State matrix, chart sheet active (2026-11-13). Excel has no active cell
+        // on a chart sheet, so Application.ActiveCell raises a COM error. Reporting
+        // None keeps the ribbon on its previous snapshot instead of faulting on a
+        // sheet switch -- this is the positive test for the catch in Identify().
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 3, selectionRow: 3, selectionCount: 1);
+        graph.SelectionIsRange = false;
+        graph.ActiveCellProbeFails = true;
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.Equal(SelectionFacts.None, facts);
+    }
+
+    [Fact]
+    public void Identify_falls_back_to_the_active_cell_when_a_non_range_object_is_selected()
+    {
+        // State matrix, chart/shape selection (2026-11-13). A non-Range selection
+        // casts to null, and the active cell still names the row the structural
+        // commands act on (R5.9b).
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 3, selectionRow: 3, selectionCount: 1);
+        graph.SelectionIsRange = false;
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.True(facts.HasSelection);
+        Assert.True(facts.IsSingleBodyRow);
+        Assert.Equal(2, facts.BodyIndex);
+    }
+
+    [Fact]
+    public void Identify_never_consults_sheet_or_workbook_protection()
+    {
+        // State matrix, protected sheet (2026-11-13). Protection blocks edits, not
+        // reads, so identifying a selection must be protection-independent: if it
+        // branched on protection, Remove/structural gating would silently disable
+        // itself the moment the user protected the Gantt sheet.
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 3, selectionRow: 3, selectionCount: 1);
+        _ = graph.Worksheet.SetupGet(w => w.ProtectContents).Returns(true);
+        _ = graph.Worksheet.SetupGet(w => w.ProtectDrawingObjects).Returns(true);
+        _ = graph.Workbook.SetupGet(w => w.ProtectStructure).Returns(true);
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.True(facts.IsSingleBodyRow);
+        graph.Worksheet.VerifyGet(w => w.ProtectContents, Times.Never());
+        graph.Worksheet.VerifyGet(w => w.ProtectDrawingObjects, Times.Never());
+        graph.Workbook.VerifyGet(w => w.ProtectStructure, Times.Never());
+    }
+
+    /// <summary>
+    /// Produces the exception a failed COM probe raises, without constructing the
+    /// runtime-reserved <see cref="COMException"/> directly (CA2201). The same
+    /// production is used by the other Office contract tests.
+    /// </summary>
+    /// <param name="hresult">The HRESULT the host would report.</param>
+    /// <returns>A live <see cref="COMException"/> carrying that HRESULT.</returns>
+    private static COMException ComFailure(int hresult)
+    {
+        var exception = (COMException?)Marshal.GetExceptionForHR(hresult);
+        return exception ?? throw new InvalidOperationException(
+            $"The runtime did not produce a COMException for HRESULT 0x{hresult:X8}.");
     }
 }
