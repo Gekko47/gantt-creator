@@ -1138,8 +1138,85 @@ public class ExcelWorkbookRecovery(
         SetShowTableStyleColumnStripes(table, false);
     }
 
+    /// <summary>
+    /// Gives a rebuilt table the same leading gutter width a freshly initialised one gets
+    /// (ADR-0059, R5.18k).
+    /// </summary>
+    /// <param name="table">The rebuilt Gantt data table.</param>
+    /// <remarks>
+    /// The mirror of the initialiser's pass, and for the same reason the theme and the
+    /// date format are mirrored: a repair produces a fresh set of cells, and a repair that
+    /// left the gutter at Excel's default width would hand the user a chart whose frame
+    /// starts 48 points to the left of the table instead of one padding row.
+    /// </remarks>
+    private void SetLeadingGutterWidth(Excel.ListObject table)
+    {
+        if (table.Parent is not Excel.Worksheet worksheet
+            || FindColumnByIndex(worksheet, GanttSheetLayout.LeadingGutterColumnIndex) is not { } column)
+        {
+            return;
+        }
+
+        if (ReadColumnWidthCharacters(column) is not { } characters
+            || ReadColumnWidthPoints(column) is not { } points)
+        {
+            return;
+        }
+
+        if (ExcelWorkbookInitialiser.CorrectedColumnWidthCharacters(
+                characters,
+                points,
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt")) is { } corrected)
+        {
+            SetColumnWidthCharacters(column, corrected);
+        }
+    }
+
+    /// <summary>Returns a worksheet column by index. Test seam over the <c>Columns</c> indexer.</summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="columnIndex">The one-based column index.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? FindColumnByIndex(Excel.Worksheet worksheet, int columnIndex)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[columnIndex];
+    }
+
+    /// <summary>Reads a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in characters, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthCharacters(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.ColumnWidth is double width ? width : null;
+    }
+
+    /// <summary>Reads a column's measured width in points. Test seam over <c>Width</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in points, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthPoints(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.Width is double width ? width : null;
+    }
+
+    /// <summary>Writes a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <param name="width">The width in characters.</param>
+    internal virtual void SetColumnWidthCharacters(Excel.Range column, double width)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        column.ColumnWidth = width;
+    }
+
     private void ApplyColumnPresentation(Excel.ListObject table)
     {
+        SetLeadingGutterWidth(table);
+
         Excel.ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
         for (int index = 1; index <= schema.Count; index++)

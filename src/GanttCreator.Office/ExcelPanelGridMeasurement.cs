@@ -192,6 +192,14 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
 
+        // ADR-0059/R5.18k: column A is the add-in's leading gutter, not a table column,
+        // and it is what gives the frame a left margin equal to the framing rows' top and
+        // bottom margins. A column whose width the host does not report composes with NO
+        // gutter rather than refusing: the gutter is decoration, and the alternative is
+        // no chart at all over a missing border. Every measurement that POSITIONS content
+        // — the origin, the rows — still refuses, which is the line this draws.
+        double leadingGutter = ReadLeadingGutterWidth(table) ?? 0d;
+
         // Core validates the grid: a non-positive or non-finite width or height, a
         // blank or duplicated column name, a missing required column, and a negative
         // or non-finite origin are all refused there with their own typed reasons
@@ -206,7 +214,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             topPaddingHeight,
             bottomPaddingHeight,
             anchorHeight,
-            allowEmptyRows: true);
+            allowEmptyRows: true,
+            leadingGutterPt: leadingGutter);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -485,6 +494,42 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
 
         Excel.Range? body = table.DataBodyRange;
         return body is null ? null : ToPoints(body.Left);
+    }
+
+    /// <summary>
+    /// Reads the measured width of the add-in's leading gutter column, in points
+    /// (ADR-0059, R5.18k).
+    /// </summary>
+    /// <param name="table">The Gantt data table, whose worksheet owns the gutter column.</param>
+    /// <returns>The measured width, or <see langword="null"/> when it cannot be read.</returns>
+    /// <remarks>
+    /// The worksheet is reached through the table's <c>Parent</c> rather than through a
+    /// second sheet walk, so this cannot measure the gutter of a DIFFERENT sheet than the
+    /// one the table is on. Null is a real answer: an adapter that cannot see the column
+    /// composes without a margin, which is what every composition did before the gutter
+    /// existed.
+    /// </remarks>
+    internal virtual double? ReadLeadingGutterWidth(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        return table.Parent is Excel.Worksheet worksheet
+            && GetLeadingGutterColumn(worksheet) is { } column
+            ? ToPoints(column.Width)
+            : null;
+    }
+
+    /// <summary>
+    /// Returns the worksheet column that holds the leading gutter. Test seam over the
+    /// <c>Columns</c> indexer.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <returns>The whole-column range.</returns>
+    internal virtual Excel.Range? GetLeadingGutterColumn(Excel.Worksheet worksheet)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[GanttSheetLayout.LeadingGutterColumnIndex];
     }
 
     /// <summary>

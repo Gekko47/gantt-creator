@@ -233,6 +233,7 @@ public class ExcelWorkbookInitialiser(
             createdTable = true;
             PresentDataTable(createdDataTable);
             ApplyColumnPresentation(createdDataTable);
+            ApplyLeadingGutterWidth(createdDataTable);
 
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
@@ -923,6 +924,100 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
+    /// The tolerance within which a measured gutter width counts as already correct.
+    /// </summary>
+    /// <remarks>
+    /// Half a point: Excel stores a column width in characters and reports the width in
+    /// points, so a round trip through one unit and back is not exact. Half a point is
+    /// below what any border or grid line can show, so a column inside it needs no write
+    /// and the workbook stays clean.
+    /// </remarks>
+    private const double _gutterWidthTolerancePt = 0.5;
+
+    /// <summary>
+    /// Makes column A the chart's left margin by setting its width to the framing rows'
+    /// padding height (ADR-0059, R5.18k).
+    /// </summary>
+    /// <param name="table">The Gantt data table, whose worksheet owns the gutter column.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why one provisional write and one correction rather than a formula.</b> Excel
+    /// expresses a column width in CHARACTERS of the Normal font and reports it in
+    /// POINTS, and the conversion depends on the workbook's font. The existing width and
+    /// its measured points give that ratio for THIS workbook, so one correction lands on
+    /// the target without guessing a characters-per-point constant. There is no second
+    /// correction: a value still outside the tolerance afterwards is left alone rather
+    /// than iterated, because the scene measures whatever is really there.
+    /// </para>
+    /// <para>
+    /// <b>Zero writes on a correct sheet.</b> A column already at the target is not
+    /// rewritten, for the same reason the date format and the hidden flags are not: a
+    /// no-op pass must not mark the workbook dirty.
+    /// </para>
+    /// </remarks>
+    private void ApplyLeadingGutterWidth(ListObject table)
+    {
+        if (table.Parent is not Worksheet worksheet
+            || GetColumnRange(worksheet) is not { } column)
+        {
+            return;
+        }
+
+        if (ReadColumnWidthCharacters(column) is not { } characters
+            || characters <= 0
+            || ReadColumnWidthPoints(column) is not { } points
+            || points <= 0)
+        {
+            return;
+        }
+
+        double targetPt = GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt");
+        if (CorrectedColumnWidthCharacters(characters, points, targetPt) is { } corrected)
+        {
+            SetColumnWidthCharacters(column, corrected);
+        }
+    }
+
+    /// <summary>
+    /// Converts a column's current character width and measured point width into the
+    /// character width that lands on <paramref name="targetPt"/>.
+    /// </summary>
+    /// <param name="characters">The width the column carries, in Excel's character unit.</param>
+    /// <param name="points">That same width, as the host measured it, in points.</param>
+    /// <param name="targetPt">The width the gutter needs, in points.</param>
+    /// <returns>
+    /// The character width to write, or <see langword="null"/> when nothing should be
+    /// written.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is a pure function.</b> The ratio between the two units belongs to the
+    /// workbook's Normal font, so it must come from the sheet rather than a constant; the
+    /// arithmetic that applies it is the part a test can pin without a host, and it is
+    /// the part that would otherwise be wrong silently.
+    /// </para>
+    /// <para>
+    /// A width already inside <see cref="_gutterWidthTolerancePt"/> returns
+    /// <see langword="null"/> — the no-write path — and so does any input that is not a
+    /// usable pair of positive, finite numbers: a correction computed from an unusable
+    /// measurement would write a width nobody measured.
+    /// </para>
+    /// </remarks>
+    internal static double? CorrectedColumnWidthCharacters(double characters, double points, double targetPt)
+    {
+        // One expression, so the three reasons for "no write" cannot drift apart: an
+        // unusable pair, a target that is not a width, and a width already inside the
+        // tolerance are all the same answer to the caller.
+        bool usable = double.IsFinite(characters) && characters > 0
+            && double.IsFinite(points) && points > 0
+            && double.IsFinite(targetPt) && targetPt > 0;
+
+        return usable && Math.Abs(points - targetPt) > _gutterWidthTolerancePt
+            ? characters * targetPt / points
+            : null;
+    }
+
+    /// <summary>
     /// Applies each column's <see cref="GanttColumnAccess"/> classification to the
     /// live table: engine columns are hidden and every non-authoring column's cells
     /// carry the locked format (R4.7C D1/D2, ADR-0029 D7/D8).
@@ -1214,6 +1309,46 @@ public class ExcelWorkbookInitialiser(
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
         => target.Cells[GanttSheetLayout.HeaderRowIndex, GanttSheetLayout.TableOriginColumnIndex]
             .Resize[1, columnCount];
+
+    /// <summary>Returns the leading gutter column. Test seam over the <c>Columns</c> indexer.</summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? GetColumnRange(Worksheet worksheet)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[GanttSheetLayout.LeadingGutterColumnIndex];
+    }
+
+    /// <summary>Reads a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in characters, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthCharacters(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.ColumnWidth is double width ? width : null;
+    }
+
+    /// <summary>Reads a column's measured width in points. Test seam over <c>Width</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in points, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthPoints(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.Width is double width ? width : null;
+    }
+
+    /// <summary>Writes a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <param name="width">The width in characters.</param>
+    internal virtual void SetColumnWidthCharacters(Excel.Range column, double width)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        column.ColumnWidth = width;
+    }
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM
