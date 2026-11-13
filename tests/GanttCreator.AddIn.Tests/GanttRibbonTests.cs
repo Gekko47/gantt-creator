@@ -1545,28 +1545,29 @@ public class GanttRibbonTests
     }
 
     /// <summary>
-    /// The preset buttons share one handler; Excel's button
-    /// onAction contract passes the control, and the control
-    /// id selects the preset. Clicking the A4 landscape button
-    /// stores the A4 landscape preset, so the width/height
-    /// displays and the next Refresh agree.
+    /// Excel's <c>dropDown.onAction</c> contract passes the control, the chosen
+    /// item id and its index. The item id selects the preset, so choosing A4
+    /// landscape stores it and the width/height displays and the next Refresh
+    /// agree. The control's own id is deliberately a different value here: the
+    /// contract is the item id, and reading <c>control.Id</c> was the live
+    /// defect this test now prevents.
     /// </summary>
     [Fact]
-    public void OnSizeChange_routes_the_item_id_to_the_service()
+    public void OnSizeChange_routes_the_selected_item_id_to_the_service()
     {
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
         var control = new Mock<IRibbonControl>();
-        control.SetupGet(c => c.Id).Returns("A4Landscape");
+        control.SetupGet(c => c.Id).Returns(RibbonControlIds.SizeDropdown);
 
-        GanttRibbon.OnSizeChange(control.Object, service);
+        GanttRibbon.OnSizeChange(control.Object, "A4Landscape", service);
 
         Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
     }
 
     /// <summary>
-    /// An unknown control id is refused — never defaulted to a preset —
-    /// so a mistyped or renamed button cannot silently render the chart on
+    /// An unknown item id is refused — never defaulted to a preset —
+    /// so a mistyped or renamed item cannot silently render the chart on
     /// the wrong paper: the stored preset is untouched.
     /// </summary>
     [Fact]
@@ -1576,9 +1577,9 @@ public class GanttRibbonTests
         service.SetCatalogueWriter(null);
         service.SetPreset(SizePresets.A4Landscape);
         var control = new Mock<IRibbonControl>();
-        control.SetupGet(c => c.Id).Returns("A3");
+        control.SetupGet(c => c.Id).Returns(RibbonControlIds.SizeDropdown);
 
-        GanttRibbon.OnSizeChange(control.Object, service);
+        GanttRibbon.OnSizeChange(control.Object, "A3", service);
 
         Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
     }

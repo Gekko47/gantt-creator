@@ -2045,26 +2045,43 @@ public class GanttRibbon : ExcelRibbon
     /// Called when the user picks an output size from the Size dropdown
     /// (R5.16a). The item id is the durable <see cref="SizePreset"/> key, so
     /// the four former preset buttons all route through this one handler. The
-    /// preset is set, then persisted, exactly as the buttons did. Never throws.
+    /// preset is set, then persisted, exactly as the buttons did.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnSizeChange(IRibbonControl control)
-        => OnSizeChange(control, RibbonStateService.Instance);
+    /// <param name="selectedId">The id of the chosen item: the preset key.</param>
+    /// <param name="selectedIndex">The chosen item's zero-based index.</param>
+    /// <remarks>
+    /// The three-argument shape is Excel's <c>dropDown.onAction</c> contract, and
+    /// it must be exact: a two-argument overload was rejected live on 2026-11-13
+    /// with "Callback signature mismatch: OnSizeChange". The preset comes from
+    /// <paramref name="selectedId"/>, never from <paramref name="control"/>.Id,
+    /// which is the dropdown's own id.
+    /// </remarks>
+    public void OnSizeChange(IRibbonControl control, string selectedId, int selectedIndex)
+    {
+        _ = selectedIndex;
+        OnSizeChange(control, selectedId, RibbonStateService.Instance);
+    }
 
     /// <summary>
-    /// Runs <see cref="OnSizeChange(IRibbonControl)"/> against an injected
-    /// state service. Internal so contract tests can verify the routing without
-    /// the session singleton. Never throws.
+    /// Runs the Size handler against an injected state service. Internal so
+    /// contract tests can verify the routing without the session singleton.
+    /// Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="selectedId">The id of the chosen item: the preset key.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnSizeChange(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnSizeChange(
+        IRibbonControl? control,
+        string? selectedId,
+        RibbonStateService stateService)
     {
+        _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
         // An unknown item id is refused — never defaulted to a preset — so a
         // mistyped or renamed item cannot silently render the chart on the
         // wrong paper.
-        SizePreset? preset = SizePresets.ByKey(control?.Id);
+        SizePreset? preset = SizePresets.ByKey(selectedId);
         if (preset is not null)
         {
             stateService.SetPreset(preset);
