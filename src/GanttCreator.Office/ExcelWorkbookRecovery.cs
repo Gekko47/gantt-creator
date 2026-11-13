@@ -1153,7 +1153,37 @@ public class ExcelWorkbookRecovery(
             {
                 SetColumnHidden(entireColumn, wanted);
             }
+
+            // A repaired or rebuilt table is a fresh set of cells, so the date columns
+            // are formatted here as well as on Initialise: otherwise a repair hands the
+            // user a General-formatted Start that shows its serial number.
+            if (GanttTableSchema.IsDateColumn(schema[index - 1].Name))
+            {
+                ApplyDateColumnFormat(entireColumn);
+            }
         }
+    }
+
+    /// <summary>
+    /// Writes the date format onto a date column's whole worksheet column, unless it
+    /// already carries it.
+    /// </summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// The whole column rather than the table body, for the reason the initialiser
+    /// states: the empty cells and the rows that do not exist yet are the ones that
+    /// otherwise keep General and render a stored date as its serial number. The
+    /// read-before-write keeps a repair from dirtying a sheet that already matches.
+    /// </remarks>
+    private void ApplyDateColumnFormat(Excel.Range entireColumn)
+    {
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        if (string.Equals(ReadNumberFormat(entireColumn), pattern, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SetNumberFormat(entireColumn, pattern);
     }
 
     private static bool ReadHiddenFlag(Excel.Range range) => range.Hidden switch
@@ -1211,6 +1241,12 @@ public class ExcelWorkbookRecovery(
     internal virtual Excel.Range GetColumnRange(Excel.ListColumn column) => column.Range;
 
     internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+
+    internal virtual string? ReadNumberFormat(Excel.Range range) =>
+        range.NumberFormat is string format ? format : null;
+
+    internal virtual void SetNumberFormat(Excel.Range range, string pattern) =>
+        range.NumberFormat = pattern;
 
     internal virtual void SetColumnLocked(Excel.Range range, bool value) => range.Locked = value;
 

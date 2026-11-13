@@ -166,5 +166,37 @@ public class GanttTableSchemaTests
         Assert.Throws<ArgumentNullException>(() => new GanttTableSchema([null!]));
     }
 
+    [Fact]
+    public void The_date_columns_are_the_two_authoring_date_columns_in_the_schema()
+    {
+        // The initialiser and the recovery both format this set, so every name in it
+        // must be a real column: a typo would silently stop a date column being
+        // formatted, and a name that resolved to an engine column would format a column
+        // the user never sees.
+        Assert.Equal(2, GanttTableSchema.DateColumnNames.Count);
+        Assert.Equal("Start", GanttTableSchema.DateColumnNames[0]);
+        Assert.Equal("Finish", GanttTableSchema.DateColumnNames[1]);
+
+        foreach (string name in GanttTableSchema.DateColumnNames)
+        {
+            Assert.True(GanttTableSchema.Default.TryGetColumn(name, out GanttTableColumn? column));
+            Assert.Equal(GanttColumnAccess.Authoring, column!.Access);
+        }
+    }
+
+    [Fact]
+    public void Only_the_schema_named_date_columns_are_dates()
+    {
+        // Ordinal, like every other header lookup in this schema: a differently-cased
+        // header is not the contract's column, and a blank or absent name is no column
+        // at all. Both refusals are the positive case for the guard.
+        Assert.True(GanttTableSchema.IsDateColumn("Start"));
+        Assert.True(GanttTableSchema.IsDateColumn("Finish"));
+        Assert.False(GanttTableSchema.IsDateColumn("start"));
+        Assert.False(GanttTableSchema.IsDateColumn("Duration"));
+        Assert.False(GanttTableSchema.IsDateColumn(string.Empty));
+        Assert.False(GanttTableSchema.IsDateColumn(null));
+    }
+
     private static GanttTableSchema Schema(params GanttTableColumn[] columns) => new(columns);
 }

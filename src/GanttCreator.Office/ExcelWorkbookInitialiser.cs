@@ -975,6 +975,13 @@ public class ExcelWorkbookInitialiser(
             {
                 entireColumn.Hidden = wanted;
             }
+
+            // A date column left on General shows its serial number, so the format is
+            // part of the presentation contract, not an optional nicety.
+            if (GanttTableSchema.IsDateColumn(schema[index - 1].Name))
+            {
+                ApplyDateColumnFormat(entireColumn);
+            }
         }
     }
 
@@ -1002,6 +1009,42 @@ public class ExcelWorkbookInitialiser(
             Convert.ToString(range.Hidden, CultureInfo.InvariantCulture),
             out bool parsed) && parsed,
     };
+
+    /// <summary>
+    /// Writes the date format onto a date column's whole worksheet column, unless it
+    /// already carries it.
+    /// </summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// <para>
+    /// The WHOLE column, not the table's body. A date typed into an empty cell, and a
+    /// date written into a row that does not exist yet, both need the format already
+    /// in place; formatting only the body leaves every future row on General, which is
+    /// exactly how a date reached the sheet as its serial number.
+    /// </para>
+    /// <para>
+    /// The read-before-write is the same discipline the hidden flag follows: rewriting
+    /// an unchanged format marks the workbook dirty for a sheet that is already in the
+    /// intended state. <c>NumberFormat</c> is <see cref="object"/>-typed in this PIA, so
+    /// a value that is not a string reads as "not the wanted format" and is written.
+    /// </para>
+    /// <para>
+    /// The pattern comes from the single Core authority for the format this release
+    /// approves (<see cref="GanttDateDisplayFormat.DdMMyyyy"/>). A workbook whose
+    /// stored setting names another member is the settings-driven presentation pass,
+    /// not a second spelling of the pattern here.
+    /// </para>
+    /// </remarks>
+    private void ApplyDateColumnFormat(Excel.Range entireColumn)
+    {
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        if (string.Equals(ReadNumberFormat(entireColumn), pattern, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SetNumberFormat(entireColumn, pattern);
+    }
 
     /// <summary>
     /// Creates the configuration worksheet directly after the Gantt sheet,
@@ -1124,4 +1167,22 @@ public class ExcelWorkbookInitialiser(
     /// <param name="range">The column's range.</param>
     /// <returns>The entire worksheet column.</returns>
     internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+
+    /// <summary>
+    /// Reads <c>Range.NumberFormat</c>, which is <see cref="object"/>-typed in this PIA.
+    /// </summary>
+    /// <param name="range">The range to read.</param>
+    /// <returns>The format code, or <see langword="null"/> when the host did not report one.</returns>
+    /// <remarks>
+    /// A range whose cells carry different formats reports no single code, so null is
+    /// the honest answer and the caller writes rather than assuming the format matches.
+    /// </remarks>
+    internal virtual string? ReadNumberFormat(Excel.Range range) =>
+        range.NumberFormat is string format ? format : null;
+
+    /// <summary>Writes a format code onto a range.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="pattern">The host format code.</param>
+    internal virtual void SetNumberFormat(Excel.Range range, string pattern) =>
+        range.NumberFormat = pattern;
 }

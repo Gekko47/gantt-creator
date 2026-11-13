@@ -45,6 +45,38 @@ public static class GanttDateFormatting
     /// <summary>The approved invariant pattern for <see cref="GanttDateDisplayFormat.DdMMMyy" />.</summary>
     public const string DdMMMyyPattern = "dd-MMM-yy";
 
+    /// <summary>The Excel number-format code for <see cref="GanttDateDisplayFormat.DdMMyyyy"/>.</summary>
+    public const string DdMMyyyyWorksheetPattern = "dd/mm/yyyy";
+
+    /// <summary>The Excel number-format code for <see cref="GanttDateDisplayFormat.DdMMMyy"/>.</summary>
+    public const string DdMMMyyWorksheetPattern = "dd-mmm-yy";
+
+    /// <summary>Returns the Excel number-format code for a display format.</summary>
+    /// <param name="format">The approved display format.</param>
+    /// <returns>The host format code to write onto a worksheet date cell.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="format"/> is not a defined
+    /// <see cref="GanttDateDisplayFormat"/> value.
+    /// </exception>
+    /// <remarks>
+    /// The scene pattern and the worksheet pattern are deliberately separate
+    /// authorities. Scene text is formatted by .NET and must be byte-identical on every
+    /// host, so it carries the .NET month specifier. A worksheet cell instead carries a
+    /// host format code, which is what makes a stored serial render as a date, so it is
+    /// spelled in the host's own codes. Substituting one for the other would either make
+    /// the scene text depend on a host format code or leave a stored date rendering as
+    /// its serial.
+    /// </remarks>
+    public static string WorksheetPatternFor(GanttDateDisplayFormat format) => format switch
+    {
+        GanttDateDisplayFormat.DdMMyyyy => DdMMyyyyWorksheetPattern,
+        GanttDateDisplayFormat.DdMMMyy => DdMMMyyWorksheetPattern,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(format),
+            format,
+            "The date display format is not a defined value."),
+    };
+
     /// <summary>Formats a date using the invariant pattern for a display format.</summary>
     /// <param name="date">The date to format.</param>
     /// <param name="format">The approved display format.</param>

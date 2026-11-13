@@ -77,6 +77,12 @@ public class WorkbookInitialiserTests
         public List<bool> HiddenWrites { get; } = [];
 
         /// <summary>
+        /// The <c>NumberFormat</c> written to each column, with its schema index, so a
+        /// test can prove the date format landed on Start and Finish and nowhere else.
+        /// </summary>
+        public List<(int Index, string Pattern)> NumberFormatWrites { get; } = [];
+
+        /// <summary>
         /// Pre-sets each column's current <c>Hidden</c> state, so a test can start from
         /// a sheet that already matches (or deliberately contradicts) the schema.
         /// </summary>
@@ -96,8 +102,39 @@ public class WorkbookInitialiserTests
             }
         }
 
+        /// <summary>
+        /// Pre-sets a column's current <c>NumberFormat</c>, so a test can start from a
+        /// column that already carries the code the writer wants.
+        /// </summary>
+        /// <param name="formats">The schema index and the format code that column already carries.</param>
+        public void SetExistingNumberFormat(IEnumerable<(int Index, string Pattern)> formats)
+        {
+            foreach ((int index, string pattern) in formats)
+            {
+                _existingNumberFormat[index] = pattern;
+            }
+
+            // The per-column mocks captured their starting value when the graph was
+            // constructed, so a later call has to push the new value into each one.
+            for (var index = 0; index < _presettableNumberFormat.Count; index++)
+            {
+                _presettableNumberFormat[index][0] =
+                    _existingNumberFormat.TryGetValue(index, out string? set) ? set : null;
+            }
+        }
+
         /// <summary>The one-element boxed state each column's <c>Hidden</c> mock reads.</summary>
         private readonly List<object[]> _presettableHidden = [];
+
+        /// <summary>The one-element boxed format each column's <c>NumberFormat</c> mock reads.</summary>
+        private readonly List<object?[]> _presettableNumberFormat = [];
+
+        /// <summary>
+        /// The format code each column starts with, keyed by schema index. A column
+        /// absent from this map starts with no single code, which is what a General
+        /// worksheet column reports.
+        /// </summary>
+        private readonly Dictionary<int, string> _existingNumberFormat = [];
 
         /// <summary>
         /// Unboxes an <c>object</c>-typed PIA property write. <c>IRange.Locked</c>
@@ -113,6 +150,19 @@ public class WorkbookInitialiserTests
             ? value
             : throw new Xunit.Sdk.XunitException(
                 $"Expected a boolean cell-format write but received '{raw?.GetType().Name ?? "null"}'.");
+
+        /// <summary>
+        /// Unboxes an <c>object</c>-typed <c>NumberFormat</c> write. The property is
+        /// declared <see cref="object"/> in this interop assembly, so the code arrives
+        /// boxed; anything other than a string would mean the adapter wrote something
+        /// other than a format code, which is worth failing on rather than coercing.
+        /// </summary>
+        /// <param name="raw">The boxed host value.</param>
+        /// <returns>The format code it carries.</returns>
+        private static string RequireFormat(object raw) => raw is string value
+            ? value
+            : throw new Xunit.Sdk.XunitException(
+                $"Expected a date-format write but received '{raw?.GetType().Name ?? "null"}'.");
         public Mock<Excel.Names> Names { get; } = new();
         public Mock<Excel.Shapes> Shapes { get; } = new();
         public Mock<Excel.Comments> Comments { get; } = new();
@@ -257,6 +307,23 @@ public class WorkbookInitialiserTests
                         hidden[0] = value;
                         _finalHidden[columnIndex] = RequireBool(value);
                         HiddenWrites.Add(RequireBool(value));
+                    });
+
+                // `NumberFormat` is `object`-typed in the PIA, so leaving the getter
+                // unconfigured would report null -- which the adapter reads as "no
+                // single code" and writes. Wiring the getter to the recorded state is
+                // what lets the skip-when-already-correct test mean something.
+                var numberFormat = new object?[1];
+                numberFormat[0] = _existingNumberFormat.TryGetValue(columnIndex, out string? format)
+                    ? format
+                    : null;
+                _presettableNumberFormat.Add(numberFormat);
+                _ = entireColumn.SetupGet(r => r.NumberFormat).Returns(() => numberFormat[0]!);
+                _ = entireColumn.SetupSet(r => r.NumberFormat = It.IsAny<object>())
+                    .Callback<object>(value =>
+                    {
+                        numberFormat[0] = value;
+                        NumberFormatWrites.Add((columnIndex, RequireFormat(value)));
                     });
                 Columns.Add(column);
             }
@@ -799,6 +866,46 @@ public class WorkbookInitialiserTests
             columns.Count(column => column.IsHidden),
             active.HiddenWrites.Count);
         Assert.All(active.HiddenWrites, written => Assert.True(written));
+    }
+
+    [Fact]
+    public void Initialise_formats_the_start_and_finish_columns_as_dates()
+    {
+        // Excel stores a date as a serial number, so a General-formatted cell shows the
+        // serial. The WHOLE worksheet column is formatted, which is what covers the
+        // empty cells and the rows that do not exist yet; a body-only write would leave
+        // every new row General, which is how a date reached the sheet as a number.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        Assert.Equal(
+            new[] { (IndexOf("Start"), pattern), (IndexOf("Finish"), pattern) },
+            active.NumberFormatWrites);
+    }
+
+    [Fact]
+    public void Initialise_leaves_a_date_column_that_already_carries_the_format_alone()
+    {
+        // The same read-before-write discipline as the hidden flag: rewriting an
+        // unchanged format marks the workbook dirty for a sheet already in the intended
+        // state, so only the column that still needs it is written.
+        var active = BlankActiveSheet();
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        active.SetExistingNumberFormat([(IndexOf("Start"), pattern)]);
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal(
+            new[] { (IndexOf("Finish"), pattern) },
+            active.NumberFormatWrites);
     }
 
     [Fact]

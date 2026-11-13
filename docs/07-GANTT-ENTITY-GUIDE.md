@@ -364,6 +364,8 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Labels:** column headings are separate header entities. Body text follows cell alignment policy; dates use the approved display format `dd/mm/yyyy`, selected by the `DateDisplayFormat` setting and rendered culture-invariantly ([ADR-0016](adr/0016-date-display-format-setting.md)).
 
+**Cell date format (owner ruling 2026-11-13):** the `Start` and `Finish` worksheet columns carry the workbook date format on the **whole worksheet column**, not just the table body. Excel stores a date as a serial number, so a General-formatted cell shows the serial; formatting the entire column is what covers the empty cells and the rows that do not exist yet. The pattern is the host format code derived from the same display-format authority as the rendered date text (`dd/mm/yyyy` for `DdMMyyyy`, `dd-mmm-yy` for `DdMMMyy`), and the scene text and the cell code are deliberately two spellings of one decision. The format is applied on Initialise and re-applied on repair; a column that already carries it is not rewritten, so a correct sheet is never left dirty. Which columns are dates is named once, in `GanttTableSchema.DateColumnNames`, so the initialiser and the recovery cannot disagree.
+
 **Validation:** required columns exist once; no merged body cells; supported date/value types; positive visible column widths.
 
 **Tests:** adjacent bounds, row alignment with lanes, date formatting, long descriptions, hidden/optional column inclusion, editable shape replication, one-sheet invariant.

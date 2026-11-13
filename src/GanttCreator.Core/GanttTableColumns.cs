@@ -104,6 +104,53 @@ public sealed class GanttTableSchema
     public const string TableName = "tblGanttData";
 
     /// <summary>
+    /// The columns whose cells hold a calendar date.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Excel stores a date as a serial number, so a cell carrying the General format
+    /// shows the serial: a date the add-in writes reads back as <c>46051</c> rather
+    /// than as a date. The writer therefore formats the WHOLE worksheet column behind
+    /// each of these columns, not just the table's body, which is what covers the
+    /// empty cells in existing rows and the rows that do not exist yet.
+    /// </para>
+    /// <para>
+    /// The set is a schema fact rather than a name list held inside the Office
+    /// adapters, because the initialiser and the recovery must not disagree about
+    /// which columns the contract declares as dates. <see cref="IsDateColumn"/> is the
+    /// single lookup for both.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> DateColumnNames { get; } = ["Start", "Finish"];
+
+    /// <summary>
+    /// Returns whether a column's cells hold a calendar date.
+    /// </summary>
+    /// <param name="columnName">The exact header text. <see langword="null"/> and an empty name are not dates.</param>
+    /// <returns><see langword="true"/> for a name listed exactly in <see cref="DateColumnNames"/>.</returns>
+    /// <remarks>
+    /// The comparison is ordinal, like every other header lookup in this schema, so a
+    /// differently-cased header is not silently treated as the contract's column.
+    /// </remarks>
+    public static bool IsDateColumn(string? columnName)
+    {
+        if (string.IsNullOrEmpty(columnName))
+        {
+            return false;
+        }
+
+        foreach (string name in DateColumnNames)
+        {
+            if (string.Equals(name, columnName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Initialises a schema from ordered column descriptors.
     /// </summary>
     /// <param name="columns">The columns in header-row order.</param>
