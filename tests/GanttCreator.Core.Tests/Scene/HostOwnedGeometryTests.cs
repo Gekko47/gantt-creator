@@ -22,18 +22,60 @@ public sealed class HostOwnedGeometryTests
         Assert.True(HostOwnedGeometry.IsHostOwned(line, _plot));
     }
 
+    /// <summary>
+    /// A horizontal rule spanning the plot's width is host-owned (ADR-0052 D6, amended
+    /// 2026-11-13), so Excel's <c>xlMoveAndSize</c> can stretch it when a column widens.
+    /// </summary>
+    /// <remarks>
+    /// The live defect this pins: the chart's upper and lower frame rules stayed at their
+    /// old width after a column resize, because <c>xlMove</c> translates a shape and never
+    /// resizes it, and Excel has no two-edge anchor. The class used to exclude horizontal
+    /// lines outright, so the exclusion itself was the bug.
+    /// </remarks>
     [Fact]
-    public void A_horizontal_line_is_not_host_owned()
+    public void A_horizontal_rule_spanning_the_plot_width_is_host_owned()
     {
         SceneLine line = new(
-            "G-1:rule",
+            "chart:frame:top",
             _owner,
             ZLayer.Grid,
             new PointD(_plot.Left, 100),
             new PointD(_plot.Right, 100),
             _style);
 
+        Assert.True(HostOwnedGeometry.IsHostOwned(line, _plot));
+    }
+
+    [Fact]
+    public void A_horizontal_rule_that_stops_short_of_the_plot_is_not_host_owned()
+    {
+        // A bar-length rule or a label-width rule has nothing the host could stretch with
+        // the worksheet, so it stays on xlMove translation.
+        SceneLine line = new(
+            "G-1:short-rule",
+            _owner,
+            ZLayer.Grid,
+            new PointD(_plot.Left, 100),
+            new PointD(_plot.Right - 10, 100),
+            _style);
+
         Assert.False(HostOwnedGeometry.IsHostOwned(line, _plot));
+    }
+
+    [Fact]
+    public void A_horizontal_rule_within_the_geometry_tolerance_is_host_owned()
+    {
+        // Same coverage contract as the vertical class: the frame rules are built on the
+        // content bounds, which can be wider than the plot by a rounding fraction.
+        SceneLine line = new(
+            "chart:frame:top",
+            _owner,
+            ZLayer.Grid,
+            new PointD(_plot.Left + 0.005, 100),
+            new PointD(_plot.Right - 0.005, 100),
+            _style);
+
+        Assert.True(HostOwnedGeometry.IsHostOwned(line, _plot));
     }
 
     [Fact]

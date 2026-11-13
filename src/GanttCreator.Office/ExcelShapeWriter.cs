@@ -653,15 +653,25 @@ public class ExcelShapeWriter(
             return false;
         }
 
-        // Height is the one member the host is allowed to have moved for a host-owned
-        // shape: Excel resizes an xlMoveAndSize shape proportionally, so a
-        // collapse/expand cycle can leave a fraction of a point of drift that is not a
-        // scene change and must not be rewritten on every pass. The wider tolerance is
-        // stated (D8), not tuned; left, top and width keep the strict one because the
-        // host does not resize along those axes for this class.
+        // The host-resized extent is the one member the host is allowed to have moved for
+        // a host-owned shape: Excel resizes an xlMoveAndSize shape proportionally, so a
+        // collapse/expand cycle (height) or a column resize (width) can leave a fraction
+        // of a point of drift that is not a scene change and must not be rewritten on
+        // every pass. The wider tolerance is stated (D8), not tuned.
+        //
+        // A host-owned LINE takes it on both axes, because a line has a near-zero extent
+        // on the axis it does not span: a vertical delineator's width and a horizontal
+        // rule's height are both the stroke, so a 0.5pt acceptance there can never hide a
+        // real difference. A host-owned RECT keeps the strict width, because the host
+        // never resizes a band's width and a mismatch there IS a real difference. Left and
+        // top keep the strict tolerance for every class: the host moves a shape, it does
+        // not reposition it within its own anchor.
+        bool hostOwnsWidth = request.HostOwnsExtent && request.Kind == OfficeShapeKind.Line;
         return MatchesLive(shape.Left, desired.X)
             && MatchesLive(shape.Top, desired.Y)
-            && MatchesLive(shape.Width, desired.Width)
+            && (hostOwnsWidth
+                ? MatchesLiveWithin(shape.Width, desired.Width, HostOwnedGeometry.HostResizeTolerancePt)
+                : MatchesLive(shape.Width, desired.Width))
             && (request.HostOwnsExtent
                 ? MatchesLiveWithin(shape.Height, desired.Height, HostOwnedGeometry.HostResizeTolerancePt)
                 : MatchesLive(shape.Height, desired.Height));

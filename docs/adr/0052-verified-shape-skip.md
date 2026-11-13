@@ -140,3 +140,41 @@ and after a collapse", not a second geometry rule.
   inserted above the plot leaves the verticals one row short until the next
   refresh. A row-height drag that does not raise a cell change is now visible
   immediately on the verticals and corrected by the next refresh.
+
+## Amendment — 2026-11-13: horizontal plot-width rules join the host-owned class
+
+**Reported:** the chart's upper and lower frame rules do not follow a worksheet column
+resize; they keep their old width until the next refresh.
+
+**Cause.** D6's class was defined on the vertical extent only, and the Core predicate said so
+explicitly: "a horizontal line is never in the class: it is row-anchored and `xlMove`
+translation is already what it needs." That is right about rows and wrong about columns.
+`xlMove` translates a shape and never resizes it, and Excel exposes no two-edge anchor, so a
+horizontal rule cannot follow a column width change under any placement except
+`xlMoveAndSize`.
+
+**D11 — a horizontal line that covers the plot's width is host-owned.** `HostOwnedGeometry`
+now classifies a `SceneLine` whose two endpoints share a y (within the geometry tolerance) and
+whose horizontal extent *covers* the plot's, using the same coverage-not-equality rule D6
+already needed for bands and delineators. The members are `chart:frame:top`,
+`chart:frame:bottom`, `chart:plot-closing`, and the splitter's two horizontal rules. A
+bar-length rule, a label-width rule, and a rule that stops short of the plot stay on `xlMove`:
+none of them has an extent the sheet can stretch. Rects are unchanged on this axis — the host
+never resizes a band's width, so admitting width-covering rects would accept a real
+difference.
+
+**D12 — the tolerance follows the axis the host stretched.** For a host-owned *line* the width
+comparison uses `HostResizeTolerancePt` as well as the height, because a line has a near-zero
+extent on the axis it does not span, so a 0.5 pt acceptance there cannot hide a real
+difference. A host-owned *rect* keeps the strict width comparison, since only its height is
+host-stretched. Left and top keep the strict tolerance for every class.
+
+**Not measured, and recorded as such.** D2 measured `AddLine` as natively `xlMoveAndSize`, and
+ADR-0037 measured its behaviour on row inserts; nobody has measured a *column* resize on a
+near-zero-height line. The expectation is a proportional stretch whose sub-point height drift
+D12 absorbs. The alternatives were rejected for cause: re-rendering on a width change is not
+possible because Excel raises no event for a column width change, and there is no two-edge
+anchor to use instead. `scripts/verify-office.ps1` must settle it on the host — widen a column
+under a chart whose frame rules are host-sized, confirm both rules follow the wider column,
+and confirm the following collapse/expand leaves each rule's height within
+`HostResizeTolerancePt`.
