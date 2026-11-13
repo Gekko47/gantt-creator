@@ -57,10 +57,20 @@ public static class EntityTypeCatalog
             GanttLabelPosition.None,
         ]);
 
+    /// <summary>
+    /// The positions a <see cref="GanttEntityType.Splitter"/> may carry (R5.18l, D4).
+    /// </summary>
+    /// <remarks>
+    /// <b>No <see cref="GanttLabelPosition.DataPanelLeft"/>.</b> The splitter is the one
+    /// entity whose label is a section heading over the plot, and a heading tucked into
+    /// the data panel's left edge reads as a cell value rather than as a band over the
+    /// chart — measured against the live sheet, the two are not the same statement. The
+    /// position stays in the enum because the builder still emits the panel-side label for
+    /// <see cref="GanttLabelPosition.Both"/>, which is the supported way to have both.
+    /// </remarks>
     private static readonly IReadOnlySet<GanttLabelPosition> _splitterLabelPositions =
         new HashSet<GanttLabelPosition>(
         [
-            GanttLabelPosition.DataPanelLeft,
             GanttLabelPosition.PlotCentre,
             GanttLabelPosition.Both,
             GanttLabelPosition.None,

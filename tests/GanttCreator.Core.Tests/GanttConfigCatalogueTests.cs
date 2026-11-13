@@ -555,7 +555,7 @@ public class GanttConfigCatalogueTests
     public void Style_presets_project_label_and_colour_capabilities_from_the_type_catalogue()
     {
         GanttStylePreset splitter = GanttCatalogues.GetPreset("Splitter");
-        Assert.Equal(GanttLabelPosition.DataPanelLeft, splitter.DefaultLabelPosition);
+        Assert.Equal(GanttLabelPosition.PlotCentre, splitter.DefaultLabelPosition);
         Assert.Equal(EntityColourCapability.Fill, splitter.ColourCapability);
 
         GanttStylePreset spacer = GanttCatalogues.GetPreset("Spacer");
@@ -943,7 +943,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "2c29d868dd124db1a32a4831d30bd029c58b807d0f6da3f6694d6a19a6f99517";
+        "bc13cec642aebae212aafdd73b0188fac765104a5d30dd102b2c02ec0ddb5a50";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

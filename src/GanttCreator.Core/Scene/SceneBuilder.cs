@@ -1728,7 +1728,14 @@ public static class SceneBuilder
                 // border width a function of a style the guide never defined it from. The
                 // stroke colour comes from the major-boundary style, because a line is a
                 // stroke and the band preset has no stroke token to contribute.
-                GanttLabelPosition position = @event.LabelPosition ?? GanttLabelPosition.DataPanelLeft;
+                // The row's blank position means "the type's default", and the default is
+                // owned by the type's own preset (R5.18l). Writing a literal here was a
+                // second authority: it kept asking for `DataPanelLeft` after the catalogue
+                // stopped offering it, and the builder refused every splitter band.
+                string defaultStyleKey =
+                    EntityTypeCatalog.GetDefinition(GanttEntityType.Splitter)!.DefaultStyleKey;
+                GanttLabelPosition position = @event.LabelPosition
+                    ?? GanttCatalogues.GetPreset(defaultStyleKey).DefaultLabelPosition;
                 // The lane layout is lane-relative — it starts at y=0 for the first
                 // lane — so the plot top is added here, exactly once, the same way
                 // BuildSpans offsets a slot centre. Without it the band would sit in

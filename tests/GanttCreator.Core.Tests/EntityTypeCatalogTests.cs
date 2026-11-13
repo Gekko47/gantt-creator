@@ -81,7 +81,7 @@ public class EntityTypeCatalogTests
     {
         var expected = new (GanttEntityType Type, string DisplayName, EntityKind Kind, EntityDateMode DateMode, string DefaultStyleKey, EntityColourCapability ColourCapability, bool RequiresStyleKey, GanttLabelPosition[] Labels)[]
         {
-            (GanttEntityType.Splitter, "Splitter", EntityKind.SectionHeader, EntityDateMode.None, "Splitter", EntityColourCapability.Fill, false, [GanttLabelPosition.DataPanelLeft, GanttLabelPosition.PlotCentre, GanttLabelPosition.Both, GanttLabelPosition.None]),
+            (GanttEntityType.Splitter, "Splitter", EntityKind.SectionHeader, EntityDateMode.None, "Splitter", EntityColourCapability.Fill, false, [GanttLabelPosition.PlotCentre, GanttLabelPosition.Both, GanttLabelPosition.None]),
             (GanttEntityType.Spacer, "Spacer", EntityKind.Spacer, EntityDateMode.None, "Spacer", EntityColourCapability.None, false, [GanttLabelPosition.None]),
             (GanttEntityType.AsBuiltActivity, "As-Built Activity", EntityKind.Span, EntityDateMode.StartFinish, "AsBuiltActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsPlannedActivity, "As-Planned Activity", EntityKind.Span, EntityDateMode.StartFinish, "AsPlannedActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
@@ -323,7 +323,6 @@ public class EntityTypeCatalogTests
         Assert.Equal(
             new[]
             {
-                GanttLabelPosition.DataPanelLeft,
                 GanttLabelPosition.PlotCentre,
                 GanttLabelPosition.Both,
                 GanttLabelPosition.None,

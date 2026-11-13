@@ -502,7 +502,7 @@ A **projected child creates no lane and consumes no lane height.** It renders on
 
 **Style:** `SplitterFill` with major top/bottom border; no activity fill. The style is the code-owned `Splitter` preset, so a change to the `SplitterFill` token changes the rendered band.
 
-**Labels:** supported positions are `DataPanelLeft`, `PlotCentre`, `Both`, and `None`; the initial default is `DataPanelLeft`. `Both` deliberately creates two scene text entities with stable role-derived IDs (`splitter-label` and `splitter-label-plot`). A blank `Description` renders the band and no label.
+**Labels:** supported positions are `PlotCentre`, `Both`, and `None`; the default is `PlotCentre` (owner ruling 2026-11-13, R5.18l). `DataPanelLeft` is **not** offered: a section heading tucked into the data panel's left edge reads as a cell value rather than as a band over the chart, and `Both` is the supported way to have a label on both sides. The builder refuses `DataPanelLeft` for a splitter with its typed `UnsupportedLabelPosition` rather than drawing the band and silently dropping the label, and the row's blank position resolves to the type's own preset default — never to a literal in the scene builder, which is what kept asking for a position the catalogue had stopped offering. `Both` deliberately creates two scene text entities with stable role-derived IDs (`splitter-label` and `splitter-label-plot`); the panel-side one is suppressed rather than emitted at zero width when there is no panel. A blank `Description` renders the band and no label.
 
 **Validation/tests:** no required dates, deterministic group placement, export span, expand/collapse interaction where supported.
 

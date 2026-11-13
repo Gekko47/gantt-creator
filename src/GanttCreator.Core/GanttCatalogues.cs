@@ -540,7 +540,7 @@ public static class GanttCatalogues
         {
             "DelayEvent" => GanttLabelPosition.Inside,
             "CriticalInterval" or "Spacer" => GanttLabelPosition.None,
-            "Splitter" => GanttLabelPosition.DataPanelLeft,
+            "Splitter" => GanttLabelPosition.PlotCentre,
             _ => GanttLabelPosition.Auto,
         };
         double outline = outlineToken is null ? 0 : ResolveMetric(outlineToken);

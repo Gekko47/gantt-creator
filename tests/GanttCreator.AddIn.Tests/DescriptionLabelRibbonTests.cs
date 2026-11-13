@@ -247,11 +247,12 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
-        Assert.Equal(5, service.GetDescriptionLabelCount());
-        Assert.Equal("DataPanelLeft", service.GetDescriptionLabelItemID(1));
-        Assert.Equal("PlotCentre", service.GetDescriptionLabelItemID(2));
-        Assert.Equal("Both", service.GetDescriptionLabelItemID(3));
-        Assert.Equal("None", service.GetDescriptionLabelItemID(4));
+        // R5.18l: a splitter no longer offers `DataPanelLeft`, so the projected list is
+        // one shorter and the three remaining positions shift down by one.
+        Assert.Equal(4, service.GetDescriptionLabelCount());
+        Assert.Equal("PlotCentre", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Both", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(3));
     }
 
     [Theory]
@@ -288,9 +289,10 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
-        Assert.Equal("Data panel", service.GetDescriptionLabelItemLabel(1));
-        Assert.Equal("Plot centre", service.GetDescriptionLabelItemLabel(2));
-        Assert.Equal("Both", service.GetDescriptionLabelItemLabel(3));
+        // R5.18l removed `DataPanelLeft`, so the list opens on Plot centre.
+        Assert.Equal("Plot centre", service.GetDescriptionLabelItemLabel(1));
+        Assert.Equal("Both", service.GetDescriptionLabelItemLabel(2));
+        Assert.Equal("None (hide)", service.GetDescriptionLabelItemLabel(3));
     }
 
     [Fact]

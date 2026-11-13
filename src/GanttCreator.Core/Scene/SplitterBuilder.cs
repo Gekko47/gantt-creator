@@ -28,7 +28,7 @@ public sealed record SplitterRequest(
     double BorderWidthPt,
     SceneStyle? LabelStyle,
     ITextMetrics LabelMetrics,
-    GanttLabelPosition LabelPosition = GanttLabelPosition.DataPanelLeft
+    GanttLabelPosition LabelPosition = GanttLabelPosition.PlotCentre
 );
 
 /// <summary>The result of building one splitter.</summary>
