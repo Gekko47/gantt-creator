@@ -91,6 +91,92 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.Null(service.GetLastSuccessfulRenderAtUtc());
     }
 
+    [Fact]
+    public void A_fresh_service_points_every_add_primary_at_its_family_default()
+    {
+        // R5.18g: before the user has touched a menu, each split button's primary adds the
+        // family default its label shows.
+        RibbonStateService service = new();
+
+        Assert.Equal(
+            GanttEntityType.AsPlannedActivity,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Activity));
+        Assert.Equal(
+            GanttEntityType.AsPlannedMilestone,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Milestone));
+        Assert.Equal(
+            GanttEntityType.Delineator,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Element));
+    }
+
+    [Fact]
+    public void A_menu_pick_moves_only_its_own_family_primary()
+    {
+        RibbonStateService service = new();
+
+        service.RememberAddedType(GanttEntityType.AsBuiltActivity);
+
+        Assert.Equal(
+            GanttEntityType.AsBuiltActivity,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Activity));
+        Assert.Equal(
+            GanttEntityType.AsPlannedMilestone,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Milestone));
+        Assert.Equal(
+            GanttEntityType.Delineator,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Element));
+    }
+
+    [Fact]
+    public void A_remembered_pick_that_is_no_longer_permitted_falls_back_to_the_family_default()
+    {
+        // The Critical Interval item disables itself when no row can own one. A primary must
+        // never stay pointed at an action its own menu greys out, so the projection falls
+        // back to the default; an unarmed service reports the item unavailable, which is
+        // precisely the condition being pinned.
+        RibbonStateService service = new();
+        Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+
+        service.RememberAddedType(GanttEntityType.CriticalInterval);
+
+        Assert.Equal(
+            GanttEntityType.AsPlannedActivity,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Activity));
+    }
+
+    [Fact]
+    public void The_primary_label_names_what_that_primary_would_add()
+    {
+        RibbonStateService service = new();
+
+        Assert.Equal(
+            "As-Planned Activity",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddActivity, service));
+        Assert.Equal(
+            "As-Planned Milestone",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddMilestone, service));
+        Assert.Equal(
+            "Delineator",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddDelineator, service));
+
+        service.RememberAddedType(GanttEntityType.Splitter);
+
+        Assert.Equal(
+            "Splitter",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddDelineator, service));
+    }
+
+    [Fact]
+    public void A_primary_label_for_an_unknown_control_is_empty_rather_than_a_guess()
+    {
+        RibbonStateService service = new();
+
+        Assert.Equal(string.Empty, RibbonStateService.AddEntityPrimaryLabel(null, service));
+        Assert.Equal(
+            string.Empty,
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.Remove, service));
+    }
+
     /// <summary>
     /// Hand-written fake for <see cref="IExcelApplicationAdapter"/>: counts
     /// captures and subscriptions so the tests can prove the getters never probe

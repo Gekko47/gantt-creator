@@ -341,20 +341,55 @@ public class GanttRibbon : ExcelRibbon
     /// <summary>Runs the production repair command.</summary>
     private static void RunRepairConfig() => RepairConfigCommand.RunForExcel();
 
-    /// <summary>Called when the user clicks the Add activity button.</summary>
+    /// <summary>
+    /// Called when the user clicks the Add activity split button's primary. The type is the
+    /// family's remembered menu pick, so the button always adds what its own label names
+    /// (R5.18g).
+    /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddActivityClick(IRibbonControl control)
-        => OnAddActivityClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedActivity), NotifyRibbonStateChanged);
+        => OnAddActivityClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(PrimaryAddType(RibbonStateService.AddEntityFamily.Activity)),
+            NotifyRibbonStateChanged);
 
-    /// <summary>Called when the user clicks the Add milestone button.</summary>
+    /// <summary>
+    /// Called when the user clicks the Add milestone split button's primary; the parallel of
+    /// <see cref="OnAddActivityClick(IRibbonControl)"/> for the milestone family (R5.18g).
+    /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddMilestoneClick(IRibbonControl control)
-        => OnAddMilestoneClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedMilestone), NotifyRibbonStateChanged);
+        => OnAddMilestoneClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(PrimaryAddType(RibbonStateService.AddEntityFamily.Milestone)),
+            NotifyRibbonStateChanged);
 
-    /// <summary>Called when the user clicks the Add delineator button.</summary>
+    /// <summary>
+    /// Called when the user clicks the Add elements split button's primary; the parallel of
+    /// <see cref="OnAddActivityClick(IRibbonControl)"/> for the elements family (R5.18g).
+    /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddDelineatorClick(IRibbonControl control)
-        => OnAddDelineatorClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.Delineator), NotifyRibbonStateChanged);
+        => OnAddDelineatorClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(PrimaryAddType(RibbonStateService.AddEntityFamily.Element)),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// The entity a family's primary button adds right now (R5.18g).
+    /// </summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The remembered pick, or the family default when it is not permitted.</returns>
+    /// <remarks>
+    /// The label and the action read the same projection, which is what keeps a split button
+    /// honest: a button reading "As-Built Activity" must not add an as-planned row because the
+    /// callback was hard-coded before the menus became stateful.
+    /// </remarks>
+    internal static GanttEntityType PrimaryAddType(RibbonStateService.AddEntityFamily family) =>
+        RibbonStateService.Instance.PrimaryTypeFor(family);
 
     /// <summary>
     /// Called when the user picks an entity from one of the Data-group menus
@@ -362,6 +397,11 @@ public class GanttRibbon : ExcelRibbon
     /// callback serves all three menus and no type list is authored twice.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
+    /// <remarks>
+    /// The pick is remembered before the command runs (R5.18g), so the family's primary
+    /// button follows it and Excel is asked for that button's label again. A refused add is
+    /// still a choice the user made.
+    /// </remarks>
     public void OnAddEntityClick(IRibbonControl control)
     {
         if (!TryParseEntityMenuId(TryReadControlId(control), out GanttEntityType type))
@@ -370,6 +410,8 @@ public class GanttRibbon : ExcelRibbon
                 "That add action is not recognised. Use the ribbon list to choose an entity.");
             return;
         }
+
+        RibbonStateService.Instance.RememberAddedType(type);
 
         OnAddRowClick(
             control,
@@ -387,6 +429,15 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
     public string GetEntityMenuLabel(IRibbonControl control) =>
         GetEntityMenuLabel(TryReadControlId(control));
+
+    /// <summary>
+    /// The visible label for an add-entity split button's primary, projected from the same
+    /// catalogue the menu uses (R5.18g), so the button always names the entity it adds.
+    /// </summary>
+    /// <param name="control">The primary button Excel is asking about.</param>
+    /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
+    public string GetAddEntityPrimaryLabel(IRibbonControl control) =>
+        RibbonStateService.AddEntityPrimaryLabel(TryReadControlId(control), RibbonStateService.Instance);
 
     /// <summary>
     /// Excel's <c>getEnabled</c> callback for the Critical Interval menu item

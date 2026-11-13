@@ -2030,6 +2030,151 @@ internal class RibbonStateService
     /// <returns>The control's label.</returns>
     internal static string CellLockLabel(bool locked) => locked ? "Cells locked" : "Cells unlocked";
 
+    /// <summary>The three add-entity split buttons, in ribbon order (R5.18g).</summary>
+    /// <remarks>
+    /// A family is a menu, not an entity kind: the Add activity menu mixes activities, a
+    /// delay event and procurement rows because that is how a user thinks about them, while
+    /// <see cref="GanttEntityType"/> describes how they render. The mapping below is the menu
+    /// structure, and a test asserts every menu item the XML declares belongs to a family.
+    /// </remarks>
+    internal enum AddEntityFamily
+    {
+        /// <summary>The Add activity split button.</summary>
+        Activity = 0,
+
+        /// <summary>The Add milestone split button.</summary>
+        Milestone = 1,
+
+        /// <summary>The Add elements split button.</summary>
+        Element = 2,
+    }
+
+    /// <summary>
+    /// The last entity added from each split button's menu, defaulting to the family's own
+    /// default. Session-scoped on purpose: the plan records persisting it as out of scope.
+    /// </summary>
+    private readonly Dictionary<AddEntityFamily, GanttEntityType> _lastAdded = new()
+    {
+        [AddEntityFamily.Activity] = GanttEntityType.AsPlannedActivity,
+        [AddEntityFamily.Milestone] = GanttEntityType.AsPlannedMilestone,
+        [AddEntityFamily.Element] = GanttEntityType.Delineator,
+    };
+
+    /// <summary>The family a type's menu belongs to, or <see langword="null"/> when no menu offers it.</summary>
+    /// <param name="type">The entity type.</param>
+    /// <returns>The family, or null for a type the ribbon cannot add from a split button.</returns>
+    internal static AddEntityFamily? FamilyOf(GanttEntityType type) => type switch
+    {
+        GanttEntityType.AsPlannedActivity
+        or GanttEntityType.AsBuiltActivity
+        or GanttEntityType.BaselineActivity
+        or GanttEntityType.CustomActivity
+        or GanttEntityType.DelayEvent
+        or GanttEntityType.CriticalInterval
+        or GanttEntityType.AsPlannedProcurement
+        or GanttEntityType.AsBuiltProcurement
+        or GanttEntityType.BaselineProcurement => AddEntityFamily.Activity,
+
+        GanttEntityType.AsPlannedMilestone
+        or GanttEntityType.AsBuiltMilestone
+        or GanttEntityType.BaselineMilestone
+        or GanttEntityType.CriticalMilestone
+        or GanttEntityType.CustomMilestone => AddEntityFamily.Milestone,
+
+        GanttEntityType.Delineator
+        or GanttEntityType.Spacer
+        or GanttEntityType.Splitter => AddEntityFamily.Element,
+
+        _ => null,
+    };
+
+    /// <summary>The family's default type, which is what its primary adds before any pick.</summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The default entity type.</returns>
+    internal static GanttEntityType DefaultTypeFor(AddEntityFamily family) => family switch
+    {
+        AddEntityFamily.Activity => GanttEntityType.AsPlannedActivity,
+        AddEntityFamily.Milestone => GanttEntityType.AsPlannedMilestone,
+        AddEntityFamily.Element => GanttEntityType.Delineator,
+        _ => GanttEntityType.AsPlannedActivity,
+    };
+
+    /// <summary>
+    /// The type the family's primary button will add: the last menu pick, or the family
+    /// default when that pick is not currently permitted.
+    /// </summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The entity type the primary action would add right now.</returns>
+    /// <remarks>
+    /// The fallback is what keeps the primary usable. A Critical Interval is offered only when
+    /// a row can own one; if the user picked it while it was available and later removed the
+    /// last eligible parent, the primary must not stay pointed at an action the menu itself
+    /// now disables. The permission question is asked through the same <c>getEnabled</c>
+    /// truth table the menu item uses, so the two cannot disagree.
+    /// </remarks>
+    internal GanttEntityType PrimaryTypeFor(AddEntityFamily family)
+    {
+        GanttEntityType remembered = _lastAdded[family];
+        return GetEnabled(RibbonControlIds.EntityMenuItemPrefix + remembered.ToString())
+            ? remembered
+            : DefaultTypeFor(family);
+    }
+
+    /// <summary>Records a menu pick so that family's primary follows it.</summary>
+    /// <param name="type">The type the menu action just added.</param>
+    /// <remarks>
+    /// Recording happens on the way to the command, not on success: the user's choice is what
+    /// the primary should remember, and a refused add is still a choice they made. The
+    /// family's primary label is invalidated so Excel asks for it again.
+    /// </remarks>
+    internal void RememberAddedType(GanttEntityType type)
+    {
+        if (FamilyOf(type) is not { } family)
+        {
+            return;
+        }
+
+        _lastAdded[family] = type;
+        InvalidateControl(PrimaryControlIdFor(family));
+    }
+
+    /// <summary>The ribbon id of a family's primary button.</summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The control id.</returns>
+    internal static string PrimaryControlIdFor(AddEntityFamily family) => family switch
+    {
+        AddEntityFamily.Activity => RibbonControlIds.AddActivity,
+        AddEntityFamily.Milestone => RibbonControlIds.AddMilestone,
+        AddEntityFamily.Element => RibbonControlIds.AddDelineator,
+        _ => RibbonControlIds.AddActivity,
+    };
+
+    /// <summary>The family a primary button id belongs to, or <see langword="null"/>.</summary>
+    /// <param name="controlId">The control id.</param>
+    /// <returns>The family, or null when the id is not one of the three primaries.</returns>
+    internal static AddEntityFamily? FamilyOfPrimary(string? controlId) => controlId switch
+    {
+        RibbonControlIds.AddActivity => AddEntityFamily.Activity,
+        RibbonControlIds.AddMilestone => AddEntityFamily.Milestone,
+        RibbonControlIds.AddDelineator => AddEntityFamily.Element,
+        _ => null,
+    };
+
+    /// <summary>
+    /// The visible label for an add-entity split button's primary, projected from the
+    /// catalogue so no display name is authored twice.
+    /// </summary>
+    /// <param name="controlId">The primary's control id.</param>
+    /// <param name="state">The state service holding the remembered choice.</param>
+    /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
+    internal static string AddEntityPrimaryLabel(string? controlId, RibbonStateService state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return FamilyOfPrimary(controlId) is { } family
+            ? EntityTypeCatalog.Format(state.PrimaryTypeFor(family))
+            : string.Empty;
+    }
+
     /// <summary>
     /// Gets the CHART toggle's current label, read from the same preference object the protection
     /// port uses, so the wording cannot disagree with what the sheet enforces.

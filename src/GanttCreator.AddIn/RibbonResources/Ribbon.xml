@@ -25,8 +25,11 @@
             </menu>
           </splitButton>
 
+          <!-- R5.18g: the three add primaries label themselves from the catalogue and
+               follow the last menu pick, so the button never promises one type and adds
+               another. The label text lives in EntityTypeCatalog, not here. -->
           <splitButton id="spbAddActivity" size="large" getEnabled="GetEnabled">
-            <button id="btnAddActivity" label="Add activity" imageMso="TableRowsInsertAboveExcel" keytip="AA" screentip="Add an activity row" supertip="Adds the default As-Planned Activity. Open the list for every activity type." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
+            <button id="btnAddActivity" getLabel="GetAddEntityPrimaryLabel" imageMso="TableRowsInsertAboveExcel" keytip="AA" screentip="Add an activity row" supertip="Adds the activity type named on the button. Open the list for every activity type." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
             <menu id="mnuAddActivity">
               <button id="entAsPlannedActivity" getLabel="GetEntityMenuLabel" keytip="AP" screentip="Add an As-Planned Activity" supertip="Adds an as-planned activity row." onAction="OnAddEntityClick"/>
               <button id="entAsBuiltActivity" getLabel="GetEntityMenuLabel" keytip="AB" screentip="Add an As-Built Activity" supertip="Adds an as-built activity row." onAction="OnAddEntityClick"/>
@@ -42,7 +45,7 @@
           </splitButton>
 
           <splitButton id="spbAddMilestone" size="large" getEnabled="GetEnabled">
-            <button id="btnAddMilestone" label="Add milestone" imageMso="CalendarInsert" keytip="AM" screentip="Add a milestone row" supertip="Adds the default As-Planned Milestone. Open the list for every milestone type." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
+            <button id="btnAddMilestone" getLabel="GetAddEntityPrimaryLabel" imageMso="CalendarInsert" keytip="AM" screentip="Add a milestone row" supertip="Adds the milestone type named on the button. Open the list for every milestone type." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
             <menu id="mnuAddMilestone">
               <button id="entAsPlannedMilestone" getLabel="GetEntityMenuLabel" keytip="BP" screentip="Add an As-Planned Milestone" supertip="Adds an as-planned milestone row. A milestone plots from its Start date only." onAction="OnAddEntityClick"/>
               <button id="entAsBuiltMilestone" getLabel="GetEntityMenuLabel" keytip="BB" screentip="Add an As-Built Milestone" supertip="Adds an as-built milestone row." onAction="OnAddEntityClick"/>
@@ -53,7 +56,7 @@
           </splitButton>
 
           <splitButton id="spbAddElements" size="large" getEnabled="GetEnabled">
-            <button id="btnAddDelineator" label="Elements" imageMso="ShapesInsertGallery" keytip="AD" screentip="Add a delineator or a structural row" supertip="Adds the default Delineator. Open the list for a spacer or a splitter." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+            <button id="btnAddDelineator" getLabel="GetAddEntityPrimaryLabel" imageMso="ShapesInsertGallery" keytip="AD" screentip="Add a delineator or a structural row" supertip="Adds the element type named on the button. Open the list for a spacer or a splitter." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
             <menu id="mnuAddElements">
               <button id="entDelineator" getLabel="GetEntityMenuLabel" keytip="JD" screentip="Add a Delineator" supertip="Adds a delineator row. A delineator draws a full-height line at its Start date." onAction="OnAddEntityClick"/>
               <button id="entSpacer" getLabel="GetEntityMenuLabel" keytip="JS" screentip="Add a Spacer" supertip="Adds a spacer row that separates sections of the table." onAction="OnAddEntityClick"/>

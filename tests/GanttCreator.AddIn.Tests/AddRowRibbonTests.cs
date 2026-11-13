@@ -1,5 +1,6 @@
 using System.Xml.Linq;
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 using GanttCreator.Core.Logging;
 using GanttCreator.Office;
 using Moq;
@@ -170,5 +171,70 @@ public class AddRowRibbonTests
         Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
         Assert.False(service.GetEnabled(RibbonControlIds.AddMilestone));
         Assert.False(service.GetEnabled(RibbonControlIds.AddDelineator));
+    }
+
+    [Fact]
+    public void Add_row_primaries_take_their_label_from_the_catalogue()
+    {
+        // R5.18g: a split button whose primary keeps a static label lies as soon as the
+        // menu changes what that primary adds. The caption is therefore projected from
+        // EntityTypeCatalog through getLabel and never authored in the Ribbon XML.
+        XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = CustomUiNamespace;
+
+        string[] primaries =
+        [
+            RibbonControlIds.AddActivity,
+            RibbonControlIds.AddMilestone,
+            RibbonControlIds.AddDelineator,
+        ];
+
+        foreach (string id in primaries)
+        {
+            XElement button = doc.Descendants(ns + "button")
+                .Single(element => element.Attribute("id")?.Value == id);
+            Assert.Null(button.Attribute("label"));
+            Assert.Equal("GetAddEntityPrimaryLabel", button.Attribute("getLabel")?.Value);
+        }
+    }
+
+    [Fact]
+    public void Every_menu_item_belongs_to_the_family_that_declares_it()
+    {
+        // The family map is the state's view of the menu structure: a remembered pick must
+        // reach the primary of the menu the user actually picked it from. If the XML gains
+        // an item the map does not claim (or the catalogue gains a type no menu offers),
+        // remembering the pick would silently stop following it back. Both directions are
+        // pinned here so neither list can drift alone.
+        XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = CustomUiNamespace;
+
+        (string MenuId, RibbonStateService.AddEntityFamily Family)[] menus =
+        [
+            (RibbonControlIds.AddActivityMenu, RibbonStateService.AddEntityFamily.Activity),
+            (RibbonControlIds.AddMilestoneMenu, RibbonStateService.AddEntityFamily.Milestone),
+            (RibbonControlIds.AddElementsMenu, RibbonStateService.AddEntityFamily.Element),
+        ];
+
+        List<GanttEntityType> offered = [];
+        foreach ((string menuId, RibbonStateService.AddEntityFamily family) in menus)
+        {
+            XElement menu = doc.Descendants(ns + "menu")
+                .Single(element => element.Attribute("id")?.Value == menuId);
+            foreach (XElement item in menu.Elements(ns + "button"))
+            {
+                Assert.True(
+                    GanttRibbon.TryParseEntityMenuId(item.Attribute("id")?.Value, out GanttEntityType type),
+                    $"{menuId} declares an item that is not a catalogue entity type.");
+                Assert.Equal(family, RibbonStateService.FamilyOf(type));
+                offered.Add(type);
+            }
+        }
+
+        List<GanttEntityType> catalogue =
+            [.. EntityTypeCatalog.Entries.Select(entry => entry.Type)];
+        Assert.Equal(
+            [.. catalogue.Order()],
+            [.. offered.Order()]);
     }
 }
