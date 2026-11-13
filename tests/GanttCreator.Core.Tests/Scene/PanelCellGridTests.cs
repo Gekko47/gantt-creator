@@ -378,4 +378,49 @@ public sealed class PanelCellGridTests
             Assert.Equal(column.Name, grid.Columns[0].Name);
         }
     }
+
+    [Fact]
+    public void A_grid_without_a_gutter_puts_the_panel_left_edge_at_the_origin()
+    {
+        // The default is zero and must stay behaviour-neutral: every composition that
+        // predates the gutter has to draw exactly where it drew before.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [Col("Id")], [12.0], 12.0, [], originLeftPt: 100).Grid!;
+
+        Assert.Equal(0, grid.LeadingGutterPt);
+        Assert.Equal(100, grid.PanelLeftPt);
+    }
+
+    [Fact]
+    public void A_measured_gutter_moves_the_panel_left_edge_without_moving_the_origin()
+    {
+        // R5.18k: the frame is drawn around the panel, so the gutter is what gives it a
+        // left margin. The ORIGIN must not move — it is where the live title textbox
+        // sits, and a title shifted onto the gutter is exactly the defect this guards.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [Col("Id")], [12.0], 12.0, [], originLeftPt: 100, leadingGutterPt: 5.75).Grid!;
+
+        Assert.Equal(5.75, grid.LeadingGutterPt);
+        Assert.Equal(94.25, grid.PanelLeftPt);
+        Assert.Equal(100, grid.OriginLeftPt);
+    }
+
+    [Fact]
+    public void A_negative_gutter_is_refused_rather_than_clamped()
+    {
+        // Clamping would hide a measurement bug behind a plausible number; the frame
+        // would then enclose nothing on that side and nothing downstream would say so.
+        Assert.Equal(
+            PanelCellGridRefusal.InvalidLeadingGutter,
+            PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, [], leadingGutterPt: -1).Refusal);
+    }
+
+    [Fact]
+    public void A_non_finite_gutter_is_refused()
+    {
+        Assert.Equal(
+            PanelCellGridRefusal.InvalidLeadingGutter,
+            PanelCellGrid.TryCreate(
+                [Col("Id")], [12.0], 12.0, [], leadingGutterPt: double.PositiveInfinity).Refusal);
+    }
 }

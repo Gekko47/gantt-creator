@@ -230,16 +230,32 @@ Two capability facts that shape the design:
   Tests: schema order and count pins; layout derivations (anchor, title, origin); integrity positives
   for a correct sheet, a legacy sheet and a spacer holding user content; a full rebuild-from-missing
   repair onto column 2; reader/writer round trip; the whole Office contract suite.
-  **Traced 2026-11-13, part 1 landed as `0055d88`:** the schema order, the origin, the layout
-  offsets, the initialiser/recovery header ranges and the hash re-pin are in; the gutter's width and
-  the scene's use of it are not. The plumbing the remaining half needs, read from the code rather
-  than assumed: `SceneBuilder.LiveDataPanelBounds` is a private static taking only the grid, so the
-  gutter must arrive on the request (`SceneBuildRequest` gains a measured leading-gutter field, and
-  `LiveDataPanelBounds` subtracts it from `grid.OriginLeftPt`); `ExcelSceneBuildRequestFactory` is
-  stateless and holds no worksheet, so it cannot measure the column itself — the width has to be
-  measured where the grid already is (`ExcelPanelGridMeasurement`) and carried to
-  `Create(...)`. That is why this half is its own commit: it changes the scene, so it owns the
-  golden.
+  **Part 1 landed as `0055d88`:** schema order, origin column B, the layout offsets, the
+  initialiser/recovery header ranges and the hash re-pin. **Part 2, reviewed 2026-11-13 — required
+  for the item to be done as intended:**
+  1. *The width is set, once.* `Initialise` (and the repair mirror) sets the leading gutter column's
+     width so its **measured** width in points equals `ChartPaddingRowHeightPt`. Excel's column
+     width unit is characters, so this is one provisional write, one `Range.Width` read, one
+     correction — not a loop. A column already at the target is not rewritten.
+  2. *The measurement travels with the grid, not with the request.* The reviewed design differs from
+     the first trace: `PanelCellGrid` already carries every other measured worksheet fact the scene
+     consumes (`OriginLeftPt`, the padding rows, the anchor row), and it is the object the live
+     measurement adapter builds. Adding a leading-gutter field there needs no change to
+     `SceneBuildRequest`, the request factory signature, or the refresh orchestrator, and it keeps
+     "measured geometry arrives as `PanelCellGrid`" true rather than adding a second carrier. The
+     field defaults to zero, so an export composition and every existing caller are unchanged.
+  3. *The frame encloses it.* `LiveDataPanelBounds` subtracts the gutter from `grid.OriginLeftPt`,
+     so the panel — and the frame drawn on the union — starts one gutter left of the table.
+     `OriginLeftPt` itself must NOT move: it is the title textbox's left edge, and shifting it would
+     move the title onto the gutter.
+  4. *Refusal.* A negative or non-finite gutter is refused with its own typed reason, and that
+     refusal gets a positive test in the same commit.
+  Tests: Core — the grid accepts zero and a positive gutter, refuses a negative one, and the
+  panel rectangle starts `gutter` points left of the origin while the title column is unchanged;
+  Office — the initialiser writes the corrected width once, does not rewrite a column already at
+  the target, and the measured grid carries the column's measured width. Golden scene: unaffected
+  while the gutter is zero, which is what makes this half reviewable without a golden churn — the
+  golden moves only when the Office width pass lands and a composition carries a non-zero gutter.
 
 - **R5.18l — Remove the Data panel description-label option (D4).** The Splitter's capability set
   becomes `Plot centre`/`Both`/`None`, and its default becomes `Plot centre`; `DataPanelLeft` remains

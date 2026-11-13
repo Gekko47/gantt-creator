@@ -76,6 +76,19 @@ public enum PanelCellGridRefusal
     /// would catch.
     /// </remarks>
     InvalidPaddingHeight = 11,
+
+    /// <summary>
+    /// The measured leading gutter width was not finite, or was negative.
+    /// </summary>
+    /// <remarks>
+    /// Zero is legitimate and is the default: an export composition has no worksheet
+    /// gutter, and a live sheet whose gutter has not been measured yet must still
+    /// compose. A negative width is refused on the same rule as a negative padding
+    /// row — it would place the chart frame's left edge inside the table it is meant
+    /// to enclose — rather than clamped, because clamping would hide a measurement
+    /// bug behind a plausible number.
+    /// </remarks>
+    InvalidLeadingGutter = 12,
 }
 
 /// <summary>The typed result of validating a measured cell grid.</summary>
@@ -117,7 +130,8 @@ public sealed record PanelCellGrid
         double originLeftPt,
         double topPaddingHeightPt,
         double bottomPaddingHeightPt,
-        double anchorRowHeightPt)
+        double anchorRowHeightPt,
+        double leadingGutterPt)
     {
         Columns = columns;
         RowHeightsPt = rowHeightsPt;
@@ -128,6 +142,7 @@ public sealed record PanelCellGrid
         TopPaddingHeightPt = topPaddingHeightPt;
         BottomPaddingHeightPt = bottomPaddingHeightPt;
         AnchorRowHeightPt = anchorRowHeightPt;
+        LeadingGutterPt = leadingGutterPt;
 
         // The cumulative tops are derived ONCE, here, so a lane anchor and a panel
         // row cannot disagree about where a body row starts. Entry n is
@@ -275,6 +290,40 @@ public sealed record PanelCellGrid
     public double AnchorRowHeightPt { get; }
 
     /// <summary>
+    /// The measured width of the add-in's leading gutter column, in points (R5.18k).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Column A is not a column of <c>tblGanttData</c>
+    /// (<see cref="GanttSheetLayout.LeadingGutterColumnIndex"/>); it is the spacer the
+    /// chart frame encloses on the left, so the frame has the same margin on all four
+    /// sides instead of sitting flush against the first table column.
+    /// </para>
+    /// <para>
+    /// <b>It is a separate measurement from <see cref="OriginLeftPt"/> and must stay
+    /// one.</b> The origin is the table's own left edge and is where the live title
+    /// textbox is placed; folding the gutter into it would move the title onto the
+    /// gutter. The panel rectangle is what subtracts the gutter, because the panel is
+    /// the thing the frame is drawn around.
+    /// </para>
+    /// </remarks>
+    public double LeadingGutterPt { get; }
+
+    /// <summary>
+    /// The panel rectangle's left edge: the table's own left edge moved left by the
+    /// leading gutter (R5.18k).
+    /// </summary>
+    /// <remarks>
+    /// This is the value the FRAME is drawn around, so it is published rather than
+    /// recomputed at the call site: the subtraction is the whole effect of the gutter,
+    /// and a second copy of it in the builder is where an off-by-one-gutter would hide.
+    /// <see cref="OriginLeftPt"/> is deliberately unchanged — it is where the live title
+    /// textbox sits, and a title moved onto the gutter would be the visible defect this
+    /// property exists to avoid.
+    /// </remarks>
+    public double PanelLeftPt => OriginLeftPt - LeadingGutterPt;
+
+    /// <summary>
     /// The chart's total bottom margin: the anchor row plus the padding row
     /// (ADR-0038 D1/D4).
     /// </summary>
@@ -348,6 +397,13 @@ public sealed record PanelCellGrid
     /// anchor to, so it paints no overhang and emits no closing line.
     /// </param>
     /// <param name="allowEmptyRows">Allows an intentionally empty live chart grid; defaults to the established no-rows refusal.</param>
+    /// <param name="leadingGutterPt">
+    /// The measured width of the add-in's leading gutter column, in points (R5.18k).
+    /// Defaults to zero, which is correct for an EXPORT composition and for a live
+    /// sheet whose gutter has not been measured: the frame then starts at the table's
+    /// own left edge, which is the behaviour every composition had before the gutter
+    /// existed.
+    /// </param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
@@ -359,8 +415,16 @@ public sealed record PanelCellGrid
         double topPaddingHeightPt = 0d,
         double bottomPaddingHeightPt = 0d,
         double anchorRowHeightPt = 0d,
-        bool allowEmptyRows = false)
+        bool allowEmptyRows = false,
+        double leadingGutterPt = 0d)
     {
+        // Validated on the same rule as the padding rows and with its own reason: a
+        // negative gutter would invert the frame, and folding it into the padding
+        // refusal would tell a reader to go and look at the wrong rows.
+        if (!double.IsFinite(leadingGutterPt) || leadingGutterPt < 0)
+        {
+            return Refused(PanelCellGridRefusal.InvalidLeadingGutter);
+        }
         // A padding height is a MEASUREMENT, so it is validated like every other
         // measurement here rather than defaulted when absent. Zero is a legitimate
         // value (the export case) and is therefore allowed; a negative or
@@ -461,7 +525,8 @@ public sealed record PanelCellGrid
                     originLeftPt,
                     topPaddingHeightPt,
                     bottomPaddingHeightPt,
-                    anchorRowHeightPt),
+                    anchorRowHeightPt,
+                    leadingGutterPt),
                 null)
             : Refused(PanelCellGridRefusal.InvalidOrigin);
     }
