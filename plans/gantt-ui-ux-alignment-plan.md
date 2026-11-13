@@ -298,3 +298,20 @@ ripple), then the render/ribbon group, then schema 23, then the items that depen
 - A custom child indicator beyond indentation; bold summary rows are recorded as a deferred option.
 - A migration path from schema 22: there are no active users, and Initialise remains the only
   creation path.
+
+## 9. Mutation-survivor ledger (R5.18)
+
+`verify.ps1` judges only the Core files the branch changed, and it judges them whole-file, so
+touching `LabelPlanner`, `DateLabelBuilder`, `EntityTypeCatalog` or `SceneBuilder` pulls in those
+files' pre-existing survivors. Part 1 moved the gate from 77.30 % to 77.66 % and part 2 from
+77.66 % to 82.45 % (465 of 564 scored mutants killed, 87 survived, 12 no-coverage) against the
+80 % threshold. The survivors that remain are recorded here so a later reader does not chase them
+as untested behaviour.
+
+| Kind | Examples | Why no test can kill it |
+|---|---|---|
+| Tolerance noise | `WithinBounds`'s `<=` versus `<` and its per-edge `±Epsilon`; `DateLabelBuilder.Contains`; the `occupant.Bounds.Right < right - Epsilon` guards | They differ only when a coordinate sits within 1e-6pt of a bound, and every candidate that reaches the check was clamped onto that bound exactly |
+| Unreachable through `RectD` | `IsFinite(RectD)` in `LabelPlanner.ValidMetrics`; the same shape in `DateLabelBuilder.IsPositive` | `RectD`'s constructor refuses non-finite coordinates and extents, so the predicate is always true |
+| Unreachable by any caller | the `or` chains in `LabelPlanner.TextAlignmentFor` and `DateLabelBuilder.Box` | `LabelRefusal.InvalidPosition` rejects every position that would reach those arms, and `None`/`Auto` are handled before geometry |
+| Equivalent under the current constants | `2d * BoxVerticalInsetPt` versus `2d / BoxVerticalInsetPt`; `best = -1.0`; the `continue` in `TryWidestGap`; the right-anchor ternary | The inset is 1, a gap narrower than the marker is already refused, and the widest-gap box always spans the whole measured gap |
+| Inherited, not created | the pre-existing `SceneBuilder`, `EntityTypeCatalog` and style-resolution survivors | Existing debt in code this branch did not change; it enters the judged set only because the file is in the diff |

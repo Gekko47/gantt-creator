@@ -651,6 +651,163 @@ public sealed class LabelPlannerTests
         Assert.Null(result.Primitive);
     }
 
+    [Fact]
+    public void A_box_exactly_as_tall_as_the_chart_is_clamped_to_the_chart_top()
+    {
+        // A 42pt row leaves a 40pt box, which is exactly the chart's height. The
+        // centred top would hang the box below the chart, so the clamp moves it to
+        // the chart top; a box that fits is moved, never shrunk or refused.
+        var metrics = new LabelMetrics(
+            new RectD(0, 0, 310, 100),
+            new RectD(-6, -6, 322, 40),
+            LabelGapPt: 3,
+            RowHeightPt: 42);
+
+        LabelPlanCreationOutcome outcome = PlanOutcome(
+            Request(Shape(100, 20, 50), "abcde", GanttLabelPosition.Right),
+            metrics);
+
+        Assert.Null(outcome.Refusal);
+        LabelPlanResult result = outcome.Result!;
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.Equal(-6.0, result.Bounds!.Value.Top);
+        Assert.Equal(40.0, result.Bounds.Value.Height);
+    }
+
+    [Fact]
+    public void A_label_that_reaches_the_chart_left_edge_is_inside_the_bounds()
+    {
+        // The plot and the chart share their left edge and the gap is zero, so a
+        // Left label that fills the space exactly lands ON the containment bound.
+        // That is inside, not outside: the rule is inclusive at each edge. A zero
+        // gap is also a legal metrics set - a label may sit flush against its bar.
+        var metrics = new LabelMetrics(
+            new RectD(0, 0, 310, 100),
+            new RectD(0, 0, 310, 100),
+            LabelGapPt: 0,
+            RowHeightPt: 18);
+
+        LabelPlanCreationOutcome outcome = PlanOutcome(
+            Request(Shape(20, 20, 50), "abcde", GanttLabelPosition.Left),
+            metrics);
+
+        Assert.Null(outcome.Refusal);
+        LabelPlanResult result = outcome.Result!;
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        Assert.Equal(0.0, result.Bounds!.Value.Left);
+    }
+
+    [Fact]
+    public void A_right_hand_gap_ends_at_the_nearest_obstruction_not_the_farthest()
+    {
+        // Two obstructions sit to the right, 27pt and 217pt away. The gap is the
+        // NEARER one, so 40pt of text truncates into 27pt. The obstructions are in
+        // a different vertical band, which is what separates this from the
+        // suppression test above: a `Math.Max` mutation would measure 277pt to the
+        // plot edge and hand back a box 190pt wider than the space that exists.
+        RectD shape = Shape(10, 20, 20);
+        LabelOccupant near = new(new RectD(60, 60, 10, 8));
+        LabelOccupant far = new(new RectD(250, 60, 10, 8));
+
+        LabelPlanResult result = Plan(shape, "abcdefghij", GanttLabelPosition.Right, [near, far]);
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.True(result.WasTruncated);
+        Assert.Equal(33.0, result.Bounds!.Value.Left);
+        Assert.Equal(27.0, result.Bounds.Value.Width);
+        Assert.Equal("abcde…", result.Primitive!.Text);
+    }
+
+    [Fact]
+    public void A_left_hand_gap_ends_at_the_nearest_obstruction_not_the_farthest()
+    {
+        // The mirror case: the obstruction ends 47pt to the left of the candidate's
+        // right edge, so 80pt of text truncates into 47pt. A `Math.Max` to
+        // `Math.Min` mutation would take the plot edge (197pt) instead, and
+        // `right - limit` becoming `right + limit` would put the box off the chart.
+        RectD shape = Shape(200, 20, 20);
+        LabelOccupant near = new(new RectD(100, 60, 50, 8));
+
+        LabelPlanResult result = Plan(shape, "abcdefghijklmnopqrst", GanttLabelPosition.Left, [near]);
+
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        Assert.True(result.WasTruncated);
+        Assert.Equal(150.0, result.Bounds!.Value.Left);
+        Assert.Equal(47.0, result.Bounds.Value.Width);
+        Assert.Equal("abcdefghij…", result.Primitive!.Text);
+    }
+
+    [Fact]
+    public void A_gap_too_narrow_for_the_ellipsis_itself_is_not_usable()
+    {
+        // One point of free space beside the bar cannot hold the 4pt marker, so
+        // §22's suppression applies. Drawing a bare ellipsis over the plot edge
+        // would be a label that says nothing at all.
+        LabelPlanCreationOutcome outcome = PlanOutcome(
+            Request(Shape(256, 20, 50), "abcde", GanttLabelPosition.Right));
+
+        Assert.Null(outcome.Refusal);
+        Assert.Null(outcome.Result!.Primitive);
+        SceneWarning warning = Assert.Single(outcome.Result.Warnings);
+        Assert.Equal(LabelPlanner.SuppressedNoSpaceCode, warning.Code);
+    }
+
+    [Fact]
+    public void An_inside_label_may_occupy_the_shape_it_belongs_to()
+    {
+        // §22 Inside is the one placement inside the shape's own body, so the
+        // parent rectangle is not a collision. Without the exemption every Inside
+        // candidate is blocked by the very bar it is centred on.
+        RectD shape = Shape(100, 20, 50);
+
+        LabelPlanResult result = Plan(shape, "abcde", GanttLabelPosition.Inside, [shape]);
+
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal(115.0, result.Bounds!.Value.Left);
+    }
+
+    [Fact]
+    public void An_inside_label_is_exempt_only_from_an_occupant_that_is_exactly_its_own_shape()
+    {
+        // The occupant starts at the same corner and has the same height, but is
+        // 20pt narrower. It is a neighbouring bar, not the label's own body, so it
+        // still blocks: treating a look-alike as the parent would draw the text
+        // over a real entity.
+        RectD shape = Shape(100, 20, 50);
+        LabelOccupant lookAlike = new(new RectD(100, 20, 30, 8));
+
+        LabelPlanCreationOutcome outcome = PlanOutcome(
+            Request(shape, "abcde", GanttLabelPosition.Inside),
+            [lookAlike]);
+
+        Assert.Null(outcome.Refusal);
+        Assert.Null(outcome.Result!.Primitive);
+        SceneWarning warning = Assert.Single(outcome.Result.Warnings);
+        Assert.Equal(LabelPlanner.SuppressedNoSpaceCode, warning.Code);
+    }
+
+    [Fact]
+    public void An_equal_gap_keeps_the_earlier_position_so_placement_is_stable()
+    {
+        // The shape is centred in the plot, so the free space to its right and to
+        // its left are both 142pt. The cascade tries Right first and the tie must
+        // keep it, or a refresh could flip a label to the other side of the bar
+        // with nothing about the chart having changed.
+        RectD shape = new(145, 20, 20, 8);
+        LabelOccupant insideBlocker = new(new RectD(150, 20, 6, 8));
+
+        LabelPlanResult result = Plan(
+            shape,
+            "abcdefghijklmnopqrstuvwxyz0123456789 ",
+            GanttLabelPosition.Auto,
+            [insideBlocker]);
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.True(result.WasTruncated);
+        Assert.Equal(168.0, result.Bounds!.Value.Left);
+        Assert.Equal(142.0, result.Bounds.Value.Width);
+    }
+
     private static RectD Shape(double x, double y, double width) => new(x, y, width, 8);
 
     /// <summary>

@@ -407,6 +407,75 @@ public sealed class DateLabelBuilderTests
     }
 
     [Fact]
+    public void The_off_plot_fallback_centres_the_date_box_on_the_visible_bar_and_anchors_each_side_by_the_gap()
+    {
+        // The plot is only as wide as the sliver of the clipped bar, so the planner
+        // has no free space on either side and §23's never-suppress rule falls
+        // through to the fallback box in the chart's outer padding.
+        RectD visible = new(100, 100, 40, 12);
+        var metrics = new LabelMetrics(
+            new RectD(100, 100, 40, 12),
+            new RectD(40, 60, 200, 100),
+            3.0,
+            18.0);
+
+        DateLabelResult result = DateLabelBuilder.TryBuild(
+            Request(visible: visible, full: new RectD(60, 100, 80, 12)) with
+            {
+                Metrics = metrics,
+                TextMetrics = new FakeTextMetrics(_ => 4.0, 10.0),
+            }).Result!;
+
+        // The never-suppress rule emits both dates, and neither box was moved to
+        // the other side, so there is nothing to warn about.
+        Assert.Empty(result.Suppressed);
+        Assert.Empty(result.Warnings);
+
+        SceneText start = result.Primitives[0];
+        SceneText finish = result.Primitives[1];
+
+        // One worksheet row less the 1pt inset at each edge, centred on the bar.
+        Assert.Equal(98.0, start.TextBounds.Top);
+        Assert.Equal(16.0, start.TextBounds.Height);
+        Assert.Equal(98.0, finish.TextBounds.Top);
+
+        // Start ends one gap left of the bar and finish starts one gap right of
+        // it. A 10-character date is 40pt wide at 4pt per character.
+        Assert.Equal(57.0, start.TextBounds.Left);
+        Assert.Equal(97.0, start.TextBounds.Right);
+        Assert.Equal(143.0, finish.TextBounds.Left);
+        Assert.Equal(183.0, finish.TextBounds.Right);
+
+        Assert.Equal(GanttTextAlignment.Right, start.Alignment);
+        Assert.Equal(GanttTextAlignment.Left, finish.Alignment);
+    }
+
+    [Fact]
+    public void The_off_plot_fallback_centres_an_inside_date_box_on_the_visible_bar()
+    {
+        // An explicit Inside position reaches the same fallback when the date is
+        // wider than the sliver it would sit in: the box is centred on the visible
+        // bar, and §22's centred alignment follows the placement.
+        RectD visible = new(100, 100, 40, 12);
+        var metrics = new LabelMetrics(
+            new RectD(100, 100, 40, 12),
+            new RectD(40, 60, 200, 100),
+            3.0,
+            18.0);
+
+        DateLabelResult result = DateLabelBuilder.TryBuild(
+            Request(visible: visible, full: new RectD(60, 100, 80, 12), showFinish: false) with
+            {
+                Metrics = metrics,
+                StartPosition = GanttLabelPosition.Inside,
+            }).Result!;
+
+        SceneText start = Assert.Single(result.Primitives);
+        Assert.Equal(70.0, start.TextBounds.Left);
+        Assert.Equal(GanttTextAlignment.Centre, start.Alignment);
+    }
+
+    [Fact]
     public void A_null_request_is_refused() =>
         Assert.Equal(DateLabelRefusal.NullRequest, DateLabelBuilder.TryBuild(null).Refusal);
 
