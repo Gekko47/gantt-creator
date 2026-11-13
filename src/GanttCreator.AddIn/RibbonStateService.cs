@@ -71,6 +71,14 @@ internal class RibbonStateService
     private IConfigCatalogueReader? _catalogueReader;
     private IGanttTableReader? _tableReader;
     private IPanelGridMeasurementPort? _panelGridMeasurementPort;
+    private IColumnVisibilityPort? _columnVisibilityPort;
+
+    /// <summary>
+    /// The columns the user has hidden through the column dropdown (R5.18h). Seeded
+    /// from the live worksheet so the items state the real state, and replaced
+    /// whenever the dropdown changes it.
+    /// </summary>
+    private HashSet<string> _hiddenColumns = new(StringComparer.Ordinal);
     private RibbonState _state = RibbonState.Initial;
     private IReadOnlyList<SceneWarning> _lastSuccessfulSceneWarnings = [];
     private IReadOnlyList<GanttValidationIssue> _currentValidationIssues = [];
@@ -292,6 +300,22 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="port">The measurement port, or null when unavailable.</param>
     internal void SetPanelGridMeasurementPort(IPanelGridMeasurementPort? port) => _panelGridMeasurementPort = port;
+
+    /// <summary>
+    /// Replaces the column-visibility port (R5.18h), or null when unavailable.
+    /// </summary>
+    /// <param name="port">The port that reads and applies a table column's visibility.</param>
+    /// <remarks>
+    /// Seeds the dropdown's state from the live table as soon as the port arrives, so a
+    /// ribbon loaded against an already-initialised workbook states the truth before any
+    /// sheet is activated. The read is best-effort — a refusal leaves the empty set, which
+    /// shows every column as visible until the next activation re-seeds it.
+    /// </remarks>
+    internal void SetColumnVisibilityPort(IColumnVisibilityPort? port)
+    {
+        _columnVisibilityPort = port;
+        LoadColumnVisibilityFromWorksheet();
+    }
 
     /// <summary>
     /// Injects the table reader that derives the effective AUTO plot dates
@@ -1580,6 +1604,10 @@ internal class RibbonStateService
                 };
 
                 RefreshEffectivePlotDates(settings);
+
+                // The same activation read seeds the column dropdown: its ticks are
+                // worksheet state, not a second setting to parse.
+                LoadColumnVisibilityFromWorksheet();
             }
         }
         catch
@@ -2206,6 +2234,137 @@ internal class RibbonStateService
     /// </summary>
     internal int GetDescriptionLabelCount() =>
         _state.DescriptionLabelOptions is { Count: > 0 } options ? options.Count + 1 : 0;
+
+    /// <summary>
+    /// Returns how many items the column-visibility dropdown offers (R5.18h): one per
+    /// column the Core contract names, so the list cannot drift from the toggle rules.
+    /// </summary>
+    internal static int GetColumnVisibilityCount() => GanttColumnVisibility.ToggleableColumnNames.Count;
+
+    /// <summary>
+    /// Returns the item ID at <paramref name="index"/>: <c>col</c> + the schema display
+    /// name. The suffix is the durable column name, so the id needs no second table.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
+    internal static string GetColumnVisibilityItemID(int index) =>
+        index >= 0 && index < GanttColumnVisibility.ToggleableColumnNames.Count
+            ? RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.ToggleableColumnNames[index]
+            : string.Empty;
+
+    /// <summary>
+    /// Returns the label at <paramref name="index"/>, stating the column's CURRENT
+    /// visibility. Until the tick image lands (slice 3) the label is the only place the
+    /// state is visible, so it says "shown" or "hidden" rather than naming an action
+    /// that would contradict the state it sits beside.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    internal string GetColumnVisibilityItemLabel(int index)
+    {
+        if (index < 0 || index >= GanttColumnVisibility.ToggleableColumnNames.Count)
+        {
+            return string.Empty;
+        }
+
+        string name = GanttColumnVisibility.ToggleableColumnNames[index];
+        return _hiddenColumns.Contains(name) ? name + " (hidden)" : name + " (shown)";
+    }
+
+    /// <summary>
+    /// Flips one column's visibility from the dropdown: parsed through the Core
+    /// contract (an unknown id is ignored, a refused toggle reports why), applied to the
+    /// worksheet through the port, then written to <see cref="GanttColumnVisibility.SettingKey"/>
+    /// so the choice survives reopening the workbook. Never throws.
+    /// </summary>
+    /// <param name="selectionId">The selected item ID, or null in tests.</param>
+    internal void ToggleColumnVisibility(string? selectionId)
+    {
+        if (!TryParseColumnItemId(selectionId, out string? columnName))
+        {
+            return;
+        }
+
+        ColumnVisibilityOutcome outcome = GanttColumnVisibility.Toggle(_hiddenColumns, columnName);
+        if (!outcome.Succeeded)
+        {
+            PresentWarning(
+                "At least one of Type, Description, Start, Finish or Duration must stay "
+                + "visible, or the table could not be typed into.");
+            return;
+        }
+
+        IReadOnlySet<string> next = outcome.Hidden!;
+
+        // The worksheet is applied BEFORE the setting is written: a persist that
+        // succeeded while the hide failed would record a choice the sheet does not show.
+        ColumnVisibilityPortOutcome applied = _columnVisibilityPort is { } port
+            ? port.Apply(next)
+            : ColumnVisibilityPortOutcome.Ok(next);
+        if (!applied.Succeeded)
+        {
+            PresentWarning($"The column visibility could not be applied: {applied.Refusal}.");
+            return;
+        }
+
+        _hiddenColumns = new HashSet<string>(next, StringComparer.Ordinal);
+
+        Dictionary<string, string> values = new(StringComparer.Ordinal)
+        {
+            [GanttColumnVisibility.SettingKey] = GanttColumnVisibility.Format(next),
+        };
+        ConfigWriteOutcome? write = _catalogueWriter?.WriteSettings(values);
+        if (write is not null && !write.Succeeded)
+        {
+            PresentWarning($"Failed to persist the column visibility: {write.Refusal}");
+        }
+
+        InvalidateControl(RibbonControlIds.ColumnsDropDown);
+        ScheduleAutomaticRefresh();
+    }
+
+    /// <summary>
+    /// Parses an item ID back to a column name: the prefix stripped, then validated
+    /// through the Core contract, so an id the dropdown never issued is ignored rather
+    /// than toggling whatever its suffix happens to spell.
+    /// </summary>
+    /// <param name="itemId">The item ID, or null.</param>
+    /// <param name="columnName">The column name, or null.</param>
+    /// <returns>Whether the id names an offered column.</returns>
+    private static bool TryParseColumnItemId(string? itemId, out string? columnName)
+    {
+        columnName = null;
+        if (itemId is null
+            || !itemId.StartsWith(RibbonControlIds.ColumnItemPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string candidate = itemId[RibbonControlIds.ColumnItemPrefix.Length..];
+        if (!GanttColumnVisibility.IsToggleable(candidate))
+        {
+            return false;
+        }
+
+        columnName = candidate;
+        return true;
+    }
+
+    /// <summary>
+    /// Seeds the hidden set from the live table, so the dropdown states what the sheet
+    /// shows rather than what a stale setting claims. A refused read leaves the last
+    /// known set alone: a tick is decoration, and losing it is better than reporting a
+    /// hide that never happened.
+    /// </summary>
+    private void LoadColumnVisibilityFromWorksheet()
+    {
+        if (_columnVisibilityPort?.ReadHidden() is not { Succeeded: true, Hidden: { } hidden })
+        {
+            return;
+        }
+
+        _hiddenColumns = new HashSet<string>(hidden, StringComparer.Ordinal);
+    }
 
     /// <summary>
     /// Returns the item ID at <paramref name="index"/>: <c>Default</c> for the
@@ -3595,6 +3754,8 @@ internal class RibbonStateService
         _catalogueReader = null;
         _tableReader = null;
         _panelGridMeasurementPort = null;
+        _columnVisibilityPort = null;
+        _hiddenColumns = new HashSet<string>(StringComparer.Ordinal);
 
         // The presenters are restored to their defaults too. An injected
         // presenter is a test seam: leaving it in place would let one test's

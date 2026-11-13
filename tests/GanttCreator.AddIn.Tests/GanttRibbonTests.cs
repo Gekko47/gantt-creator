@@ -617,6 +617,10 @@ public class GanttRibbonTests
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
                 RibbonControlIds.CustomStyle,
+                // R5.18h: the column-visibility dropdown sits in its own Columns
+                // group after the Labels group, gated on workbook + initialised on
+                // the Gantt sheet like the layout controls.
+                RibbonControlIds.ColumnsDropDown,
                 // R5.16a: the merged Chart group holds the dates and the scale;
                 // the Size group holds the size dropdown and the margin pair.
                 // Dropdowns are listed before edit boxes because the query

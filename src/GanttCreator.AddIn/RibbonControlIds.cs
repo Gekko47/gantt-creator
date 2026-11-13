@@ -106,6 +106,25 @@ internal static class RibbonControlIds
     /// </summary>
     internal const string ToggleCellLock = "btnToggleCellLock";
 
+    /// <summary>
+    /// The Columns group (R5.18h). Named here as well as the dropdown because
+    /// <see cref="RibbonState.IsVisible"/> is fail-closed: a group the truth table does
+    /// not name is hidden, so the XML group and this constant are one decision.
+    /// </summary>
+    internal const string ColumnsGroup = "grpColumns";
+
+    /// <summary>
+    /// The column-visibility dropdown (R5.18h). Its items toggle one authoring
+    /// column each and state the result in their own label until the tick image lands.
+    /// </summary>
+    internal const string ColumnsDropDown = "ddnColumnVisibility";
+
+    /// <summary>
+    /// Prefix for every column item id: <c>col</c> + the schema display name, so the
+    /// suffix is the durable column name and the id needs no second table.
+    /// </summary>
+    internal const string ColumnItemPrefix = "col";
+
     /// <summary>The Promote to parent button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PromoteToParent = "btnPromoteToParent";
 

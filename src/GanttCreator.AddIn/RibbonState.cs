@@ -344,6 +344,11 @@ internal sealed record RibbonState(
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         RibbonControlIds.ChartTitle =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        // R5.18h: hiding a column is a table-presentation command, so it needs an
+        // initialised table on the Gantt sheet and nothing else — the same gate the
+        // layout controls use.
+        RibbonControlIds.ColumnsDropDown =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         _ => true,
     };
 
@@ -366,6 +371,7 @@ internal sealed record RibbonState(
         RibbonControlIds.DataGroup
             or RibbonControlIds.OutlineGroup
             or RibbonControlIds.LabelsGroup
+            or RibbonControlIds.ColumnsGroup
             or RibbonControlIds.StyleThemeGroup
             or RibbonControlIds.PlotAreaGroup
             or RibbonControlIds.PlotSizeGroup

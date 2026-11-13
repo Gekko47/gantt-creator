@@ -66,6 +66,30 @@ public static class GanttColumnVisibility
     public static IReadOnlyList<string> ToggleableColumnNames { get; } =
         ["Type", "Description", "Start", "Finish", "Duration"];
 
+    /// <summary>
+    /// Returns whether the schema, rather than the user, owns a column's hidden flag.
+    /// </summary>
+    /// <param name="column">The schema column, or null.</param>
+    /// <returns><see langword="true"/> for an engine-hidden column.</returns>
+    /// <remarks>
+    /// <para>
+    /// Only the engine columns' visibility is the add-in's: they are hidden because the
+    /// add-in owns their cells, and a table with them on show invites a hand edit that the
+    /// next Refresh overwrites. Every user-visible column's hidden flag is the dropdown's
+    /// choice, recorded in <see cref="SettingKey"/>.
+    /// </para>
+    /// <para>
+    /// <b>This exists so a writer cannot undo the user's choice by accident.</b>
+    /// `ExcelColumnPresentationRestorer` and `ExcelWorkbookRecovery` both force a column's
+    /// visibility from <see cref="GanttTableSchema.Default"/> on every Refresh and Repair;
+    /// written unconditionally, that silently un-hides a column the user hid, once per
+    /// pass. Both ask this question first instead, and the answer is asserted here rather
+    /// than restated at each call site.
+    /// </para>
+    /// </remarks>
+    public static bool SchemaOwnsVisibility(GanttTableColumn? column) =>
+        column is not null && column.IsHidden;
+
     /// <summary>Returns whether the dropdown offers this column.</summary>
     /// <param name="columnName">The exact schema display name, or null.</param>
     /// <returns><see langword="true"/> for a name in <see cref="ToggleableColumnNames"/>.</returns>

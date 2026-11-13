@@ -160,8 +160,15 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             }
 
             Excel.Range entireColumn = GetEntireColumn(columnRange);
+
+            // Only an ENGINE column's visibility is the schema's (R5.18h). A visible
+            // column's hidden flag is the user's choice from the ribbon's column
+            // dropdown, stored in `HiddenColumns`; forcing it from the schema here
+            // would silently un-hide that column on every Refresh, which is a state the
+            // user cannot then keep.
             bool wantedHidden = column.IsHidden;
-            if (ReadHiddenFlag(entireColumn) != wantedHidden)
+            if (GanttColumnVisibility.SchemaOwnsVisibility(column)
+                && ReadHiddenFlag(entireColumn) != wantedHidden)
             {
                 entireColumn.Hidden = wantedHidden;
                 restored++;

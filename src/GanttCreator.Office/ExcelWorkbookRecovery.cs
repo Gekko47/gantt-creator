@@ -1225,8 +1225,13 @@ public class ExcelWorkbookRecovery(
             Excel.Range columnRange = GetColumnRange(column);
             SetColumnLocked(columnRange, schema[index - 1].IsLocked);
             Excel.Range entireColumn = GetEntireColumn(columnRange);
+
+            // Only an ENGINE column's visibility is the schema's (R5.18h). A visible
+            // column's hidden flag is the user's choice from the ribbon's column
+            // dropdown, stored in `HiddenColumns`, so a repair does not clobber it.
             bool wanted = schema[index - 1].IsHidden;
-            if (ReadHiddenFlag(entireColumn) != wanted)
+            if (GanttColumnVisibility.SchemaOwnsVisibility(schema[index - 1])
+                && ReadHiddenFlag(entireColumn) != wanted)
             {
                 SetColumnHidden(entireColumn, wanted);
             }

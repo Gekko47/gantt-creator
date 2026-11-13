@@ -164,6 +164,10 @@ public sealed class AddInHost(
                 new ExcelConfigCatalogueWriter(ExcelDnaUtil.Application, log: _log));
             RibbonStateService.Instance.SetCatalogueReader(
                 new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
+            // R5.18h: the column dropdown applies its choice to the live table through
+            // this port, so the ribbon and the repair paths write the same columns.
+            RibbonStateService.Instance.SetColumnVisibilityPort(
+                new ExcelColumnVisibilityPort(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetTableReader(
                 new ExcelGanttTableReader(ExcelDnaUtil.Application));
             // R5.5 ruling 6: the standalone selection identifier feeds the

@@ -112,4 +112,25 @@ public sealed class GanttColumnVisibilityTests
     [Fact]
     public void A_null_format_input_is_refused() =>
         _ = Assert.Throws<ArgumentNullException>(() => GanttColumnVisibility.Format(null!));
+
+    [Fact]
+    public void Only_an_engine_column_has_a_schema_owned_hidden_flag()
+    {
+        // The Refresh and Repair writers ask this before forcing a column's visibility:
+        // an engine column is the schema's, every user-visible one is the dropdown's.
+        Assert.True(GanttColumnVisibility.SchemaOwnsVisibility(GanttTableSchema.Default.Columns
+            .Single(column => column.Name == "Id")));
+        Assert.True(GanttColumnVisibility.SchemaOwnsVisibility(GanttTableSchema.Default.Columns
+            .Single(column => column.Name == "StyleKey")));
+
+        foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+        {
+            Assert.False(
+                GanttColumnVisibility.SchemaOwnsVisibility(GanttTableSchema.Default.Columns
+                    .Single(column => column.Name == name)),
+                $"{name} is user-visible, so its hidden flag is the dropdown's choice.");
+        }
+
+        Assert.False(GanttColumnVisibility.SchemaOwnsVisibility(null));
+    }
 }

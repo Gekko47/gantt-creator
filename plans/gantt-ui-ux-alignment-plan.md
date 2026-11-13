@@ -182,6 +182,21 @@ Two capability facts that shape the design:
      so both must read the persisted set and write the effective visibility (engine-hidden ∪
      user-hidden) instead. `ExcelWorkbookInitialiser.ApplyColumnPresentation` runs only on a
      pristine sheet, so it needs no change.
+     **Landed.** The reconciliation took the smaller of the two available shapes: rather than
+     threading the persisted set into two adapters that have no settings reader, both writers now
+     ask `GanttColumnVisibility.SchemaOwnsVisibility(column)` and skip a user-visible column's
+     hidden flag entirely — the engine columns are still forced, and a visible column keeps
+     whatever the user chose. That is the same result with no new dependency and no port-signature
+     change. The dropdown is `ddnColumnVisibility` in a new `grpColumns` group, its items are
+     `col` + the schema name, and each item's label states the live visibility ("Start (hidden)")
+     until slice 3 replaces the wording with the tick. Selecting an item runs the Core `Toggle`,
+     applies the set through `IColumnVisibilityPort`, then writes `Format(set)` to
+     `HiddenColumns` — worksheet first, key second, so a failed hide cannot record a choice the
+     sheet does not show. The last-authoring-column refusal and a refused apply both report and
+     write nothing. **Still open, recorded here rather than assumed:** nothing re-applies the
+     stored key after a rebuild that recreates the worksheet — Excel keeps the flags on a table
+     rebuild, so the state survives today, and the `Parse` consumer for the fresh-sheet case is
+     the next commit.
   3. `getItemImage` with the rasterised Lucide tick/blank, an addition to the ribbon
      callback-signature rules, and the live-host verification of the bitmap conversion.
   Files: new ids in [`RibbonControlIds`](src/GanttCreator.AddIn/RibbonControlIds.cs), a new dropdown

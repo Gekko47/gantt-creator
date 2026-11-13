@@ -185,6 +185,35 @@ public sealed class ExcelColumnPresentationRestorerTests
         Assert.Contains("Hidden:" + firstEngineColumn + "=True", recorded);
     }
 
+    /// <summary>
+    /// A user-visible column reported hidden is NOT written back to visible (R5.18h):
+    /// its visibility is the dropdown's choice, so the restorer leaves it alone.
+    /// </summary>
+    /// <remarks>
+    /// This is the reconciliation the schema-driven writer would otherwise undo once per
+    /// Refresh. The fake reports every column hidden, so the engine columns already match
+    /// the schema and only the five user-visible ones differ — and each of those must be
+    /// left exactly as the user left it. Remove the <c>SchemaOwnsVisibility</c> guard and
+    /// this records five <c>Hidden</c> writes, which is the defect the test exists for.
+    /// </remarks>
+    [Fact]
+    public void A_user_hidden_visible_column_is_not_written_back_to_visible()
+    {
+        List<string> recorded = [];
+        TestableRestorerAllHidden restorer = new(
+            Application().Object,
+            Guard(ProtectionGuardOutcome.NotProtected).Object,
+            new Mock<Excel.ListObject>().Object,
+            Worksheet(),
+            recorded);
+
+        ColumnPresentationOutcome outcome = restorer.EnsureClassification();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.ColumnsRestored);
+        Assert.DoesNotContain(recorded, entry => entry.StartsWith("Hidden:", StringComparison.Ordinal));
+    }
+
     /// <summary>The one-based index of the first engine-hidden column in the schema.</summary>
     private static int IndexOfFirstEngineColumn()
     {
@@ -246,6 +275,45 @@ public sealed class ExcelColumnPresentationRestorerTests
             column.SetupGet(c => c.Range).Returns(range.Object);
             column.SetupGet(c => c.Name)
                 .Returns(GanttTableSchema.Default.Columns[index - 1].Name);
+            return column.Object;
+        }
+    }
+
+    /// <summary>
+    /// A restorer whose columns all report <c>Hidden = true</c>: every engine column
+    /// already matches the schema, and every user-visible column is reported hidden.
+    /// </summary>
+    /// <param name="application">The application object.</param>
+    /// <param name="guard">The protection guard.</param>
+    /// <param name="table">The table.</param>
+    /// <param name="worksheet">The resolved worksheet.</param>
+    /// <param name="recorded">The flag writes recorded.</param>
+    private sealed class TestableRestorerAllHidden(
+        object? application,
+        IWorksheetProtectionGuard guard,
+        Excel.ListObject table,
+        Excel.Worksheet worksheet,
+        List<string> recorded)
+        : TestableRestorer(application, guard, table, worksheet, recorded)
+    {
+        internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index)
+        {
+            GanttTableColumn definition = GanttTableSchema.Default.Columns[index - 1];
+
+            Mock<Excel.Range> entire = new();
+            entire.SetupGet(c => c.Hidden).Returns(true);
+            entire.SetupSet(c => c.Hidden = It.IsAny<object>())
+                .Callback((object value) => Recorded.Add($"Hidden:{definition.Name}={value}"));
+
+            Mock<Excel.Range> range = new();
+            range.SetupGet(r => r.Locked).Returns(definition.IsLocked);
+            range.SetupSet(r => r.Locked = It.IsAny<object>())
+                .Callback((object value) => Recorded.Add($"Locked:{definition.Name}={value}"));
+            range.SetupGet(r => r.EntireColumn).Returns(entire.Object);
+
+            Mock<Excel.ListColumn> column = new();
+            column.SetupGet(c => c.Range).Returns(range.Object);
+            column.SetupGet(c => c.Name).Returns(definition.Name);
             return column.Object;
         }
     }
