@@ -1603,10 +1603,50 @@ public class GanttRibbonTests
         service.SetPreset(SizePresets.Presentation16x9);
         Assert.Equal(2, GanttRibbon.GetSize(null, service));
 
-        // A workbook that names no preset reads as "nothing selected".
+        // A workbook that names no preset reports the first item, because
+        // Excel has no "nothing selected" state for this callback.
         var empty = new RibbonStateService();
         empty.SetCatalogueWriter(null);
-        Assert.Equal(-1, GanttRibbon.GetSize(null, empty));
+        Assert.Equal(0, GanttRibbon.GetSize(null, empty));
+    }
+
+    /// <summary>
+    /// The live defect of 2026-11-13: on a blank sheet <c>GetSize</c> returned
+    /// -1, and Excel rejected it with "The callback function GetSize on control
+    /// ddnSize returned an invalid value". Every reachable state must name a real
+    /// item, including the state where no workbook, table, or preset exists.
+    /// </summary>
+    [Fact]
+    public void GetSize_never_returns_an_negative_index()
+    {
+        var unarmed = new RibbonStateService();
+        unarmed.SetCatalogueWriter(null);
+
+        int index = GanttRibbon.GetSize(null, unarmed);
+
+        Assert.InRange(index, 0, SizePresets.All.Count - 1);
+    }
+
+    /// <summary>
+    /// The dropdown's items <em>are</em> the catalogue, in order. An item added
+    /// to one without the other would let <c>GetSize</c> name an index the
+    /// dropdown cannot resolve — the same "invalid value" the host reported for
+    /// a negative index.
+    /// </summary>
+    [Fact]
+    public void The_size_dropdown_items_are_the_size_preset_catalogue_in_order()
+    {
+        XDocument document = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = document.Root!.Name.Namespace;
+        string[] itemIds =
+        [
+            .. document.Descendants(ns + "dropDown")
+                .Where(dropDown => (string?)dropDown.Attribute("id") == RibbonControlIds.SizeDropdown)
+                .SelectMany(dropDown => dropDown.Elements(ns + "item"))
+                .Select(item => (string?)item.Attribute("id") ?? string.Empty),
+        ];
+
+        Assert.Equal(SizePresets.All.Select(preset => preset.Key), itemIds);
     }
 
     /// <summary>

@@ -2172,12 +2172,19 @@ public class GanttRibbon : ExcelRibbon
     /// <summary>
     /// The selected index of the Size dropdown (R5.16a). The item list mirrors
     /// <see cref="SizePresets.All"/>, so the index is a projection of the stored
-    /// preset rather than a second list. Returns -1 when the workbook names no
-    /// preset: Excel renders that as "nothing selected", never a phantom item.
-    /// Never throws.
+    /// preset rather than a second list. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <returns>The zero-based index of the current preset, or -1.</returns>
+    /// <returns>The zero-based index of the current preset; the first item when none is stored.</returns>
+    /// <remarks>
+    /// Never returns a negative index. Excel's <c>getSelectedItemIndex</c> has no
+    /// "nothing selected" state and rejects a negative value in the live host
+    /// with "The callback function GetSize ... returned an invalid value", which
+    /// is what a blank sheet produced on 2026-11-13. A workbook that names no
+    /// preset reports the first item, the same paper the add-in defaults to, and
+    /// the index is clamped to the catalogue so a preset added to Core without a
+    /// matching ribbon item cannot report an out-of-range index.
+    /// </remarks>
     public int GetSize(IRibbonControl control) => GetSize(control, RibbonStateService.Instance);
 
     /// <summary>
@@ -2187,33 +2194,41 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The zero-based index of the current preset, or -1.</returns>
+    /// <returns>A valid zero-based index into the dropdown's items; never negative.</returns>
     internal static int GetSize(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        int lastIndex = SizePresets.All.Count - 1;
+        if (lastIndex < 0)
+        {
+            // No catalogue at all: the dropdown has no items, so there is
+            // nothing to select and nothing Excel can validate.
+            return 0;
+        }
+
 #pragma warning disable CA1031
         try
         {
             SizePreset? current = stateService.GetPreset();
             if (current is null)
             {
-                return -1;
+                return 0;
             }
 
             for (int index = 0; index < SizePresets.All.Count; index++)
             {
                 if (string.Equals(SizePresets.All[index].Key, current.Key, StringComparison.Ordinal))
                 {
-                    return index;
+                    return Math.Min(index, lastIndex);
                 }
             }
 
-            return -1;
+            return 0;
         }
         catch
         {
-            return -1;
+            return 0;
         }
 #pragma warning restore CA1031
     }
