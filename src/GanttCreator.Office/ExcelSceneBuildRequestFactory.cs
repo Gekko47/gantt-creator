@@ -35,7 +35,7 @@ namespace GanttCreator.Office;
 /// four values and asserts the exact request produced.
 /// </para>
 /// </remarks>
-public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : ISceneBuildRequestFactory
+public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : ISceneBuildRequestFactory
 {
     /// <summary>
     /// The columns the live panel measures, in panel order.
@@ -565,11 +565,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     public static IReadOnlyList<string> MeasuredColumns => MeasuredColumnsCore;
 
     /// <summary>
+    /// The caller's current day, as an injectable seam.
+    /// </summary>
+    /// <returns>The host's current date.</returns>
+    /// <remarks>
+    /// Core never reads a clock, so the factory supplies the day that
+    /// <see cref="PlotRangeResolver"/> anchors its empty-table fallback to. It is virtual
+    /// so a contract test can pin the default plot range without depending on the
+    /// machine's date, which would otherwise fail once a year.
+    /// </remarks>
+    internal virtual DateOnly Today() => DateOnly.FromDateTime(DateTime.Today);
+
+    /// <summary>
     /// Resolves the inclusive plot range from the per-end modes (R5.1): each end
     /// is automatic (derived from the events, padded) or explicit (the
     /// user-supplied date). The extent is then snapped outward to whole months.
     /// </summary>
-    private static bool TryResolveDateRange(
+    private bool TryResolveDateRange(
         IReadOnlyList<GanttEvent> events,
         IReadOnlyDictionary<string, string> settings,
         out DateOnly plotStart,
@@ -599,7 +611,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             finishModeText,
             startDateText,
             finishDateText,
-            padding);
+            padding,
+            today: Today());
         if (!range.Succeeded)
         {
             refusal = MapRangeRefusal(range.Refusal!.Value);

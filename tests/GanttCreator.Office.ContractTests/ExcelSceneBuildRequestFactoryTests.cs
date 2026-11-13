@@ -850,18 +850,33 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
-    /// Rows with no start date refuse rather than producing a chart over a range
-    /// invented from the epoch.
+    /// A table with no dated row plots the current calendar year rather than refusing,
+    /// which is the owner's default plot range (R5.18j).
     /// </summary>
+    /// <remarks>
+    /// This replaces a test that asserted the refusal. The refusal left a freshly
+    /// initialised workbook with no chart drawn at all — the reported "the chart looks
+    /// broken until the first refresh" — so an empty table now falls back to 1 January to
+    /// 31 December of the caller's day, and never to the epoch. The day is pinned through
+    /// the factory's seam so the assertion cannot depend on the machine's date.
+    /// </remarks>
     [Fact]
-    public void No_event_with_a_date_refuses_rather_than_inventing_a_range()
+    public void A_table_with_no_dated_row_plots_the_current_calendar_year()
     {
-        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        ExcelSceneBuildRequestFactory factory = new PinnedTodayFactory(new DateOnly(2026, 6, 15), Metrics());
 
         SceneBuildRequestOutcome outcome = factory.Create([], new Dictionary<string, string>(), StyleRegistry(), Grid(), new Dictionary<string, double>());
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(SceneBuildRequestRefusal.NoPlotRange, outcome.Refusal);
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(new DateOnly(2026, 1, 1), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2026, 12, 31), outcome.Request.PlotFinish);
+    }
+
+    /// <summary>The factory with its day pinned, so an empty-table range is deterministic.</summary>
+    private sealed class PinnedTodayFactory(DateOnly today, ITextMetrics? metrics = null)
+        : ExcelSceneBuildRequestFactory(metrics)
+    {
+        internal override DateOnly Today() => today;
     }
 
     /// <summary>A single-day span is widened rather than refused as unreadable.</summary>

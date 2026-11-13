@@ -65,6 +65,64 @@ public sealed class PlotRangeResolverTests
     }
 
     [Fact]
+    public void An_empty_table_plots_the_current_calendar_year_when_today_is_known()
+    {
+        // Owner ruling: a freshly initialised workbook must plot something rather than
+        // refuse. An empty table has no extent, so a known day supplies that day's
+        // calendar year - 1 January to 31 December, not a padded or snapped range.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [],
+            "DataRange",
+            "DataRange",
+            null,
+            null,
+            paddingDays: 3,
+            today: new DateOnly(2026, 6, 15));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2026, 1, 1), outcome.Start);
+        Assert.Equal(new DateOnly(2026, 12, 31), outcome.Finish);
+    }
+
+    [Fact]
+    public void An_empty_table_still_refuses_without_a_known_today()
+    {
+        // The guard's positive case: with no day to anchor a calendar year to, the
+        // resolver must refuse rather than invent a year. This is the behaviour every
+        // caller had before the fallback existed, and it is what keeps the resolver
+        // deterministic for a caller that cannot name the day.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [],
+            "DataRange",
+            "DataRange",
+            null,
+            null,
+            paddingDays: 3);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PlotRangeRefusal.NoPlotRange, outcome.Refusal);
+    }
+
+    [Fact]
+    public void An_explicit_end_still_wins_over_the_calendar_year_fallback()
+    {
+        // Modes never blend, and the fallback supplies only the end that had nothing: an
+        // explicit start is not widened to the year's first day.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [],
+            "Explicit",
+            "DataRange",
+            "10-Jan-26",
+            null,
+            paddingDays: 3,
+            today: new DateOnly(2026, 6, 15));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2026, 1, 10), outcome.Start);
+        Assert.Equal(new DateOnly(2026, 12, 31), outcome.Finish);
+    }
+
+    [Fact]
     public void Automatic_mode_with_no_start_date_refuses_rather_than_inventing_a_range()
     {
         var dateless = Event(1, GanttEntityType.Splitter, start: null, finish: null) with

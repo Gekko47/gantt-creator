@@ -1663,6 +1663,17 @@ internal class RibbonStateService
         settings.TryGetValue("SizePreset", out string? text) ? SizePresets.ByKey(text) : null;
 
     /// <summary>
+    /// The caller's current day, as an injectable seam.
+    /// </summary>
+    /// <returns>The host's current date.</returns>
+    /// <remarks>
+    /// Core never reads a clock, so the ribbon supplies the day the plot-range resolver
+    /// anchors its empty-table fallback to. Virtual so a test can pin the default range
+    /// instead of depending on the machine's date.
+    /// </remarks>
+    internal virtual DateOnly Today() => DateOnly.FromDateTime(DateTime.Today);
+
+    /// <summary>
     /// Derives the effective display dates for both edit boxes (fix plan
     /// ruling 1): the explicit date in explicit mode, the TRUE chart plot
     /// bound in automatic mode (the month-snapped extent Refresh renders, not
@@ -1700,7 +1711,8 @@ internal class RibbonStateService
                         _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit),
                         _state.PlotStartDate,
                         _state.PlotFinishDate,
-                        padding);
+                        padding,
+                        today: Today());
 
                     if (range.Succeeded && range.Start is { } resolvedStart && range.Finish is { } resolvedFinish)
                     {

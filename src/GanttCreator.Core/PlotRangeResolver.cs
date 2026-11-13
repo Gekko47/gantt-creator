@@ -30,14 +30,29 @@ public static class PlotRangeResolver
     /// <param name="startDateText">The stored <c>PlotStartDate</c> text.</param>
     /// <param name="finishDateText">The stored <c>PlotFinishDate</c> text.</param>
     /// <param name="paddingDays">The automatic-mode padding, in days per side.</param>
+    /// <param name="today">
+    /// The caller's current day, or <see langword="null"/> when the caller has none to
+    /// offer. It is an input rather than a clock read, because Core must stay
+    /// deterministic and a test that depended on the machine's date would fail once a
+    /// year.
+    /// </param>
     /// <returns>The raw extent, or the typed refusal.</returns>
+    /// <remarks>
+    /// When an end is in <see cref="PlotRangeMode.DataRange"/> but the events carry no
+    /// extent at all — the empty-table case a freshly initialised workbook is in — a known
+    /// <paramref name="today"/> falls back to that day's calendar year, which is the
+    /// owner's default plot range. Without it the refusal stands, so a caller that cannot
+    /// name the day never gets an invented year. An explicit end is never widened or
+    /// narrowed by the fallback: the fallback only supplies the end that had nothing.
+    /// </remarks>
     public static PlotRangeOutcome TryResolve(
         IReadOnlyList<GanttEvent>? events,
         string? startModeText,
         string? finishModeText,
         string? startDateText,
         string? finishDateText,
-        int paddingDays)
+        int paddingDays,
+        DateOnly? today = null)
     {
         if (events is null)
         {
@@ -74,7 +89,17 @@ public static class PlotRangeResolver
         {
             if (!TryDeriveDataExtent(events, paddingDays, out DateOnly dataStart, out DateOnly dataFinish))
             {
-                return new PlotRangeOutcome(null, null, PlotRangeRefusal.NoPlotRange);
+                // An empty table has no extent to derive. Refusing here is what left a
+                // freshly initialised workbook with no chart drawn at all — the reported
+                // "the chart looks broken until the first refresh". With a known day the
+                // range becomes that day's calendar year, which is the owner's default.
+                if (today is not { } anchor)
+                {
+                    return new PlotRangeOutcome(null, null, PlotRangeRefusal.NoPlotRange);
+                }
+
+                dataStart = new DateOnly(anchor.Year, 1, 1);
+                dataFinish = new DateOnly(anchor.Year, 12, 31);
             }
 
             start ??= dataStart;
