@@ -83,9 +83,51 @@ public sealed class ExcelOutlineGroupWriterTests
         /// </summary>
         internal int BodyRowCount { get; set; }
 
+        /// <summary>
+        /// The <c>Description</c> body range R5.18i indents. Null by default, so every test
+        /// written before that pass keeps exercising the outline-only path with no
+        /// indentation read or write at all.
+        /// </summary>
+        internal Excel.Range? IndentBody { get; set; }
+
+        /// <summary>The column names the adapter asked for, in order.</summary>
+        internal List<string> IndentColumnRequests { get; } = [];
+
+        /// <summary>
+        /// The indent each body row already carries. A row with no entry reports zero, which
+        /// is what a freshly initialised sheet holds.
+        /// </summary>
+        internal Dictionary<int, int> InitialIndents { get; set; } = [];
+
+        /// <summary>Every indent this pass wrote, as (body row, level).</summary>
+        internal List<(int BodyRow, int Level)> IndentWrites { get; } = [];
+
+        internal override Excel.Range? GetColumnBody(Excel.ListObject source, string columnName)
+        {
+            IndentColumnRequests.Add(columnName);
+            return IndentBody;
+        }
+
+        internal override Excel.Range GetCellAt(Excel.Range column, int index)
+        {
+            _indentBodyRow = index;
+            return new Mock<Excel.Range>().Object;
+        }
+
+        internal override object? ReadIndentLevelValue(Excel.Range cell) =>
+            InitialIndents.TryGetValue(_indentBodyRow, out int level) ? level : 0;
+
+        internal override bool WriteIndentLevel(Excel.Range cell, int level)
+        {
+            IndentWrites.Add((_indentBodyRow, level));
+            return true;
+        }
+
         private int _pendingFirst;
 
         private int _pendingLast;
+
+        private int _indentBodyRow;
 
         private Excel.Range SourceBody { get; } = new Mock<Excel.Range>().Object;
     }
@@ -671,5 +713,129 @@ public sealed class ExcelOutlineGroupWriterTests
             []);
 
         Assert.Throws<ArgumentNullException>(() => writer.Apply(null!));
+    }
+
+    /// <summary>
+    /// The indentation pass writes one step into the <c>Description</c> cell of every
+    /// grouped child, and leaves the parent's zero step untouched (R5.18i).
+    /// </summary>
+    [Fact]
+    public void A_grouped_child_is_indented_in_the_description_column()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            IndentBody = new Mock<Excel.Range>().Object,
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, writer.IndentWrites.Count);
+        Assert.Equal((2, 1), writer.IndentWrites[0]);
+        Assert.Equal((3, 1), writer.IndentWrites[1]);
+
+        // Addressed by the schema's display name, never by a column position: the left-hand
+        // columns move with the workbook layout, and an index would indent whatever sat there.
+        Assert.Equal(ExcelOutlineGroupWriter.IndentColumnName, Assert.Single(writer.IndentColumnRequests));
+    }
+
+    /// <summary>
+    /// A row that was a child and is now top level has its indent taken back, so a promoted
+    /// row cannot keep a step that no bracket explains.
+    /// </summary>
+    [Fact]
+    public void A_promoted_child_is_re_levelled_to_zero()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 2,
+            IndentBody = new Mock<Excel.Range>().Object,
+
+            // Body row 2 was a child of row 1 on the previous pass.
+            InitialIndents = new Dictionary<int, int> { [2] = 1 },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply([Event(1, NewId()), Event(2, NewId())]);
+
+        Assert.True(outcome.Succeeded);
+        (int bodyRow, int level) = Assert.Single(writer.IndentWrites);
+        Assert.Equal(2, bodyRow);
+        Assert.Equal(0, level);
+    }
+
+    /// <summary>
+    /// A table whose indents already match the plan writes nothing, so a no-op Refresh does
+    /// not dirty the workbook for a pass that changed no presentation.
+    /// </summary>
+    [Fact]
+    public void An_already_indented_row_is_not_rewritten()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            IndentBody = new Mock<Excel.Range>().Object,
+            InitialIndents = new Dictionary<int, int> { [2] = 1, [3] = 1 },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(writer.IndentWrites);
+    }
+
+    /// <summary>
+    /// A table without the visible <c>Description</c> column still gets its outline: the
+    /// missing column is a structure the Repair command owns, and indentation is
+    /// presentation, so it is skipped rather than turned into a refusal.
+    /// </summary>
+    [Fact]
+    public void A_table_without_the_description_column_still_applies_the_outline()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.GroupsApplied);
+        Assert.Empty(writer.IndentWrites);
+        Assert.Equal(ExcelOutlineGroupWriter.IndentColumnName, Assert.Single(writer.IndentColumnRequests));
     }
 }

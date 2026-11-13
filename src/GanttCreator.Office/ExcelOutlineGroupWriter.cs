@@ -73,6 +73,13 @@ public class ExcelOutlineGroupWriter(
     /// <summary>The outline level of a child row, one group beneath its parent.</summary>
     internal const int ChildOutlineLevel = 2;
 
+    /// <summary>
+    /// The one visible column that carries the hierarchy indent (R5.18i). The name is the
+    /// schema's display name, never a column position: the schema's left-hand columns move
+    /// with the workbook layout, and an index would indent whatever happened to sit there.
+    /// </summary>
+    internal const string IndentColumnName = "Description";
+
     /// <inheritdoc />
     public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction)
     {
@@ -345,7 +352,82 @@ public class ExcelOutlineGroupWriter(
             }
         }
 
+        ApplyIndentation(table, plan, bodyRowCount);
+
         return OutlineGroupOutcome.Ok(applied, ungrouped);
+    }
+
+    /// <summary>
+    /// Indents each grouped row's <c>Description</c> cell and resets every other row to
+    /// zero, in the pass that owns the outline (R5.18i).
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <param name="plan">The outline plan this pass applied.</param>
+    /// <param name="bodyRowCount">How many body rows the table has.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the indent is formatting, not data.</b> Nothing in the table's values moves, so
+    /// the reader, the chart and copy/paste are unaffected; only the cell's
+    /// <c>IndentLevel</c> changes, which is exactly the control Excel's own "Increase
+    /// Indent" writes.
+    /// </para>
+    /// <para>
+    /// <b>Why each row is read before it is written.</b> A Refresh runs on every
+    /// chart-affecting edit, and writing an unchanged indent would dirty the workbook for a
+    /// pass that changed nothing — the same reason the outline passes skip an
+    /// already-grouped span. The read is one property on one cell per body row.
+    /// </para>
+    /// <para>
+    /// <b>Why a missing column is not a refusal.</b> A table without the visible
+    /// <c>Description</c> column is a structure the Repair command owns. The outline above
+    /// this call has already applied, and indentation is presentation, so the pass reports
+    /// what it did and leaves the structure to the command that repairs it.
+    /// </para>
+    /// </remarks>
+    private void ApplyIndentation(Excel.ListObject table, OutlineGroupPlan plan, int bodyRowCount)
+    {
+        if (bodyRowCount == 0)
+        {
+            return;
+        }
+
+        Excel.Range? column = GetColumnBody(table, IndentColumnName);
+        if (column is null)
+        {
+            return;
+        }
+
+        IReadOnlyDictionary<int, int> indents = HierarchyIndentation.Plan(plan);
+        int indented = 0;
+        int levelled = 0;
+        for (int bodyRowNumber = 1; bodyRowNumber <= bodyRowCount; bodyRowNumber++)
+        {
+            Excel.Range cell = GetCellAt(column, bodyRowNumber);
+            int wanted = HierarchyIndentation.IndentFor(indents, bodyRowNumber);
+            int current = UnboxOutlineLevel(ReadIndentLevelValue(cell)) ?? 0;
+            if (current == wanted || !WriteIndentLevel(cell, wanted))
+            {
+                continue;
+            }
+
+            if (wanted > 0)
+            {
+                indented++;
+            }
+            else
+            {
+                levelled++;
+            }
+        }
+
+        if (indented == 0 && levelled == 0)
+        {
+            return;
+        }
+
+        _trace?.Invoke(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.indent indented={indented} reset={levelled}"));
     }
 
     /// <summary>
@@ -662,6 +744,73 @@ public class ExcelOutlineGroupWriter(
         ArgumentNullException.ThrowIfNull(range);
 
         range.OutlineLevel = level;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a list column's data body by its display name, so the indent is addressed
+    /// by name rather than by position. Test seam over the <c>ListColumns</c> collection,
+    /// the <c>ListColumn.Name</c> and <c>ListColumn.DataBodyRange</c> reads.
+    /// </summary>
+    /// <param name="table">The table to search.</param>
+    /// <param name="columnName">The exact, case-sensitive column display name.</param>
+    /// <returns>The column's body range, or <see langword="null"/> when it is absent or empty.</returns>
+    internal virtual Excel.Range? GetColumnBody(Excel.ListObject table, string columnName)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        Excel.ListColumns columns = table.ListColumns;
+        int count = columns.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.ListColumn column = columns[index];
+            if (column is not null
+                && string.Equals(column.Name, columnName, StringComparison.Ordinal))
+            {
+                return column.DataBodyRange;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns the cell at a one-based row offset inside a single-column range. Test seam
+    /// over the parameterised <c>Range.Cells</c> property.
+    /// </summary>
+    /// <param name="column">The single-column body range.</param>
+    /// <param name="index">The one-based body row.</param>
+    /// <returns>The cell range.</returns>
+    internal virtual Excel.Range GetCellAt(Excel.Range column, int index)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.Cells[index];
+    }
+
+    /// <summary>
+    /// Reads a cell's <c>IndentLevel</c>. The property is Variant-typed in the interop
+    /// assembly, so the value is unboxed by <see cref="UnboxOutlineLevel"/>; contract tests
+    /// override this seam to supply known levels.
+    /// </summary>
+    /// <param name="cell">The cell to read.</param>
+    /// <returns>The indent the host reports, boxed.</returns>
+    internal virtual object? ReadIndentLevelValue(Excel.Range cell)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+
+        return cell.IndentLevel;
+    }
+
+    /// <summary>Writes a cell's <c>IndentLevel</c>. Test seam over the Variant-typed setter.</summary>
+    /// <param name="cell">The cell to write.</param>
+    /// <param name="level">The indent level to write.</param>
+    /// <returns>Whether the host accepted the write.</returns>
+    internal virtual bool WriteIndentLevel(Excel.Range cell, int level)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+
+        cell.IndentLevel = level;
         return true;
     }
 }
