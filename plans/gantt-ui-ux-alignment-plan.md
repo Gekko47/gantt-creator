@@ -168,8 +168,20 @@ Two capability facts that shape the design:
   Slicing, so each commit is reviewable and green:
   1. Core visibility contract (toggleable columns, last-column refusal) + the schema 24 settings key
      + the Office port that reads and writes it. No host seam, no ribbon surface.
+     **Landed:** `GanttColumnVisibility` (`Parse`/`Format`/`Toggle`, `LastVisibleColumn`),
+     `HiddenColumns` in `GanttCatalogues.Settings`, schema 24 with the config anchor moved to A99
+     (the 27th settings key consumed the old blank row — the anchor invariant test caught it, as
+     designed) plus the hash re-pin, and `IColumnVisibilityPort` / `ExcelColumnVisibilityPort`
+     reading and applying the five offered columns' `Hidden` flags by name, resolution before
+     mutation, drift-only writes.
   2. The dropdown in `Ribbon.xml` and `RibbonStateService`, with **label** state first so the
-     behaviour is testable offline.
+     behaviour is testable offline. **Must also reconcile the two schema-driven writers**, or a
+     user-hidden column reappears on the next Refresh/Repair:
+     `ExcelColumnPresentationRestorer.EnsureClassification` and
+     `ExcelWorkbookRecovery.ApplyColumnPresentation` both force `column.IsHidden` from the schema,
+     so both must read the persisted set and write the effective visibility (engine-hidden ∪
+     user-hidden) instead. `ExcelWorkbookInitialiser.ApplyColumnPresentation` runs only on a
+     pristine sheet, so it needs no change.
   3. `getItemImage` with the rasterised Lucide tick/blank, an addition to the ribbon
      callback-signature rules, and the live-host verification of the bitmap conversion.
   Files: new ids in [`RibbonControlIds`](src/GanttCreator.AddIn/RibbonControlIds.cs), a new dropdown

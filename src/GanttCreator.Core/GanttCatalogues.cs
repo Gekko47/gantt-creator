@@ -58,7 +58,7 @@ public static class GanttCatalogues
 
     /// <summary>
     /// The anchor cell of <see cref="ConfigTableName"/> (ADR-0007 D7).
-    /// A98 rather than the original A90: the catalogue writer writes each
+    /// A99 rather than the original A90: the catalogue writer writes each
     /// table's cell values BEFORE creating the ListObject (so a refused add
     /// leaves clearable cells), and values written directly adjacent to an
     /// existing table are claimed by Excel's table auto-expand before the
@@ -67,11 +67,12 @@ public static class GanttCatalogues
     /// (tblGanttSettings reached row 89, making A90 adjacent) and every
     /// live Initialise began failing (defect 2026-10-09). R5.6a's six
     /// chart-chrome colour settings grew it again, to 25 keys reaching row
-    /// 95, so the anchor moved to A98. The blank-row invariant test ties
-    /// every anchor to the catalogue sizes, so future growth fails there
-    /// first.
+    /// 95, so the anchor moved to A98; R5.18h's <c>HiddenColumns</c> key took
+    /// it to 27 keys reaching row 97, so it moved once more to A99. The
+    /// blank-row invariant test ties every anchor to the catalogue sizes, so
+    /// future growth fails there first.
     /// </summary>
-    public const string ConfigAnchor = "A98";
+    public const string ConfigAnchor = "A99";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";
@@ -372,6 +373,18 @@ public static class GanttCatalogues
         // deliberately with NO password: this is accidental-edit prevention, not
         // security, and a password we do not store could never be re-entered.
         new("ProtectGanttSheet", "TRUE"),
+
+        // Schema version 24 (R5.18h). `HiddenColumns` stores the comma-separated schema
+        // display names of the table columns the USER has hidden from the ribbon's column
+        // dropdown, so the choice survives opening the workbook in another instance.
+        //
+        // It is one key rather than one key per column because the set is small, ordered
+        // and written by exactly one method (`GanttColumnVisibility.Format`), and because
+        // a per-column group would multiply the schema by five for the same information.
+        // The value is strictly parsed: an unreadable list is REFUSED, never silently read
+        // as "nothing hidden", which would un-hide the user's columns and look like a
+        // fresh workbook. A blank default means nothing is hidden.
+        new(GanttColumnVisibility.SettingKey, string.Empty),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

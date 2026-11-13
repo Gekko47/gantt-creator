@@ -357,12 +357,13 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_26_approved_keys()
+    public void Settings_contains_exactly_the_27_approved_keys()
     {
         // R5.6a added the six chart-chrome colour keys (schema version 20),
         // taking 19 to 25. ADR-0055 added ProtectGanttSheet (schema version
-        // 22), taking 25 to 26.
-        Assert.Equal(26, GanttCatalogues.Settings.Count);
+        // 22), taking 25 to 26. R5.18h added HiddenColumns (schema version 24),
+        // taking 26 to 27.
+        Assert.Equal(27, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -397,6 +398,7 @@ public class GanttConfigCatalogueTests
         "YearHeaderColour",
         "PeriodHeaderColour",
         "ProtectGanttSheet",
+        "HiddenColumns",
     ];
 
     [Fact]
@@ -941,9 +943,19 @@ public class GanttConfigCatalogueTests
     /// carries the older hash and is reported as a mismatch; the remedy is
     /// Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Advanced to 24 by R5.18h</b>: <c>tblGanttSettings</c> gains the
+    /// <c>HiddenColumns</c> key (blank by default, meaning nothing is hidden)
+    /// and the schema seed line moves from 23 to 24, so both halves of the
+    /// hashed text change again. The config table's anchor also moves from
+    /// A98 to A99 to keep the required blank row, which the anchor invariant
+    /// test enforces but the hash does not cover. A version-23 workbook
+    /// carries the older hash and is reported as a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "bc13cec642aebae212aafdd73b0188fac765104a5d30dd102b2c02ec0ddb5a50";
+        "301b70d282b8d271826fc6a7492980c4a34e748029bb914f3319fcc379bd61ee";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

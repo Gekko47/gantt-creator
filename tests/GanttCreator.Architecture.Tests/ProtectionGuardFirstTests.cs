@@ -146,6 +146,13 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ClearHighlight"),
         new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ReconcileHighlights"),
         new("src/GanttCreator.Office/ExcelWarningHighlighter.cs", "HighlightWarnings"),
+        // R5.18h: the column-visibility port hides and unhides the five authoring
+        // columns the ribbon's dropdown offers, which is user-visible worksheet
+        // state, so it is a data mutation under ADR-0008 D4. Listed at "Apply",
+        // the only mutating member; it queries the target guard after resolving
+        // the workbook and table and before the first flag write, because the
+        // refusal must precede any mutation rather than interrupt it.
+        new("src/GanttCreator.Office/ExcelColumnVisibilityPort.cs", "Apply"),
     ];
 
     /// <summary>
@@ -206,6 +213,10 @@ public sealed class ProtectionGuardFirstTests
         // The port for the column-classification restorer. It declares no mutation of
         // its own; the mutating implementation is registered in MutatingAdapters above.
         "src/GanttCreator.Office/IColumnPresentationPort.cs",
+        // R5.18h: the column-visibility port's interface and outcome types. A
+        // declaration plus two records -- no interop proxy, no statement, nothing to
+        // guard. Its implementation is registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IColumnVisibilityPort.cs",
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/ExcelSheetChangeAnalyzer.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",

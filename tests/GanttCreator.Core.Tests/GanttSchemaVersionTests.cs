@@ -78,7 +78,11 @@ public class GanttSchemaVersionTests
         // 22 adds `ProtectGanttSheet` (ADR-0055).
         // 23 reorders tblGanttData to lead with the visible columns and moves the
         // table to column B so column A can hold the spacer gutter (R5.18k).
-        Assert.Equal(23, GanttSchemaVersion.CurrentSchemaVersion);
+        // 24 adds `HiddenColumns` to tblGanttSettings so the R5.18h column-
+        // visibility choice survives reopening the workbook. A blank value means
+        // nothing is hidden; a value that does not parse is refused, never
+        // defaulted. No migration (ADR-0029 D6); Initialise is the remedy.
+        Assert.Equal(24, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

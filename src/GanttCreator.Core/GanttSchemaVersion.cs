@@ -200,6 +200,19 @@ public static class GanttSchemaVersion
     /// is Initialise.
     /// </para>
     /// <para>
+    /// <b>Version 24 is R5.18h's persisted column visibility.</b>
+    /// <c>tblGanttSettings</c> gains <c>HiddenColumns</c>, which stores the schema display
+    /// names of the table columns the user hid from the ribbon's column dropdown. The key
+    /// is required rather than optional because the choice must survive opening the
+    /// workbook in another instance, and a missing row would make every reopening look
+    /// like a fresh workbook and un-hide the user's columns. The extra row moves the
+    /// settings table's extent from row 95 to row 97, so the config table's anchor moves
+    /// from A98 to A99 to keep the blank row Excel's table auto-expand requires. A
+    /// version-23 workbook's settings table lacks the row, so its stored catalogue hash no
+    /// longer matches and it reports a mismatch; the remedy is Initialise (ADR-0029 D6, no
+    /// migration).
+    /// </para>
+    /// <para>
     /// <b>Version 23 is R5.18k's visible-columns-first table (owner-approved).</b>
     /// <c>tblGanttData</c> now leads with <c>Type</c>, <c>Description</c>, <c>Start</c>,
     /// <c>Finish</c> and <c>Duration</c>, and the engine columns follow them instead of
@@ -223,5 +236,5 @@ public static class GanttSchemaVersion
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 23;
+    public const int CurrentSchemaVersion = 24;
 }
