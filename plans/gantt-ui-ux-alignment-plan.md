@@ -272,6 +272,34 @@ Two capability facts that shape the design:
   [`LiveDataPanelBounds`](src/GanttCreator.Core/Scene/SceneBuilder.cs:844) so the frame encloses the
   gutter exactly as it encloses the top and bottom padding rows. Panel projection and the plot anchor
   are unchanged by it.
+  **R5.18k OFFICE GATE FAILED (2026-11-14) — 9 of 62 integration tests, all stale
+  expectations from the reorder, none of them a product defect.** The gate had never been
+  run for this item; `verify-office.ps1` on `805f8e3` produced two clusters and both are
+  the test's literals, not the code's behaviour:
+  1. *The plot anchor moved with the table, as designed.*
+     `Initialise_adopts_a_blank_worksheet_and_builds_the_supported_state` and
+     `Repair_restores_visibility_plot_anchor_and_typeoptions` expect
+     `='Gantt Data'!$R$3` and the host reports `=…!$S$3`. `PlotAnchorColumnIndex` is
+     `TableOriginColumnIndex + Columns.Count` = 2 + 17 = 19 = **S**, which is column
+     after the last table column (B..R). The expectation is the pre-reorder A..Q layout.
+     Fix: derive the expected reference from `GanttSheetLayout.BuildPlotAnchorRefersTo`
+     instead of a literal.
+  2. *The row helpers kept positional literals.* `AddRowIntegrationTests.AssertId` reads
+     `row.Range.Cells[1, 1]`, which is now `Type`, so an Id assertion compares against
+     "As-Planned Activity"; `AssertRow` passes `("Id", 1)`, `("Type", 4)`,
+     `("StyleKey", 11)` to `ColumnValue`, whose whole point is the **cross-check** between
+     the name and the index — `Id` is now position 6, so the cross-check fires before the
+     cell is read. Fix: drop the literal arguments and let `ColumnValue` resolve the index
+     from `GanttTableSchema`, which is what the helper already does internally;
+     `AssertId` becomes `ColumnValue(range, "Id")`.
+  3. The remaining three (`Insert_appends_all_three_command_rows_without_rendering`
+     expecting 0 and seeing 1, `Repair_confirmed_identity_damage_changes_only_duplicate_id_cells`
+     finding two Id cells, and `ProtectionToggle…` at line 97) need the same treatment
+     after those two helpers are fixed — two of them almost certainly collapse with it,
+     so fix the helpers first and re-run before touching the third.
+  **Do not change the product to satisfy these.** Every observed value is the one the
+  schema-23 contract specifies; the tests are the stale side.
+
   **Repair, integrity and validation parity (explicit D6 requirement):**
   [`ExcelConfigIntegrityChecker`](src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs:130) origin
   check and the positional header-alignment/structure-repair plans must accept origin column 2 and
