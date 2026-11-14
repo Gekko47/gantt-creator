@@ -562,9 +562,13 @@ public class GanttRibbonTests
         // query would let a gated toggle be added or dropped without this pin noticing. They therefore
         // appear in the pinned list after every <button>, which is why they are listed there rather
         // than beside the buttons they sit next to in the XML.
+        // R5.18h's column control became a `menu` (owner ruling 2026-11-14), so menus
+        // join the query between dropdowns and edit boxes; a gated menu dropped or added
+        // without this pin noticing is exactly what the pin exists to stop.
         var gatedIds = doc.Descendants(ns + "button")
             .Concat(doc.Descendants(ns + "toggleButton"))
             .Concat(doc.Descendants(ns + "dropDown"))
+            .Concat(doc.Descendants(ns + "menu"))
             .Concat(doc.Descendants(ns + "editBox"))
             .Where(button => button.Attribute("getEnabled") is not null
                 && button.Attribute("getEnabled")?.Value != "GetPlotDimensionsEnabled")
@@ -617,17 +621,18 @@ public class GanttRibbonTests
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
                 RibbonControlIds.CustomStyle,
-                // R5.18h: the column-visibility dropdown sits in its own Columns
-                // group after the Labels group, gated on workbook + initialised on
-                // the Gantt sheet like the layout controls.
-                RibbonControlIds.ColumnsDropDown,
                 // R5.16a: the merged Chart group holds the dates and the scale;
                 // the Size group holds the size dropdown and the margin pair.
-                // Dropdowns are listed before edit boxes because the query
-                // groups by element type, not by document order.
+                // Dropdowns are listed before edit boxes, and menus between the
+                // two, because the query groups by element type rather than by
+                // document order.
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.SizeDropdown,
                 RibbonControlIds.Margin,
+                // R5.18h: the column-visibility MENU sits in its own Columns group
+                // after the Labels group, gated on workbook + initialised on the
+                // Gantt sheet like the layout controls. Its rows inherit its gate.
+                RibbonControlIds.ColumnsMenu,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
                 RibbonControlIds.MarginCm,
@@ -658,6 +663,46 @@ public class GanttRibbonTests
         var service = new RibbonStateService();
         Assert.Equal("W", GanttRibbon.GetPlotWidthLabel(null, service));
         Assert.Equal("H", GanttRibbon.GetPlotHeightLabel(null, service));
+    }
+
+    [Fact]
+    public void The_columns_control_is_one_large_menu_whose_rows_are_the_columns()
+    {
+        // Owner ruling 2026-11-14: the control is ONE large button whose rows are the
+        // columns, not a "Show" label plus a combo. A `menu` is a large ribbon control, so
+        // the group holds no box and no dropDown any more. The rows are a projection of the
+        // Core contract's toggleable set: a column added there without a row here fails, and
+        // a row naming a column the contract does not offer fails too.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        XElement menu = Assert.Single(
+            doc.Descendants(ns + "menu"),
+            element => element.Attribute("id")?.Value == RibbonControlIds.ColumnsMenu);
+
+        string[] expected =
+        [
+            .. GanttColumnVisibility.ToggleableColumnNames
+                .Select(name => RibbonControlIds.ColumnItemPrefix + name),
+        ];
+        Assert.Equal(
+            expected,
+            menu.Elements(ns + "button").Select(element => element.Attribute("id")!.Value));
+
+        Assert.All(
+            menu.Elements(ns + "button"),
+            row =>
+            {
+                Assert.Equal("GetColumnVisibilityLabel", row.Attribute("getLabel")?.Value);
+                Assert.Equal("GetColumnVisibilityImage", row.Attribute("getImage")?.Value);
+                Assert.Equal("OnColumnVisibilityToggle", row.Attribute("onAction")?.Value);
+            });
+
+        // The old combo is gone: a leftover dropDown would render beside the menu.
+        Assert.DoesNotContain(
+            doc.Descendants(ns + "dropDown"),
+            element => element.Attribute("id")?.Value == "ddnColumnVisibility");
     }
 
     [Fact]

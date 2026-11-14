@@ -346,8 +346,8 @@ internal sealed record RibbonState(
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         // R5.18h: hiding a column is a table-presentation command, so it needs an
         // initialised table on the Gantt sheet and nothing else — the same gate the
-        // layout controls use.
-        RibbonControlIds.ColumnsDropDown =>
+        // layout controls use. The MENU is gated; its rows inherit the menu's state.
+        RibbonControlIds.ColumnsMenu =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         _ => true,
     };

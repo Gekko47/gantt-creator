@@ -105,14 +105,21 @@
             <dropDown id="ddnCustomStyle" keytip="CS" screentip="Custom style for the row" supertip="Assigns a custom style to the selected Custom Activity or Custom Milestone row." getEnabled="GetEnabled" getItemCount="GetCustomStyleCount" getItemID="GetCustomStyleItemID" getItemLabel="GetCustomStyleItemLabel" getSelectedItemIndex="GetCustomStyleSelectedIndex" onAction="OnCustomStyleChange"/>
           </box>
         </group>
-        <!-- R5.18h: a toggle surface, not a selection: every item flips one
-             column, so there is no getSelectedItemIndex and the item's own label
-             states the current visibility until slice 3 adds the tick image. -->
+        <!-- R5.18h, surface revised 2026-11-14: ONE large button whose rows are the
+             columns themselves. A `menu` is a large ribbon control, so the group no
+             longer needs a "Show" label plus a combo, and each row is a normal menu
+             row: a toggle, not a selection, whose own label and 16px tick/dash state
+             the current visibility. The five ids are `col` + the schema display name,
+             exactly the ids the Core contract's toggleable set names, so the rows are a
+             projection of the catalogue rather than a second list. -->
         <group id="grpColumns" label="Columns" getVisible="GetVisible">
-          <box id="boxColumnVisibility" boxStyle="horizontal">
-            <labelControl id="lblColumnVisibility" label="Show"/>
-            <dropDown id="ddnColumnVisibility" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" getItemCount="GetColumnVisibilityCount" getItemID="GetColumnVisibilityItemID" getItemLabel="GetColumnVisibilityItemLabel" getItemImage="GetColumnVisibilityItemImage" onAction="OnColumnVisibilityChange"/>
-          </box>
+          <menu id="mnuColumnVisibility" label="Show columns" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled">
+            <button id="colType" keytip="1" screentip="Show or hide Type" supertip="Shows or hides the Type column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+            <button id="colDescription" keytip="2" screentip="Show or hide Description" supertip="Shows or hides the Description column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+            <button id="colStart" keytip="3" screentip="Show or hide Start" supertip="Shows or hides the Start column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+            <button id="colFinish" keytip="4" screentip="Show or hide Finish" supertip="Shows or hides the Finish column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+            <button id="colDuration" keytip="5" screentip="Show or hide Duration" supertip="Shows or hides the Duration column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+          </menu>
         </group>
         <group id="grpStyleTheme" label="Style" getVisible="GetVisible">
           <button id="btnThemeSettings" label="Theme settings..." imageMso="ThemesGallery" keytip="T" screentip="Open the theme settings" supertip="Edits entity styles, chart chrome, and custom styles. Changes apply to the chart after they are saved." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>

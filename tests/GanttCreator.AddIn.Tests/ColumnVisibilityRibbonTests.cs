@@ -73,21 +73,26 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         return null;
     }
 
-    /// <summary>The dropdown offers exactly the columns the Core contract names.</summary>
+    /// <summary>
+    /// Every row the menu declares names a column the Core contract offers, and the row's
+    /// label states that column's live visibility. An id the menu never issued — an engine
+    /// column, or none at all — yields nothing rather than a guessed label.
+    /// </summary>
     [Fact]
-    public void The_dropdown_offers_one_item_per_offered_column()
+    public void The_menu_rows_name_every_offered_column()
     {
-        Assert.Equal(GanttColumnVisibility.ToggleableColumnNames.Count, RibbonStateService.GetColumnVisibilityCount());
-        Assert.Equal("colType", RibbonStateService.GetColumnVisibilityItemID(0));
-        Assert.Equal("colDuration", RibbonStateService.GetColumnVisibilityItemID(4));
-    }
+        (RibbonStateService service, _) = Arm(new FakeColumnVisibilityPort());
 
-    /// <summary>An out-of-range index yields an empty item rather than throwing.</summary>
-    [Fact]
-    public void An_out_of_range_index_yields_an_empty_item()
-    {
-        Assert.Equal(string.Empty, RibbonStateService.GetColumnVisibilityItemID(5));
-        Assert.Equal(string.Empty, RibbonStateService.GetColumnVisibilityItemID(-1));
+        foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+        {
+            Assert.Equal(
+                name + " (shown)",
+                service.GetColumnVisibilityLabel(RibbonControlIds.ColumnItemPrefix + name));
+        }
+
+        // The positive refusal cases: an engine column (never offered) and a null id.
+        Assert.Equal(string.Empty, service.GetColumnVisibilityLabel("colId"));
+        Assert.Equal(string.Empty, service.GetColumnVisibilityLabel(null));
     }
 
     /// <summary>Each label states the live visibility the port reports.</summary>
@@ -96,9 +101,8 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
     {
         (RibbonStateService service, _) = Arm(new FakeColumnVisibilityPort("Start"));
 
-        Assert.Equal("Type (shown)", service.GetColumnVisibilityItemLabel(0));
-        Assert.Equal("Start (hidden)", service.GetColumnVisibilityItemLabel(2));
-        Assert.Equal(string.Empty, service.GetColumnVisibilityItemLabel(9));
+        Assert.Equal("Type (shown)", service.GetColumnVisibilityLabel("colType"));
+        Assert.Equal("Start (hidden)", service.GetColumnVisibilityLabel("colStart"));
     }
 
     /// <summary>
@@ -117,8 +121,8 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         Assert.Equal(
             "Type",
             LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
-        Assert.Equal("Type (hidden)", service.GetColumnVisibilityItemLabel(0));
-        Assert.Equal("Description (shown)", service.GetColumnVisibilityItemLabel(1));
+        Assert.Equal("Type (hidden)", service.GetColumnVisibilityLabel("colType"));
+        Assert.Equal("Description (shown)", service.GetColumnVisibilityLabel("colDescription"));
     }
 
     /// <summary>Choosing the same item again shows the column and clears the stored name.</summary>
@@ -132,7 +136,7 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         service.ToggleColumnVisibility("colStart");
 
         Assert.Equal(string.Empty, LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
-        Assert.Equal("Start (shown)", service.GetColumnVisibilityItemLabel(2));
+        Assert.Equal("Start (shown)", service.GetColumnVisibilityLabel("colStart"));
         Assert.Empty(port.Applied[1]);
     }
 
@@ -155,7 +159,7 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
 
         Assert.Equal(appliedAfterThree, port.Applied.Count);
         Assert.Equal("Type,Description,Start", LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
-        Assert.Equal("Finish (shown)", service.GetColumnVisibilityItemLabel(3));
+        Assert.Equal("Finish (shown)", service.GetColumnVisibilityLabel("colFinish"));
     }
 
     /// <summary>An item id the dropdown never issued is ignored, not guessed at.</summary>
@@ -186,6 +190,6 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         service.ToggleColumnVisibility("colType");
 
         Assert.Null(LastWritten(writer));
-        Assert.Equal("Type (shown)", service.GetColumnVisibilityItemLabel(0));
+        Assert.Equal("Type (shown)", service.GetColumnVisibilityLabel("colType"));
     }
 }

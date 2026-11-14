@@ -2266,58 +2266,36 @@ internal class RibbonStateService
         _state.DescriptionLabelOptions is { Count: > 0 } options ? options.Count + 1 : 0;
 
     /// <summary>
-    /// Returns how many items the column-visibility dropdown offers (R5.18h): one per
-    /// column the Core contract names, so the list cannot drift from the toggle rules.
+    /// Returns the label for one column menu row, stating that column's CURRENT
+    /// visibility: <c>Type (shown)</c> or <c>Type (hidden)</c>.
     /// </summary>
-    internal static int GetColumnVisibilityCount() => GanttColumnVisibility.ToggleableColumnNames.Count;
-
-    /// <summary>
-    /// Returns the item ID at <paramref name="index"/>: <c>col</c> + the schema display
-    /// name. The suffix is the durable column name, so the id needs no second table.
-    /// </summary>
-    /// <param name="index">The zero-based item index.</param>
-    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
-    internal static string GetColumnVisibilityItemID(int index) =>
-        index >= 0 && index < GanttColumnVisibility.ToggleableColumnNames.Count
-            ? RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.ToggleableColumnNames[index]
-            : string.Empty;
-
-    /// <summary>
-    /// Returns the label at <paramref name="index"/>, stating the column's CURRENT
-    /// visibility. Until the tick image lands (slice 3) the label is the only place the
-    /// state is visible, so it says "shown" or "hidden" rather than naming an action
-    /// that would contradict the state it sits beside.
-    /// </summary>
-    /// <param name="index">The zero-based item index.</param>
-    /// <returns>The item label, or an empty string when the index is out of range.</returns>
-    internal string GetColumnVisibilityItemLabel(int index)
-    {
-        if (index < 0 || index >= GanttColumnVisibility.ToggleableColumnNames.Count)
-        {
-            return string.Empty;
-        }
-
-        string name = GanttColumnVisibility.ToggleableColumnNames[index];
-        return _hiddenColumns.Contains(name) ? name + " (hidden)" : name + " (shown)";
-    }
-
-    /// <summary>
-    /// Returns the item image at <paramref name="index"/> (R5.18h): the tick when that
-    /// column is shown, the dash when it is hidden.
-    /// </summary>
-    /// <param name="index">The zero-based item index.</param>
-    /// <returns>The item's picture, or null when the index is out of range or the glyph
-    /// is unavailable.</returns>
+    /// <param name="itemId">The menu row's id, <c>col</c> + the column display name.</param>
+    /// <returns>The row label, or an empty string when the id names no offered column.</returns>
     /// <remarks>
-    /// The label keeps stating the state as well. A tick alone is unreadable for a
-    /// screen reader and invisible at 100 % scaling on a themed ribbon, so the two
-    /// channels agree instead of one replacing the other.
+    /// The label says which state it is in rather than naming an action, so it cannot
+    /// contradict the tick beside it. It is also the channel a screen reader reads: a
+    /// tick is silent, so the two state the same fact.
     /// </remarks>
-    internal object? GetColumnVisibilityItemImage(int index) =>
-        index < 0 || index >= GanttColumnVisibility.ToggleableColumnNames.Count
-            ? null
-            : ColumnVisibilityImages.For(
-                !_hiddenColumns.Contains(GanttColumnVisibility.ToggleableColumnNames[index]));
+    internal string GetColumnVisibilityLabel(string? itemId) =>
+        !TryParseColumnItemId(itemId, out string? name)
+            ? string.Empty
+            : _hiddenColumns.Contains(name) ? name + " (hidden)" : name + " (shown)";
+
+    /// <summary>
+    /// Returns the image for one column menu row (R5.18h): the tick when that column is
+    /// shown, the dash when it is hidden.
+    /// </summary>
+    /// <param name="itemId">The menu row's id, <c>col</c> + the column display name.</param>
+    /// <returns>The row's picture, or null when the id names no offered column or the
+    /// glyph is unavailable.</returns>
+    /// <remarks>
+    /// The 16 px pair is served: a menu row is a normal-height row, so a 32 px picture
+    /// would set the row height itself — the taller rows the owner reported.
+    /// </remarks>
+    internal object? GetColumnVisibilityImage(string? itemId) =>
+        TryParseColumnItemId(itemId, out string? name)
+            ? ColumnVisibilityImages.For(!_hiddenColumns.Contains(name))
+            : null;
 
     /// <summary>
     /// Flips one column's visibility from the dropdown: parsed through the Core
@@ -2367,7 +2345,15 @@ internal class RibbonStateService
             PresentWarning($"Failed to persist the column visibility: {write.Refusal}");
         }
 
-        InvalidateControl(RibbonControlIds.ColumnsDropDown);
+        // A menu's row labels and images are cached per ROW, so invalidating the menu
+        // alone can leave every row stating the previous state. The menu and each row
+        // are invalidated together.
+        InvalidateControl(RibbonControlIds.ColumnsMenu);
+        foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+        {
+            InvalidateControl(RibbonControlIds.ColumnItemPrefix + name);
+        }
+
         ScheduleAutomaticRefresh();
     }
 
@@ -2377,9 +2363,11 @@ internal class RibbonStateService
     /// than toggling whatever its suffix happens to spell.
     /// </summary>
     /// <param name="itemId">The item ID, or null.</param>
-    /// <param name="columnName">The column name, or null.</param>
+    /// <param name="columnName">The column name when the id parses.</param>
     /// <returns>Whether the id names an offered column.</returns>
-    private static bool TryParseColumnItemId(string? itemId, out string? columnName)
+    private static bool TryParseColumnItemId(
+        string? itemId,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? columnName)
     {
         columnName = null;
         if (itemId is null

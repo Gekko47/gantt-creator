@@ -1396,67 +1396,32 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns how many items the column-visibility dropdown offers (R5.18h). Excel's
-    /// dynamic dropDown contract asks for this through getItemCount; the count comes from
-    /// the Core contract, so the list cannot drift from the toggle rules. Never throws.
+    /// Returns the label for one column menu row (R5.18h): <c>Type (shown)</c> or
+    /// <c>Type (hidden)</c>. The row is a toggle, so the label states the CURRENT
+    /// visibility rather than naming an action, which is also the only channel a screen
+    /// reader has — a tick is silent. Never throws.
     /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    public int GetColumnVisibilityCount(IRibbonControl control) =>
-        GetColumnVisibilityCount(control, RibbonStateService.Instance);
+    /// <param name="control">The ribbon control whose id names the column.</param>
+    public string GetColumnVisibilityLabel(IRibbonControl control) =>
+        GetColumnVisibilityLabel(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetColumnVisibilityCount(IRibbonControl)"/> against an injected
+    /// Runs <see cref="GetColumnVisibilityLabel(IRibbonControl)"/> against an injected
     /// state service. Internal so contract tests can verify the routing without the
     /// session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The item count; the contract's count when the service is unusable.</returns>
-    internal static int GetColumnVisibilityCount(IRibbonControl? control, RibbonStateService stateService)
-    {
-        _ = control;
-        ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return RibbonStateService.GetColumnVisibilityCount();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
-    }
-
-    /// <summary>
-    /// Returns the item ID at the given index for the column dropdown (<c>col</c> + the
-    /// column name). Excel asks for this through getItemID. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <param name="index">The zero-based item index.</param>
-    public string GetColumnVisibilityItemID(IRibbonControl control, int index) =>
-        GetColumnVisibilityItemID(control, index, RibbonStateService.Instance);
-
-    /// <summary>
-    /// Runs <see cref="GetColumnVisibilityItemID(IRibbonControl, int)"/> against an
-    /// injected state service. Internal so contract tests can verify the routing without
-    /// the session singleton. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="index">The zero-based item index.</param>
-    /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
-    internal static string GetColumnVisibilityItemID(
+    /// <returns>The row label, or an empty string when the id names no offered column.</returns>
+    internal static string GetColumnVisibilityLabel(
         IRibbonControl? control,
-        int index,
         RibbonStateService stateService)
     {
-        _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
 #pragma warning disable CA1031
         try
         {
-            return RibbonStateService.GetColumnVisibilityItemID(index);
+            return stateService.GetColumnVisibilityLabel(control?.Id);
         }
         catch
         {
@@ -1466,73 +1431,31 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns the item label at the given index for the column dropdown, which states
-    /// whether that column is currently shown or hidden. Excel asks for this through
-    /// getItemLabel. Never throws.
+    /// Returns the image for one column menu row (R5.18h): the tick when that column is
+    /// shown, the dash when it is hidden. Excel expects an <c>IPictureDisp</c>. Never
+    /// throws.
     /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <param name="index">The zero-based item index.</param>
-    public string GetColumnVisibilityItemLabel(IRibbonControl control, int index) =>
-        GetColumnVisibilityItemLabel(control, index, RibbonStateService.Instance);
+    /// <param name="control">The ribbon control whose id names the column.</param>
+    public object? GetColumnVisibilityImage(IRibbonControl control) =>
+        GetColumnVisibilityImage(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetColumnVisibilityItemLabel(IRibbonControl, int)"/> against an
-    /// injected state service. Internal so contract tests can verify the routing without
-    /// the session singleton. Never throws.
+    /// Runs <see cref="GetColumnVisibilityImage(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="index">The zero-based item index.</param>
-    /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The item label, or an empty string when the index is out of range.</returns>
-    internal static string GetColumnVisibilityItemLabel(
-        IRibbonControl? control,
-        int index,
-        RibbonStateService stateService)
-    {
-        _ = control;
-        ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetColumnVisibilityItemLabel(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
-    }
-
-    /// <summary>
-    /// Returns the item image at the given index for the column dropdown: the tick when
-    /// that column is shown, the dash when it is hidden. Excel asks for this through
-    /// getItemImage and expects an <c>IPictureDisp</c>. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <param name="index">The zero-based item index.</param>
-    public object? GetColumnVisibilityItemImage(IRibbonControl control, int index) =>
-        GetColumnVisibilityItemImage(control, index, RibbonStateService.Instance);
-
-    /// <summary>
-    /// Runs <see cref="GetColumnVisibilityItemImage(IRibbonControl, int)"/> against an
-    /// injected state service. Internal so contract tests can verify the routing without
-    /// the session singleton. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="index">The zero-based item index.</param>
     /// <param name="stateService">The state service that answers from its snapshot.</param>
-    /// <returns>The item's picture, or null when it cannot be produced.</returns>
-    internal static object? GetColumnVisibilityItemImage(
+    /// <returns>The row's picture, or null when it cannot be produced.</returns>
+    internal static object? GetColumnVisibilityImage(
         IRibbonControl? control,
-        int index,
         RibbonStateService stateService)
     {
-        _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
 #pragma warning disable CA1031
         try
         {
-            return stateService.GetColumnVisibilityItemImage(index);
+            return stateService.GetColumnVisibilityImage(control?.Id);
         }
         catch
         {
@@ -1542,39 +1465,31 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Toggles the column whose item was chosen (R5.18h). The item is a toggle, not a
-    /// selection, so the same item both hides and shows. Excel passes the item index as a
-    /// third argument for a dynamic dropDown, and it is ignored: the id names the column.
-    /// Never throws.
+    /// Toggles the column whose menu row was chosen (R5.18h). The row is a toggle, not a
+    /// selection, so the same row both hides and shows; the control's id names the
+    /// column, which is why a button's one-argument <c>onAction</c> is enough. Never
+    /// throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is reporting.</param>
-    /// <param name="id">The chosen item ID.</param>
-    /// <param name="index">The chosen item index, unused.</param>
-    public void OnColumnVisibilityChange(IRibbonControl control, string id, int index) =>
-        OnColumnVisibilityChange(control, id, index, RibbonStateService.Instance);
+    public void OnColumnVisibilityToggle(IRibbonControl control) =>
+        OnColumnVisibilityToggle(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnColumnVisibilityChange(IRibbonControl, string, int)"/> against an
-    /// injected state service. Internal so contract tests can verify the routing without
-    /// the session singleton. Never throws.
+    /// Runs <see cref="OnColumnVisibilityToggle(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="id">The chosen item ID, or null.</param>
-    /// <param name="index">The chosen item index, unused.</param>
     /// <param name="stateService">The state service that applies the toggle.</param>
-    internal static void OnColumnVisibilityChange(
+    internal static void OnColumnVisibilityToggle(
         IRibbonControl? control,
-        string? id,
-        int index,
         RibbonStateService stateService)
     {
-        _ = control;
-        _ = index;
         ArgumentNullException.ThrowIfNull(stateService);
 #pragma warning disable CA1031
         try
         {
-            stateService.ToggleColumnVisibility(id);
+            stateService.ToggleColumnVisibility(control?.Id);
         }
         catch
         {

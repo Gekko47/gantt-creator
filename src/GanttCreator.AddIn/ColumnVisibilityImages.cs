@@ -1,8 +1,8 @@
 namespace GanttCreator.AddIn;
 
 /// <summary>
-/// The two item images the column dropdown shows (R5.18h): a tick when the column is
-/// shown, a dash when it is hidden.
+/// The two row images the column menu shows (R5.18h): a tick when the column is shown, a
+/// dash when it is hidden.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -13,18 +13,19 @@ namespace GanttCreator.AddIn;
 /// decodes an embedded resource and hands the result to the host.
 /// </para>
 /// <para>
-/// <b>Two sizes are embedded, the 32 px one is served.</b> Office scales the picture it is
-/// given, and a 32 px source stays crisp at both ribbon sizes and at 150 %/200 % display
-/// scaling; the 16 px pair is committed beside it because the owner's ruling names both.
+/// <b>The 16 px pair is served, because a menu row is a normal-height row.</b> A 32 px
+/// picture sets the row height itself — the taller menu rows the owner reported — so the
+/// small pair is the one the menu asks for; the 32 px pair stays committed for any future
+/// LARGE control that needs a full-size glyph.
 /// </para>
 /// </remarks>
 internal static class ColumnVisibilityImages
 {
     /// <summary>The embedded suffix of the "column is shown" glyph.</summary>
-    internal const string VisibleResourceSuffix = "column-visible-32.png";
+    internal const string VisibleResourceSuffix = "column-visible-16.png";
 
     /// <summary>The embedded suffix of the "column is hidden" glyph.</summary>
-    internal const string HiddenResourceSuffix = "column-hidden-32.png";
+    internal const string HiddenResourceSuffix = "column-hidden-16.png";
 
     /// <summary>
     /// Returns the picture for a visibility state.

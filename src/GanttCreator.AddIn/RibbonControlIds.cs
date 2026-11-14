@@ -114,10 +114,11 @@ internal static class RibbonControlIds
     internal const string ColumnsGroup = "grpColumns";
 
     /// <summary>
-    /// The column-visibility dropdown (R5.18h). Its items toggle one authoring
-    /// column each and state the result in their own label until the tick image lands.
+    /// The column-visibility menu (R5.18h, surface revised 2026-11-14). It is one
+    /// LARGE button whose rows are the columns themselves: each row toggles one
+    /// authoring column and states the result in its own label and tick/dash glyph.
     /// </summary>
-    internal const string ColumnsDropDown = "ddnColumnVisibility";
+    internal const string ColumnsMenu = "mnuColumnVisibility";
 
     /// <summary>
     /// Prefix for every column item id: <c>col</c> + the schema display name, so the

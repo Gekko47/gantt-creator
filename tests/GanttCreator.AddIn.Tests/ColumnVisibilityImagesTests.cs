@@ -54,15 +54,17 @@ public sealed class ColumnVisibilityImagesTests
         Assert.NotNull(ColumnVisibilityImages.For(visible: false));
     }
 
-    /// <summary>The dropdown's per-item image answers for every offered index only.</summary>
+    /// <summary>The menu's per-row image answers for every offered column only.</summary>
     [Fact]
-    public void The_dropdown_answers_for_offered_indexes_only()
+    public void The_menu_answers_for_offered_rows_only()
     {
         RibbonStateService service = new();
 
-        Assert.NotNull(service.GetColumnVisibilityItemImage(0));
-        Assert.NotNull(service.GetColumnVisibilityItemImage(4));
-        Assert.Null(service.GetColumnVisibilityItemImage(5));
-        Assert.Null(service.GetColumnVisibilityItemImage(-1));
+        Assert.NotNull(service.GetColumnVisibilityImage("colType"));
+        Assert.NotNull(service.GetColumnVisibilityImage("colDuration"));
+
+        // The positive refusal cases: an engine column (never offered) and a null id.
+        Assert.Null(service.GetColumnVisibilityImage("colId"));
+        Assert.Null(service.GetColumnVisibilityImage(null));
     }
 }
