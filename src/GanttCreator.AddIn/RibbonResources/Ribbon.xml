@@ -111,7 +111,7 @@
         <group id="grpColumns" label="Columns" getVisible="GetVisible">
           <box id="boxColumnVisibility" boxStyle="horizontal">
             <labelControl id="lblColumnVisibility" label="Show"/>
-            <dropDown id="ddnColumnVisibility" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" getItemCount="GetColumnVisibilityCount" getItemID="GetColumnVisibilityItemID" getItemLabel="GetColumnVisibilityItemLabel" onAction="OnColumnVisibilityChange"/>
+            <dropDown id="ddnColumnVisibility" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" getItemCount="GetColumnVisibilityCount" getItemID="GetColumnVisibilityItemID" getItemLabel="GetColumnVisibilityItemLabel" getItemImage="GetColumnVisibilityItemImage" onAction="OnColumnVisibilityChange"/>
           </box>
         </group>
         <group id="grpStyleTheme" label="Style" getVisible="GetVisible">

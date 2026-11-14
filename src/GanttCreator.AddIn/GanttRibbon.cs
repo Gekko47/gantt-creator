@@ -1482,6 +1482,44 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns the item image at the given index for the column dropdown: the tick when
+    /// that column is shown, the dash when it is hidden. Excel asks for this through
+    /// getItemImage and expects an <c>IPictureDisp</c>. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public object? GetColumnVisibilityItemImage(IRibbonControl control, int index) =>
+        GetColumnVisibilityItemImage(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetColumnVisibilityItemImage(IRibbonControl, int)"/> against an
+    /// injected state service. Internal so contract tests can verify the routing without
+    /// the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service that answers from its snapshot.</param>
+    /// <returns>The item's picture, or null when it cannot be produced.</returns>
+    internal static object? GetColumnVisibilityItemImage(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetColumnVisibilityItemImage(index);
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Toggles the column whose item was chosen (R5.18h). The item is a toggle, not a
     /// selection, so the same item both hides and shows. Excel passes the item index as a
     /// third argument for a dynamic dropDown, and it is ignored: the id names the column.

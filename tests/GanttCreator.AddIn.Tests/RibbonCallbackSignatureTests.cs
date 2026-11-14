@@ -50,10 +50,13 @@ public class RibbonCallbackSignatureTests
         new("editBox", "getText", [typeof(IRibbonControl)], typeof(string)),
         new("dropDown", "getSelectedItemIndex", [typeof(IRibbonControl)], typeof(int)),
 
-        // Dynamic item lists: count, then per-index id and label.
+        // Dynamic item lists: count, then per-index id, label and image.
         new("dropDown", "getItemCount", [typeof(IRibbonControl)], typeof(int)),
         new("dropDown", "getItemID", [typeof(IRibbonControl), typeof(int)], typeof(string)),
         new("dropDown", "getItemLabel", [typeof(IRibbonControl), typeof(int)], typeof(string)),
+        // R5.18h: an item image is an IPictureDisp. Excel marshals it through the
+        // callback's return value, which the interop surface types as object.
+        new("dropDown", "getItemImage", [typeof(IRibbonControl), typeof(int)], typeof(object)),
 
         // Actions: the argument list depends on the control.
         new("button", "onAction", [typeof(IRibbonControl)], typeof(void)),

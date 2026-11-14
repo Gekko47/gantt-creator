@@ -2272,6 +2272,24 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Returns the item image at <paramref name="index"/> (R5.18h): the tick when that
+    /// column is shown, the dash when it is hidden.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The item's picture, or null when the index is out of range or the glyph
+    /// is unavailable.</returns>
+    /// <remarks>
+    /// The label keeps stating the state as well. A tick alone is unreadable for a
+    /// screen reader and invisible at 100 % scaling on a themed ribbon, so the two
+    /// channels agree instead of one replacing the other.
+    /// </remarks>
+    internal object? GetColumnVisibilityItemImage(int index) =>
+        index < 0 || index >= GanttColumnVisibility.ToggleableColumnNames.Count
+            ? null
+            : ColumnVisibilityImages.For(
+                !_hiddenColumns.Contains(GanttColumnVisibility.ToggleableColumnNames[index]));
+
+    /// <summary>
     /// Flips one column's visibility from the dropdown: parsed through the Core
     /// contract (an unknown id is ignored, a refused toggle reports why), applied to the
     /// worksheet through the port, then written to <see cref="GanttColumnVisibility.SettingKey"/>
