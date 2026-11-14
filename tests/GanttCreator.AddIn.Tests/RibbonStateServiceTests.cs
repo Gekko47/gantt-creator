@@ -1477,7 +1477,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.PlotAnchorInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
@@ -1514,7 +1514,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.PlotAnchorInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
@@ -1549,7 +1549,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.PlotAnchorInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),

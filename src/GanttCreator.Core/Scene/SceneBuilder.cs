@@ -851,10 +851,11 @@ public static class SceneBuilder
         // The leading gutter (R5.18k) is the frame's left margin, exactly as the top and
         // bottom padding rows are its top and bottom margins. It is subtracted from the
         // panel's left edge only: the RIGHT edge is still measured from the origin, so a
-        // non-zero gutter widens the panel leftwards rather than widening the table. The
-        // subtraction itself is PanelLeftPt's, so the arithmetic has one home and one test.
+        // non-zero gutter widens the panel leftwards rather than widening the table. Both
+        // edges are the grid's own properties, so the arithmetic has one home — and the
+        // live plot starts from the same right edge, which is what stops the two drifting.
         double left = grid.PanelLeftPt;
-        double right = grid.OriginLeftPt + grid.Columns.Sum(column => column.WidthPt);
+        double right = grid.PanelRightPt;
         double top = grid.OriginTopPt - grid.HeaderHeightPt;
         double bottom = grid.OriginTopPt + grid.RowHeightsPt.Sum();
 

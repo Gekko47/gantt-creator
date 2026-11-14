@@ -53,9 +53,23 @@ public class ExcelSceneBuildRequestFactoryTests
     /// <param name="widthPt">The panel's total measured width.</param>
     /// <param name="originTopPt">The first body row's absolute top edge (ADR-0030 D3).</param>
     /// <param name="rowHeightsPt">The measured body row heights.</param>
-    private static PanelCellGrid Grid(double widthPt = 120, double originTopPt = 58, double[]? rowHeightsPt = null) =>
+    /// <param name="originLeftPt">The table's absolute left edge (ADR-0030 D3).</param>
+    /// <param name="leadingGutterPt">The measured leading gutter (R5.18k).</param>
+    private static PanelCellGrid Grid(
+        double widthPt = 120,
+        double originTopPt = 58,
+        double[]? rowHeightsPt = null,
+        double originLeftPt = 0,
+        double leadingGutterPt = 0) =>
         PanelCellGrid
-            .TryCreate([new PanelColumn("Id", widthPt)], rowHeightsPt ?? [_managedRowHeight], _managedRowHeight, ["Id"], originTopPt)
+            .TryCreate(
+                [new PanelColumn("Id", widthPt)],
+                rowHeightsPt ?? [_managedRowHeight],
+                _managedRowHeight,
+                ["Id"],
+                originTopPt,
+                originLeftPt,
+                leadingGutterPt: leadingGutterPt)
             .Grid!;
 
     /// <summary>
@@ -250,15 +264,17 @@ public class ExcelSceneBuildRequestFactoryTests
     /// asserts the placement rather than merely the list.
     /// </para>
     /// <para>
-    /// <b>This assertion was inverted, deliberately.</b> It previously required
-    /// <c>panel + ChartOuterPaddingPt</c>, which is the behaviour the owner asked to
-    /// change: the plot sat one margin-width away from the table it belongs to. The
-    /// margin is now exactly zero, and the test is the one place that will fail if a
-    /// later change reintroduces a gap.
+    /// <b>This assertion has moved twice, both times deliberately.</b> It first required
+    /// <c>panel + ChartOuterPaddingPt</c>, the margin-width gap the owner asked to remove.
+    /// It then required the panel's summed width, which was right only while the panel
+    /// started at the sheet's left edge — on a table that starts in column B it put the
+    /// plot one origin inside the table's last column (live report 2026-11-14). It now
+    /// requires the measured panel's RIGHT EDGE plus the 1pt anchor inset, so a later
+    /// change that reintroduces a gap, loses the origin, or drops the inset fails here.
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_plot_left_edge_starts_flush_where_the_measured_panel_ends()
+    public void The_plot_left_edge_starts_one_point_past_the_measured_panel()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
@@ -278,7 +294,10 @@ public class ExcelSceneBuildRequestFactoryTests
         // with the `!.Value`/`!` form the rest of this file already uses. The factory
         // only emits a request whose grid and plot both resolved, so a null here is a
         // defect the equality assertion reports as a mismatch rather than a null crash.
-        Assert.Equal(request.Grid!.TotalWidthPt, request.PlotBounds!.Value.X, precision: 6);
+        Assert.Equal(
+            request.Grid!.PanelRightPt + GanttSheetLayout.PlotAnchorInsetPt,
+            request.PlotBounds!.Value.X,
+            precision: 6);
 
         // The right margin is NOT removed: the plot's right edge is the sheet's own
         // edge, and the chrome there is what keeps the last period label off it.
@@ -304,6 +323,43 @@ public class ExcelSceneBuildRequestFactoryTests
     /// that is correct.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The plot starts one point past the measured panel's RIGHT EDGE, which includes the
+    /// table's origin.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the reported defect.</b> The plot used to be placed at the summed column
+    /// widths, which is the width of the table rather than where it ends: a table starting
+    /// in column B put the chart one measured origin inside the table's last column. The
+    /// origin and the gutter are deliberately different numbers here (40 and 10), so the
+    /// three candidate expressions — width alone (200), panel-left plus width (230) and
+    /// origin plus width (240) — are all distinguishable. The plot's own edge is then
+    /// pushed one point past 240 so the generated shapes anchor inside the first plot
+    /// column instead of on the boundary it shares with the table.
+    /// </remarks>
+    [Fact]
+    public void The_plot_starts_one_point_past_the_measured_panels_right_edge()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        PanelCellGrid grid = Grid(widthPt: 200, originLeftPt: 40, leadingGutterPt: 10);
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>()
+        );
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(240, grid.PanelRightPt, precision: 6);
+        Assert.Equal(30, grid.PanelLeftPt, precision: 6);
+        Assert.Equal(
+            240 + GanttSheetLayout.PlotAnchorInsetPt,
+            outcome.Request!.PlotBounds!.Value.X,
+            precision: 6);
+    }
+
     [Fact]
     public void The_live_charts_border_starts_at_the_measured_table_origin()
     {

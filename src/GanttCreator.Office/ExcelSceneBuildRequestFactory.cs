@@ -62,8 +62,8 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     /// <para>
     /// <b>Why every visible column, not a chosen few.</b> Entity guide section 3
     /// requires the panel's right edge to touch the plot's left edge without overlap
-    /// or gap, and <see cref="PlotGeometryResolver"/> places the plot at
-    /// <c>textPanelWidthPt + chrome</c>. Measuring only the label columns would
+    /// or gap, and <see cref="PlotGeometryResolver"/> places the plot at the measured
+    /// panel right edge plus the anchor inset. Measuring only the label columns would
     /// therefore draw the plot on top of the still-visible <c>Start</c>,
     /// <c>Finish</c>, and <c>Duration</c> columns. The measured width is the table's
     /// real visible width, so it is derived from
@@ -224,10 +224,14 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
 
         PanelCellGrid measuredGrid = grid;
 
-        // The grid's own total, not a re-sum of its columns. Re-deriving it here
-        // would be a second computation of a figure the grid already publishes, and
-        // the two could disagree on what "the panel width" means.
-        double textPanelWidthPt = measuredGrid.TotalWidthPt;
+        // The grid's own RIGHT EDGE, not a re-sum of its columns and not the summed
+        // width. The table starts at a measured origin (column B since R5.18k), so the
+        // right edge is `origin + widths`: passing the widths alone placed the plot one
+        // origin to the left of the table's right edge, i.e. inside the table's LAST
+        // column (live report 2026-11-14, "the chart plots well into column F"). The
+        // grid publishes both this edge and the panel's left edge, and the frame is
+        // drawn on the same pair, so the plot and the frame cannot disagree.
+        double panelRightPt = measuredGrid.PanelRightPt;
         double chrome = themedMetrics.GetValueOrDefault(
             _outerPaddingToken, GanttCatalogues.MetricDefault(_outerPaddingToken));
 
@@ -301,13 +305,16 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         // consumes the result.
         PlotGeometryOutcome geometry = PlotGeometryResolver.TryResolve(
             preset,
-            textPanelWidthPt,
+            panelRightPt,
 
-            // ADR-0031 D2: no left chrome. The plot begins exactly where the data
-            // table ends, so the two read as one object. The RIGHT chrome carries the
-            // R5.2 margin (twice) plus the frame's own outer padding, so the plot's
-            // right edge sits inside the page with the margin as breathing room.
-            leftChromePt: 0,
+            // ADR-0031 D2: the plot begins where the data table ends, so the two read as
+            // one object. It is pushed GanttSheetLayout.PlotAnchorInsetPt past that edge
+            // so every generated shape's anchor cell resolves INSIDE the first plot
+            // column instead of on the boundary, where Excel would pick the table's last
+            // column. The RIGHT chrome carries the R5.2 margin (twice) plus the frame's
+            // own outer padding, so the plot's right edge sits inside the page with the
+            // margin as breathing room.
+            leftChromePt: GanttSheetLayout.PlotAnchorInsetPt,
             rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,

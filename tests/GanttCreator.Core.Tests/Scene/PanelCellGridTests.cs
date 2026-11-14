@@ -406,6 +406,22 @@ public sealed class PanelCellGridTests
     }
 
     [Fact]
+    public void The_panel_right_edge_is_measured_from_the_origin_not_from_the_panel_left_edge()
+    {
+        // R5.18k's asymmetry, and the reason the live plot drifted into the table: the
+        // gutter widens the panel LEFTWARDS only, so the right edge is origin + widths
+        // (120), never PanelLeftPt + widths (114.25). The live plot starts one point past
+        // this edge, so reading the wrong one puts the chart inside the table's last
+        // column.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [Col("Id", 100), Col("Type", 20)], [12.0], 12.0, [], originLeftPt: 100, leadingGutterPt: 5.75).Grid!;
+
+        Assert.Equal(220, grid.PanelRightPt);
+        Assert.Equal(120, grid.TotalWidthPt);
+        Assert.NotEqual(grid.PanelLeftPt + grid.TotalWidthPt, grid.PanelRightPt);
+    }
+
+    [Fact]
     public void A_negative_gutter_is_refused_rather_than_clamped()
     {
         // Clamping would hide a measurement bug behind a plausible number; the frame
