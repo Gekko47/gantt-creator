@@ -455,6 +455,8 @@ Export compositions carry no worksheet rows to anchor to, so they pass `0` and p
 
 **Style:** `MinorGridStroke` or `MajorGridStroke`; solid unless an approved style specifies a dash pattern.
 
+**Layer:** a line **between** periods sits at the grid layer (20). The two lines that **close the plot** — its left and right edge — sit at the frame layer (80), because the period band is a filled rectangle at that layer which begins exactly on the plot's left edge; a grid-layer edge line is painted over inside the header row and the table-to-plot boundary disappears (owner report 2026-11-14, when the plot was moved onto the column edge).
+
 **Labels:** none.
 
 **Validation/tests:** no duplicate coincident minor/major lines, year line wins at shared X, plot frame closes cleanly, common zoom/DPI point tolerance.

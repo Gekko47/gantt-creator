@@ -467,13 +467,19 @@ public static class FrameBandsBuilder
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
         {
             string key = line.Key.ToString("R", CultureInfo.InvariantCulture);
+            bool isEdge = line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right;
+
+            // The two EDGE lines close the plot, so they belong to the frame's layer, not
+            // the grid's. The period band is a FILLED rect at Frame (80) that begins
+            // exactly on the plot's left edge, so a Grid-layer (20) edge line is painted
+            // over inside the header row and the table-to-plot boundary disappears
+            // (reported 2026-11-14, when the plot was moved onto the column edge). The
+            // interior lines stay at Grid: they sit between bands, never over them.
             primitives.Add(
                 new SceneLine(
-                    line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right
-                        ? $"chart:grid:edge:{key}"
-                        : $"chart:grid:{key}",
+                    isEdge ? $"chart:grid:edge:{key}" : $"chart:grid:{key}",
                     SceneOwnerId.Chart,
-                    ZLayer.Grid,
+                    isEdge ? ZLayer.Frame : ZLayer.Grid,
                     new PointD(line.Key, plotSpan.Y),
                     new PointD(line.Key, plotSpan.Bottom),
                     line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid

@@ -527,6 +527,36 @@ public sealed class FrameBandsBuilderTests
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Frame);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Title);
     }
+
+    [Fact]
+    public void The_plot_edge_lines_sit_on_the_frame_layer_while_interior_lines_stay_on_the_grid_layer()
+    {
+        // The period band is a FILLED rect at Frame (80) that begins exactly on the
+        // plot's left edge, so a Grid-layer (20) edge line is painted over inside the
+        // header row and the table-to-plot boundary disappears — reported live on
+        // 2026-11-14, once the plot was moved onto the column edge. The two edge lines
+        // therefore belong to the frame's layer; interior lines stay at Grid, because
+        // they sit BETWEEN bands and never over them.
+        FrameBandsCreationOutcome outcome = Build(CreateRequest());
+        Assert.True(outcome.Succeeded);
+
+        SceneLine[] lines = [.. outcome.Result!.Primitives.OfType<SceneLine>()];
+        SceneLine[] edges =
+        [
+            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)),
+        ];
+        Assert.Equal(2, edges.Length);
+        Assert.All(edges, edge => Assert.Equal(ZLayer.Frame, edge.ZLayer));
+
+        SceneLine[] interior =
+        [
+            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
+                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(interior);
+        Assert.All(interior, line => Assert.Equal(ZLayer.Grid, line.ZLayer));
+    }
+
     [Fact]
     public void The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides()
     {
