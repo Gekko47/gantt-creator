@@ -477,11 +477,24 @@ public sealed class GanttSheetLayoutTests
             GanttSheetLayout.AnchorRowIndex(7) + 1,
             GanttSheetLayout.BottomPaddingRowIndex(7));
 
-        // A table with no body has no last activity row, so there is no row to name.
-        // Returning a plausible index would place the chart's bottom margin inside
-        // the table, so this is refused rather than guessed -- by BOTH derivations.
-        Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.AnchorRowIndex(0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.BottomPaddingRowIndex(0));
+        // ZERO body rows names the two rows rather than refusing (owner ruling
+        // 2026-11-14). The empty chart is drawn over these rows (ADR-0050), so they exist
+        // before there is any activity above them: the anchor takes the position the FIRST
+        // body row would have occupied and the padding sits one below. This used to throw,
+        // and that is why a freshly initialised workbook kept both rows at Excel's default
+        // 15 pt: the row-height normaliser could not name them, so it never wrote them.
+        Assert.Equal(GanttSheetLayout.FirstBodyRowIndex, GanttSheetLayout.AnchorRowIndex(0));
+        Assert.Equal(GanttSheetLayout.FirstBodyRowIndex + 1, GanttSheetLayout.BottomPaddingRowIndex(0));
+
+        // The relationship still holds at zero, so the two derivations cannot drift.
+        Assert.Equal(
+            GanttSheetLayout.AnchorRowIndex(0) + 1,
+            GanttSheetLayout.BottomPaddingRowIndex(0));
+
+        // A NEGATIVE count is a caller defect and still throws, which is what keeps the
+        // clamp above from being a blanket acceptance.
+        Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.AnchorRowIndex(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.BottomPaddingRowIndex(-1));
     }
 
     /// <summary>

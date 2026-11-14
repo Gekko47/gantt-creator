@@ -224,9 +224,41 @@ public class ExcelRowHeightNormaliser(
         Excel.Range? body = GetTableBody(table);
         int rowCount = body is null ? 0 : GetBodyRowCount(body);
 
-        int? bottomPaddingRow = null;
-        int? anchorRow = null;
-        if (body is not null && rowCount > 0)
+        // Both branches assign both rows; neither keeps a null default, which is the
+        // difference between "not resolved" and "resolved to nothing".
+        int? bottomPaddingRow;
+        int? anchorRow;
+        if (body is null || rowCount == 0)
+        {
+            // Owner ruling 2026-11-14 (option A): the two reserved rows below the header
+            // exist even when the body is empty, because the chart is still drawn over them
+            // (ADR-0050). They sit exactly where GanttSheetLayout says — the anchor at the
+            // position the FIRST body row would have occupied, the padding one below it —
+            // and emptiness is still verified before either is written: a user's note in that
+            // row must not be squashed to the 0.25 pt sub-row height.
+            //
+            // Measured on the host the same day, with zero body rows: rowsWritten=3 (top
+            // padding, reserved, header) and the two rows below the header kept Excel's
+            // default 15 pt, so the table read about 30 pt taller than the chart drawn over
+            // it. Reported as "row 5 and 6 are not the correct height on initialise".
+            int emptyAnchorRow = GanttSheetLayout.AnchorRowIndex(0);
+            int emptyPaddingRow = GanttSheetLayout.BottomPaddingRowIndex(0);
+            if (IsLayoutRowEmpty(worksheet, emptyAnchorRow) is not true)
+            {
+                return RowHeightNormalisationOutcome.Refused(
+                    RowHeightNormalisationRefusalReason.AnchorRowNotOwned);
+            }
+
+            if (IsLayoutRowEmpty(worksheet, emptyPaddingRow) is not true)
+            {
+                return RowHeightNormalisationOutcome.Refused(
+                    RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
+            }
+
+            anchorRow = emptyAnchorRow;
+            bottomPaddingRow = emptyPaddingRow;
+        }
+        else
         {
             // ADR-0035 D2: the bottom padding row is now RESOLVED AND VERIFIED against
             // the body's measured worksheet span rather than derived from the row count

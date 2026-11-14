@@ -173,6 +173,41 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
                 + $" bodyTotal={grid.TotalRowHeightPt:F2}"
                 + $" body={string.Join('/', grid.RowHeightsPt.Select(h => h.ToString("F2", CultureInfo.InvariantCulture)))}"));
 
+            // R5.18n geometry probe, second half. Initialise leaves EVERY row at Excel's
+            // default 15 pt, while the scene draws its year and period bands from the themed
+            // catalogue tokens (18 and 16) and the frame's margins from 5.75 and 0.25. Those
+            // only agree once the refresh normaliser has run, so the rows are printed before
+            // and after it: "the table and the chart do not line up" then has a cause and a
+            // size instead of a screenshot.
+            var normaliser = new ExcelRowHeightNormaliser(fixture.Excel);
+            RowHeightNormalisationOutcome normalised = normaliser.Normalise(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                GanttCatalogues.MetricDefault("SplitterHeightPt"),
+                GanttCatalogues.MetricDefault("SpacerHeightPt"),
+                GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+                GanttCatalogues.MetricDefault("YearBandHeightPt"),
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
+            _output.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"normalise: succeeded={normalised.Succeeded} rowsWritten={normalised.RowsWritten} refusal={normalised.Refusal}"));
+
+            for (var row = 1; row <= 8; row++)
+            {
+                Excel.Range line = scope.Track(ganttSheet.Rows[row]);
+                double top = Convert.ToDouble(line.Top, CultureInfo.InvariantCulture);
+                double height = Convert.ToDouble(line.RowHeight, CultureInfo.InvariantCulture);
+                _output.WriteLine($"after normalise row {row}: top={top:F2} height={height:F2}");
+            }
+
+            PanelGridOutcome afterNormalise = new ExcelPanelGridMeasurement(fixture.Excel)
+                .Measure([MeasuredColumnName]);
+            _output.WriteLine("after normalise grid: success=" + afterNormalise.Succeeded
+                + " originTop=" + (afterNormalise.Grid is null ? "-" : afterNormalise.Grid.OriginTopPt.ToString("F2", CultureInfo.InvariantCulture))
+                + " header=" + (afterNormalise.Grid is null ? "-" : afterNormalise.Grid.HeaderHeightPt.ToString("F2", CultureInfo.InvariantCulture))
+                + " topPadding=" + (afterNormalise.Grid is null ? "-" : afterNormalise.Grid.TopPaddingHeightPt.ToString("F2", CultureInfo.InvariantCulture))
+                + " body=" + (afterNormalise.Grid is null ? "-" : string.Join('/', afterNormalise.Grid.RowHeightsPt.Select(h => h.ToString("F2", CultureInfo.InvariantCulture)))));
+
             // Make the body genuinely mixed. The expected list is derived from the
             // row count the host actually reports rather than from how many rows were
             // requested: the initialised table's range means the two differ, and a

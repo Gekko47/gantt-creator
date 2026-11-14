@@ -574,10 +574,17 @@ public sealed class ExcelRowHeightNormaliserTests
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
 
-        // Both layout rows were already at their tokens, so nothing was written, and
-        // the outcome says zero: no body rows and no layout rows needed a change.
-        Assert.Equal(0, outcome.RowsWritten);
-        Assert.Empty(written);
+        // The three rows ABOVE the body were already at their tokens. The two rows BELOW
+        // it are written now, and that is the point of the empty case: with no body there
+        // is no activity row to sit above them, so the anchor takes the position the first
+        // body row would have occupied and the bottom padding sits one below (owner ruling
+        // 2026-11-14). Measured before this change on the host: rowsWritten=3, and both of
+        // these rows kept Excel's default 15 pt, so the table read ~30 pt taller than the
+        // chart drawn over it.
+        Assert.Equal(2, outcome.RowsWritten);
+        Assert.Equal(
+            [GanttSheetLayout.BottomPaddingRowIndex(0), GanttSheetLayout.AnchorRowIndex(0)],
+            written);
     }
 
     /// <summary>
@@ -1027,11 +1034,12 @@ public sealed class ExcelRowHeightNormaliserTests
     }
 
     /// <summary>
-    /// An empty body succeeds with zero writes. A table with no rows is a legitimate
-    /// state, not a failure.
+    /// An empty body succeeds and still writes the two rows below the header. A table with
+    /// no rows is a legitimate state, not a failure — and not a reason to leave the chart's
+    /// anchor and bottom margin at Excel's default either.
     /// </summary>
     [Fact]
-    public void An_empty_body_succeeds_with_no_writes()
+    public void An_empty_body_writes_the_two_layout_rows_below_the_header()
     {
         var (application, worksheet, table) = Graph();
         var normaliser = new TestableNormaliser(
@@ -1045,6 +1053,10 @@ public sealed class ExcelRowHeightNormaliserTests
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(0, outcome.RowsWritten);
+
+        // Two, not zero: the anchor row (0.25 pt sub-row) and the bottom padding row
+        // (5.75 pt margin) exist with or without a body. Zero here was the defect — it
+        // left both at 15 pt in a freshly initialised workbook.
+        Assert.Equal(2, outcome.RowsWritten);
     }
 }
