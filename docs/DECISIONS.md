@@ -58,13 +58,17 @@
 | ADR-0056 | Ribbon first-run surface, Critical Interval attachment, and the append-to-end insert | Accepted (amended 2026-11-11) | 2026-11-10 | [`adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md`](adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md) |
 | ADR-0057 | Repair rebuilds a missing data table, and no repair path is silent | Accepted (amended 2026-11-11) | 2026-11-11 | [`adr/0057-repair-rebuilds-a-missing-data-table.md`](adr/0057-repair-rebuilds-a-missing-data-table.md) |
 | ADR-0058 | Ribbon tab context: active-sheet gating and tab activation | Accepted | 2026-11-12 | [`adr/0058-ribbon-tab-context-and-active-sheet-gating.md`](adr/0058-ribbon-tab-context-and-active-sheet-gating.md) |
+| ADR-0060 | The live table's header type and outside border match the chart | Accepted | 2026-11-14 | [`adr/0060-live-table-header-and-outside-border-match-the-chart.md`](adr/0060-live-table-header-and-outside-border-match-the-chart.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,
 the refresh round-trip budget, and add-in-owned sheet protection). The gap is
 reported rather than filled in this change: adding four rows would mix an
 unrelated index repair into the R5.16 governance commit. The files remain
-readable at `docs/adr/0052-*.md` … `0055-*.md`.
+readable at `docs/adr/0052-*.md` … `0055-*.md`. **ADR-0059 is in the same
+position**: its file exists and is cited by the guide and by R5.18k, but it has
+no row here yet — also reported rather than filled, and not part of this
+change's concern.
 
 **ADR-0041 amends ADR-0040's D2 to make period-label visibility measured-fit.** ADR-0040 let the user choose `MM` or `MMM`, but both forms were gated by the same fixed `MinimumHeaderLabelWidthPt` floor, so `MM` showed on identical intervals to `MMM` — cosmetic, not functional. ADR-0041 replaces that floor **for the period band** with a measured-fit test (show iff the interval is at least as wide as the label measures), so `MM` — measuring shorter — survives on narrower intervals. The band stays uniform: the format is still one verbatim, user-chosen form, only the show/hide decision varies, and this is measured-fit, not ADR-0039's rejected per-interval ladder. The year band keeps the floor; measurement failure falls back to it.
 

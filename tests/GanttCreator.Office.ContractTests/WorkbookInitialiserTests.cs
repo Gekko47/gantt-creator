@@ -63,6 +63,40 @@ public class WorkbookInitialiserTests
         /// </summary>
         public Mock<Excel.Range> TableHeaderRow { get; } = new();
 
+        /// <summary>The table's whole range, which the border pass colours and weights.</summary>
+        public Mock<Excel.Range> TableRange { get; } = new();
+
+        /// <summary>The table range's border collection.</summary>
+        public Mock<Excel.Borders> TableBorders { get; } = new();
+
+        /// <summary>The header row's font, which the header type is written onto.</summary>
+        public Mock<Excel.Font> HeaderFont { get; } = new();
+
+        /// <summary>The header row's fill.</summary>
+        public Mock<Excel.Interior> HeaderInterior { get; } = new();
+
+        /// <summary>The header font family as written.</summary>
+        public object? HeaderFontName { get; private set; }
+
+        /// <summary>The header font size as written.</summary>
+        public object? HeaderFontSize { get; private set; }
+
+        /// <summary>
+        /// The header font's bold flag as written. Left <see langword="null"/> when the
+        /// adapter never wrote one, so a test can tell "regular" from "not set" — which is
+        /// the difference between overriding Excel's table-style bold and inheriting it.
+        /// </summary>
+        public object? HeaderFontBold { get; private set; }
+
+        /// <summary>The header font colour as written.</summary>
+        public object? HeaderFontColour { get; private set; }
+
+        /// <summary>The header row's fill colour as written.</summary>
+        public object? HeaderFillColour { get; private set; }
+
+        /// <summary>The colour written to every cell border.</summary>
+        public object? TableBorderColour { get; private set; }
+
         /// <summary>The reserved title cell, captured separately (ADR-0030 D4).</summary>
         public Mock<Excel.Range> TitleCell { get; } = new();
         public Mock<Excel.Range> UsedRange { get; } = new();
@@ -284,6 +318,28 @@ public class WorkbookInitialiserTests
                 .Returns(() => (object)(HeaderRowLockWrites.Count > 0));
             _ = TableHeaderRow.SetupSet(r => r.Locked = It.IsAny<object>())
                 .Callback<object>(value => HeaderRowLockWrites.Add(RequireBool(value)));
+
+            // The header and border passes under test are the REAL methods: `TestableInitialiser`
+            // calls them through `base`, so the graph records what lands on the host properties
+            // rather than only counting that a seam ran. That is what lets a fact tell a
+            // regular 9pt header from a bold one, and a weighted outside edge from an untouched
+            // interior.
+            _ = TableHeaderRow.SetupGet(r => r.Font).Returns(HeaderFont.Object);
+            _ = TableHeaderRow.SetupGet(r => r.Interior).Returns(HeaderInterior.Object);
+            _ = HeaderFont.SetupSet(f => f.Name = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontName = value);
+            _ = HeaderFont.SetupSet(f => f.Size = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontSize = value);
+            _ = HeaderFont.SetupSet(f => f.Bold = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontBold = value);
+            _ = HeaderFont.SetupSet(f => f.Color = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontColour = value);
+            _ = HeaderInterior.SetupSet(i => i.Color = It.IsAny<object>())
+                .Callback<object>(value => HeaderFillColour = value);
+            _ = Table.SetupGet(t => t.Range).Returns(TableRange.Object);
+            _ = TableRange.SetupGet(r => r.Borders).Returns(TableBorders.Object);
+            _ = TableBorders.SetupSet(b => b.Color = It.IsAny<object>())
+                .Callback<object>(value => TableBorderColour = value);
 
             // `ListColumns.Count` is read by every column walk, including the
             // rollback's visibility restore. Unconfigured, Moq returns 0 and the
@@ -607,9 +663,25 @@ public class WorkbookInitialiserTests
         /// <summary>How many times the border colour was written; it is table-wide, so once.</summary>
         public int BorderColourWrites { get; private set; }
 
-        internal override void ApplyHeaderFormat(Excel.ListObject table) => HeaderFormatWrites++;
+        internal override void ApplyHeaderFormat(Excel.ListObject table)
+        {
+            HeaderFormatWrites++;
+            base.ApplyHeaderFormat(table);
+        }
 
-        internal override void ApplyBorderColour(Excel.ListObject table) => BorderColourWrites++;
+        internal override void ApplyBorderColour(Excel.ListObject table)
+        {
+            BorderColourWrites++;
+            base.ApplyBorderColour(table);
+        }
+
+        /// <summary>The outside borders the real border pass asked to weight, in write order.</summary>
+        public List<(Excel.XlBordersIndex Edge, Excel.XlBorderWeight Weight)> OutsideBorders { get; } = [];
+
+        internal override void SetBorderWeight(
+            Excel.Borders borders,
+            Excel.XlBordersIndex edge,
+            Excel.XlBorderWeight weight) => OutsideBorders.Add((edge, weight));
 
         private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
@@ -1005,6 +1077,56 @@ public class WorkbookInitialiserTests
         // rather than one per column.
         Assert.Equal(1, initialiser.HeaderFormatWrites);
         Assert.Equal(1, initialiser.BorderColourWrites);
+    }
+
+    [Fact]
+    public void Initialise_writes_the_period_band_type_onto_the_header_row()
+    {
+        // Owner ruling 2026-11-14: the header row and the chart's period band are one
+        // heading, so the header is the 9pt regular the band renders. The bold flag is
+        // asserted explicitly rather than left unset, because Excel's table style bolds a
+        // header row — a header the adapter never unbolds is still bold on the sheet.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal(GanttTableAppearance.FontFamily, active.HeaderFontName);
+        Assert.Equal(GanttTableAppearance.HeaderFontSizePt, active.HeaderFontSize);
+        Assert.Equal(9.0, active.HeaderFontSize);
+        Assert.Equal(false, active.HeaderFontBold);
+        Assert.Equal(GanttTableAppearance.HeaderTextColour.ARGB, active.HeaderFontColour);
+        Assert.Equal(GanttTableAppearance.HeaderFill.ARGB, active.HeaderFillColour);
+    }
+
+    [Fact]
+    public void Initialise_weights_only_the_four_outside_borders()
+    {
+        // The table's outside edge and the chart frame are one boundary (owner ruling
+        // 2026-11-14). Only the four edge indices are written: an interior index here
+        // would redraw the cell grid the table style owns.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        TestableInitialiser initialiser = graph.Build(active);
+        _ = initialiser.Initialise();
+
+        Excel.XlBordersIndex[] expectedEdges =
+        [
+            Excel.XlBordersIndex.xlEdgeTop,
+            Excel.XlBordersIndex.xlEdgeBottom,
+            Excel.XlBordersIndex.xlEdgeLeft,
+            Excel.XlBordersIndex.xlEdgeRight,
+        ];
+        Assert.Equal(expectedEdges, initialiser.OutsideBorders.Select(border => border.Edge));
+        Assert.All(
+            initialiser.OutsideBorders,
+            border => Assert.Equal(Excel.XlBorderWeight.xlThin, border.Weight));
+        Assert.Equal(GanttTableAppearance.BorderColour.ARGB, active.TableBorderColour);
     }
 
     [Fact]

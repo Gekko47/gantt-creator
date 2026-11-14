@@ -76,16 +76,52 @@ public static class GanttTableAppearance
     public static ColourHex HeaderTextColour => Colour("DefaultText");
 
     /// <summary>The theme's header text size, in points.</summary>
+    /// <remarks>
+    /// <b>9pt, because that is the type the chart's period band draws.</b> The owner's
+    /// ruling (2026-11-14) is that the live header row and the period band above the plot
+    /// are one heading, so the table reads as the band's own column labels rather than as
+    /// a second, smaller row. The size comes from the catalogue token the entity guide
+    /// already names, so the guide and the host cannot disagree.
+    /// </remarks>
     public static double HeaderFontSizePt => GanttCatalogues.TypographyDefault("HeaderFontSizePt");
+
+    /// <summary>Whether the theme's header text is bold; it is regular.</summary>
+    /// <remarks>
+    /// The period band is regular, so the header is too. This is written explicitly rather
+    /// than left alone: Excel's table style bolds the header row, and a value the adapter
+    /// never writes is a value Excel keeps.
+    /// </remarks>
+    public static bool HeaderIsBold => GanttCatalogues.TypographyDefaultIsBold("HeaderFontSizePt");
+
+    /// <summary>
+    /// The width, in points, the table's outer border shares with the chart's frame.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The frame's closing boundary is the structural <c>MajorBoundaryPt</c> token, so the
+    /// table's own outside edge reads as the frame's edge where the two meet (owner ruling
+    /// 2026-11-14). Reading the token rather than restating <c>1</c> keeps the two
+    /// boundaries one decision.
+    /// </para>
+    /// <para>
+    /// Only the frame token's default is mirrored on a cell border today: Excel's
+    /// <c>Border.Weight</c> is a closed set of weights, not an arbitrary point width, so a
+    /// user-raised frame width (R5.6d) cannot be reproduced exactly on a cell. The adapter
+    /// maps 1pt to Excel's <c>xlThin</c>, which is the 1pt weight.
+    /// </para>
+    /// </remarks>
+    public static double OuterBorderWeightPt => GanttCatalogues.MetricDefault("MajorBoundaryPt");
 
     /// <summary>
     /// The theme colour a live cell border takes.
     /// </summary>
     /// <remarks>
-    /// The owner's ruling (2026-11-13) leaves a live cell border's <em>style</em> to Excel's
-    /// table style and takes only the colour from the chart theme. The token chosen is the
-    /// minor grid stroke, the light boundary the chart already draws between time columns, so
-    /// a table border and a grid line are one boundary colour rather than two near-misses.
+    /// The owner's rulings take the <em>colour</em> of every cell border from the chart theme
+    /// and, on the table's <em>outside</em> edge only, its weight from the frame
+    /// (2026-11-13 and 2026-11-14). Interior borders keep Excel's table-style weight, so the
+    /// cell grid stays the table style's rather than being redrawn by the add-in. The token is
+    /// the minor grid stroke, the light boundary the chart already draws between time columns,
+    /// so a table border and a grid line are one boundary colour rather than two near-misses.
     /// </remarks>
     public static ColourHex BorderColour => Colour("MinorGridStroke");
 

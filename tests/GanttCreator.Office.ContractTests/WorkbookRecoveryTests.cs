@@ -169,9 +169,35 @@ public class WorkbookRecoveryTests
         /// <summary>How many times the border colour was written; it is table-wide, so once.</summary>
         public int BorderColourWrites { get; private set; }
 
-        internal override void ApplyHeaderFormat(Excel.ListObject table) => HeaderFormatWrites++;
+        /// <summary>The header type the mirror asked for, or <see langword="null"/> when it never ran.</summary>
+        public (string Family, double SizePt, bool Bold)? HeaderType { get; private set; }
 
-        internal override void ApplyBorderColour(Excel.ListObject table) => BorderColourWrites++;
+        /// <summary>The outside borders the mirror asked to weight, in write order.</summary>
+        public List<(Excel.XlBordersIndex Edge, Excel.XlBorderWeight Weight)> OutsideBorders { get; } = [];
+
+        // The real table-wide passes run (`base`), so the header-type and border-weight
+        // seams record exactly what the mirror asks the host for. The Font/Interior/Borders
+        // proxies are mocks on the table `AddTable` builds; the seams are the only values
+        // a fact needs to read, because they carry the authority's own arguments.
+        internal override void ApplyHeaderFormat(Excel.ListObject table)
+        {
+            HeaderFormatWrites++;
+            base.ApplyHeaderFormat(table);
+        }
+
+        internal override void ApplyBorderColour(Excel.ListObject table)
+        {
+            BorderColourWrites++;
+            base.ApplyBorderColour(table);
+        }
+
+        internal override void ApplyHeaderType(Excel.Font font) =>
+            HeaderType = (GanttTableAppearance.FontFamily, GanttTableAppearance.HeaderFontSizePt, GanttTableAppearance.HeaderIsBold);
+
+        internal override void SetBorderWeight(
+            Excel.Borders borders,
+            Excel.XlBordersIndex edge,
+            Excel.XlBorderWeight weight) => OutsideBorders.Add((edge, weight));
 
         internal override Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
         {
@@ -197,6 +223,19 @@ public class WorkbookRecoveryTests
             }
 
             _ = table.SetupGet(t => t.ListColumns).Returns(columns.Object);
+
+            // The table-wide presentation passes are the real methods, so the header row and
+            // the table range must answer: a null `HeaderRowRange` would make the mirror
+            // throw rather than prove anything.
+            Mock<Excel.Range> headerRow = new();
+            Mock<Excel.Range> tableRange = new();
+            Mock<Excel.Borders> borders = new();
+            _ = headerRow.SetupGet(r => r.Font).Returns(new Mock<Excel.Font>().Object);
+            _ = headerRow.SetupGet(r => r.Interior).Returns(new Mock<Excel.Interior>().Object);
+            _ = tableRange.SetupGet(r => r.Borders).Returns(borders.Object);
+            _ = table.SetupGet(t => t.HeaderRowRange).Returns(headerRow.Object);
+            _ = table.SetupGet(t => t.Range).Returns(tableRange.Object);
+
             CreatedTables.Add(table.Object);
             return table.Object;
         }
@@ -738,6 +777,26 @@ public class WorkbookRecoveryTests
         // The header band and the border colour are table-wide, so one write each.
         Assert.Equal(1, recovery.HeaderFormatWrites);
         Assert.Equal(1, recovery.BorderColourWrites);
+
+        // Owner ruling 2026-11-14: the mirror writes the same 9pt regular type the
+        // initialiser does, and gives the outside edge the same frame weight — a repaired
+        // table must not come back bold or with an unweighted edge.
+        Assert.Equal(
+            (GanttTableAppearance.FontFamily, GanttTableAppearance.HeaderFontSizePt, GanttTableAppearance.HeaderIsBold),
+            recovery.HeaderType);
+        Assert.Equal(9.0, recovery.HeaderType!.Value.SizePt);
+        Assert.False(recovery.HeaderType!.Value.Bold);
+        Excel.XlBordersIndex[] expectedEdges =
+        [
+            Excel.XlBordersIndex.xlEdgeTop,
+            Excel.XlBordersIndex.xlEdgeBottom,
+            Excel.XlBordersIndex.xlEdgeLeft,
+            Excel.XlBordersIndex.xlEdgeRight,
+        ];
+        Assert.Equal(expectedEdges, recovery.OutsideBorders.Select(border => border.Edge));
+        Assert.All(
+            recovery.OutsideBorders,
+            border => Assert.Equal(Excel.XlBorderWeight.xlThin, border.Weight));
 
         Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.VerticalAlignments.Count);
         Assert.All(recovery.VerticalAlignments, alignment => Assert.Equal(Excel.XlVAlign.xlVAlignCenter, alignment));

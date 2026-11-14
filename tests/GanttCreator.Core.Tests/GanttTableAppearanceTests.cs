@@ -52,6 +52,30 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
+    public void The_header_type_matches_the_period_band_and_is_not_bold()
+    {
+        // Owner ruling 2026-11-14: the live header row and the chart's period band are one
+        // heading, so the header takes the 9pt regular type the band already renders. The
+        // bold flag is asserted separately because Excel's table style bolds a header row,
+        // so a regular header only exists if the adapter writes the flag.
+        Assert.Equal(9, GanttTableAppearance.HeaderFontSizePt);
+        Assert.False(GanttTableAppearance.HeaderIsBold);
+    }
+
+    [Fact]
+    public void The_outside_border_weight_is_the_frame_token()
+    {
+        // The table's outside edge and the chart frame are one boundary (owner ruling
+        // 2026-11-14). The Office adapter writes Excel's xlThin, which IS the 1pt weight,
+        // so the token must stay at 1pt for the two boundaries to meet: this fact is the
+        // guard that fails if the frame token moves away from the mapping.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("MajorBoundaryPt"),
+            GanttTableAppearance.OuterBorderWeightPt);
+        Assert.Equal(1, GanttTableAppearance.OuterBorderWeightPt);
+    }
+
+    [Fact]
     public void The_header_fill_and_the_border_colour_are_catalogue_colours()
     {
         // The owner's ruling takes the fill and the border COLOUR from the chart theme while

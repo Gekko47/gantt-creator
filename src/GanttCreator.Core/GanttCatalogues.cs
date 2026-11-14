@@ -278,11 +278,18 @@ public static class GanttCatalogues
     /// <c>YearFontSizePt</c>, <c>TitleFontSizePt</c>, and
     /// <c>DelineatorFontSizePt</c>).
     /// </summary>
+    /// <remarks>
+    /// <c>HeaderFontSizePt</c> is the 9pt regular type the chart's period band
+    /// already renders, so the live table's header row and the band above the plot
+    /// read as one heading rather than two (owner ruling 2026-11-14). The same
+    /// <c>isBold: false</c> flag drives the write, which is what makes the header
+    /// regular even though Excel's table style bolds it by default.
+    /// </remarks>
     public static IReadOnlyList<GanttTypographyToken> Typography { get; } =
     [
         new("FontFamily", "Aptos", isBold: false),
         new("BodyFontSizePt", "8", isBold: false),
-        new("HeaderFontSizePt", "8", isBold: false),
+        new("HeaderFontSizePt", "9", isBold: false),
         new("YearFontSizePt", "9", isBold: true),
         new("TitleFontSizePt", "11", isBold: true),
         new("DelineatorFontSizePt", "8", isBold: true),
@@ -699,6 +706,35 @@ public static class GanttCatalogues
             : throw new ArgumentException(
                 $"Typography token '{tokenName}' has a value that is not a positive point size: '{value}'.",
                 nameof(tokenName));
+    }
+
+    /// <summary>
+    /// The bold flag of a typography token.
+    /// </summary>
+    /// <param name="tokenName">The token name, matched Ordinal.</param>
+    /// <returns>The token's bold flag.</returns>
+    /// <exception cref="ArgumentException">
+    /// The name is not a typography token, for the same reason
+    /// <see cref="TypographyDefaultText"/> throws rather than defaulting.
+    /// </exception>
+    /// <remarks>
+    /// The flag belongs to the token, not to a call site: a header that is regular in
+    /// the entity guide and bold on the sheet is one decision with two spellings.
+    /// </remarks>
+    public static bool TypographyDefaultIsBold(string tokenName)
+    {
+        ArgumentNullException.ThrowIfNull(tokenName);
+        foreach (GanttTypographyToken token in Typography)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return token.IsBold;
+            }
+        }
+
+        throw new ArgumentException(
+            $"'{tokenName}' is not a typography token in the Gantt Creator catalogue.",
+            nameof(tokenName));
     }
 
     /// <summary>

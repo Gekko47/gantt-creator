@@ -84,6 +84,15 @@ public class ExcelWorkbookInitialiser(
 
     private static double Ms(long ticks) => ticks * 1000d / Stopwatch.Frequency;
 
+    /// <summary>The four border indices that form a table's outside edge.</summary>
+    private static readonly XlBordersIndex[] _outsideBorderEdges =
+    [
+        XlBordersIndex.xlEdgeTop,
+        XlBordersIndex.xlEdgeBottom,
+        XlBordersIndex.xlEdgeLeft,
+        XlBordersIndex.xlEdgeRight,
+    ];
+
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
@@ -1206,9 +1215,9 @@ public class ExcelWorkbookInitialiser(
     /// <param name="table">The visible data table.</param>
     /// <remarks>
     /// <para>
-    /// The header's bold flag and its border style stay with Excel's table style (owner
-    /// ruling 2026-11-13); the fill, the text colour and the type are the chart theme's.
-    /// Both proxies are held locally rather than chained.
+    /// The header's fill, type and text colour are the chart theme's; Excel's table style
+    /// keeps every border it draws inside the table (owner ruling 2026-11-13). Both proxies
+    /// are held locally rather than chained.
     /// </para>
     /// <para>
     /// <b>The text colour is not optional.</b> Live evidence 2026-11-14: writing the white
@@ -1221,25 +1230,67 @@ public class ExcelWorkbookInitialiser(
     {
         Excel.Range header = table.HeaderRowRange;
         Font font = header.Font;
-        font.Name = GanttTableAppearance.FontFamily;
-        font.Size = GanttTableAppearance.HeaderFontSizePt;
+        ApplyHeaderType(font);
         font.Color = GanttTableAppearance.HeaderTextColour.ARGB;
         Interior interior = header.Interior;
         interior.Color = GanttTableAppearance.HeaderFill.ARGB;
     }
 
-    /// <summary>Recolours every border of the table from the chart theme.</summary>
+    /// <summary>Writes the theme's header type onto a header row's font.</summary>
+    /// <param name="font">The header row's font.</param>
+    /// <remarks>
+    /// The bold flag is written rather than left alone. Excel's table style bolds a header
+    /// row, so a regular header only exists if the adapter says so — and the ruling
+    /// (2026-11-14) is that the header matches the chart's period band, which is regular.
+    /// One seam, so the initialiser and the recovery cannot disagree about its type.
+    /// </remarks>
+    internal virtual void ApplyHeaderType(Font font)
+    {
+        font.Name = GanttTableAppearance.FontFamily;
+        font.Size = GanttTableAppearance.HeaderFontSizePt;
+        font.Bold = GanttTableAppearance.HeaderIsBold;
+    }
+
+    /// <summary>
+    /// Recolours every border of the table and gives its outside edge the frame's weight.
+    /// </summary>
     /// <param name="table">The visible data table.</param>
     /// <remarks>
     /// <c>Borders.Color</c> writes the colour of every border the range contains and leaves
-    /// each border's line style and weight alone — exactly the split the owner's ruling
-    /// describes, where the table style owns the structure and the theme owns the colour.
+    /// each border's line style and weight alone, which is the split the 2026-11-13 ruling
+    /// describes: the table style owns the cell grid, the theme owns the colour. The
+    /// 2026-11-14 ruling adds one exception — the table's <em>outside</em> edge takes the
+    /// chart frame's weight, so the two boundaries meet at the same 1pt instead of one
+    /// stepping down to the other. Only the four edge indices are written; the interior
+    /// lines keep whatever weight the table style gives them.
     /// </remarks>
     internal virtual void ApplyBorderColour(ListObject table)
     {
         Excel.Range range = table.Range;
         Borders borders = range.Borders;
         borders.Color = GanttTableAppearance.BorderColour.ARGB;
+        foreach (XlBordersIndex edge in _outsideBorderEdges)
+        {
+            // Excel's cell-border weights are a closed set, not a point width: xlThin is
+            // the 1pt weight, which is the frame token's default (MajorBoundaryPt).
+            SetBorderWeight(borders, edge, XlBorderWeight.xlThin);
+        }
+    }
+
+    /// <summary>Writes one border's weight.</summary>
+    /// <param name="borders">The table range's border collection.</param>
+    /// <param name="edge">Which border to write.</param>
+    /// <param name="weight">The weight to write.</param>
+    /// <remarks>
+    /// <c>Borders.Item</c> is an indexed COM property, so it is a documented seam like
+    /// <see cref="GetTableAt"/>: expression trees cannot contain it (CS0855) and the
+    /// contract tests substitute this member. The one proxy is held in a local rather than
+    /// chained, per the COM ownership rule.
+    /// </remarks>
+    internal virtual void SetBorderWeight(Borders borders, XlBordersIndex edge, XlBorderWeight weight)
+    {
+        Border border = borders[edge];
+        border.Weight = weight;
     }
 
     /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>

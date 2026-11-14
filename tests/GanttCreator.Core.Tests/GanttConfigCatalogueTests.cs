@@ -953,9 +953,22 @@ public class GanttConfigCatalogueTests
     /// carries the older hash and is reported as a mismatch; the remedy is
     /// Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Moved at schema 24 by the header-type ruling (ADR-0060)</b>: the
+    /// <c>HeaderFontSizePt</c> typography value becomes <c>9</c>, so the live
+    /// table's header row and the chart's period band are one heading (owner
+    /// ruling 2026-11-14). No column, row, or setting contract changes, so
+    /// <c>CurrentSchemaVersion</c> does NOT move — only the typography line of
+    /// the hashed text does. That makes this the first pin advance driven by a
+    /// catalogue VALUE rather than a schema shape, and it is recorded here
+    /// because the guard exists to make exactly this kind of change visible. A
+    /// workbook written before it reports <c>CatalogueHashMismatch</c>, which
+    /// the Repair command auto-classifies; the full remedy is Initialise
+    /// (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "301b70d282b8d271826fc6a7492980c4a34e748029bb914f3319fcc379bd61ee";
+        "b8845b938a243ef918c37a92bf845a8b4677bb08557d7431393184aac8e689e4";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through
