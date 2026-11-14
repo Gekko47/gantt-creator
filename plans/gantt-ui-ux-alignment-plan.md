@@ -481,11 +481,23 @@ The remaining fifteen are the pre-existing whole-file survivors in `GanttCatalog
 strings, `First()` versus `FirstOrDefault()`, and the metric/typography validation arms this change
 did not touch) — that file enters the judged set only because the settings catalogue is in the diff.
 
+### Branch-final measurement (2026-11-14)
+
+`pwsh ./scripts/verify.ps1 -MutationSince 11da4c0` — the batch base — on a clean tree: **PASS**,
+**88.77 % (1233 of 1389 scored mutants killed, 123 survived, 1 timeout, 32 no-coverage)** against
+the 80 % threshold. The gate also judges only the files the branch changed, whole-file, so the
+inherited `SceneBuilder`/`LabelPlanner`/`EntityTypeCatalog` survivors above are inside that number
+rather than excluded by it. It is 4.9 points above the 83.87 % measured mid-batch, which is what
+closing the two named gaps and the R5.18h slice tests bought; the residual 123 survivors are the
+categories this chapter already argues, plus the `SceneBuilder` set that O6 says has never been
+examined. `verify.ps1` PASS in 1,109.6 s, Office suite included via the archived live gate.
+
 ## 10. Outstanding after the batch (audited 2026-11-14)
 
 Everything below is work this batch either deliberately deferred or discovered and did not close.
 It is a list of what is *not* done, not a wish list: each entry names the reason and what would
-close it.
+close it. **Status at the end of the batch: nine open, one closed** — O8 closed by the measurement
+directly above.
 
 | # | Item | Why it is still open | What closes it |
 |---|---|---|---|
@@ -496,7 +508,7 @@ close it.
 | O5 | **`HostOwnedGeometry` tolerance boundaries** | The four inclusive-tolerance boundary pairs and `NearlyEqual`'s strict comparison differ only at a value exactly on the boundary, which no test currently pins | Four boundary facts, one per geometry rule |
 | O6 | **`SceneBuilder` mutation survivors never examined** | 32 survivors in a file this batch changed, categorised as "plausible but unchecked" — the only entry in the ledger with no line-by-line argument at all | A per-survivor pass over that file, killing what a test can kill and recording the rest |
 | O7 | **`GanttColumnVisibility.Toggle`'s `ThrowIfNull`** | Recorded as equivalent: the next statement's `HashSet` constructor throws the same exception for the same input, so no test can distinguish them | Nothing; it stays in the ledger |
-| O8 | **Branch-final `verify.ps1 -MutationSince`** | `verify-quick` judges changed Core files per commit with `mutation-gate.ps1`; the whole-branch score against the 80 % threshold has not been re-measured since the R5.18h slice 1 pass (93.99 %). Chapter `9`'s numbers are older than the last four commits | `pwsh ./scripts/verify.ps1 -MutationSince <batch base>` on a clean tree |
+| O8 | **Branch-final `verify.ps1 -MutationSince`** — **closed 2026-11-14** | `verify-quick` judges changed Core files per commit; the whole-branch score had not been re-measured since R5.18h slice 1 | Ran on a clean tree at the batch base `11da4c0`: **PASS, 88.77 % (1233/1389)**, recorded above |
 | O9 | **COM-proxy leak signal has no headroom** | The gate passed at exactly its ceiling (38 forced kills, ceiling 38). Any new test body that leaves a proxy alive fails the gate for a reason unrelated to what it tests | Retire one leaked chain, or raise the ceiling with a measured band as the script's own history requires — not by a quiet bump |
 | O10 | **`docs/STATUS.md` / `docs/REPO-MAP.md` drift** | Status rows were written per item; the map's test locations and commands have not been re-read since the R5.18h port and the four new test classes landed | One pass over both, in the commit that closes this list |
 
