@@ -52,8 +52,25 @@ public static class GanttTableAppearance
     /// <summary>The theme's body text size, in points, for table text.</summary>
     public static double BodyFontSizePt => GanttCatalogues.TypographyDefault("BodyFontSizePt");
 
-    /// <summary>The theme's header band fill.</summary>
-    public static ColourHex HeaderFill => Colour("HeaderFill");
+    /// <summary>The header band fill: the chart's period-band fill.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The header row is the period band's row, so it takes the period band's fill</b>
+    /// (ADR-0030 D5, owner ruling 2026-11-14). It previously took the <c>HeaderFill</c>
+    /// colour token, which is white, while the band beside it rendered the neutral
+    /// <c>AlternateBandFill</c> — one heading in two fills, reported from the live host.
+    /// The role is read through <see cref="GanttChartChrome"/> rather than restating the
+    /// token, so the band, its setting key, and this fill cannot disagree.
+    /// </para>
+    /// <para>
+    /// The fill is the chart-chrome <em>default</em>. A workbook whose user changed
+    /// <c>PeriodHeaderColour</c> is not reflected here, exactly as the header's type is not
+    /// reflected from the chart chrome: cell presentation is written by Initialise and
+    /// Repair from the code-owned theme, and a Refresh never rewrites it.
+    /// </para>
+    /// </remarks>
+    public static ColourHex HeaderFill =>
+        ColourHex.Parse(GanttChartChrome.DefaultHexFor(GanttChartChromeRole.PeriodHeader));
 
     /// <summary>
     /// The colour the visible header band's text takes: the theme's body text colour.
@@ -68,9 +85,9 @@ public static class GanttTableAppearance
     /// </para>
     /// <para>
     /// The body text colour, not the export panel's header text colour: the panel's header
-    /// is white <em>on</em> a dark band, whereas the live band is filled with
-    /// <see cref="HeaderFill"/>. The two must be read as a pair, and this is the pair the
-    /// theme actually supports.
+    /// is white <em>on</em> a dark band, whereas the live band is filled with the period
+    /// band's neutral <see cref="HeaderFill"/> — a light fill, which needs dark text. The
+    /// two must be read as a pair, and this is the pair the theme actually supports.
     /// </para>
     /// </remarks>
     public static ColourHex HeaderTextColour => Colour("DefaultText");

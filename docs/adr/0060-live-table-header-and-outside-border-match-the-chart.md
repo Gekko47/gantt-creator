@@ -18,11 +18,12 @@ therefore sit on one line, and they disagreed about how the line should read.
   the `HeaderFontSizePt` typography token: **8pt**, and its bold flag was never written at
   all, so Excel's table style kept the header **bold**.
 
-The result, seen on the live host, was one heading in two typefaces and two weights: a bold
-8pt header under a regular 9pt band. The same 2026-11-13 ruling that deferred the bold flag
-also deferred every cell border's weight, so the table's own outside edge stepped down from
-the chart frame's 1pt `MajorBoundaryPt` to whatever weight the table style supplied — a
-visible seam where the frame meets the table on all four sides.
+The result, seen on the live host, was one heading in two typefaces, two weights and two
+fills: a bold 8pt header on a white fill, under a regular 9pt band on the neutral
+`AlternateBandFill`. The same 2026-11-13 ruling that deferred the bold flag also deferred
+every cell border's weight, so the table's own outside edge stepped down from the chart
+frame's 1pt `MajorBoundaryPt` to whatever weight the table style supplied — a visible seam
+where the frame meets the table on all four sides.
 
 ## Decision
 
@@ -37,7 +38,11 @@ visible seam where the frame meets the table on all four sides.
    `xlThin` — which is Excel's 1pt cell-border weight — on the four edge indices only.
    Interior borders keep Excel's table-style weight and line style, exactly as the
    2026-11-13 ruling requires: the add-in recolours the grid, it does not redraw it.
-3. **Both writes live in one seam per adapter** (`ApplyHeaderType`, `SetBorderWeight`), so the
+3. **The header row takes the period band's fill.** `GanttTableAppearance.HeaderFill` resolves
+   `GanttChartChrome`'s `PeriodHeader` role — default `AlternateBandFill`, `#F2F2F2` — rather
+   than the white `HeaderFill` token, so the band and its column labels are one band. The role
+   is read, never restated, so the band, its setting key and the cell fill cannot drift.
+4. **Both writes live in one seam per adapter** (`ApplyHeaderType`, `SetBorderWeight`), so the
    initialiser and the recovery mirror cannot disagree about the header's type or the
    edge weight.
 
@@ -50,6 +55,12 @@ visible seam where the frame meets the table on all four sides.
   advance driven by a catalogue *value*. A workbook written before the change reports
   `CatalogueHashMismatch`, which the Repair command auto-classifies; the full remedy is
   Initialise (ADR-0029 D6, no migration).
+- **The fill change moves no hash.** It reads a chrome role's default; the catalogue values it
+  reads are unchanged, so only the type change above moved the pin.
+- **Cell presentation is written by Initialise and Repair, never by Refresh.** A workbook
+  opened with an older theme shows the older header until one of those runs — the same rule
+  the body font and the date format already follow, stated here because a header fill is the
+  first thing a user will notice not changing after a Refresh.
 - **Excel's border weights are a closed set, not a point width.** The 1pt frame default maps
   exactly to `xlThin`; a user-raised frame width (R5.6d) is not mirrored on a cell border.
   The coupling is guarded by a Core fact that pins `OuterBorderWeightPt` to 1.

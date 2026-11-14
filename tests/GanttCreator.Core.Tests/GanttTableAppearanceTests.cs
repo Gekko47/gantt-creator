@@ -76,12 +76,22 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
-    public void The_header_fill_and_the_border_colour_are_catalogue_colours()
+    public void The_header_fill_is_the_period_bands_and_the_border_colour_is_the_minor_grid()
     {
-        // The owner's ruling takes the fill and the border COLOUR from the chart theme while
-        // leaving the border style to Excel's table style, so both must resolve from the
-        // colour catalogue rather than from a literal in the writer.
-        Assert.Equal(ColourHex.Parse("#FFFFFF"), GanttTableAppearance.HeaderFill);
+        // The header row IS the period band's row, so its fill is the period band's
+        // (owner ruling 2026-11-14). It previously took the white HeaderFill token while
+        // the band beside it rendered the neutral AlternateBandFill, which is the mismatch
+        // reported from the host. Reading the CHROME ROLE rather than restating the token
+        // is what keeps the band, its setting key and this fill one decision.
+        Assert.Equal(
+            ColourHex.Parse(GanttChartChrome.DefaultHexFor(GanttChartChromeRole.PeriodHeader)),
+            GanttTableAppearance.HeaderFill);
+
+        // Not white any more: this is the reported defect stated as an assertion.
+        Assert.NotEqual(ColourHex.Parse("#FFFFFF"), GanttTableAppearance.HeaderFill);
+
+        // The border colour is still the theme's minor grid stroke, so a cell boundary and
+        // a grid line stay one colour while the table style owns the border's weight.
         Assert.Equal(ColourHex.Parse("#D9D9D9"), GanttTableAppearance.BorderColour);
     }
 
