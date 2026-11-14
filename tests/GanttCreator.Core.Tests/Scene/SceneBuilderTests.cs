@@ -534,6 +534,28 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
+    public void A_null_event_list_is_refused()
+    {
+        // The guard's FIRST disjunct. Without this fact, deleting the null check makes
+        // the builder dereference Events.Count on a null list, and the remaining
+        // empty-list facts still pass because they supply an instance.
+        Assert.Equal(
+            SceneBuilderRefusal.EmptyEvents,
+            SceneBuilder.TryBuild(Request(Event(1)) with { Events = null! }).Refusal);
+    }
+
+    [Fact]
+    public void A_null_event_entry_is_refused()
+    {
+        // The guard's THIRD disjunct. Nothing else in the suite constructs a list
+        // carrying a null entry, so this is the one branch a mutation can delete
+        // without a red test - and the one that stops a null reaching lane layout.
+        Assert.Equal(
+            SceneBuilderRefusal.EmptyEvents,
+            SceneBuilder.TryBuild(Request(Event(1)) with { Events = [null!] }).Refusal);
+    }
+
+    [Fact]
     public void An_intentionally_empty_live_scene_still_builds_its_frame()
     {
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request() with { AllowEmptyEvents = true });
@@ -718,6 +740,66 @@ public sealed class SceneBuilderTests
         SceneRect background = scene.Primitives.OfType<SceneRect>()
             .Single(rect => string.Equals(rect.PrimitiveId, "chart:background", StringComparison.Ordinal));
         Assert.Equal(300, background.Bounds.Left, precision: 9);
+    }
+
+    /// <summary>
+    /// The live panel rectangle is the measured table, not the plot: its width is the
+    /// SUM of every column's measured width and its edges are the table's own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The rectangle is not emitted as its own primitive. On the live path
+    /// <see cref="PanelBuilder"/> is not called at all (the worksheet's own cells are
+    /// the panel), so <c>LiveDataPanelBounds</c> reaches the scene only as the union
+    /// the outer frame is drawn on, and the frame's edges are what this fact reads.
+    /// </para>
+    /// <para>
+    /// <b>Why two unequal columns, and why the table must extend past the plot.</b> A
+    /// one-column grid makes <c>Sum</c> and <c>Max</c> the same number, and a table
+    /// narrower than the plot leaves the union's right edge on the plot's, so a
+    /// <c>Sum</c> → <c>Max</c> mutation would never reach the frame and the test would
+    /// pass for the wrong reason. Here the larger column is 400 while the sum is 600,
+    /// and the table spans 30..640 against a plot of 300..600, so both mutated edges
+    /// move the frame.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_live_frames_edges_are_the_tables_edges_and_its_width_is_the_summed_columns()
+    {
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 200), new PanelColumn("Description", 400)],
+            [10.0],
+            10,
+            ["Type", "Description"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            leadingGutterPt: 10).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The left edge is the table's own edge moved left by the measured gutter
+        // (40 - 10), not the raw origin and not the plot's left edge.
+        SceneLine left = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+        Assert.Equal(30, left.From!.X, precision: 9);
+        Assert.Equal(30, left.To!.X, precision: 9);
+
+        // The right edge is the origin plus the SUM of the measured column widths
+        // (40 + 200 + 400). The largest column alone would close the frame at 440,
+        // and swapping the subtraction for an addition would put it far past 640.
+        SceneLine right = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:right", StringComparison.Ordinal));
+        Assert.Equal(640, right.From!.X, precision: 9);
+        Assert.Equal(640, right.To!.X, precision: 9);
     }
 
     [Fact]
