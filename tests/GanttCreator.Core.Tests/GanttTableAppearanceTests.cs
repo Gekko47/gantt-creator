@@ -60,4 +60,15 @@ public sealed class GanttTableAppearanceTests
         Assert.Equal(ColourHex.Parse("#FFFFFF"), GanttTableAppearance.HeaderFill);
         Assert.Equal(ColourHex.Parse("#D9D9D9"), GanttTableAppearance.BorderColour);
     }
+
+    [Fact]
+    public void The_header_text_colour_never_equals_the_header_fill()
+    {
+        // Live evidence 2026-11-14: the initialiser wrote the fill alone, so the table
+        // style's white header font stayed white ON the white band and every schema name
+        // was invisible. The pair is what must be asserted, not either colour alone — a
+        // future token change that made them equal would be the same defect again.
+        Assert.Equal(ColourHex.Parse("#000000"), GanttTableAppearance.HeaderTextColour);
+        Assert.NotEqual(GanttTableAppearance.HeaderFill, GanttTableAppearance.HeaderTextColour);
+    }
 }

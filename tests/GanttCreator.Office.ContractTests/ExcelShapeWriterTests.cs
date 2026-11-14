@@ -1612,15 +1612,28 @@ public class ExcelShapeWriterTests
     }
 
     /// <summary>
-    /// O2: the proxy an update resolved is reused by the z-order preflight (ADR-0054).
+    /// O2: a batch answers every name lookup from ONE scan, and reuses the proxy it found
+    /// for the z-order preflight (ADR-0054).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Both passes name the same shape, and a name lookup is a host round trip. The memo is
     /// batch-scoped, so it can never outlive the pass that built it — a stale proxy across
     /// refreshes would be a correctness hazard, not a saving.
+    /// </para>
+    /// <para>
+    /// This used to require exactly TWO indexed lookups, one per update. It now requires
+    /// ZERO: the batch builds a complete name index on its first lookup, so a hit AND a
+    /// miss are both answered from memory. That is not a loosening — it is the fix for the
+    /// measured cost of a miss. Excel's name indexer RAISES for an absent name, and the
+    /// first live plot creates 52 shapes on a sheet holding none, so the old path paid 52
+    /// COM exceptions: <c>lookup=1355.0</c> of a 1529 ms write. The z-order assertion below
+    /// is unchanged, so "the preflight reused the proxy and moved only what it had to" is
+    /// still proved.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void A_batch_reuses_the_shape_proxy_for_the_z_order_pass()
+    public void A_batch_answers_name_lookups_from_one_scan_and_reuses_the_proxy()
     {
         var writer = new BatchWriter()
             .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
@@ -1634,9 +1647,9 @@ public class ExcelShapeWriterTests
             Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b"]).Succeeded);
         }
 
-        // Two lookups for the updates and none for the preflight: both names are cached.
-        // Without the memo this would be four.
-        Assert.Equal(2, writer.IndexedNameLookups);
+        // No per-name host call at all inside the batch: both names were indexed by the
+        // single scan, and the preflight reused the proxies it found.
+        Assert.Equal(0, writer.IndexedNameLookups);
         Assert.Equal(["row-1:a"], writer.ZOrderCalls);
     }
 

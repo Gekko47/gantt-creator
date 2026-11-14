@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using GanttCreator.Core;
@@ -79,6 +80,24 @@ public class ExcelShapeWriter(
     /// </summary>
     private Dictionary<string, Excel.Shape>? _batchProxies;
 
+    // Per-step create timings for the open batch, in Stopwatch ticks (R5.18n). The live
+    // trace reports one `write=` figure for the whole pass, which cannot distinguish
+    // "Excel is slow at AddShape" from "we issue too many round trips per shape": a
+    // create costs ~31 ms live against ~1.6 ms for an update, and the difference is the
+    // ten-or-so COM calls a create makes. Accumulated, never per shape, so a 52-shape
+    // pass still writes one record.
+    private long _createTicksLookup;
+    private long _createTicksAdd;
+    private long _createTicksStyle;
+    private long _createTicksOwnership;
+    private int _createCount;
+
+    /// <summary>
+    /// Whether the open batch has built its complete name index (see
+    /// <see cref="EnsureBatchNameIndex"/>).
+    /// </summary>
+    private bool _batchNameIndexed;
+
     /// <inheritdoc />
     /// <remarks>
     /// Opening a batch hoists the two costs that do not depend on the shape: the worksheet
@@ -99,6 +118,12 @@ public class ExcelShapeWriter(
         _batchActive = true;
         _batchShapes = null;
         _batchProxies = new Dictionary<string, Excel.Shape>(StringComparer.Ordinal);
+        _createTicksLookup = 0;
+        _createTicksAdd = 0;
+        _createTicksStyle = 0;
+        _createTicksOwnership = 0;
+        _createCount = 0;
+        _batchNameIndexed = false;
         return new BatchScope(this);
     }
 
@@ -108,10 +133,88 @@ public class ExcelShapeWriter(
         /// <inheritdoc />
         public void Dispose()
         {
+            // Reported before the state is cleared, and only when the caller asked for
+            // trace records: this is a measurement of the pass, not a product behaviour.
+            owner.ReportCreateSteps();
             owner._batchActive = false;
             owner._batchShapes = null;
             owner._batchProxies = null;
+            owner._batchNameIndexed = false;
         }
+    }
+
+    /// <summary>
+    /// Builds the open batch's complete name index exactly once, so an ABSENT name can be
+    /// answered without asking the host.
+    /// </summary>
+    /// <param name="shapes">The batch's resolved shapes collection.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Measured cost of not having this.</b> Excel's name indexer RAISES for a name it
+    /// does not hold, and a COM exception costs ~26 ms to cross the boundary. The first
+    /// live plot after Initialise writes 52 shapes onto a sheet with none, so every
+    /// create paid a miss: <c>gantt.shape.create-steps n=52 lookup=1355.0 add=119.3
+    /// style=31.6 ownership=13.2</c> — 1355 ms of a 1529 ms write, and 1984 ms of a
+    /// click-to-plot the user reported as "feels like four seconds". Creating the
+    /// shapes was never the expensive part.
+    /// </para>
+    /// <para>
+    /// After one scan, a name that is not in the index is <em>proven</em> absent: events
+    /// are off for the whole refresh (ADR-0020), so nothing can add a shape behind this
+    /// pass. Creates add themselves through <see cref="Remember"/>, so a later lookup of
+    /// a shape this batch created still hits.
+    /// </para>
+    /// </remarks>
+    private void EnsureBatchNameIndex(Excel.Shapes shapes)
+    {
+        if (_batchProxies is null || _batchNameIndexed)
+        {
+            return;
+        }
+
+        int count = GetShapeCount(shapes);
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.Shape? shape = GetShapeAt(shapes, index);
+            if (shape is null)
+            {
+                continue;
+            }
+
+            string name = shape.Name;
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                _ = _batchProxies.TryAdd(name, shape);
+            }
+        }
+
+        _batchNameIndexed = true;
+    }
+
+    /// <summary>
+    /// Writes one record splitting the batch's create cost by COM step, so the next
+    /// attempt at making the first plot faster is aimed at the expensive step instead of
+    /// at whichever one looks likely.
+    /// </summary>
+    private void ReportCreateSteps()
+    {
+        if (_trace is null || _createCount == 0)
+        {
+            return;
+        }
+
+        static double Ms(long ticks)
+        {
+            return ticks * 1000d / Stopwatch.Frequency;
+        }
+
+        _trace(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.shape.create-steps n={_createCount}"
+            + $" lookup={Ms(_createTicksLookup):F1}"
+            + $" add={Ms(_createTicksAdd):F1}"
+            + $" style={Ms(_createTicksStyle):F1}"
+            + $" ownership={Ms(_createTicksOwnership):F1}"));
     }
 
     /// <summary>Remembers a resolved proxy for the rest of the batch, when one is open.</summary>
@@ -216,9 +319,18 @@ public class ExcelShapeWriter(
             return refusal!;
         }
 
+        long stepStart = _trace is null ? 0L : Stopwatch.GetTimestamp();
+
         if (FindShapeByName(shapes, request.PrimitiveId) is not null)
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.AlreadyExists);
+        }
+
+        if (_trace is not null)
+        {
+            long now = Stopwatch.GetTimestamp();
+            _createTicksLookup += now - stepStart;
+            stepStart = now;
         }
 
         Excel.Shape? created = AddShape(shapes, request);
@@ -239,6 +351,12 @@ public class ExcelShapeWriter(
         // four rows tall in one state and a line in another -- which is why the
         // classification is a geometric one (full plot height) and not "all shapes".
         ApplyPlacement(created, request.HostOwnsExtent);
+        if (_trace is not null)
+        {
+            long now = Stopwatch.GetTimestamp();
+            _createTicksAdd += now - stepStart;
+            stepStart = now;
+        }
 
         // R4.6. The style is written on the create path for the same reason the
         // text is: it is generated output the scene owns, and a shape created in
@@ -260,6 +378,13 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
+        if (_trace is not null)
+        {
+            long now = Stopwatch.GetTimestamp();
+            _createTicksStyle += now - stepStart;
+            stepStart = now;
+        }
+
         // No per-shape z-order call here. The caller creates the scene's
         // primitives in Translate's back-to-front order and a new shape is
         // inserted in front of the existing ones, so the default insertion order
@@ -267,6 +392,12 @@ public class ExcelShapeWriter(
         // pass, and it establishes the final order independently of whatever
         // order the host happened to be in.
         ShapeWriteOutcome stamped = ApplyOwnershipOrDiscard(created, request.PrimitiveId);
+        if (_trace is not null)
+        {
+            _createTicksOwnership += Stopwatch.GetTimestamp() - stepStart;
+            _createCount++;
+        }
+
         if (stamped.Succeeded)
         {
             // The new shape is a valid proxy for the rest of the batch: the geometry check
@@ -1528,9 +1659,18 @@ public class ExcelShapeWriter(
 
         // Inside a batch the same name is looked up by the geometry check, the update and
         // the z-order pass; one indexed lookup serves all three (ADR-0054).
-        if (_batchProxies is not null && _batchProxies.TryGetValue(name, out Excel.Shape? cached))
+        if (_batchProxies is not null)
         {
-            return cached;
+            if (_batchProxies.TryGetValue(name, out Excel.Shape? cached))
+            {
+                return cached;
+            }
+
+            // A complete index answers ABSENCE without the host call that raises for a
+            // missing name. This is the difference between one scan per batch and one
+            // COM exception per create (see EnsureBatchNameIndex).
+            EnsureBatchNameIndex(shapes);
+            return _batchProxies.TryGetValue(name, out Excel.Shape? indexed) ? indexed : null;
         }
 
         // The host's name indexer is the fast path: one lookup instead of a scan of

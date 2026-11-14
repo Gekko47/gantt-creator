@@ -146,6 +146,14 @@ internal static class RefreshSheetCommand
     /// <summary>Runs the production refresh in the current Excel session.</summary>
     internal static void RunForExcel()
     {
+        // Click-to-plot, taken at the command's own first line. The pipeline reports
+        // `gantt.refresh timings total=`, which is only part of what the user waits for:
+        // the protection window, the ribbon state writes, the tab restore and the
+        // presenter all sit inside the command but outside the pipeline, and one live
+        // session recorded `post ms=1944.8` against a pipeline `total=1794.1`. Without
+        // this figure "it feels like four seconds" cannot be checked against a number.
+        long commandStarted = Stopwatch.GetTimestamp();
+
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
         // ADR-0055 clause 7: an explicit Refresh is the user asking for the chart to be rebuilt from
@@ -182,6 +190,7 @@ internal static class RefreshSheetCommand
         }
 
         TracePostPass(refreshCompleted);
+        TraceCommand(commandStarted, automatic: false);
     }
 
     /// <summary>
@@ -199,6 +208,8 @@ internal static class RefreshSheetCommand
     /// </summary>
     internal static void RunSilentForExcel()
     {
+        long commandStarted = Stopwatch.GetTimestamp();
+
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
         // ADR-0055: same window as the manual path, so a scheduled refresh can create and move shapes
@@ -231,12 +242,31 @@ internal static class RefreshSheetCommand
             // Owner ruling D-4 (ADR-0058): same tab restore as the manual path.
             RibbonStateService.Instance.ActivateGanttTab();
             TracePostPass(refreshCompleted);
+            TraceCommand(commandStarted, automatic: true);
             return;
         }
 
         Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
         TracePostPass(refreshCompleted);
+        TraceCommand(commandStarted, automatic: true);
     }
+
+    /// <summary>
+    /// Records the command's whole elapsed time, which is the figure the user
+    /// experiences as "click, then the chart appears".
+    /// </summary>
+    /// <param name="since">The timestamp taken at the command's first line.</param>
+    /// <param name="automatic">Whether this was a scheduled refresh rather than a click.</param>
+    /// <remarks>
+    /// Distinct from <c>gantt.refresh timings total=</c> (the pipeline alone) and from
+    /// <c>gantt.refresh post ms=</c> (the work after it). Those two can be added to
+    /// nothing useful when the protection window or the ribbon work dominates, which is
+    /// exactly the case this record exists to expose.
+    /// </remarks>
+    private static void TraceCommand(long since, bool automatic) =>
+        CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh command ms={Stopwatch.GetElapsedTime(since).TotalMilliseconds:0.#} source={(automatic ? "automatic" : "manual")}"));
 
     /// <summary>Runs an injected refresh, for tests and for the R4.9 wiring.</summary>
     /// <param name="orchestrator">The refresh service to invoke.</param>

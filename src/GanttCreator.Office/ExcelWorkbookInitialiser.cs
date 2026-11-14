@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
@@ -23,6 +24,14 @@ namespace GanttCreator.Office;
 /// </param>
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
 /// <param name="typeOptionsMaterialiser">The TypeOptions name and validation materialiser.</param>
+/// <param name="trace">
+/// Optional technical-record sink. When supplied, one <c>gantt.initialise steps</c>
+/// record splits the mutation sequence — header row, table, the 17-column presentation
+/// pass, configuration sheet plus catalogue write, plot anchor, and the TypeOptions
+/// validation — because "Initialise feels slow" cannot be answered by the refresh
+/// timings, which begin only after all of this has run. Absent in tests, where the
+/// timings are not a product behaviour.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -62,8 +71,19 @@ public class ExcelWorkbookInitialiser(
     object? application,
     IConfigCatalogueWriter? catalogueWriter = null,
     IWorksheetProtectionGuard? protectionGuard = null,
-    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : IWorkbookInitialiser
+    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
+    Action<string>? trace = null) : IWorkbookInitialiser
 {
+    /// <summary>
+    /// Optional technical-record sink. When supplied, one
+    /// <c>gantt.initialise steps</c> record splits the mutation sequence, which is the
+    /// half of "Initialise feels slow" the refresh timings cannot describe: the table,
+    /// the 17-column presentation pass and the catalogue write all happen here.
+    /// </summary>
+    private readonly Action<string>? _trace = trace;
+
+    private static double Ms(long ticks) => ticks * 1000d / Stopwatch.Frequency;
+
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
@@ -212,10 +232,24 @@ public class ExcelWorkbookInitialiser(
         bool createdConfigSheet = false;
         bool wrotePlotAnchor = false;
 
+        long stepStart = _trace is null ? 0L : Stopwatch.GetTimestamp();
+        long headerTicks = 0;
+        long tableTicks = 0;
+        long columnsTicks = 0;
+        long configTicks = 0;
+        long anchorTicks = 0;
+        long typeTicks = 0;
+
         try
         {
             WriteHeaderRow(target);
             wroteHeader = true;
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                headerTicks = now - stepStart;
+                stepStart = now;
+            }
 
             // The table is split into "add" and "present" so `createdTable` can be set
             // BETWEEN them. Everything after `ListObjects.Add` can throw -- the host
@@ -232,12 +266,31 @@ public class ExcelWorkbookInitialiser(
             createdDataTable = AddDataTable(target);
             createdTable = true;
             PresentDataTable(createdDataTable);
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                tableTicks = now - stepStart;
+                stepStart = now;
+            }
+
             ApplyColumnPresentation(createdDataTable);
             ApplyLeadingGutterWidth(createdDataTable);
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                columnsTicks = now - stepStart;
+                stepStart = now;
+            }
 
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
             ConfigWriteOutcome catalogueOutcome = _catalogueWriter.Write();
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                configTicks = now - stepStart;
+                stepStart = now;
+            }
             if (!catalogueOutcome.Succeeded)
             {
                 RollBackForCatalogueRefusal(
@@ -268,7 +321,18 @@ public class ExcelWorkbookInitialiser(
 
             WritePlotAnchorName(target);
             wrotePlotAnchor = true;
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                anchorTicks = now - stepStart;
+                stepStart = now;
+            }
+
             TypeOptionsMaterialiseOutcome typeOptionsOutcome = _typeOptionsMaterialiser.Materialise();
+            if (_trace is not null)
+            {
+                typeTicks = Stopwatch.GetTimestamp() - stepStart;
+            }
             if (!typeOptionsOutcome.Succeeded)
             {
                 RollBackPlotAnchorName(target);
@@ -306,6 +370,12 @@ public class ExcelWorkbookInitialiser(
 
             throw;
         }
+
+        _trace?.Invoke(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.initialise steps header={Ms(headerTicks):F1} table={Ms(tableTicks):F1}"
+            + $" columns={Ms(columnsTicks):F1} config={Ms(configTicks):F1}"
+            + $" anchor={Ms(anchorTicks):F1} types={Ms(typeTicks):F1}"));
 
         return adopt
             ? WorkbookInitialiseOutcome.Adopted(label)
@@ -1050,6 +1120,21 @@ public class ExcelWorkbookInitialiser(
     {
         ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+
+        // The theme's body font and vertical centring are the SAME for every column, so
+        // they are written once over the table's whole columns rather than once per
+        // column. Measured 2026-11-14 on the live host: the presentation pass cost
+        // 252.3 ms for 17 columns (~15 ms each) and was 55% of Initialise, while the
+        // columns' font and vertical alignment were being rewritten 17 times each with
+        // an identical value. Two writes replace thirty-four.
+        //
+        // The whole column is still the target - not the table's body range - so a row
+        // that does not exist yet already carries the theme instead of inheriting
+        // whatever Excel decides when the user types.
+        Excel.Range allColumns = GetEntireColumn(table.Range);
+        ApplyBodyFont(allColumns);
+        ApplyVerticalCentre(allColumns);
+
         for (int index = 1; index <= schema.Count; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
@@ -1094,11 +1179,8 @@ public class ExcelWorkbookInitialiser(
                 ApplyDateColumnFormat(entireColumn);
             }
 
-            // The theme's body typography and this column's alignment (R5.18d). Written on
-            // the same whole column as the date format, so a row that does not exist yet
-            // already carries the theme rather than inheriting whatever Excel decides.
-            ApplyBodyFont(entireColumn);
-            ApplyVerticalCentre(entireColumn);
+            // Only this column's alignment varies (R5.18d); the font and the vertical
+            // centring are written once for the whole table above.
             ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
         }
 
@@ -1120,12 +1202,20 @@ public class ExcelWorkbookInitialiser(
         ApplyBorderColour(table);
     }
 
-    /// <summary>Applies the theme's header fill and header type to the table's header row.</summary>
+    /// <summary>Applies the theme's header fill, text colour and header type to the table's header row.</summary>
     /// <param name="table">The visible data table.</param>
     /// <remarks>
+    /// <para>
     /// The header's bold flag and its border style stay with Excel's table style (owner
-    /// ruling 2026-11-13); the fill and the type are the chart theme's. Both proxies are held
-    /// locally rather than chained.
+    /// ruling 2026-11-13); the fill, the text colour and the type are the chart theme's.
+    /// Both proxies are held locally rather than chained.
+    /// </para>
+    /// <para>
+    /// <b>The text colour is not optional.</b> Live evidence 2026-11-14: writing the white
+    /// <see cref="GanttTableAppearance.HeaderFill"/> without it left the table style's white
+    /// header font in place, so every schema name was present and invisible. The fill and
+    /// the text colour are written together, from the same authority.
+    /// </para>
     /// </remarks>
     internal virtual void ApplyHeaderFormat(ListObject table)
     {
@@ -1133,6 +1223,7 @@ public class ExcelWorkbookInitialiser(
         Font font = header.Font;
         font.Name = GanttTableAppearance.FontFamily;
         font.Size = GanttTableAppearance.HeaderFontSizePt;
+        font.Color = GanttTableAppearance.HeaderTextColour.ARGB;
         Interior interior = header.Interior;
         interior.Color = GanttTableAppearance.HeaderFill.ARGB;
     }

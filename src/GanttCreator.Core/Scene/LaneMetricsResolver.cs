@@ -83,6 +83,14 @@ public static class LaneMetricsResolver
     /// <param name="stackGapPt">Space between distinct effective slots.</param>
     /// <param name="splitterHeightPt">The fixed splitter lane height.</param>
     /// <param name="spacerHeightPt">The fixed spacer lane height.</param>
+    /// <param name="emptyBodyRowHeightPt">
+    /// The managed row height to use when the measured table has NO body rows: the
+    /// themed <c>GanttRowHeightPt</c>. ADR-0050 makes an empty live table a supported
+    /// state that still renders its frame, and there is no measured row to derive a
+    /// lane from — refusing there meant a freshly initialised workbook never drew a
+    /// chart. <see langword="null"/> keeps the previous refusal for any caller that has
+    /// no such token.
+    /// </param>
     /// <returns>The resolved metrics, or a typed refusal.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="grid"/> is null.</exception>
     public static LaneMetricsResolution Resolve(
@@ -91,7 +99,8 @@ public static class LaneMetricsResolver
         double lanePaddingBottomPt,
         double stackGapPt,
         double splitterHeightPt,
-        double spacerHeightPt)
+        double spacerHeightPt,
+        double? emptyBodyRowHeightPt = null)
     {
         if (grid is null)
         {
@@ -101,7 +110,22 @@ public static class LaneMetricsResolver
         IReadOnlyList<double> heights = grid.RowHeightsPt;
         if (heights.Count == 0)
         {
-            return new LaneMetricsResolution(null, LaneMetricsRefusal.NoRows);
+            // No measured body: the table is empty, and the lane height is the token the
+            // row-height normaliser writes to every body row. Refused only when no token
+            // was supplied, which is every caller before this change.
+            return emptyBodyRowHeightPt is { } emptyHeight
+                && double.IsFinite(emptyHeight)
+                && emptyHeight > 0
+                ? new LaneMetricsResolution(
+                    new LaneLayoutMetrics(
+                        emptyHeight,
+                        lanePaddingTopPt,
+                        lanePaddingBottomPt,
+                        stackGapPt,
+                        splitterHeightPt,
+                        spacerHeightPt),
+                    null)
+                : new LaneMetricsResolution(null, LaneMetricsRefusal.NoRows);
         }
 
         foreach (double height in heights)

@@ -30,7 +30,45 @@ public sealed class LaneMetricsResolverTests
     [Fact]
     public void A_grid_with_no_rows_is_refused()
     {
+        // ADR-0050 D1: the default stays a refusal, so a caller that has not opted in
+        // still cannot compose a chart from a body it never measured.
         Assert.Equal(LaneMetricsRefusal.NoRows, Resolve(Grid([], allowEmptyRows: true)).Refusal);
+    }
+
+    [Fact]
+    public void An_empty_body_uses_the_supplied_row_height_so_the_empty_chart_composes()
+    {
+        // ADR-0050: a freshly initialised table has zero body rows, and the lane height
+        // comes from the GanttRowHeightPt token the normaliser writes to every managed
+        // row. Before this opt-in the resolver refused NoRows and the chart never drew.
+        LaneMetricsResolution resolution = LaneMetricsResolver.Resolve(
+            Grid([], allowEmptyRows: true),
+            lanePaddingTopPt: 1.0,
+            lanePaddingBottomPt: 2.0,
+            stackGapPt: 3.0,
+            splitterHeightPt: 20.0,
+            spacerHeightPt: 10.0,
+            emptyBodyRowHeightPt: 15.0);
+
+        Assert.True(resolution.Succeeded);
+        Assert.Equal(15.0, resolution.Metrics!.LaneHeightPt);
+    }
+
+    [Fact]
+    public void An_empty_body_with_an_unusable_row_height_still_refuses_NoRows()
+    {
+        // A non-positive or non-finite token is not a height, so the refusal stands
+        // rather than resolving a zero-height lane nobody could see.
+        Assert.Equal(
+            LaneMetricsRefusal.NoRows,
+            LaneMetricsResolver.Resolve(
+                Grid([], allowEmptyRows: true),
+                lanePaddingTopPt: 1.0,
+                lanePaddingBottomPt: 2.0,
+                stackGapPt: 3.0,
+                splitterHeightPt: 20.0,
+                spacerHeightPt: 10.0,
+                emptyBodyRowHeightPt: 0.0).Refusal);
     }
 
     [Fact]

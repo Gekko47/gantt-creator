@@ -648,7 +648,23 @@ public class WorkbookInitialiserTests
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index)
             => ColumnAt(columns, index);
 
-        internal override Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+        /// <summary>
+        /// Answers the two shapes of this seam the product asks for: one column's entire
+        /// column inside the presentation loop, and the WHOLE TABLE's entire columns once
+        /// before it (the theme's body font and vertical centring are identical for every
+        /// column, so they are written once — measured 252.3 ms for 17 columns when they
+        /// were written per column).
+        /// </summary>
+        /// <param name="range">The range the product asked about.</param>
+        /// <returns>The range's entire column, or a stand-in for the table-wide range the
+        /// graph does not model.</returns>
+        internal override Excel.Range GetEntireColumn(Excel.Range range) =>
+            range is null ? EntireColumnStandIn : range.EntireColumn;
+
+        private Excel.Range? _entireColumnStandIn;
+
+        private Excel.Range EntireColumnStandIn =>
+            _entireColumnStandIn ??= new Mock<Excel.Range>().Object;
 
         /// <summary>
         /// The sheet-scoped name the rollback resolves, or <see langword="null"/> for a
@@ -959,8 +975,15 @@ public class WorkbookInitialiserTests
     {
         // R5.18d, owner ruling D5: the visible table is presented from the same code-owned
         // typography tokens the chart and its export use, so the live panel and the exported
-        // panel cannot drift apart. Every schema column is written, hidden engine columns
+        // panel cannot drift apart. Every schema column is covered, hidden engine columns
         // included: hiding a column does not stop the row-height and read paths from using it.
+        //
+        // The COVERAGE is per column; the WRITE is not. The theme's body font and vertical
+        // centring are identical for every column, so they are written once over the table's
+        // whole columns — measured 2026-11-14, the per-column version cost 252.3 ms for 17
+        // columns and was 55% of Initialise. The assertions below therefore check that the
+        // theme reaches the columns once with the right values, and that the alignment,
+        // which genuinely varies, is still written per column.
         var active = BlankActiveSheet();
         var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
         var graph = new WorkbookGraph(active);
@@ -970,15 +993,12 @@ public class WorkbookInitialiserTests
         _ = initialiser.Initialise();
 
         IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
-        Assert.Equal(columns.Count, initialiser.BodyFontWrites.Count);
-        Assert.Equal(columns.Count, initialiser.VerticalCentreWrites);
-        Assert.All(
-            initialiser.BodyFontWrites,
-            write =>
-            {
-                Assert.Equal(GanttTableAppearance.FontFamily, write.Family);
-                Assert.Equal(GanttTableAppearance.BodyFontSizePt, write.Size);
-            });
+        Assert.Single(initialiser.BodyFontWrites);
+        Assert.Equal(1, initialiser.VerticalCentreWrites);
+        Assert.Equal(
+            (GanttTableAppearance.FontFamily, GanttTableAppearance.BodyFontSizePt),
+            initialiser.BodyFontWrites[0]);
+        Assert.Equal(columns.Count, initialiser.HorizontalAlignmentWrites.Count);
 
         // The header band and the border colour are table-wide, so exactly one write each
         // rather than one per column.

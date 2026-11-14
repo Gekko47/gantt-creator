@@ -55,6 +55,26 @@ public static class GanttTableAppearance
     /// <summary>The theme's header band fill.</summary>
     public static ColourHex HeaderFill => Colour("HeaderFill");
 
+    /// <summary>
+    /// The colour the visible header band's text takes: the theme's body text colour.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A fill without its text colour is an invisible header.</b> Live evidence
+    /// 2026-11-14: the initialiser wrote <see cref="HeaderFill"/> (white) over the header
+    /// row but never the font colour, so the table style's own header font — white on
+    /// <c>TableStyleMedium2</c>'s dark band — stayed white. The header cells held every
+    /// schema name and the user could see none of them.
+    /// </para>
+    /// <para>
+    /// The body text colour, not the export panel's header text colour: the panel's header
+    /// is white <em>on</em> a dark band, whereas the live band is filled with
+    /// <see cref="HeaderFill"/>. The two must be read as a pair, and this is the pair the
+    /// theme actually supports.
+    /// </para>
+    /// </remarks>
+    public static ColourHex HeaderTextColour => Colour("DefaultText");
+
     /// <summary>The theme's header text size, in points.</summary>
     public static double HeaderFontSizePt => GanttCatalogues.TypographyDefault("HeaderFontSizePt");
 

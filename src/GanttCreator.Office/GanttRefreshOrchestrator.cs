@@ -1205,14 +1205,22 @@ public sealed class GanttRefreshOrchestrator(
     /// stated reason. Every refusal reached after a mutation therefore reports what it
     /// actually did.
     /// </remarks>
-    private static GanttRefreshOutcome RefuseAfterWrites(
+    private GanttRefreshOutcome RefuseAfterWrites(
         GanttRefreshRefusal refusal,
         string message,
         IReadOnlyList<GanttValidationIssue> issues,
         int durationCellsWritten,
         int shapesWritten = 0,
-        int styleKeyCellsWritten = 0) =>
-        GanttRefreshOutcome.Refused(refusal, message, issues, durationCellsWritten, shapesWritten, styleKeyCellsWritten);
+        int styleKeyCellsWritten = 0)
+    {
+        // The same record every other refusal writes. This is now the commonest
+        // refusal shape — measurement, scene build, translation — and it used to write
+        // NOTHING, so "Initialise leaves a blank sheet" had no line naming the cause:
+        // the log showed the row-warning pass and then silence. A silent failure path
+        // is indistinguishable from a pipeline that never ran.
+        _trace?.Invoke("gantt.refresh refusal=" + refusal);
+        return GanttRefreshOutcome.Refused(refusal, message, issues, durationCellsWritten, shapesWritten, styleKeyCellsWritten);
+    }
 
     /// <summary>Turns a configuration read refusal into a message that names the remedy.</summary>
     /// <param name="refusal">The reason the catalogue reader refused.</param>

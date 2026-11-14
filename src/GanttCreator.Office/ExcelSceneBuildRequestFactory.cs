@@ -234,6 +234,17 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         double topPt = measuredGrid.OriginTopPt;
         double heightPt = measuredGrid.TotalRowHeightPt;
 
+        // ADR-0050: an empty table has no measured body, so the plot takes ONE managed
+        // row's height from the themed token — the same figure the row-height normaliser
+        // writes to a body row, and the same one the lane metrics now use. Without it the
+        // plot height was zero, PlotGeometryResolver refused, and the empty chart could
+        // not be composed at all.
+        if (heightPt <= 0)
+        {
+            heightPt = themedMetrics.GetValueOrDefault(
+                _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken));
+        }
+
         // R5.2: the plot margin, resolved once from the Margin/MarginCm settings and
         // subtracted TWICE from the width budget (owner ruling) so a visible, usable
         // plotting area is determined. The plot stays flush-left (ADR-0031 D2), so both
@@ -277,7 +288,14 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             splitterHeightPt: themedMetrics.GetValueOrDefault(
                 _splitterHeightToken, GanttCatalogues.MetricDefault(_splitterHeightToken)),
             spacerHeightPt: themedMetrics.GetValueOrDefault(
-                _spacerHeightToken, GanttCatalogues.MetricDefault(_spacerHeightToken)));
+                _spacerHeightToken, GanttCatalogues.MetricDefault(_spacerHeightToken)),
+
+            // ADR-0050: a freshly initialised table has no body rows to measure, so the
+            // lane height comes from the token the row-height normaliser writes to every
+            // managed row. Without it the resolver refused NoRows and the empty chart
+            // could never be composed.
+            emptyBodyRowHeightPt: themedMetrics.GetValueOrDefault(
+                _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken)));
         if (lanes.Metrics is not { } laneMetrics)
         {
             return SceneBuildRequestOutcome.Refused(

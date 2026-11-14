@@ -1354,6 +1354,11 @@ public class ExcelWorkbookRecovery(
         Excel.Font font = header.Font;
         font.Name = GanttTableAppearance.FontFamily;
         font.Size = GanttTableAppearance.HeaderFontSizePt;
+
+        // The fill's pair, written with it: the recovery mirror must produce the same
+        // readable header the initialiser does, or a rebuilt workbook shows an invisible
+        // header (live evidence 2026-11-14).
+        font.Color = GanttTableAppearance.HeaderTextColour.ARGB;
         Excel.Interior interior = header.Interior;
         interior.Color = GanttTableAppearance.HeaderFill.ARGB;
     }

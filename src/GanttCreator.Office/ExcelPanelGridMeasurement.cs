@@ -135,8 +135,9 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // reading, so a stale or partial list can never be laid out as if it were the
         // sheet. A supplied height that is non-finite or negative is refused by
         // `PanelCellGrid.TryCreate`, exactly as a read one would be.
+        Excel.Range? body = table.DataBodyRange;
         List<double> rowHeights = [];
-        if (table.DataBodyRange is { } body)
+        if (body is not null)
         {
             int bodyRowCount = GetBodyRowCount(body);
             if (bodyRowHeightsPt is { Count: > 0 } supplied && supplied.Count == bodyRowCount)
@@ -165,7 +166,14 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             }
         }
 
-        if (rowHeights.Count == 0)
+        // ADR-0050/R5.18j: an intentionally EMPTY table is a supported live state — the
+        // first Refresh after Initialise draws the frame over the default range — and
+        // Excel reports it as NO body at all (`DataBodyRange` is null), not as a
+        // zero-row range. Refusing that state is why a freshly initialised workbook
+        // never drew a chart: the measurement refused the one input the empty-chart
+        // contract exists for. A body that EXISTS but yields no measurable height is
+        // still refused, because that is an unreadable table rather than an empty one.
+        if (body is not null && rowHeights.Count == 0)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
@@ -238,7 +246,17 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         ArgumentNullException.ThrowIfNull(table);
 
         Excel.Range? body = table.DataBodyRange;
-        return body is null ? null : ToPoints(body.Top);
+
+        // With no body rows the first body row's top is still the header's bottom, and
+        // it is measured rather than defaulted for the same reason every other origin
+        // is: a zero would be the page-coordinate assumption ADR-0030 removed.
+        Excel.Range? header = table.HeaderRowRange;
+        double? bodyTop = body is null ? null : ToPoints(body.Top);
+        double? headerTop = header is null ? null : ToPoints(header.Top);
+        double? headerHeight = header is null ? null : ToPoints(header.Height);
+
+        return bodyTop
+            ?? (headerTop is { } top && headerHeight is { } height ? top + height : null);
     }
 
     /// <summary>
@@ -267,7 +285,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     internal virtual double? ReadBottomPaddingHeight(Excel.ListObject table) =>
         table.DataBodyRange is not { } body
-            ? null
+            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowFirstBodyRow: 2)
             : ReadVerifiedBottomPaddingHeight(table, body);
 
     /// <summary>
@@ -292,8 +310,46 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     internal virtual double? ReadAnchorHeight(Excel.ListObject table) =>
         table.DataBodyRange is not { } body
-            ? null
+            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowFirstBodyRow: 1)
             : ReadVerifiedAnchorHeight(table, body);
+
+    /// <summary>
+    /// Reads a reserved row's height when the table has NO body rows (ADR-0050).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="offsetBelowFirstBodyRow">
+    /// 1 for the anchor row, 2 for the bottom padding row. The first body row's
+    /// position IS the reserved row's position when no body row exists: the anchor sits
+    /// immediately below the last activity row, and with no activity rows that is the
+    /// row the first one would occupy.
+    /// </param>
+    /// <returns>The measured height, or <see langword="null"/> when the row cannot be verified.</returns>
+    /// <remarks>
+    /// <para>
+    /// The layout authority derives these rows from a POSITIVE body length
+    /// (<see cref="GanttSheetLayout.AnchorRowIndex"/> throws for zero), which is correct
+    /// for a verification that needs a measured span. An empty body has no span to
+    /// verify against, so the position comes from the measured HEADER row instead of a
+    /// contract constant, and the row itself is still verified empty before its height
+    /// is trusted — the two rules the non-empty path applies are kept, only the source
+    /// of the index changes.
+    /// </para>
+    /// <para>
+    /// An occupied or unreadable row returns <see langword="null"/>, which the caller
+    /// maps to the typed measurement refusal: a user's own row is never resized or
+    /// measured as a chart margin.
+    /// </para>
+    /// </remarks>
+    private double? ReadEmptyBodyLayoutRowHeight(Excel.ListObject table, int offsetBelowFirstBodyRow)
+    {
+        if (table.HeaderRowRange is not { } header)
+        {
+            return null;
+        }
+
+        int row = GetRangeRow(header) + offsetBelowFirstBodyRow;
+        return IsLayoutRowEmpty(table, row) is true ? ReadRowHeightAt(table, row) : null;
+    }
 
     /// <summary>
     /// Resolves the reserved anchor row from the body's MEASURED span and reads its
@@ -492,8 +548,17 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     {
         ArgumentNullException.ThrowIfNull(table);
 
+        // With no body rows the table's left edge is the header's left: every column of
+        // a table shares its left edge, so this is the same measured number the body
+        // would report, read from the range that still exists (ADR-0050 empty table).
         Excel.Range? body = table.DataBodyRange;
-        return body is null ? null : ToPoints(body.Left);
+        Excel.Range? header = table.HeaderRowRange;
+
+        return body is not null
+            ? ToPoints(body.Left)
+            : header is null
+                ? null
+                : ToPoints(header.Left);
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using Microsoft.Office.Core;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -89,6 +90,34 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
                     GanttTableSchema.Default.Columns[index].Name,
                     table.ListColumns[index + 1].Name,
                     StringComparer.Ordinal);
+            }
+
+            // The header band and its text are written as a PAIR. Live evidence
+            // 2026-11-14: the fill was written without the text colour, so the table
+            // style's white header font stayed white on the white band — every schema name
+            // was present and invisible. Both are asserted from the DISPLAYED format, which
+            // is what the user sees rather than what a property set says.
+            using (OfficeFixture.ComScope headerScope = new())
+            {
+                Excel.Range headerRow = headerScope.Track(table.HeaderRowRange);
+
+                // Converted to int first: the COM properties are dynamic, and passing one
+                // straight into Assert.Equal binds the overload at runtime instead of
+                // picking the int one.
+                int displayedText = Convert.ToInt32(
+                    headerRow.DisplayFormat.Font.Color, CultureInfo.InvariantCulture);
+                int displayedFill = Convert.ToInt32(
+                    headerRow.DisplayFormat.Interior.Color, CultureInfo.InvariantCulture);
+
+                // Excel's Color property is RGB; ColourHex carries an alpha byte, so the
+                // comparison masks it rather than comparing 0xFF000000 with 0x000000.
+                const uint RgbMask = 0x00FFFFFF;
+                Assert.Equal(
+                    GanttTableAppearance.HeaderTextColour.ARGB & RgbMask,
+                    unchecked((uint)displayedText) & RgbMask);
+                Assert.Equal(
+                    GanttTableAppearance.HeaderFill.ARGB & RgbMask,
+                    unchecked((uint)displayedFill) & RgbMask);
             }
 
             var anchor = workbook.Names.Item(GanttWorkbookContract.PlotAnchorDefinedName);
