@@ -228,26 +228,21 @@ public static class GanttSheetLayout
     /// </para>
     /// </remarks>
     /// <remarks>
-    /// <para>
-    /// <b>ZERO body rows is a supported length (owner ruling 2026-11-14, option A).</b>
-    /// An empty table still has the chart drawn over it (ADR-0050), so the two reserved rows
-    /// below the header exist before there is any activity to sit above them: the anchor
-    /// takes the position the FIRST body row would have occupied and the bottom padding sits
-    /// one below that. Refusing the zero case here is what left both rows at Excel's default
-    /// 15 pt in a freshly initialised workbook — the row-height normaliser could not name
-    /// them, so it never wrote them, while the panel measurement read them as the layout rows
-    /// they are. Two parts of the codebase disagreed about the same sheet.
-    /// </para>
-    /// <para>
-    /// A NEGATIVE count is still a caller defect and still throws.
-    /// </para>
+    /// <b>An empty table still has ONE body row's worth of sheet</b> (owner ruling
+    /// 2026-11-14): Excel presents a table with no <c>ListRows</c> with its insert row
+    /// occupying the position the first activity would take, and that row carries the
+    /// standard row height. Callers therefore pass at least 1 for the reserved rows' span —
+    /// the insert row IS the row above the anchor. Passing 0 is a caller defect, not the
+    /// empty case, which is why the throw stays.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="bodyRowCount"/> is negative.
+    /// Thrown when <paramref name="bodyRowCount"/> is not positive. A table with no
+    /// body has no last activity row, so there is no row for this to name; an empty
+    /// table's span is the ONE insert row, and its caller passes 1.
     /// </exception>
     public static int AnchorRowIndex(int bodyRowCount)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(bodyRowCount);
+        ArgumentOutOfRangeException.ThrowIfLessThan(bodyRowCount, 1);
         return FirstBodyRowIndex + bodyRowCount;
     }
 
@@ -276,12 +271,11 @@ public static class GanttSheetLayout
     /// </para>
     /// </remarks>
     /// <remarks>
-    /// Zero body rows is supported for the reason <see cref="AnchorRowIndex"/> records: the
-    /// padding row is the chart's bottom margin and exists with or without a body. A negative
-    /// count still throws, through <see cref="AnchorRowIndex"/>.
+    /// An empty table's caller passes 1 for the same reason <see cref="AnchorRowIndex"/>
+    /// records: the insert row is the one body row the sheet shows.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="bodyRowCount"/> is negative.
+    /// Thrown when <paramref name="bodyRowCount"/> is not positive.
     /// </exception>
     public static int BottomPaddingRowIndex(int bodyRowCount) =>
         AnchorRowIndex(bodyRowCount) + 1;

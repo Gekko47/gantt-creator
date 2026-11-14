@@ -567,23 +567,42 @@ public sealed class ExcelRowHeightNormaliserTests
     [Fact]
     public void The_layout_rows_are_normalised_even_when_the_body_is_empty()
     {
-        var (normaliser, written, _) = Build(bodyHeights: []);
+        // Every row below the header is seeded OFF its token, so a row that is resolved but
+        // not written cannot be mistaken for a row that was never addressed: the fixture's
+        // defaults already sit at their targets, which would make "no write" ambiguous.
+        var (normaliser, written, _) = Build(
+            bodyHeights: [],
+            layoutHeights: new()
+            {
+                [GanttSheetLayout.TopPaddingRowIndex] = PaddingRowPt,
+                [GanttSheetLayout.ReservedRowIndex] = ReservedRowPt,
+                [GanttSheetLayout.HeaderRowIndex] = HeaderPt,
+                [GanttSheetLayout.FirstBodyRowIndex] = 15d,
+                [GanttSheetLayout.AnchorRowIndex(1)] = 15d,
+                [GanttSheetLayout.BottomPaddingRowIndex(1)] = 15d,
+            });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
             ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
 
-        // The three rows ABOVE the body were already at their tokens. The two rows BELOW
-        // it are written now, and that is the point of the empty case: with no body there
-        // is no activity row to sit above them, so the anchor takes the position the first
-        // body row would have occupied and the bottom padding sits one below (owner ruling
-        // 2026-11-14). Measured before this change on the host: rowsWritten=3, and both of
-        // these rows kept Excel's default 15 pt, so the table read ~30 pt taller than the
-        // chart drawn over it.
-        Assert.Equal(2, outcome.RowsWritten);
+        // The three rows ABOVE the body were already at their tokens. Three rows are
+        // written now, and that is the point of the empty case (owner ruling 2026-11-14):
+        //   - the INSERT row, which an empty table shows directly under the header, at the
+        //     standard row height so the row a user types into is already lane height;
+        //   - the anchor row below it, at the 0.25 pt sub-row height;
+        //   - the bottom padding row below that, at the margin height.
+        // Measured before this change on the host: rowsWritten=3, with the insert row and
+        // both reserved rows left at Excel's default 15 pt, so the table read ~30 pt taller
+        // than the chart drawn over it.
+        Assert.Equal(3, outcome.RowsWritten);
         Assert.Equal(
-            [GanttSheetLayout.BottomPaddingRowIndex(0), GanttSheetLayout.AnchorRowIndex(0)],
+            [
+                GanttSheetLayout.FirstBodyRowIndex,
+                GanttSheetLayout.BottomPaddingRowIndex(1),
+                GanttSheetLayout.AnchorRowIndex(1),
+            ],
             written);
     }
 
@@ -1039,7 +1058,7 @@ public sealed class ExcelRowHeightNormaliserTests
     /// anchor and bottom margin at Excel's default either.
     /// </summary>
     [Fact]
-    public void An_empty_body_writes_the_two_layout_rows_below_the_header()
+    public void An_empty_body_writes_the_insert_row_and_both_reserved_rows()
     {
         var (application, worksheet, table) = Graph();
         var normaliser = new TestableNormaliser(
@@ -1047,16 +1066,28 @@ public sealed class ExcelRowHeightNormaliserTests
             Guard(ProtectionGuardOutcome.NotProtected),
             worksheet.Object,
             table.Object,
-            [],
-            []);
+            heights: [],
+            written: [],
+
+            // Off-token for the three rows below the header, so each must be written.
+            layoutHeights: new Dictionary<int, double>
+            {
+                [GanttSheetLayout.TopPaddingRowIndex] = PaddingRowPt,
+                [GanttSheetLayout.ReservedRowIndex] = ReservedRowPt,
+                [GanttSheetLayout.HeaderRowIndex] = HeaderPt,
+                [GanttSheetLayout.FirstBodyRowIndex] = 15d,
+                [GanttSheetLayout.AnchorRowIndex(1)] = 15d,
+                [GanttSheetLayout.BottomPaddingRowIndex(1)] = 15d,
+            });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
 
-        // Two, not zero: the anchor row (0.25 pt sub-row) and the bottom padding row
-        // (5.75 pt margin) exist with or without a body. Zero here was the defect — it
-        // left both at 15 pt in a freshly initialised workbook.
-        Assert.Equal(2, outcome.RowsWritten);
+        // Three, not zero: the insert row at the standard row height, the anchor row at
+        // 0.25 pt and the bottom padding row at 5.75 pt all exist with or without a body.
+        // Zero here was the defect — it left all three at Excel's default in a freshly
+        // initialised workbook, with the anchor written into the insert row's position.
+        Assert.Equal(3, outcome.RowsWritten);
     }
 }

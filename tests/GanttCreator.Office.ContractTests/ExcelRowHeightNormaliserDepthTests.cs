@@ -476,13 +476,13 @@ public sealed class ExcelRowHeightNormaliserDepthTests
 
         RowHeightNormalisationOutcome outcome = Normalise(normaliser);
 
-        // Five, not three: the anchor and bottom padding rows are resolved positionally
-        // when there is no body, so they are written with the three rows above the body
-        // (owner ruling 2026-11-14). Three was the defect — measured on the host, the two
-        // rows below the header kept Excel's default 15 pt in a freshly initialised
+        // Six, not three (owner ruling 2026-11-14): the three rows above the body, the
+        // table's INSERT row at the standard row height, then the anchor and bottom padding
+        // rows resolved positionally below it. Three was the defect — measured on the host,
+        // everything below the header kept Excel's default 15 pt in a freshly initialised
         // workbook, and the table read ~30 pt taller than the chart drawn over it.
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
-        Assert.Equal(5, outcome.RowsWritten);
+        Assert.Equal(6, outcome.RowsWritten);
         Assert.Empty(normaliser.BodyWrites);
     }
 }

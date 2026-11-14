@@ -224,25 +224,34 @@ public class ExcelRowHeightNormaliser(
         Excel.Range? body = GetTableBody(table);
         int rowCount = body is null ? 0 : GetBodyRowCount(body);
 
-        // Both branches assign both rows; neither keeps a null default, which is the
-        // difference between "not resolved" and "resolved to nothing".
+        // Both branches assign both reserved rows; neither keeps a null default, which is
+        // the difference between "not resolved" and "resolved to nothing". The insert row is
+        // assigned ONLY by the empty branch: a populated table has no insert row of its own,
+        // because its rows are the body the loop below normalises.
         int? bottomPaddingRow;
         int? anchorRow;
+        int? insertRow = null;
         if (body is null || rowCount == 0)
         {
-            // Owner ruling 2026-11-14 (option A): the two reserved rows below the header
-            // exist even when the body is empty, because the chart is still drawn over them
-            // (ADR-0050). They sit exactly where GanttSheetLayout says — the anchor at the
-            // position the FIRST body row would have occupied, the padding one below it —
-            // and emptiness is still verified before either is written: a user's note in that
-            // row must not be squashed to the 0.25 pt sub-row height.
+            // Owner ruling 2026-11-14: an empty table still occupies ONE body row's worth of
+            // sheet. Excel presents a table with no ListRows with its INSERT ROW in the
+            // position the first activity would take, and that row belongs to the user — it
+            // carries the theme's standard row height, not the 0.25 pt sub-row height. The
+            // two reserved rows therefore sit one lower than the header, at the positions a
+            // ONE-ROW body would give them, which is why they are derived with 1 rather than
+            // 0: `AnchorRowIndex` needs a positive span and the insert row IS that span.
             //
-            // Measured on the host the same day, with zero body rows: rowsWritten=3 (top
-            // padding, reserved, header) and the two rows below the header kept Excel's
-            // default 15 pt, so the table read about 30 pt taller than the chart drawn over
-            // it. Reported as "row 5 and 6 are not the correct height on initialise".
-            int emptyAnchorRow = GanttSheetLayout.AnchorRowIndex(0);
-            int emptyPaddingRow = GanttSheetLayout.BottomPaddingRowIndex(0);
+            // Measured on the host before this change, with zero body rows: rowsWritten=3
+            // (top padding, reserved, header) and everything below the header left at
+            // Excel's default 15 pt, so the table read ~30 pt taller than the chart drawn
+            // over it. Reported as "row 5 and 6 are not the correct height on initialise".
+            int insertBodyRow = GanttSheetLayout.FirstBodyRowIndex;
+            int emptyAnchorRow = GanttSheetLayout.AnchorRowIndex(1);
+            int emptyPaddingRow = GanttSheetLayout.BottomPaddingRowIndex(1);
+
+            // The reserved rows are still verified empty before anything is written to them:
+            // a user's note in that row must never be squashed to a margin height. The insert
+            // row is the table's own, so it needs no such proof.
             if (IsLayoutRowEmpty(worksheet, emptyAnchorRow) is not true)
             {
                 return RowHeightNormalisationOutcome.Refused(
@@ -255,6 +264,7 @@ public class ExcelRowHeightNormaliser(
                     RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
             }
 
+            insertRow = insertBodyRow;
             anchorRow = emptyAnchorRow;
             bottomPaddingRow = emptyPaddingRow;
         }
@@ -307,6 +317,14 @@ public class ExcelRowHeightNormaliser(
             reservedRowHeightPt);
 
         written += NormaliseLayoutRow(worksheet, GanttSheetLayout.HeaderRowIndex, headerHeightPt);
+
+        // The empty table's insert row: the standard row height, so the row a user types
+        // their first activity into is already the height the lanes will use. A populated
+        // table needs nothing here — its body rows are measured and normalised below.
+        if (insertRow is { } resolvedInsertRow)
+        {
+            written += NormaliseLayoutRow(worksheet, resolvedInsertRow, managedHeightPt);
+        }
 
         // Normalised after the body rows are MEASURED for the same reason the others
         // exist at all: a user who drags it is asking for a different margin, and

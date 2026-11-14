@@ -285,7 +285,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     internal virtual double? ReadBottomPaddingHeight(Excel.ListObject table) =>
         table.DataBodyRange is not { } body
-            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowFirstBodyRow: 2)
+            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowHeaderRow: 3)
             : ReadVerifiedBottomPaddingHeight(table, body);
 
     /// <summary>
@@ -310,18 +310,19 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     internal virtual double? ReadAnchorHeight(Excel.ListObject table) =>
         table.DataBodyRange is not { } body
-            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowFirstBodyRow: 1)
+            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowHeaderRow: 2)
             : ReadVerifiedAnchorHeight(table, body);
 
     /// <summary>
     /// Reads a reserved row's height when the table has NO body rows (ADR-0050).
     /// </summary>
     /// <param name="table">The Gantt table.</param>
-    /// <param name="offsetBelowFirstBodyRow">
-    /// 1 for the anchor row, 2 for the bottom padding row. The first body row's
-    /// position IS the reserved row's position when no body row exists: the anchor sits
-    /// immediately below the last activity row, and with no activity rows that is the
-    /// row the first one would occupy.
+    /// <param name="offsetBelowHeaderRow">
+    /// 2 for the anchor row, 3 for the bottom padding row. The offset is counted from the
+    /// HEADER row and starts at 2, not 1, because an empty table still occupies one body
+    /// row's worth of sheet: Excel shows the table's INSERT ROW directly below the header,
+    /// at the standard row height, and the anchor sits below it (owner ruling 2026-11-14).
+    /// Counting from 1 would read the insert row as the anchor.
     /// </param>
     /// <returns>The measured height, or <see langword="null"/> when the row cannot be verified.</returns>
     /// <remarks>
@@ -340,14 +341,14 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// measured as a chart margin.
     /// </para>
     /// </remarks>
-    private double? ReadEmptyBodyLayoutRowHeight(Excel.ListObject table, int offsetBelowFirstBodyRow)
+    private double? ReadEmptyBodyLayoutRowHeight(Excel.ListObject table, int offsetBelowHeaderRow)
     {
         if (table.HeaderRowRange is not { } header)
         {
             return null;
         }
 
-        int row = GetRangeRow(header) + offsetBelowFirstBodyRow;
+        int row = GetRangeRow(header) + offsetBelowHeaderRow;
         return IsLayoutRowEmpty(table, row) is true ? ReadRowHeightAt(table, row) : null;
     }
 
