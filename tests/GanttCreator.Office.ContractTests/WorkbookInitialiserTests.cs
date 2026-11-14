@@ -56,6 +56,13 @@ public class WorkbookInitialiserTests
         public Mock<Excel.Worksheet> Worksheet { get; } = new();
         public Mock<Excel.Range> HeaderRange { get; } = new();
 
+        /// <summary>
+        /// The table's own header row, which is a different range from
+        /// <see cref="HeaderRange"/> (the worksheet row the header values are written to).
+        /// The initialiser locks it once for every column, after the per-column pass.
+        /// </summary>
+        public Mock<Excel.Range> TableHeaderRow { get; } = new();
+
         /// <summary>The reserved title cell, captured separately (ADR-0030 D4).</summary>
         public Mock<Excel.Range> TitleCell { get; } = new();
         public Mock<Excel.Range> UsedRange { get; } = new();
@@ -72,6 +79,9 @@ public class WorkbookInitialiserTests
 
         /// <summary>The <c>Locked</c> value written to each column, in column order.</summary>
         public List<bool> LockedWrites { get; } = [];
+
+        /// <summary>The <c>Locked</c> value written to the table's header row.</summary>
+        public List<bool> HeaderRowLockWrites { get; } = [];
 
         /// <summary>The <c>Hidden</c> value written to each column, in column order.</summary>
         public List<bool> HiddenWrites { get; } = [];
@@ -265,6 +275,15 @@ public class WorkbookInitialiserTests
             // why these are wired explicitly — otherwise the presentation step
             // would silently no-op and its tests would pass vacuously.
             _ = Table.SetupGet(t => t.ListColumns).Returns(ListColumns.Object);
+
+            // The header row the lock pass writes to (R5.18k follow-up). Its getter reports
+            // what the recorded write left behind, so an adapter that skipped the write on
+            // an already-locked header would be visible here rather than silently passing.
+            _ = Table.SetupGet(t => t.HeaderRowRange).Returns(TableHeaderRow.Object);
+            _ = TableHeaderRow.SetupGet(r => r.Locked)
+                .Returns(() => (object)(HeaderRowLockWrites.Count > 0));
+            _ = TableHeaderRow.SetupSet(r => r.Locked = It.IsAny<object>())
+                .Callback<object>(value => HeaderRowLockWrites.Add(RequireBool(value)));
 
             // `ListColumns.Count` is read by every column walk, including the
             // rollback's visibility restore. Unconfigured, Moq returns 0 and the
@@ -893,6 +912,26 @@ public class WorkbookInitialiserTests
             columns.Count(column => column.IsHidden),
             active.HiddenWrites.Count);
         Assert.All(active.HiddenWrites, written => Assert.True(written));
+    }
+
+    [Fact]
+    public void Initialise_locks_the_table_header_row_for_every_column()
+    {
+        // R5.18k follow-up. `ListColumn.Range` includes the header cell, so the per-column
+        // pass writes each authoring column's UNLOCKED flag over its own header too. Once
+        // the visible columns led the table (R5.18k) that left an unlocked `Type` header
+        // above a protected body, and a user could rename a schema column -- which breaks
+        // the name-keyed column map every adapter builds. Measured live by
+        // ProtectionToggleIntegrationTests: the header cell read Locked = False.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        _ = Assert.Single(active.HeaderRowLockWrites);
+        Assert.True(active.HeaderRowLockWrites[0]);
     }
 
     [Fact]

@@ -1326,6 +1326,18 @@ public class ExcelWorkbookRecovery(
             ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
         }
 
+        // The header row is locked for EVERY column (R5.18k follow-up). The per-column write
+        // above covers the header cell too, and an authoring column is unlocked, so a rebuilt
+        // table came back with an unlocked `Type` header directly above the body: a user could
+        // then rename a schema column, which breaks the name-keyed column map every adapter
+        // builds. Locking it here is what makes a repair restore the classification, not just
+        // the visible part of it.
+        Excel.Range? headerRow = table.HeaderRowRange;
+        if (headerRow is not null)
+        {
+            SetColumnLocked(headerRow, true);
+        }
+
         ApplyHeaderFormat(table);
         ApplyBorderColour(table);
     }

@@ -37,7 +37,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
-            var shapesBefore = sheet.Shapes.Count;
+            var chartShapes = new ExcelShapeWriter(fixture.Excel);
             var inserter = new ExcelGanttRowInserter(fixture.Excel);
 
             GanttRowInsertOutcome activity = inserter.Insert(
@@ -61,7 +61,16 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(milestone.BodyIndex > activity.BodyIndex);
             Assert.True(delineator.BodyIndex > milestone.BodyIndex);
             Assert.True(table.ListRows.Count >= delineator.BodyIndex);
-            Assert.Equal(shapesBefore, sheet.Shapes.Count);
+
+            // The CHART did not render. Asserted on the add-in's OWNED shapes rather than on
+            // `Worksheet.Shapes.Count`, because Excel itself materialises a legacy Forms
+            // control named `Drop Down 1` on this sheet once a validated cell of the Type
+            // column is selected (measured 2026-11-14: 0 shapes after the first insert, 1
+            // after the first row selection). That control is host chrome for the in-cell
+            // list; it is not a chart shape, it is not the add-in's to delete, and counting
+            // it made this test fail on a correct product. `ListOwned` is exactly the set the
+            // refresh creates and reconciles, so it is the set a command must leave alone.
+            Assert.Empty(chartShapes.ListOwned());
             Assert.Contains(
                 workbook.Names.Cast<Excel.Name>(),
                 name => string.Equals(name.Name, GanttWorkbookContract.TypeOptionsDefinedName, StringComparison.OrdinalIgnoreCase));
@@ -681,50 +690,52 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         return outcome.BodyIndex.Value;
     }
 
-    private static void AssertId(Excel.ListRow row, string id)
-    {
-        Assert.Equal(id, Convert.ToString(
-            row.Range.Cells[1, 1].Value2,
-            System.Globalization.CultureInfo.InvariantCulture));
-    }
+    private static void AssertId(Excel.ListRow row, string id) =>
+        Assert.Equal(id, ColumnValue(row.Range, "Id"));
 
     private static void AssertRow(Excel.ListRow row, string type, string styleKey, string id)
     {
         Excel.Range range = row.Range;
 
-        // Resolved by COLUMN NAME, never by a literal index. R4.7A inserted
-        // SiblingOrder after ParentId, which moved StyleKey from index 9 to 10
-        // and left this helper reading a blank cell: the assertion compared the
-        // expected style key against null and passed for the wrong reason on
-        // every earlier run. R4.7C inserted Duration after Finish, moving it to 11,
-        // and the cross-check below caught that rather than letting it pass.
-        // Excel's 1-based Cells indices are offset by the header row, hence the +1.
-        Assert.Equal(id, ColumnValue(range, "Id", 1));
-        Assert.Equal(type, ColumnValue(range, "Type", 4));
-        Assert.Equal(styleKey, ColumnValue(range, "StyleKey", 11));
+        // Resolved by NAME, never by a literal index, and cross-checked against the
+        // schema inside ColumnValue. Two generations of this helper went stale the other
+        // way: R4.7A moved StyleKey from 9 to 10, and R5.18k reordered the table so Id
+        // sits at 6 where the literal still said 1. The cross-check caught both, which
+        // is why it stays and the literals do not.
+        Assert.Equal(id, ColumnValue(range, "Id"));
+        Assert.Equal(type, ColumnValue(range, "Type"));
+        Assert.Equal(styleKey, ColumnValue(range, "StyleKey"));
     }
 
     /// <summary>
-    /// Reads one cell by the column's position in the workbook schema, so a future
-    /// column insertion cannot silently shift what this helper reads.
+    /// Reads one cell by COLUMN NAME, resolved through the workbook's own table and
+    /// cross-checked against the schema's position for the same name.
     /// </summary>
     /// <param name="rowRange">The row's range.</param>
     /// <param name="columnName">The schema column name.</param>
-    /// <param name="expectedIndex">The 1-based Excel index the schema implies, asserted as a cross-check.</param>
     /// <returns>The cell's text.</returns>
-    private static string ColumnValue(Excel.Range rowRange, string columnName, int expectedIndex)
+    /// <remarks>
+    /// The cross-check is the point of this helper: both sides resolve the name
+    /// independently — the workbook through its ListObject and the schema through its
+    /// own order — so a mismatch means the two have diverged, which is a defect rather
+    /// than a stale expectation. The previous signature took the index as an argument,
+    /// which made every caller a place to keep a literal in step with the schema.
+    /// </remarks>
+    private static string ColumnValue(Excel.Range rowRange, string columnName)
     {
-        var index = GanttTableSchema.Default.Columns
+        Excel.ListObject table = rowRange.ListObject!;
+        Excel.ListColumns columns = table.ListColumns;
+        int liveIndex = columns[columnName].Index;
+
+        int schemaIndex = GanttTableSchema.Default.Columns
             .Select((column, position) => (column.Name, Position: position))
             .Single(entry => string.Equals(entry.Name, columnName, StringComparison.Ordinal))
-            .Position;
+            .Position + 1;
 
-        // The cross-check is the point: a mismatch here means the workbook and the
-        // schema have diverged, which is a defect rather than a stale literal.
-        Assert.Equal(expectedIndex, index + 1);
+        Assert.Equal(schemaIndex, liveIndex);
 
         return Convert.ToString(
-            rowRange.Cells[1, index + 1].Value2,
+            rowRange.Cells[1, liveIndex].Value2,
             System.Globalization.CultureInfo.InvariantCulture);
     }
 }

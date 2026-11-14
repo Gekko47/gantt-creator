@@ -152,7 +152,12 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             // value as null, and null must differ from BOTH desired states — otherwise
             // a mixed-lock authoring column reads as already-correct and the adapter
             // reports success over a range it never repaired.
-            bool? liveLocked = ReadLockedFlag(columnRange);
+            //
+            // It reads the BODY when the table has one: the header cell is locked
+            // separately after this loop, so reading the whole list column would report
+            // the intended mixed state as drift and rewrite it on every Refresh.
+            Excel.Range? columnBody = resolved[index].DataBodyRange;
+            bool? liveLocked = ReadLockedFlag(columnBody ?? columnRange);
             if (liveLocked is not { } current || current != wantedLocked)
             {
                 columnRange.Locked = wantedLocked;
@@ -173,6 +178,19 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
                 entireColumn.Hidden = wantedHidden;
                 restored++;
             }
+        }
+
+        // The header row is locked for EVERY column (R5.18k follow-up). `ListColumn.Range`
+        // includes the header cell, so the per-column write above left the headers of the
+        // authoring columns unlocked, and once the visible columns led the table that put an
+        // unlocked `Type` header above a protected body: a user could rename a schema column,
+        // which breaks the name-keyed column map every adapter builds. Written only when the
+        // host does not already report it locked, so a converged Refresh stays write-free.
+        Excel.Range? headerRow = table.HeaderRowRange;
+        if (headerRow is not null && headerRow.Locked is not true)
+        {
+            headerRow.Locked = true;
+            restored++;
         }
 
         return ColumnPresentationOutcome.Ok(restored);

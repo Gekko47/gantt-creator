@@ -102,11 +102,15 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             // The anchor row comes from GanttSheetLayout, not from a literal. ADR-0030's
             // reserved row moved the header from worksheet row 1 to row 2, and this
             // expectation was still asking for row 1 -- so the live gate failed
-            // naming $Q$1 against the product's correct $Q$2. The column is derived
-            // from the live count for the reason given above; the ROW is now derived
-            // from the authority for the same reason.
+            // naming $Q$1 against the product's correct $Q$2.
+            //
+            // The COLUMN comes from the authority too, and R5.18k is why: this line used
+            // to add the table's column count to worksheet column 1, which was correct
+            // only while the table started in A. It now starts in B (ADR-0059), so the
+            // live gate failed naming $R$3 against the product's correct $S$3 -- the
+            // product had already moved to the authority and this expectation had not.
             Excel.Range anchorCell =
-                active.Cells[GanttSheetLayout.HeaderRowIndex, table.ListColumns.Count + 1];
+                active.Cells[GanttSheetLayout.HeaderRowIndex, GanttSheetLayout.PlotAnchorColumnIndex];
             Assert.Equal(
                 $"='{GanttWorkbookContract.GanttSheetLabel}'!{anchorCell.Address[External: false]}",
                 anchor.RefersTo,

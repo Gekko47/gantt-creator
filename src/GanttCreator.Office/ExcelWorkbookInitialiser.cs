@@ -1054,7 +1054,23 @@ public class ExcelWorkbookInitialiser(
         {
             ListColumn column = GetColumnAt(columns, index);
             Excel.Range columnRange = column.Range;
-            columnRange.Locked = schema[index - 1].IsLocked;
+
+            // The comparison looks at the BODY when the table has one, because the header
+            // cell is locked separately after the loop (see below). Reading the whole list
+            // column would report a MIXED range -- a locked header over an unlocked
+            // authoring body -- as null, which the adapter treats as drift, so the write
+            // would rerun on every Initialise and dirty the workbook for a sheet that is
+            // already in the intended state.
+            bool wantedLocked = schema[index - 1].IsLocked;
+            Excel.Range? columnBody = column.DataBodyRange;
+            bool? liveLocked = columnBody is null ? null : ReadLockedFlag(columnBody);
+            if (liveLocked is not { } current || current != wantedLocked)
+            {
+                // The whole column, so a row that does not exist yet already carries the
+                // class's own lock flag. The header cell is re-locked once below.
+                columnRange.Locked = wantedLocked;
+            }
+
             Excel.Range entireColumn = GetEntireColumn(columnRange);
 
             // `Range.Hidden` is declared `object` in this PIA (verified by reflection
@@ -1084,6 +1100,19 @@ public class ExcelWorkbookInitialiser(
             ApplyBodyFont(entireColumn);
             ApplyVerticalCentre(entireColumn);
             ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
+        }
+
+        // The header row is locked for EVERY column (R5.18k follow-up). `ListColumn.Range`
+        // includes the header cell, so the per-column write above left the headers of the
+        // authoring columns unlocked -- and once the visible columns led the table, that
+        // put an unlocked `Type` header directly above a protected body. A user could then
+        // rename a schema column, which breaks the name-keyed column map every adapter
+        // builds. Written only when the host does not already report it locked, so a
+        // refresh does not dirty the workbook.
+        Excel.Range? headerRow = table.HeaderRowRange;
+        if (headerRow is not null && headerRow.Locked is not true)
+        {
+            headerRow.Locked = true;
         }
 
         // Table-wide, so they run once rather than per column.
@@ -1177,6 +1206,31 @@ public class ExcelWorkbookInitialiser(
         _ => bool.TryParse(
             Convert.ToString(range.Hidden, CultureInfo.InvariantCulture),
             out bool parsed) && parsed,
+    };
+
+    /// <summary>
+    /// Reads <c>Range.Locked</c>.
+    /// </summary>
+    /// <param name="range">The range to read.</param>
+    /// <returns>
+    /// The flag, or <see langword="null"/> when the host reports a mixed range (a locked
+    /// header over an unlocked body) or a value that is not a boolean.
+    /// </returns>
+    /// <remarks>
+    /// <c>Locked</c> is declared <see cref="object"/> in this PIA too, so it is unboxed
+    /// before comparison for the same reason <c>Hidden</c> is. <see langword="null"/>
+    /// deliberately differs from BOTH desired states: a mixed range is drift, and treating
+    /// it as "already correct" would report success over a range the adapter never fixed.
+    /// </remarks>
+    private static bool? ReadLockedFlag(Excel.Range range) => range.Locked switch
+    {
+        bool flag => flag,
+        null => null,
+        _ => bool.TryParse(
+            Convert.ToString(range.Locked, CultureInfo.InvariantCulture),
+            out bool parsed)
+            ? parsed
+            : null,
     };
 
     /// <summary>
