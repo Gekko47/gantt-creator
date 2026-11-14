@@ -61,6 +61,12 @@ public static class HostOwnedGeometry
     /// </summary>
     /// <param name="primitive">The scene primitive to classify.</param>
     /// <param name="plotBounds">The plot bounds the primitive is measured against.</param>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="primitive"/> is <see langword="null"/>. The guard is
+    /// deliberate and pinned: without it the switch's discard arm would answer
+    /// <see langword="false"/>, so a caller that lost its primitive would be told the shape is
+    /// merely "not host-owned" and would write it on <c>xlMove</c> instead of stopping.
+    /// </exception>
     /// <returns>
     /// <see langword="true"/> for a vertical <see cref="SceneLine"/>, a horizontal
     /// <see cref="SceneLine"/> whose horizontal extent <em>covers</em> the plot's, or a

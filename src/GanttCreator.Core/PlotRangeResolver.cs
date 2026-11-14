@@ -179,6 +179,17 @@ public static class PlotRangeResolver
     /// Parses one explicit date: blank is missing, unparsable is unparsable,
     /// and the default value is the <c>TimeScale</c> default-dates refusal.
     /// </summary>
+    /// <remarks>
+    /// <b>The default-date branch below is unreachable today, on purpose.</b>
+    /// <see cref="TryParsePlotDate"/> filters <c>default</c> in all three of its forms, so a
+    /// text that would parse to <see cref="DateOnly.MinValue"/> is already reported as
+    /// unparsable before it gets here. The check stays because it is the guard for the refusal
+    /// the scene-build factory maps to a user message: if the parser is ever relaxed to accept
+    /// a date the caller should not bless, this is where it must be caught, and deleting it
+    /// would silently move the failure one layer out. A test pins the parser's own rejection
+    /// (`TryParsePlotDate_refuses_the_default_date_value`) so a relaxation is a red gate rather
+    /// than a silent behaviour change.
+    /// </remarks>
     private static DateOnly? ParseExplicitDate(string? text, out PlotRangeRefusal? refusal)
     {
         refusal = null;

@@ -269,4 +269,14 @@ public sealed class HostOwnedGeometryTests
 
         Assert.True(HostOwnedGeometry.IsHostOwned(band, _plot));
     }
+
+    [Fact]
+    public void A_null_primitive_is_refused_rather_than_classified()
+    {
+        // Trust boundary. Without the guard the switch's discard arm answers `false` for a
+        // null, so a caller that lost its primitive would be told the shape is simply "not
+        // host-owned" and would write it as an ordinary xlMove shape instead of stopping. The
+        // guard is the difference between a silent mis-classification and a failure.
+        _ = Assert.Throws<ArgumentNullException>(() => HostOwnedGeometry.IsHostOwned(null!, _plot));
+    }
 }

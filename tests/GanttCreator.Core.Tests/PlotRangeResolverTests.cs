@@ -88,6 +88,47 @@ public sealed class PlotRangeResolverTests
     }
 
     [Fact]
+    public void An_explicit_start_with_an_automatic_finish_keeps_the_date_the_user_typed()
+    {
+        // Mixed modes are the whole reason each end resolves from its OWN mode, and they were
+        // the uncovered path: a mutant that assigned the derived data start unconditionally
+        // (`start ??= dataStart` mutated to `start = dataStart`) overwrote the user's date with
+        // the table's earliest Start, and no test noticed.
+        // The typed start (5 January) is deliberately NOT the table's earliest Start
+        // (10 January), so an assignment that overwrote it is visible.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [Event(1)],
+            nameof(PlotRangeMode.Explicit),
+            nameof(PlotRangeMode.DataRange),
+            "05/01/2024",
+            null,
+            paddingDays: 0);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2024, 1, 5), outcome.Start);
+        Assert.Equal(new DateOnly(2024, 1, 20), outcome.Finish);
+    }
+
+    [Fact]
+    public void An_automatic_start_with_an_explicit_finish_still_derives_the_start()
+    {
+        // The mirror case, and the one that proves the derive block is entered when EITHER end
+        // is automatic: a mutant that required BOTH ends to be automatic left the start null
+        // here and threw instead of resolving.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [Event(1)],
+            nameof(PlotRangeMode.DataRange),
+            nameof(PlotRangeMode.Explicit),
+            null,
+            "31/03/2024",
+            paddingDays: 0);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2024, 1, 10), outcome.Start);
+        Assert.Equal(new DateOnly(2024, 3, 31), outcome.Finish);
+    }
+
+    [Fact]
     public void An_empty_table_plots_the_current_calendar_year_when_today_is_known()
     {
         // Owner ruling: a freshly initialised workbook must plot something rather than
@@ -386,6 +427,14 @@ public sealed class PlotRangeResolverTests
         // is truncated by FromOADate.
         Assert.True(PlotRangeResolver.TryParsePlotDate("46118.5", out DateOnly parsed));
         Assert.Equal(new DateOnly(2026, 4, 6), parsed);
+    }
+
+    [Fact]
+    public void ValidateSettings_refuses_a_null_settings_object()
+    {
+        // Trust boundary: a null settings object is a typed refusal at the door, never a
+        // NullReferenceException from the first property read.
+        _ = Assert.Throws<ArgumentNullException>(() => PlotRangeResolver.ValidateSettings(null!));
     }
 
     [Fact]
