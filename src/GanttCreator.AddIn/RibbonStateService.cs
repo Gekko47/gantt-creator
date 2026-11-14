@@ -2227,6 +2227,34 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Gets the CHART toggle's picture for the current state (D1, D7): the closed padlock while
+    /// the chart is locked, the open one while it is released.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The <c>IPictureDisp</c> the host displays, or null when the asset is missing.</returns>
+    /// <remarks>
+    /// Read from the same <see cref="ProtectionPreferences"/> the label and the protection port
+    /// read, so the glyph, the wording and what the sheet enforces cannot disagree.
+    /// </remarks>
+    internal static object? GetToggleChartLockImage(IRibbonControl? control)
+    {
+        _ = control;
+        return LockGlyphImages.For(ProtectionPreferences.Shared.ChartLocked);
+    }
+
+    /// <summary>
+    /// Gets the CELL toggle's picture for the current state; the parallel of
+    /// <see cref="GetToggleChartLockImage"/>.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The <see cref="object"/> the host displays, or null when the asset is missing.</returns>
+    internal static object? GetToggleCellLockImage(IRibbonControl? control)
+    {
+        _ = control;
+        return LockGlyphImages.For(!ProtectionPreferences.Shared.CellsUnlocked);
+    }
+
+    /// <summary>
     /// Returns how many items the description-label dropdown offers: the row's
     /// projected positions plus the leading <c>Default</c> item that clears the
     /// cell (R5.5 ruling 5 â€” blank resolves to the style default / Auto

@@ -50,6 +50,10 @@ public class RibbonCallbackSignatureTests
         new("editBox", "getText", [typeof(IRibbonControl)], typeof(string)),
         new("dropDown", "getSelectedItemIndex", [typeof(IRibbonControl)], typeof(int)),
 
+        // R5.18f/D7: a control's own glyph, served from a committed PNG. Like getItemImage,
+        // the marshalled picture is typed object by the interop surface.
+        new("*", "getImage", [typeof(IRibbonControl)], typeof(object)),
+
         // Dynamic item lists: count, then per-index id, label and image.
         new("dropDown", "getItemCount", [typeof(IRibbonControl)], typeof(int)),
         new("dropDown", "getItemID", [typeof(IRibbonControl), typeof(int)], typeof(string)),

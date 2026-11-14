@@ -759,6 +759,28 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService.GetToggleCellLockLabel(control);
 
     /// <summary>
+    /// Reports the CHART lock toggle's picture for its current state (D1, D7).
+    /// </summary>
+    /// <param name="control">The Ribbon control.</param>
+    /// <returns>The <c>IPictureDisp</c> the host displays, or null when the asset is missing.</returns>
+    /// <remarks>
+    /// This is the half of R5.18f that measurement had blocked. No open-padlock
+    /// <c>imageMso</c> exists, but D7 makes every ribbon glyph a committed Lucide asset served
+    /// through <c>getImage</c>, so the picture can follow the state exactly as the label does.
+    /// </remarks>
+    public object? GetToggleChartLockImage(IRibbonControl control) =>
+        RibbonStateService.GetToggleChartLockImage(control);
+
+    /// <summary>
+    /// Reports the CELL lock toggle's picture for its current state, the parallel of
+    /// <see cref="GetToggleChartLockImage"/>.
+    /// </summary>
+    /// <param name="control">The Ribbon control.</param>
+    /// <returns>The picture the host displays, or null when the asset is missing.</returns>
+    public object? GetToggleCellLockImage(IRibbonControl control) =>
+        RibbonStateService.GetToggleCellLockImage(control);
+
+    /// <summary>
     /// Runs <see cref="GetEnabled(IRibbonControl)"/> against an injected state
     /// service. Internal so contract tests can verify the routing without the
     /// session singleton. Never throws.
