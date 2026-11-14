@@ -80,6 +80,47 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     private static IReadOnlyList<string> MeasuredColumnsCore =>
         [.. GanttTableSchema.Default.Columns.Where(column => !column.IsHidden).Select(column => column.Name)];
 
+    /// <summary>
+    /// The columns the live panel measures for one configuration: the schema's visible
+    /// columns MINUS the ones the user has hidden from the ribbon.
+    /// </summary>
+    /// <param name="settings">The workbook's configuration settings.</param>
+    /// <returns>The columns to measure, in schema order.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the schema's set alone is not enough (reported from the host 2026-11-14).</b>
+    /// <see cref="MeasuredColumnsCore"/> excludes the ENGINE columns, whose visibility the
+    /// schema owns. A column the user hides from the <c>Columns</c> dropdown is still in that
+    /// set, and Excel reports a hidden column's <c>Range.Width</c> as <c>0</c>, which
+    /// <see cref="PanelCellGrid"/> correctly refuses as a non-positive width — so hiding any
+    /// column turned every Refresh into "The worksheet columns could not be measured."
+    /// </para>
+    /// <para>
+    /// The panel is a measurement of what the sheet SHOWS, so the user's choice is part of
+    /// its input: excluding a hidden column also moves the plot left by that column's width,
+    /// which is what makes the chart close up beside the table instead of leaving a gap
+    /// where the hidden column used to be.
+    /// </para>
+    /// <para>
+    /// A stored list that does not parse falls back to the schema's set rather than refusing:
+    /// <see cref="GanttColumnVisibility.Parse"/> refuses a malformed value so a hidden column
+    /// is never silently un-hidden, but that refusal belongs to the dropdown that wrote it,
+    /// not to a render that only needs a width.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> MeasuredColumnsFor(IReadOnlyDictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        ColumnVisibilityOutcome stored = GanttColumnVisibility.Parse(
+            settings.TryGetValue(GanttColumnVisibility.SettingKey, out string? raw) ? raw : null);
+
+        // Hidden is null precisely when the parse refused, so this one fallback covers both
+        // the absent key and a malformed one: nothing hidden, measure the schema's set.
+        IReadOnlySet<string> hidden = stored.Hidden ?? new HashSet<string>(StringComparer.Ordinal);
+        return [.. MeasuredColumnsCore.Where(name => !hidden.Contains(name))];
+    }
+
     /// <summary>The setting key naming the size preset.</summary>
     private const string _sizePresetKey = "SizePreset";
 

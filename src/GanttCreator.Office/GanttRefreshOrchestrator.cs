@@ -578,8 +578,12 @@ public sealed class GanttRefreshOrchestrator(
         // COM call per row for a value this refresh already holds. A pass that wrote a
         // height returns an empty list, so the measurement reads the host -- the sheet has
         // changed, and this is not a cache that may outlive the change.
+        // The schema's visible set MINUS the columns the user hid from the ribbon: a hidden
+        // column measures as width 0, which PanelCellGrid refuses, so measuring it turned
+        // every Refresh after a hide into "The worksheet columns could not be measured."
+        // Excluding it also moves the plot left by that column's width.
         PanelGridOutcome grid = _panelMeasurement.Measure(
-            ExcelSceneBuildRequestFactory.MeasuredColumns,
+            ExcelSceneBuildRequestFactory.MeasuredColumnsFor(config.Settings),
             measuredBodyHeights);
         if (!grid.Succeeded)
         {

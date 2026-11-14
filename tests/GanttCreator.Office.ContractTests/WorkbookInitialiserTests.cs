@@ -964,7 +964,8 @@ public class WorkbookInitialiserTests
 
         _ = graph.Build(active).Initialise();
 
-        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        // dd-mmm-yy, the pattern the columns are styled with (owner ruling 2026-11-14).
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
         Assert.Equal(
             new[] { (IndexOf("Start"), pattern), (IndexOf("Finish"), pattern) },
             active.NumberFormatWrites);
@@ -1039,7 +1040,7 @@ public class WorkbookInitialiserTests
         // unchanged format marks the workbook dirty for a sheet already in the intended
         // state, so only the column that still needs it is written.
         var active = BlankActiveSheet();
-        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
         active.SetExistingNumberFormat([(IndexOf("Start"), pattern)]);
         var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
         var graph = new WorkbookGraph(active);

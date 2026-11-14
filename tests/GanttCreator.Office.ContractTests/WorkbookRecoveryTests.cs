@@ -731,7 +731,8 @@ public class WorkbookRecoveryTests
         Assert.All(
             recovery.NumberFormatWrites,
             pattern => Assert.Equal(
-                GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy),
+                // dd-mmm-yy, matching the initialiser (owner ruling 2026-11-14).
+                GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy),
                 pattern));
 
         // The header band and the border colour are table-wide, so one write each.

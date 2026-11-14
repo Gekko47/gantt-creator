@@ -1413,10 +1413,15 @@ public class ExcelWorkbookRecovery(
     /// states: the empty cells and the rows that do not exist yet are the ones that
     /// otherwise keep General and render a stored date as its serial number. The
     /// read-before-write keeps a repair from dirtying a sheet that already matches.
+    /// <para>
+    /// The pattern is <c>dd-mmm-yy</c> (<see cref="GanttDateDisplayFormat.DdMMMyy"/>), the
+    /// same one the initialiser writes (owner ruling 2026-11-14). A repair and a fresh
+    /// Initialise must not disagree about the format of the same column.
+    /// </para>
     /// </remarks>
     private void ApplyDateColumnFormat(Excel.Range entireColumn)
     {
-        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
         if (string.Equals(ReadNumberFormat(entireColumn), pattern, StringComparison.Ordinal))
         {
             return;

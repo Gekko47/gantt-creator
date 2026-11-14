@@ -1343,15 +1343,18 @@ public class ExcelWorkbookInitialiser(
     /// a value that is not a string reads as "not the wanted format" and is written.
     /// </para>
     /// <para>
-    /// The pattern comes from the single Core authority for the format this release
-    /// approves (<see cref="GanttDateDisplayFormat.DdMMyyyy"/>). A workbook whose
-    /// stored setting names another member is the settings-driven presentation pass,
-    /// not a second spelling of the pattern here.
+    /// The pattern comes from the single Core authority
+    /// (<see cref="GanttDateFormatting.WorksheetPatternFor"/>) and is
+    /// <see cref="GanttDateDisplayFormat.DdMMMyy"/>, <c>dd-mmm-yy</c>, which is what the
+    /// column is styled with (owner ruling 2026-11-14). It was <c>dd/mm/yyyy</c>: the
+    /// adapter hardcoded the other approved member, so the columns were styled with a
+    /// pattern nobody had chosen. A workbook whose stored setting names another member is
+    /// the settings-driven presentation pass, not a second spelling of the pattern here.
     /// </para>
     /// </remarks>
     private void ApplyDateColumnFormat(Excel.Range entireColumn)
     {
-        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy);
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
         if (string.Equals(ReadNumberFormat(entireColumn), pattern, StringComparison.Ordinal))
         {
             return;
