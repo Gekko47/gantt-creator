@@ -501,6 +501,11 @@ far as a test can reach (O2), one examined with two tests still owed (O6), one m
 deliberately left (O9), and one recorded rather than chased (O7).** Nothing in the table is
 unexamined any more; what is left is stated as work, not as a gap in knowledge.
 
+**The residual is carried forward as work item [`R5.18n`](../docs/work-items/R5.18n-deferred-close-out.md)**
+(D1–D5 in that file), which specifies the two real `SceneBuilder` survivors, the live ribbon check,
+the COM-proxy chain behind the leak ceiling, and the deadline rule — with the measured baselines the
+next session starts from, so nothing here has to be re-derived before work can begin.
+
 | # | Item | Status | Evidence or residual |
 |---|---|---|---|
 | O1 | **R5.18f state glyphs, reopened by D7** | **Closed 2026-11-14** | Lucide `lock`/`lock-open` rasterised at 16 and 32 px by the same script, served through `getImage` on both toggles (`LockGlyphImages`, `RibbonStateService.GetToggle*LockImage`, `GanttRibbon` callbacks). Both `imageMso` attributes are gone, so `check-ribbon-icons.ps1` now verifies 21 ids rather than 23. D2's second control was never built, so retiring it costs nothing. Seven facts pin the assets, the pair being different pictures, the cache, the missing-glyph path and the XML wiring; the pictures render as a closed and an open padlock (eyeballed at 32 px) |
