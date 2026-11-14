@@ -163,11 +163,17 @@ internal static class RefreshSheetCommand
 
         // ADR-0055: the write phase runs with the add-in's protection released, because a protected
         // sheet refuses shape creation and movement (measured; see ProtectionArmingIntegrationTests).
-        using IDisposable window = ProtectionWindowFor(application).Open();
+        // The window is scoped to the pipeline ONLY: closing it restores the user's selection with
+        // Range.Select(), and that restore has to happen before the tab restore below.
+        GanttRefreshOutcome outcome;
+        long refreshCompleted;
+        using (IDisposable window = ProtectionWindowFor(application).Open())
+        {
+            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: false);
+            outcome = orchestrator.Refresh();
+            refreshCompleted = Stopwatch.GetTimestamp();
+        }
 
-        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: false);
-        GanttRefreshOutcome outcome = orchestrator.Refresh();
-        long refreshCompleted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service so the warnings
@@ -177,17 +183,21 @@ internal static class RefreshSheetCommand
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
             RibbonStateService.ClearStatusBar();
-
-            // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on
-            // the Table Design tab. The call is guarded by Ready + the Gantt
-            // sheet being active, so it is a no-op everywhere else.
-            RibbonStateService.Instance.ActivateGanttTab();
         }
-
-        if (!outcome.Succeeded)
+        else
         {
             Present(CommandErrorDialog.Show, outcome.Message ?? "The chart could not be refreshed.");
         }
+
+        // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on the Table
+        // Design tab — and it must run AFTER the protection window closed, because that
+        // window's selection restore is itself a Range.Select(), and a Select inside
+        // tblGanttData is what activates the Table Design tab. Restoring the tab first let
+        // the window's own restore undo it (reported 2026-11-14: pressing a Columns row
+        // pulled the user off the add-in tab). It runs on a refused refresh too: the user
+        // is still on this sheet. The call is guarded by Ready + the Gantt sheet being
+        // active, so it is a no-op everywhere else.
+        RibbonStateService.Instance.ActivateGanttTab();
 
         TracePostPass(refreshCompleted);
         TraceCommand(commandStarted, automatic: false);
@@ -212,13 +222,18 @@ internal static class RefreshSheetCommand
 
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
-        // ADR-0055: same window as the manual path, so a scheduled refresh can create and move shapes
-        // on a sheet the add-in owns.
-        using IDisposable window = ProtectionWindowFor(application).Open();
+        // ADR-0055: same window as the manual path, so a scheduled refresh can create and move
+        // shapes on a sheet the add-in owns. Scoped to the pipeline only, for the reason given on
+        // the tab restore below.
+        GanttRefreshOutcome outcome;
+        long refreshCompleted;
+        using (IDisposable window = ProtectionWindowFor(application).Open())
+        {
+            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: true);
+            outcome = orchestrator.Refresh();
+            refreshCompleted = Stopwatch.GetTimestamp();
+        }
 
-        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: true);
-        GanttRefreshOutcome outcome = orchestrator.Refresh();
-        long refreshCompleted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service — same as RunForExcel.
@@ -238,15 +253,18 @@ internal static class RefreshSheetCommand
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
-
-            // Owner ruling D-4 (ADR-0058): same tab restore as the manual path.
-            RibbonStateService.Instance.ActivateGanttTab();
-            TracePostPass(refreshCompleted);
-            TraceCommand(commandStarted, automatic: true);
-            return;
+        }
+        else
+        {
+            Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
         }
 
-        Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
+        // Owner ruling D-4 (ADR-0058): same tab restore as the manual path, and for the
+        // same ordering reason — the protection window has closed, so its selection
+        // restore (a Range.Select() inside the table) has already happened and cannot
+        // re-activate the Table Design tab afterwards.
+        RibbonStateService.Instance.ActivateGanttTab();
+
         TracePostPass(refreshCompleted);
         TraceCommand(commandStarted, automatic: true);
     }

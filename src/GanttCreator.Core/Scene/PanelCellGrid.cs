@@ -331,11 +331,11 @@ public sealed record PanelCellGrid
     /// <b>Deliberately not <see cref="PanelLeftPt"/> plus the width.</b> The gutter widens
     /// the panel leftwards only, so the right edge stays measured from the origin. Two
     /// callers need that same number and must not recompute it: the frame's right rule,
-    /// and the live plot's left edge, which begins one
-    /// <see cref="GanttSheetLayout.PlotAnchorInsetPt"/> past it. The defect this property
-    /// closes is exactly the second one: the plot was placed at the summed widths alone,
-    /// which on a sheet whose table starts in column B put it one measured origin — a
-    /// gutter — inside the table's last column.
+    /// and the live plot's left edge, which begins exactly here — on the column boundary,
+    /// which is the alignment the owner ruled (2026-11-14). The defect this property
+    /// closes is that the plot was placed at the summed widths alone, which on a sheet
+    /// whose table starts in column B put it one measured origin — a gutter — inside the
+    /// table's last column.
     /// </remarks>
     public double PanelRightPt => OriginLeftPt + TotalWidthPt;
 

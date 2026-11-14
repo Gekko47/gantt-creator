@@ -88,3 +88,20 @@ modified.
 - **Put the key actions on the Quick Access Toolbar.** Rejected by the owner
   (2026-11-12): the QAT is the user's own surface and RibbonX additions persist
   across sessions.
+
+## Amendment — 2026-11-14: the tab restore runs after the selection restore
+
+Reported from the host: pressing a row of the Columns menu moved the user to Excel's
+**Table Design** tab, although `ActivateTab` was already called at the end of every
+refresh. The cause was ordering, not absence. Both refresh paths open an
+`ExcelApplicationStateScope` window whose `Dispose` is the **selection restore**, and
+that restore is a `Range.Select()` — the one call that activates the Table Design tab
+when the selection is inside `tblGanttData`. The window's `using` scope covered the whole
+method, so it was disposed **after** `ActivateGanttTab()`, and its restore immediately
+undid the tab activation.
+
+The window now closes around the **pipeline only** (`Refresh()` and its timing), and
+`ActivateGanttTab()` runs after it, on both the manual and the silent path, whether the
+refresh succeeded or refused. D-4's guarantee is unchanged; it is now the last word rather
+than the second-to-last, and a refused refresh no longer strands the user on Table Design
+either.

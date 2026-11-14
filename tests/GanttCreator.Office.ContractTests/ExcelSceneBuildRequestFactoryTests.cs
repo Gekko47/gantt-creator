@@ -264,17 +264,18 @@ public class ExcelSceneBuildRequestFactoryTests
     /// asserts the placement rather than merely the list.
     /// </para>
     /// <para>
-    /// <b>This assertion has moved twice, both times deliberately.</b> It first required
+    /// <b>This assertion has moved three times, each deliberately.</b> It first required
     /// <c>panel + ChartOuterPaddingPt</c>, the margin-width gap the owner asked to remove.
     /// It then required the panel's summed width, which was right only while the panel
     /// started at the sheet's left edge — on a table that starts in column B it put the
-    /// plot one origin inside the table's last column (live report 2026-11-14). It now
-    /// requires the measured panel's RIGHT EDGE plus the 1pt anchor inset, so a later
-    /// change that reintroduces a gap, loses the origin, or drops the inset fails here.
+    /// plot one origin inside the table's last column (live report 2026-11-14). A 1pt
+    /// anchor inset followed and was rejected on sight as visibly off the column edge, so
+    /// the plot now begins exactly at the measured panel's RIGHT EDGE. A later change that
+    /// reintroduces a gap or loses the origin fails here.
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_plot_left_edge_starts_one_point_past_the_measured_panel()
+    public void The_plot_left_edge_starts_at_the_measured_panels_right_edge()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
@@ -294,10 +295,7 @@ public class ExcelSceneBuildRequestFactoryTests
         // with the `!.Value`/`!` form the rest of this file already uses. The factory
         // only emits a request whose grid and plot both resolved, so a null here is a
         // defect the equality assertion reports as a mismatch rather than a null crash.
-        Assert.Equal(
-            request.Grid!.PanelRightPt + GanttSheetLayout.PlotAnchorInsetPt,
-            request.PlotBounds!.Value.X,
-            precision: 6);
+        Assert.Equal(request.Grid!.PanelRightPt, request.PlotBounds!.Value.X, precision: 6);
 
         // The right margin is NOT removed: the plot's right edge is the sheet's own
         // edge, and the chrome there is what keeps the last period label off it.
@@ -324,8 +322,8 @@ public class ExcelSceneBuildRequestFactoryTests
     /// </para>
     /// </remarks>
     /// <summary>
-    /// The plot starts one point past the measured panel's RIGHT EDGE, which includes the
-    /// table's origin.
+    /// The plot starts at the measured panel's RIGHT EDGE, which includes the table's
+    /// origin.
     /// </summary>
     /// <remarks>
     /// <b>This is the reported defect.</b> The plot used to be placed at the summed column
@@ -333,12 +331,11 @@ public class ExcelSceneBuildRequestFactoryTests
     /// in column B put the chart one measured origin inside the table's last column. The
     /// origin and the gutter are deliberately different numbers here (40 and 10), so the
     /// three candidate expressions — width alone (200), panel-left plus width (230) and
-    /// origin plus width (240) — are all distinguishable. The plot's own edge is then
-    /// pushed one point past 240 so the generated shapes anchor inside the first plot
-    /// column instead of on the boundary it shares with the table.
+    /// origin plus width (240) — are all distinguishable, and only 240 lines the plot up
+    /// with the column edge.
     /// </remarks>
     [Fact]
-    public void The_plot_starts_one_point_past_the_measured_panels_right_edge()
+    public void The_plot_starts_at_the_measured_panels_right_edge()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
         PanelCellGrid grid = Grid(widthPt: 200, originLeftPt: 40, leadingGutterPt: 10);
@@ -354,10 +351,7 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         Assert.Equal(240, grid.PanelRightPt, precision: 6);
         Assert.Equal(30, grid.PanelLeftPt, precision: 6);
-        Assert.Equal(
-            240 + GanttSheetLayout.PlotAnchorInsetPt,
-            outcome.Request!.PlotBounds!.Value.X,
-            precision: 6);
+        Assert.Equal(240, outcome.Request!.PlotBounds!.Value.X, precision: 6);
     }
 
     [Fact]

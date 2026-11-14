@@ -111,26 +111,6 @@ public static class GanttSheetLayout
     public const int TableOriginColumnIndex = 2;
 
     /// <summary>
-    /// The offset, in points, the live plot is pushed past the table's right edge so
-    /// every generated shape anchors inside the first plot column.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A shape whose left edge sits exactly on the boundary between the table's last
-    /// column and the first plot column resolves its <c>TopLeftCell</c> to one of the
-    /// two, and Excel resolves it to the one on the left — the table's. One point puts
-    /// the anchor unambiguously in the plot column, and it is small enough to be
-    /// invisible: the chart frame's own 1pt rule lies across it.
-    /// </para>
-    /// <para>
-    /// One point is the owner's ruled figure (2026-11-14). A sub-point offset would also
-    /// resolve to the plot column, but 1pt leaves no argument about point rounding at any
-    /// zoom, and it is hidden: the frame's 1pt rule is drawn along the same boundary.
-    /// </para>
-    /// </remarks>
-    public const double PlotAnchorInsetPt = 1;
-
-    /// <summary>
     /// Whether a live table's top-left corner is the contract origin: the header on
     /// <see cref="HeaderRowIndex"/> and the first table column in column A.
     /// </summary>

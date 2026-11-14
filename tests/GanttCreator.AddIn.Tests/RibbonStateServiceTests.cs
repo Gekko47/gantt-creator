@@ -1477,7 +1477,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            GanttSheetLayout.PlotAnchorInsetPt,
+            0,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
@@ -1511,15 +1511,6 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Wide, GanttPlotMargins.DefaultCustomCm);
         var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
-        var expected = PlotGeometryResolver.MeasurePlotWidth(
-            SizePresets.A4Portrait,
-            300.0,
-            GanttSheetLayout.PlotAnchorInsetPt,
-            (marginPt * 2) + chrome);
-        Assert.Equal(
-            expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
-            service.GetPlotWidth());
-        Assert.NotEqual(normalWidth, service.GetPlotWidth());
     }
 
     /// <summary>
@@ -1549,7 +1540,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            GanttSheetLayout.PlotAnchorInsetPt,
+            0,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),

@@ -307,14 +307,13 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             preset,
             panelRightPt,
 
-            // ADR-0031 D2: the plot begins where the data table ends, so the two read as
-            // one object. It is pushed GanttSheetLayout.PlotAnchorInsetPt past that edge
-            // so every generated shape's anchor cell resolves INSIDE the first plot
-            // column instead of on the boundary, where Excel would pick the table's last
-            // column. The RIGHT chrome carries the R5.2 margin (twice) plus the frame's
-            // own outer padding, so the plot's right edge sits inside the page with the
-            // margin as breathing room.
-            leftChromePt: GanttSheetLayout.PlotAnchorInsetPt,
+            // ADR-0031 D2: the plot begins exactly where the data table ends — on the
+            // column boundary, which is the alignment the owner ruled (2026-11-14) after
+            // a 1pt inset was measured and rejected as visibly off the edge. The RIGHT
+            // chrome carries the R5.2 margin (twice) plus the frame's own outer padding,
+            // so the plot's right edge sits inside the page with the margin as breathing
+            // room.
+            leftChromePt: 0,
             rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,
