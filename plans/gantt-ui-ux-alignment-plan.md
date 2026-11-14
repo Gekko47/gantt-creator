@@ -193,10 +193,18 @@ Two capability facts that shape the design:
      applies the set through `IColumnVisibilityPort`, then writes `Format(set)` to
      `HiddenColumns` — worksheet first, key second, so a failed hide cannot record a choice the
      sheet does not show. The last-authoring-column refusal and a refused apply both report and
-     write nothing. **Still open, recorded here rather than assumed:** nothing re-applies the
-     stored key after a rebuild that recreates the worksheet — Excel keeps the flags on a table
-     rebuild, so the state survives today, and the `Parse` consumer for the fresh-sheet case is
-     the next commit.
+     write nothing.
+     **2b, landed with it:** a rebuild that recreates the worksheet now re-applies the stored
+     choice. `ExcelWorkbookRecovery.ApplyStoredColumnVisibility` reads `tblGanttSettings` through
+     `IConfigCatalogueReader`, parses `HiddenColumns` through `GanttColumnVisibility.Parse` — which
+     is what finally makes the parse contract load-bearing rather than test-only — and applies it
+     through `IColumnVisibilityPort` at the top of the presentation pass. It is best-effort and
+     traced: an unreadable settings table, a value that does not parse, and a refused apply all
+     leave the schema's presentation and say why in the log, because a repair that refused over a
+     decoration would leave the user with no table at all. An absent or blank key is not applied at
+     all: "nothing hidden" is already what the schema shows, so applying it would be a round trip
+     that changes nothing. Five contract tests pin the applied case and each of the four
+     do-nothing cases.
   3. `getItemImage` with the rasterised Lucide tick/blank, an addition to the ribbon
      callback-signature rules, and the live-host verification of the bitmap conversion.
   Files: new ids in [`RibbonControlIds`](src/GanttCreator.AddIn/RibbonControlIds.cs), a new dropdown

@@ -28,7 +28,9 @@ public class ExcelWorkbookRecovery(
     IApplicationStateScope? stateScope = null,
     IConfigCatalogueWriter? catalogueWriter = null,
     Action<string>? trace = null,
-    ExcelConfigSheetInspector? configSheetInspector = null) : IWorkbookRecovery
+    ExcelConfigSheetInspector? configSheetInspector = null,
+    IConfigCatalogueReader? catalogueReader = null,
+    IColumnVisibilityPort? columnVisibilityPort = null) : IWorkbookRecovery
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IGanttTableReader _tableReader = tableReader ?? new ExcelGanttTableReader(application);
@@ -40,6 +42,17 @@ public class ExcelWorkbookRecovery(
     private readonly Action<string>? _trace = trace;
     private readonly ExcelConfigSheetInspector _configSheets =
         configSheetInspector ?? new ExcelConfigSheetInspector();
+
+    /// <summary>
+    /// Reads the persisted settings, so a repair can re-apply the user's column
+    /// visibility after recreating a sheet (R5.18h).
+    /// </summary>
+    private readonly IConfigCatalogueReader _catalogueReader =
+        catalogueReader ?? new ExcelConfigCatalogueReader(application);
+
+    /// <summary>Applies the stored column visibility to the live table (R5.18h).</summary>
+    private readonly IColumnVisibilityPort _columnVisibilityPort =
+        columnVisibilityPort ?? new ExcelColumnVisibilityPort(application);
 
     /// <inheritdoc />
     public WorkbookRecoveryInspection Inspect()
@@ -1213,9 +1226,70 @@ public class ExcelWorkbookRecovery(
         column.ColumnWidth = width;
     }
 
+    /// <summary>
+    /// Re-applies the user's stored column visibility on top of the schema's (R5.18h).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The schema pass below deliberately leaves every user-visible column's hidden flag
+    /// alone, because that flag is the dropdown's choice. A repair that recreates the
+    /// worksheet therefore starts with all five columns visible while
+    /// <see cref="GanttColumnVisibility.SettingKey"/> still records what the user chose,
+    /// and this is the step that puts the two back together.
+    /// </para>
+    /// <para>
+    /// <b>Best-effort, deliberately.</b> A settings table that cannot be read, a value
+    /// that does not parse, and a refused apply all leave the schema's presentation in
+    /// place: a repair that refused over a decoration would leave the user with no table
+    /// at all. The refusals are traced rather than silent, so the reason survives in the
+    /// log instead of being guessed at later.
+    /// </para>
+    /// </remarks>
+    internal void ApplyStoredColumnVisibility()
+    {
+        ConfigReadOutcome outcome = _catalogueReader.Read();
+        if (!outcome.Succeeded)
+        {
+            _trace?.Invoke(
+                $"Recovery: the settings could not be read ({outcome.Refusal}); "
+                + "the schema presentation stands.");
+            return;
+        }
+
+        // An absent or blank key is the default "nothing hidden", which is already the
+        // schema's state: applying it would be a round trip that changes nothing.
+        if (!outcome.Settings.TryGetValue(GanttColumnVisibility.SettingKey, out string? stored)
+            || string.IsNullOrWhiteSpace(stored))
+        {
+            return;
+        }
+
+        ColumnVisibilityOutcome parsed = GanttColumnVisibility.Parse(stored);
+        if (!parsed.Succeeded)
+        {
+            _trace?.Invoke(
+                $"Recovery: the stored {GanttColumnVisibility.SettingKey} value '{stored}' did not "
+                + $"parse ({parsed.Refusal}); the schema presentation stands.");
+            return;
+        }
+
+        ColumnVisibilityPortOutcome applied = _columnVisibilityPort.Apply(parsed.Hidden!);
+        if (!applied.Succeeded)
+        {
+            _trace?.Invoke(
+                $"Recovery: the stored column visibility could not be applied "
+                + $"({applied.Refusal}).");
+        }
+    }
+
     private void ApplyColumnPresentation(Excel.ListObject table)
     {
         SetLeadingGutterWidth(table);
+
+        // R5.18h: the loop below forces only the engine columns' visibility, so the
+        // user's stored choice has to be applied separately or a rebuilt sheet would
+        // show every column.
+        ApplyStoredColumnVisibility();
 
         Excel.ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
