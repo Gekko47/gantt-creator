@@ -25,6 +25,7 @@ a deliberate choice that defaults to none.
 | D4 | The **Data panel** description-label option is removed; the Splitter's default becomes `Plot centre` |
 | D5 | The **live table's appearance is owned by the add-in**: borders and headings follow the chart's theme and must track the theme settings, reversing the 2026-10-21 "table keeps Excel's own borders" ruling |
 | D6 | **Spacer column becomes column A, so `Type` is column B.** No migration sequence: there are no active users. Every repair, integrity and validation path must work with the new schema |
+| D7 | **Lucide is available for every ribbon icon (owner ruling 2026-11-14), not just the column-visibility items.** This supersedes the `imageMso` measurement that forced D2's label-only variant: the missing open-padlock glyph is no longer a constraint, because a control can carry an embedded image through `getImage` instead of a static `imageMso`. It also retires D2's reason for existing (two swapped controls per lock). Not yet implemented — see §10 |
 
 Two points the owner did not rule on, carried forward as the standing recommendation and marked
 `(proposed)` in the work items: child notation is **indentation only**, and column visibility is
@@ -58,6 +59,10 @@ Two capability facts that shape the design:
   so [`check-ribbon-icons.ps1`](scripts/check-ribbon-icons.ps1) rejects them and there is **no
   open-padlock `imageMso` at all**. The owner therefore approved D2's label-only variant: one closed
   padlock stays and `getLabel` carries the state, with embedded images deferred.
+  **Superseded 2026-11-14 by D7.** The constraint is real but no longer binding: `getImage` returns
+  the same `IPictureDisp` the column-visibility items already produce from committed PNGs, so the
+  open padlock is a Lucide asset rather than a gallery id. The deferred state glyph is now work,
+  recorded in §10, not a capability limit.
 - **The panel origin is the table's first column.** [`LiveDataPanelBounds`](src/GanttCreator.Core/Scene/SceneBuilder.cs:844)
   derives the panel rectangle from `grid.OriginLeftPt` and the measured column widths, and
   [`ExcelPanelGridMeasurement`](src/GanttCreator.Office/ExcelPanelGridMeasurement.cs:102) measures
@@ -130,6 +135,11 @@ Two capability facts that shape the design:
   pressed state already says what is true and no open-padlock `imageMso` exists. The wording lives in
   one function pair so it can be pinned without a host; the icon becomes an embedded image only when
   that seam is approved.
+  **Landed as the label-only variant; the glyph half is reopened by D7 (2026-11-14).** The labels are
+  in place and pinned. What D7 changes is the *reason* the glyph could not follow the state: with
+  Lucide assets served through `getImage`, the open padlock exists, so D1's "the glyph matches the
+  state" is deliverable and D2's two-control design has no remaining justification. Outstanding work
+  is listed in §10.
   Files: [`RibbonControlIds`](src/GanttCreator.AddIn/RibbonControlIds.cs:101),
   [`GanttRibbon`](src/GanttCreator.AddIn/GanttRibbon.cs:289),
   [`RibbonStateService`](src/GanttCreator.AddIn/RibbonStateService.cs:1982), and the invalidation that
@@ -293,12 +303,24 @@ Two capability facts that shape the design:
      from `GanttTableSchema`, which is what the helper already does internally;
      `AssertId` becomes `ColumnValue(range, "Id")`.
   3. The remaining three (`Insert_appends_all_three_command_rows_without_rendering`
-     expecting 0 and seeing 1, `Repair_confirmed_identity_damage_changes_only_duplicate_id_cells`
-     finding two Id cells, and `ProtectionToggle…` at line 97) need the same treatment
-     after those two helpers are fixed — two of them almost certainly collapse with it,
-     so fix the helpers first and re-run before touching the third.
-  **Do not change the product to satisfy these.** Every observed value is the one the
-  schema-23 contract specifies; the tests are the stale side.
+     expecting 0 and seeing 1, `Repair_confirmed_identity_damage_cells`,
+     and `ProtectionToggle…` at line 97) were triaged one at a time. Two were stale
+     expectations and one was **not**: `ProtectionToggle…` read `headerCell.Locked = False`
+     because `ListColumn.Range` includes the header cell, so the per-column lock write in all
+     three presentation writers put an authoring column's *unlocked* flag over its own header.
+     That was invisible while `Id` led the table and became the user-visible `Type` header once
+     R5.18k moved the visible columns first — a real defect, fixed in `9a3d3ee` by locking
+     `table.HeaderRowRange` once after the per-column pass in the initialiser, the restorer and
+     the recovery, with the per-column comparison reading the body so a converged refresh stays
+     write-free. `AddRow…`'s missing shape was a legacy Forms `Drop Down 1` control Excel
+     materialises once a validated `Type` cell is selected (measured 0 → 1 after the first row
+     selection); that test now asserts on the add-in's owned chart shapes, which is the claim it
+     exists to make. **Measured after the fixes: `verify-office.ps1` PASS, 62/62**, leak signal
+     38 (ceiling 38).
+  **The line to keep from this block** is the first half: two of the nine were the tests' stale
+  literals and the product was right. It is *not* a licence to assume every red integration test
+  is stale — the third one was the opposite, and the only way it was found was by reading the
+  writer rather than the expectation.
 
   **Repair, integrity and validation parity (explicit D6 requirement):**
   [`ExcelConfigIntegrityChecker`](src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs:130) origin
@@ -458,3 +480,27 @@ survivors were in the new `GanttColumnVisibility`, and they were not the same ki
 The remaining fifteen are the pre-existing whole-file survivors in `GanttCatalogues` (message
 strings, `First()` versus `FirstOrDefault()`, and the metric/typography validation arms this change
 did not touch) — that file enters the judged set only because the settings catalogue is in the diff.
+
+## 10. Outstanding after the batch (audited 2026-11-14)
+
+Everything below is work this batch either deliberately deferred or discovered and did not close.
+It is a list of what is *not* done, not a wish list: each entry names the reason and what would
+close it.
+
+| # | Item | Why it is still open | What closes it |
+|---|---|---|---|
+| O1 | **R5.18f state glyphs, reopened by D7** | The label half landed; the glyph half was blocked by the measured absence of an open-padlock `imageMso`. D7 removes that block, and the column-visibility slice already built the pipeline (`ColumnVisibilityImages`, embedded PNGs, `IPictureDisp` marshalling, `getItemImage`) | Rasterise Lucide `lock`/`lock-open` at 16/32 px with the existing `gen-column-visibility-icons.ps1` pattern, serve them through `getImage` on both toggles, byte `imageMso` from those two controls, extend `check-ribbon-icons.ps1`'s expectation (27 → 25 ids), and retire D2's second control. A live check that the two images differ is then possible for the first time |
+| O2 | **Live-host render check of the dashboard `getItemImage`** | `ColumnVisibilityImagesTests` pins the PNG → `IPictureDisp` marshalling through `AxHost`, but nothing in `verify-office.ps1` loads a ribbon, so the host-rendered bitmap is unverified. The plan's slice 3 asked for it explicitly | A live-Excel check that opens the dropdown and reads back that both item images resolved (or an accepted, recorded statement that this is manual-only, which R5.18h slice 1's "no host seam" note does not yet grant) |
+| O3 | **Toggle → refresh → persist round trip in the host** | The Core toggle, the apply-then-persist ordering and the rebuild re-apply are each pinned in contract tests; no live test selects a dropdown item and then asserts the column stays hidden across a Refresh and a Repair. This is the one place where three separately-correct pieces meet | One `Category=OfficeIntegration` test: hide a column through `RibbonStateService.ToggleColumnVisibility`, run the restorer, assert hidden; run the recovery, assert hidden |
+| O4 | **`PlotRangeResolver.ValidateSettings` bound direction** | A mutant that flips `Max()` to `Min()` survives and looks like a genuine gap: no test pins which side of the range each setting bound is checked against | One Core test asserting a value beyond each bound is refused with that bound's reason |
+| O5 | **`HostOwnedGeometry` tolerance boundaries** | The four inclusive-tolerance boundary pairs and `NearlyEqual`'s strict comparison differ only at a value exactly on the boundary, which no test currently pins | Four boundary facts, one per geometry rule |
+| O6 | **`SceneBuilder` mutation survivors never examined** | 32 survivors in a file this batch changed, categorised as "plausible but unchecked" — the only entry in the ledger with no line-by-line argument at all | A per-survivor pass over that file, killing what a test can kill and recording the rest |
+| O7 | **`GanttColumnVisibility.Toggle`'s `ThrowIfNull`** | Recorded as equivalent: the next statement's `HashSet` constructor throws the same exception for the same input, so no test can distinguish them | Nothing; it stays in the ledger |
+| O8 | **Branch-final `verify.ps1 -MutationSince`** | `verify-quick` judges changed Core files per commit with `mutation-gate.ps1`; the whole-branch score against the 80 % threshold has not been re-measured since the R5.18h slice 1 pass (93.99 %). Chapter `9`'s numbers are older than the last four commits | `pwsh ./scripts/verify.ps1 -MutationSince <batch base>` on a clean tree |
+| O9 | **COM-proxy leak signal has no headroom** | The gate passed at exactly its ceiling (38 forced kills, ceiling 38). Any new test body that leaves a proxy alive fails the gate for a reason unrelated to what it tests | Retire one leaked chain, or raise the ceiling with a measured band as the script's own history requires — not by a quiet bump |
+| O10 | **`docs/STATUS.md` / `docs/REPO-MAP.md` drift** | Status rows were written per item; the map's test locations and commands have not been re-read since the R5.18h port and the four new test classes landed | One pass over both, in the commit that closes this list |
+
+Still explicitly out of scope, unchanged: the split buttons' remembered type is session-only, bold
+summary rows and any child indicator beyond indentation, a custom ribbon image pipeline beyond
+committed PNGs, and any schema-22 migration (`Initialise` and `Repair` remain the only creation
+paths).
