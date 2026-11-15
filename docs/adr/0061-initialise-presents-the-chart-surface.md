@@ -28,6 +28,21 @@
 > changes. The scene baseline is regenerated for the band borders, the plot's top
 > line and the hairline widths, with this note as the stated reason; no golden image
 > is involved.
+>
+> **D9 — the live frame closes on the table's column edge, and the gutter is now an
+> OUTER margin (2026-11-15).** The frame's left edge used to be the leading gutter's
+> outer edge, which is the worksheet's own left edge at x = 0. Excel clips a shape at
+> that boundary, so a 1pt stroke showed a sliver and a 0.25pt hairline showed nothing:
+> the owner reported the left border missing. `LiveDataPanelBounds` now closes the frame
+> on the table's first column (`OriginLeftPt`), which is a cell boundary the host can
+> draw, and the gutter reads as a page-style margin **outside** the frame. Nothing else
+> moves: the right edge is still the measured panel's right edge, which is also where
+> the live plot starts, and the top and bottom are still the chart bounds' padding rows.
+> The rejected alternative was to inset the frame by a fixed point inside the gutter,
+> which would have made the left margin 3pt against 4pt on the other three sides - the
+> asymmetry this amendment exists to remove. The frame stays at `ZLayer.Frame`: moving
+> it above the title layer was tried and reverted, because the entity guide's z-order
+> contract names that layer and `EquivalenceThinSliceTests` enforces it.
 
 - **Status**: Accepted
 - **Date**: 2026-11-15

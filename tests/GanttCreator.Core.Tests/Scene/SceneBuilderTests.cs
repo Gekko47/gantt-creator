@@ -791,14 +791,16 @@ public sealed class SceneBuilderTests
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         GanttScene scene = outcome.Result!.Scene;
 
-        // The left edge is the table's own edge moved left by the measured gutter
-        // (40 - 10), not the raw origin and not the plot's left edge. As above, the
-        // stroke's centre sits half a stroke inside the outline it closes.
+        // The left edge is the TABLE's left edge (40), not the gutter's outer edge (30)
+        // and not the plot's left edge: the gutter is now an OUTER margin, because a
+        // stroke on the worksheet's own left edge is clipped by the host (owner report
+        // 2026-11-15: the chart's left border was missing). As above, the stroke's centre
+        // sits half a stroke inside the outline it closes.
         const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(30 + halfStroke, left.From!.X, precision: 9);
-        Assert.Equal(30 + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(40 + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(40 + halfStroke, left.To!.X, precision: 9);
 
         // The right edge is the origin plus the SUM of the measured column widths
         // (40 + 200 + 400). The largest column alone would close the frame at 440,

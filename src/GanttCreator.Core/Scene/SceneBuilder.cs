@@ -848,13 +848,16 @@ public static class SceneBuilder
             return null;
         }
 
-        // The leading gutter (R5.18k) is the frame's left margin, exactly as the top and
-        // bottom padding rows are its top and bottom margins. It is subtracted from the
-        // panel's left edge only: the RIGHT edge is still measured from the origin, so a
-        // non-zero gutter widens the panel leftwards rather than widening the table. Both
-        // edges are the grid's own properties, so the arithmetic has one home — and the
-        // live plot starts from the same right edge, which is what stops the two drifting.
-        double left = grid.PanelLeftPt;
+        // The frame's left edge is the TABLE's left edge, not the gutter's outer edge
+        // (owner report 2026-11-15: "the left border line of the chart is missing"). The
+        // gutter is the chart's outer left margin, and the frame used to close on its
+        // outer edge — which is the worksheet's own left edge, x = 0. Excel clips a shape
+        // at that boundary, so a 1pt stroke showed only a sliver and a 0.25pt hairline
+        // showed nothing at all. Closing the frame on the table's first column keeps the
+        // margin (it is now OUTSIDE the frame, like a page margin) and puts the stroke on
+        // a cell boundary the host can draw. The right edge is unchanged: it is the
+        // plotted panel's right edge, which is also what the live plot starts from.
+        double left = grid.OriginLeftPt;
         double right = grid.PanelRightPt;
         double top = grid.OriginTopPt - grid.HeaderHeightPt;
         double bottom = grid.OriginTopPt + grid.RowHeightsPt.Sum();
