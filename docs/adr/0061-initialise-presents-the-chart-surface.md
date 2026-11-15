@@ -43,6 +43,19 @@
 > asymmetry this amendment exists to remove. The frame stays at `ZLayer.Frame`: moving
 > it above the title layer was tried and reverted, because the entity guide's z-order
 > contract names that layer and `EquivalenceThinSliceTests` enforces it.
+>
+> **D10 — two live anchor experiments (2026-11-15).** The left frame line plotted but
+> could not be found: it was anchored in the gutter, because a shape whose top-left sits
+> exactly on a column boundary resolves to the column on its left. The live frame now
+> starts `GanttSheetLayout.LiveFrameAnchorNudgePt` (**0.25pt**) to the right of the
+> table's first column, so the stroke lives inside a visible column. Separately, the
+> bottom frame line never appeared and no shape existed at that y, so the live frame's
+> bottom is now the **last body row's** bottom (`PlotBounds.Bottom`) instead of the bottom
+> padding row's — the working hypothesis being that a shape anchored below every populated
+> row falls outside the host's range and is never painted. That costs the 4pt bottom
+> margin while it is under test; the export compositions keep the full outline. Both
+> changes are live-only and both are recorded as experiments to be confirmed on the host,
+> not as settled geometry.
 
 - **Status**: Accepted
 - **Date**: 2026-11-15

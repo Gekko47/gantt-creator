@@ -965,8 +965,8 @@ public sealed class FrameBandsBuilderTests
 
         SceneLine left = lines.Single(line => line.PrimitiveId == "chart:frame:left");
         Assert.Equal(outlineLeft + frameHalf, left.From.X, 6);
-        Assert.Equal(outlineTop, left.From.Y, 6);
-        Assert.Equal(outlineBottom, left.To.Y, 6);
+        Assert.Equal(outlineTop + frameHalf, left.From.Y, 6);
+        Assert.Equal(request.PlotBounds.Bottom - frameHalf, left.To.Y, 6);
 
         SceneLine right = lines.Single(line => line.PrimitiveId == "chart:frame:right");
         Assert.Equal(outlineRight - frameHalf, right.From.X, 6);
@@ -977,7 +977,7 @@ public sealed class FrameBandsBuilderTests
         Assert.Equal(outlineRight, top.To.X, 6);
 
         SceneLine bottom = lines.Single(line => line.PrimitiveId == "chart:frame:bottom");
-        Assert.Equal(outlineBottom - frameHalf, bottom.From.Y, 6);
+        Assert.Equal(request.PlotBounds.Bottom - frameHalf, bottom.From.Y, 6);
 
         // The separator: the plot's left edge, drawn inside the plot and above the bands.
         SceneLine separator = lines.Single(

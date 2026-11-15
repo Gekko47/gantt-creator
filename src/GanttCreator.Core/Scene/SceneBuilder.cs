@@ -857,7 +857,12 @@ public static class SceneBuilder
         // margin (it is now OUTSIDE the frame, like a page margin) and puts the stroke on
         // a cell boundary the host can draw. The right edge is unchanged: it is the
         // plotted panel's right edge, which is also what the live plot starts from.
-        double left = grid.OriginLeftPt;
+        //
+        // The quarter-point nudge is the ANCHOR, not the drawing (owner ruling 2026-11-15):
+        // a shape whose top-left is exactly on a column boundary resolves to the column on
+        // its left, which is the gutter — "it is plotting in a hidden column". A quarter
+        // point puts it inside the table's first column and is invisible.
+        double left = grid.OriginLeftPt + GanttSheetLayout.LiveFrameAnchorNudgePt;
         double right = grid.PanelRightPt;
         double top = grid.OriginTopPt - grid.HeaderHeightPt;
         double bottom = grid.OriginTopPt + grid.RowHeightsPt.Sum();

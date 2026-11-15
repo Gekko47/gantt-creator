@@ -730,14 +730,14 @@ public sealed class SceneBuilderTests
         const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(40 + halfStroke, left.From!.X, precision: 9);
-        Assert.Equal(40 + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.To!.X, precision: 9);
 
         // The top and bottom rules now START at the table and run to the plot's
         // right edge, so the frame is ONE rectangle rather than a step.
         SceneLine top = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:top", StringComparison.Ordinal));
-        Assert.Equal(40, top.From!.X, precision: 9);
+        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt, top.From!.X, precision: 9);
         Assert.Equal(600, top.To!.X, precision: 9);
 
         // The BACKGROUND is untouched: a background over the table would paint
@@ -799,8 +799,8 @@ public sealed class SceneBuilderTests
         const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(40 + halfStroke, left.From!.X, precision: 9);
-        Assert.Equal(40 + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.To!.X, precision: 9);
 
         // The right edge is the origin plus the SUM of the measured column widths
         // (40 + 200 + 400). The largest column alone would close the frame at 440,

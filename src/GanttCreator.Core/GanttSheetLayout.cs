@@ -100,6 +100,19 @@ public static class GanttSheetLayout
     public const int LeadingGutterColumnIndex = 1;
 
     /// <summary>
+    /// How far right of the table's own left edge the LIVE frame is drawn, in points.
+    /// </summary>
+    /// <remarks>
+    /// A quarter point (owner ruling 2026-11-15). Excel assigns a shape to the cell that
+    /// contains its top-left point, and a point exactly ON a column boundary resolves to
+    /// the column on its left - the leading gutter, which the owner described as "a hidden
+    /// column" when the left frame line became hard to find. A quarter point puts the
+    /// stroke inside the table's first column instead of on its edge, which is the smallest
+    /// nudge Excel can express and is invisible in the drawing.
+    /// </remarks>
+    public const double LiveFrameAnchorNudgePt = 0.25;
+
+    /// <summary>
     /// The one-based worksheet column the table's first column occupies.
     /// </summary>
     /// <remarks>

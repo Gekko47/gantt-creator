@@ -382,7 +382,7 @@ public class ExcelSceneBuildRequestFactoryTests
         // left edge would otherwise clip half of it. The stroke still spans the origin, so
         // this still asserts what it was written to assert - the frame starts at the table.
         double halfStroke = GanttCatalogues.MetricDefault("MajorBoundaryPt") / 2d;
-        Assert.Equal(grid.OriginLeftPt + halfStroke, left.From!.X, precision: 6);
+        Assert.Equal(grid.OriginLeftPt + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.From!.X, precision: 6);
         Assert.NotEqual(outcome.Request!.PlotBounds!.Value.X, left.From!.X, precision: 6);
     }
 
