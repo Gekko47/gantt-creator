@@ -93,6 +93,17 @@ public class ExcelWorkbookInitialiser(
         XlBordersIndex.xlEdgeRight,
     ];
 
+    /// <summary>The two border indices that form the cell grid INSIDE the table.</summary>
+    /// <remarks>
+    /// Written as direct formatting, not left to the table style: see
+    /// <see cref="ApplyBorderColour"/> for the measured reason.
+    /// </remarks>
+    private static readonly XlBordersIndex[] _interiorBorderEdges =
+    [
+        XlBordersIndex.xlInsideVertical,
+        XlBordersIndex.xlInsideHorizontal,
+    ];
+
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
@@ -1400,17 +1411,40 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Recolours every border of the table and gives its outside edge the frame's weight.
+    /// Colours every border of the table, gives its outside edge the frame's weight, and draws
+    /// the interior cell grid as direct formatting.
     /// </summary>
     /// <param name="table">The visible data table.</param>
     /// <remarks>
+    /// <para>
     /// <c>Borders.Color</c> writes the colour of every border the range contains and leaves
     /// each border's line style and weight alone, which is the split the 2026-11-13 ruling
-    /// describes: the table style owns the cell grid, the theme owns the colour. The
+    /// describes: the table style owns the cell grid's shape, the theme owns the colour. The
     /// 2026-11-14 ruling adds one exception — the table's <em>outside</em> edge takes the
     /// chart frame's weight, so the two boundaries meet at the same 1pt instead of one
-    /// stepping down to the other. Only the four edge indices are written; the interior
-    /// lines keep whatever weight the table style gives them.
+    /// stepping down to the other.
+    /// </para>
+    /// <para>
+    /// <b>The interior grid is now DRAWN, not inherited (owner report 2026-11-15).</b> The
+    /// report was "some table rows are missing the vertical line between Start and Finish".
+    /// It is not a formatting defect in this code base: a live host measurement
+    /// (`scripts/_artifacts/probe-table-borders.ps1` plus a filtered Office integration run)
+    /// showed every body row holding a continuous Start|Finish rule both as direct formatting
+    /// and through <c>DisplayFormat</c>, before and after <c>CalculateFull</c>, on rows created
+    /// by the real Add-row path with and without the Type-options port. What fails is the
+    /// HOST's painting of a table-style rule: a style border is one device pixel and Excel
+    /// drops individual rules on rows whose height or position rounds to a sub-pixel, which is
+    /// why the missing line is per ROW and moves with the zoom. A directly formatted border is
+    /// painted from the cell's own format instead of the style consult, so the grid stops
+    /// depending on that rounding — and, as a second effect, stops depending on the style
+    /// re-application that a column hide/show triggers.
+    /// </para>
+    /// <para>
+    /// The weight is <c>xlThin</c> for the interior edges, matching the outside edge and every
+    /// drawn chart border (ADR-0061 D5: one weight for every border). It is written here and in
+    /// <c>ExcelWorkbookRecovery</c> because both own cell presentation; a Refresh still writes
+    /// no cell formatting.
+    /// </para>
     /// </remarks>
     internal virtual void ApplyBorderColour(ListObject table)
     {
@@ -1423,6 +1457,37 @@ public class ExcelWorkbookInitialiser(
             // the 1pt weight, which is the frame token's default (MajorBoundaryPt).
             SetBorderWeight(borders, edge, XlBorderWeight.xlThin);
         }
+
+        foreach (XlBordersIndex edge in _interiorBorderEdges)
+        {
+            SetInteriorBorder(borders, edge);
+        }
+    }
+
+    /// <summary>
+    /// Draws one interior border as direct formatting: a continuous thin rule in the theme's
+    /// border colour.
+    /// </summary>
+    /// <param name="borders">The table range's border collection.</param>
+    /// <param name="edge">Which interior border to draw.</param>
+    /// <remarks>
+    /// <para>
+    /// <c>Borders.Item</c> is an indexed COM property, so this is a documented seam like
+    /// <see cref="SetBorderWeight"/>: expression trees cannot contain it (CS0855) and the
+    /// contract tests substitute this member. The one proxy is held in a local rather than
+    /// chained, per the COM ownership rule.
+    /// </para>
+    /// <para>
+    /// <b>Why a line style has to be written at all.</b> <c>Borders.Color</c> gives a border a
+    /// colour but leaves its line style alone, and a border with no line style is not drawn —
+    /// which is why the colour write on its own never made the grid the add-in's own.
+    /// </para>
+    /// </remarks>
+    internal virtual void SetInteriorBorder(Borders borders, XlBordersIndex edge)
+    {
+        Border border = borders[edge];
+        border.LineStyle = XlLineStyle.xlContinuous;
+        border.Weight = XlBorderWeight.xlThin;
     }
 
     /// <summary>Writes one border's weight.</summary>

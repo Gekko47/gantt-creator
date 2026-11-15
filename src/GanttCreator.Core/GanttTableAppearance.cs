@@ -151,12 +151,25 @@ public static class GanttTableAppearance
     /// The theme colour a live cell border takes.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The owner's rulings take the <em>colour</em> of every cell border from the chart theme
-    /// and, on the table's <em>outside</em> edge only, its weight from the frame
-    /// (2026-11-13 and 2026-11-14). Interior borders keep Excel's table-style weight, so the
-    /// cell grid stays the table style's rather than being redrawn by the add-in. The token is
-    /// the minor grid stroke, the light boundary the chart already draws between time columns,
-    /// so a table border and a grid line are one boundary colour rather than two near-misses.
+    /// and the <em>weight</em> of every border the add-in draws from one number (2026-11-13,
+    /// 2026-11-14 and ADR-0061 D5). The token is the minor grid stroke, the light boundary the
+    /// chart already draws between time columns, so a table border and a grid line are one
+    /// boundary colour rather than two near-misses.
+    /// </para>
+    /// <para>
+    /// <b>The interior grid is drawn, not inherited (owner report 2026-11-15).</b> It used to be
+    /// left to the table style on the theory that the style owned the cell grid. That theory
+    /// cost a live defect: a table-style border is one device pixel painted through a style
+    /// consult, and the host drops individual rules on rows whose height or position rounds to a
+    /// sub-pixel, reported as "some rows are missing the vertical line between Start and
+    /// Finish". A live measurement cleared this code base - the cells held a continuous rule in
+    /// both the direct and the displayed border APIs, before and after <c>CalculateFull</c> - so
+    /// the fix is to draw the grid the add-in presents: Initialise and Repair write the two
+    /// interior indices as a continuous thin rule in this colour, and a Refresh still writes no
+    /// cell formatting.
+    /// </para>
     /// </remarks>
     public static ColourHex BorderColour => Colour("MinorGridStroke");
 
