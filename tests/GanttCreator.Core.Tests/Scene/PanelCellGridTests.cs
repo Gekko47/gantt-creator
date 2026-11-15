@@ -439,4 +439,37 @@ public sealed class PanelCellGridTests
             PanelCellGrid.TryCreate(
                 [Col("Id")], [12.0], 12.0, [], leadingGutterPt: double.PositiveInfinity).Refusal);
     }
+    [Fact]
+    public void A_supplied_right_edge_wins_over_the_summed_column_widths()
+    {
+        // The live panel ends at the PLOT ANCHOR column's left edge, not at the sum of the
+        // visible columns, because twelve hidden engine columns sit between the last visible
+        // column and the plot (owner report 2026-11-15: the chart began in column G while the
+        // anchor is in column S). The summed width is 40 here and the supplied edge 640.
+        PanelCellGrid supplied = PanelCellGrid.TryCreate(
+            [Col("Type")],
+            [12.0],
+            16d,
+            ["Type"],
+            originLeftPt: 40,
+            plotOriginRightPt: 640).Grid!;
+
+        Assert.Equal(640, supplied.PanelRightPt);
+        Assert.Equal(40, supplied.TotalWidthPt);
+    }
+
+    [Fact]
+    public void A_non_positive_supplied_right_edge_is_refused()
+    {
+        // A supplied edge is a POSITION, so zero - the sheet's own edge, the defect this
+        // measurement removes - is refused like any other unusable origin.
+        Assert.Equal(
+            PanelCellGridRefusal.InvalidOrigin,
+            PanelCellGrid.TryCreate(
+                [Col("Type")],
+                [12.0],
+                16d,
+                ["Type"],
+                plotOriginRightPt: 0).Refusal);
+    }
 }

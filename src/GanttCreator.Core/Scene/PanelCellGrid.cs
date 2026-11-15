@@ -131,7 +131,8 @@ public sealed record PanelCellGrid
         double topPaddingHeightPt,
         double bottomPaddingHeightPt,
         double anchorRowHeightPt,
-        double leadingGutterPt)
+        double leadingGutterPt,
+        double? plotOriginRightPt)
     {
         Columns = columns;
         RowHeightsPt = rowHeightsPt;
@@ -143,6 +144,7 @@ public sealed record PanelCellGrid
         BottomPaddingHeightPt = bottomPaddingHeightPt;
         AnchorRowHeightPt = anchorRowHeightPt;
         LeadingGutterPt = leadingGutterPt;
+        PlotOriginRightPt = plotOriginRightPt;
 
         // The cumulative tops are derived ONCE, here, so a lane anchor and a panel
         // row cannot disagree about where a body row starts. Entry n is
@@ -337,7 +339,20 @@ public sealed record PanelCellGrid
     /// whose table starts in column B put it one measured origin — a gutter — inside the
     /// table's last column.
     /// </remarks>
-    public double PanelRightPt => OriginLeftPt + TotalWidthPt;
+    public double PanelRightPt => PlotOriginRightPt ?? (OriginLeftPt + TotalWidthPt);
+
+    /// <summary>
+    /// The MEASURED right edge of the panel, when the host supplied one.
+    /// </summary>
+    /// <remarks>
+    /// On the live sheet this is the PLOT ANCHOR COLUMN's left edge, not the sum of the
+    /// visible columns' widths: the table carries twelve hidden engine columns after the
+    /// visible ones, so the sum stops at the last visible column and the plot began one
+    /// hidden range too early (owner report 2026-11-15: the chart started in column G
+    /// while the plot anchor is in column S). Null on every composition that does not
+    /// measure one, which keeps export geometry byte-identical.
+    /// </remarks>
+    public double? PlotOriginRightPt { get; }
 
     /// <summary>
     /// The chart's total bottom margin: the anchor row plus the padding row
@@ -420,6 +435,10 @@ public sealed record PanelCellGrid
     /// own left edge, which is the behaviour every composition had before the gutter
     /// existed.
     /// </param>
+    /// <param name="plotOriginRightPt">
+    /// The MEASURED right edge of the panel, in points, when the caller measured one - the
+    /// plot anchor column's left edge on the live sheet. Null keeps the summed-width edge.
+    /// </param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
@@ -432,7 +451,8 @@ public sealed record PanelCellGrid
         double bottomPaddingHeightPt = 0d,
         double anchorRowHeightPt = 0d,
         bool allowEmptyRows = false,
-        double leadingGutterPt = 0d)
+        double leadingGutterPt = 0d,
+        double? plotOriginRightPt = null)
     {
         // Validated on the same rule as the padding rows and with its own reason: a
         // negative gutter would invert the frame, and folding it into the padding
@@ -463,6 +483,15 @@ public sealed record PanelCellGrid
         if (!double.IsFinite(anchorRowHeightPt) || anchorRowHeightPt < 0)
         {
             return Refused(PanelCellGridRefusal.InvalidPaddingHeight);
+        }
+
+        // A supplied right edge is a POSITION, so it is validated like an origin:
+        // finite and positive. Zero would put the plot on the sheet's own edge, which is
+        // the defect this measurement exists to remove.
+        if (plotOriginRightPt is { } suppliedRight
+            && (!double.IsFinite(suppliedRight) || suppliedRight <= 0))
+        {
+            return Refused(PanelCellGridRefusal.InvalidOrigin);
         }
 
         if (columns is null)
@@ -542,7 +571,8 @@ public sealed record PanelCellGrid
                     topPaddingHeightPt,
                     bottomPaddingHeightPt,
                     anchorRowHeightPt,
-                    leadingGutterPt),
+                    leadingGutterPt,
+                    plotOriginRightPt),
                 null)
             : Refused(PanelCellGridRefusal.InvalidOrigin);
     }

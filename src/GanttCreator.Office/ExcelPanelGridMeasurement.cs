@@ -208,6 +208,13 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // — the origin, the rows — still refuses, which is the line this draws.
         double leadingGutter = ReadLeadingGutterWidth(table) ?? 0d;
 
+        // The plot starts at the PLOT ANCHOR COLUMN's left edge, not at the summed widths
+        // of the visible columns. The table carries twelve hidden engine columns after the
+        // visible ones, so the sum stops after the last visible column and the chart began
+        // inside the hidden range (owner report 2026-11-15). A host that reports no left
+        // edge falls back to the sum, which is the previous behaviour.
+        double? plotOriginRight = ReadPlotAnchorLeft(table);
+
         // Core validates the grid: a non-positive or non-finite width or height, a
         // blank or duplicated column name, a missing required column, and a negative
         // or non-finite origin are all refused there with their own typed reasons
@@ -223,7 +230,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             bottomPaddingHeight,
             anchorHeight,
             allowEmptyRows: true,
-            leadingGutterPt: leadingGutter);
+            leadingGutterPt: leadingGutter,
+            plotOriginRightPt: plotOriginRight);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -575,6 +583,29 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// composes without a margin, which is what every composition did before the gutter
     /// existed.
     /// </remarks>
+    internal virtual double? ReadPlotAnchorLeft(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        return table.Parent is Excel.Worksheet worksheet
+            && GetPlotAnchorColumn(worksheet) is { } column
+            ? ToPoints(column.Left)
+            : null;
+    }
+
+    /// <summary>
+    /// Returns the worksheet column the plot anchor's left edge is measured from. Test
+    /// seam over the <c>Columns</c> indexer.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? GetPlotAnchorColumn(Excel.Worksheet worksheet)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[GanttSheetLayout.PlotAnchorColumnIndex];
+    }
+
     internal virtual double? ReadLeadingGutterWidth(Excel.ListObject table)
     {
         ArgumentNullException.ThrowIfNull(table);
