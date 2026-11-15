@@ -547,6 +547,25 @@ public static class FrameBandsBuilder
             );
         }
 
+        // The plot's BOTTOM border, drawn inside the last body row (owner report
+        // 2026-11-15: "there is an edge line at the bottom and left of the plot which is
+        // not plotting"). The closing line below the plot terminates the band overhang and
+        // lives in the 0.25pt anchor row; it is not the plot's own bottom edge. This line is,
+        // and it sits inside the plot so its anchor is a populated row.
+        if (request.SheetCoordinates)
+        {
+            primitives.Add(
+                new SceneLine(
+                    "chart:plot:bottom",
+                    SceneOwnerId.Chart,
+                    ZLayer.Frame,
+                    new PointD(request.PlotBounds.Left, request.PlotBounds.Bottom - halfStroke),
+                    new PointD(request.PlotBounds.Right, request.PlotBounds.Bottom - halfStroke),
+                    request.Theme.MajorGrid
+                )
+            );
+        }
+
         // The plot's TOP edge - the period band's own bottom - completes the rectangle.
         // The band above it is a filled rect and the body below is the user's cells, so
         // without this line the labels and the first lane share an edge with nothing
