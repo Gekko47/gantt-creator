@@ -377,7 +377,12 @@ public class ExcelSceneBuildRequestFactoryTests
         SceneLine left = scene.Result!.Scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
 
-        Assert.Equal(grid.OriginLeftPt, left.From!.X, precision: 6);
+        // The centre sits half the frame's own stroke INSIDE the measured origin, because a
+        // live stroke is drawn inside the rectangle it closes (ADR-0061 D4): the sheet's own
+        // left edge would otherwise clip half of it. The stroke still spans the origin, so
+        // this still asserts what it was written to assert - the frame starts at the table.
+        double halfStroke = GanttCatalogues.MetricDefault("MajorBoundaryPt") / 2d;
+        Assert.Equal(grid.OriginLeftPt + halfStroke, left.From!.X, precision: 6);
         Assert.NotEqual(outcome.Request!.PlotBounds!.Value.X, left.From!.X, precision: 6);
     }
 

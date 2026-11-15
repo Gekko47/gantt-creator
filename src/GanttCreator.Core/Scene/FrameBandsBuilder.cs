@@ -464,10 +464,26 @@ public static class FrameBandsBuilder
             }
         }
 
+        // On the LIVE sheet a stroke is drawn INSIDE the rectangle it closes. The plot's
+        // left edge is the table's right edge, and the panel's last cell fill covers
+        // everything to the left of it, so a line centred on the boundary lost its left
+        // half to the cell and read as no line at all (live report 2026-11-15: "still no
+        // separating line between the table and the chart"). The two edge lines therefore
+        // move inwards by half their own stroke. The export compositions are unaffected:
+        // nothing there abuts the plot, so their geometry stays exactly as specified.
+        double halfStroke = request.SheetCoordinates
+            ? (request.Theme.MajorGrid.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
+            : 0d;
+
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
         {
             string key = line.Key.ToString("R", CultureInfo.InvariantCulture);
             bool isEdge = line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right;
+            double x = line.Key;
+            if (isEdge && halfStroke > 0d)
+            {
+                x = line.Key == request.PlotBounds.Left ? x + halfStroke : x - halfStroke;
+            }
 
             // The two EDGE lines close the plot, so they belong to the frame's layer, not
             // the grid's. The period band is a FILLED rect at Frame (80) that begins
@@ -480,8 +496,8 @@ public static class FrameBandsBuilder
                     isEdge ? $"chart:grid:edge:{key}" : $"chart:grid:{key}",
                     SceneOwnerId.Chart,
                     isEdge ? ZLayer.Frame : ZLayer.Grid,
-                    new PointD(line.Key, plotSpan.Y),
-                    new PointD(line.Key, plotSpan.Bottom),
+                    new PointD(x, plotSpan.Y),
+                    new PointD(x, plotSpan.Bottom),
                     line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid
                 )
             );
@@ -569,13 +585,31 @@ public static class FrameBandsBuilder
             : bounds;
 
         SceneStyle style = request.Theme.MajorGrid;
+
+        // On the LIVE sheet the frame's left edge sits on the sheet's own left edge (the
+        // leading gutter is its left margin, ADR-0059), so half of a stroke centred there
+        // fell outside the worksheet and the border read as three sides (live report
+        // 2026-11-15: "partial border around the chart ... extend it to wrap around the
+        // entire chart area"). The same rule the plot's edge lines now follow applies to
+        // all four: a live stroke is drawn INSIDE the rectangle it closes. Each centre
+        // line therefore moves inwards by half its own width, while its EXTENT still
+        // spans the whole outline -- so the corners stay closed and overlap, instead of
+        // each side stopping half a stroke short and notching the corner.
+        double half = request.SheetCoordinates
+            ? (style.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
+            : 0d;
+        double top = outline.Top + half;
+        double bottom = outline.Bottom - half;
+        double left = outline.Left + half;
+        double right = outline.Right - half;
+
         primitives.Add(
             new SceneLine(
                 "chart:frame:top",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(outline.Left, outline.Top),
-                new PointD(outline.Right, outline.Top),
+                new PointD(outline.Left, top),
+                new PointD(outline.Right, top),
                 style
             )
         );
@@ -584,8 +618,8 @@ public static class FrameBandsBuilder
                 "chart:frame:bottom",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(outline.Left, outline.Bottom),
-                new PointD(outline.Right, outline.Bottom),
+                new PointD(outline.Left, bottom),
+                new PointD(outline.Right, bottom),
                 style
             )
         );
@@ -594,8 +628,8 @@ public static class FrameBandsBuilder
                 "chart:frame:left",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(outline.Left, outline.Top),
-                new PointD(outline.Left, outline.Bottom),
+                new PointD(left, outline.Top),
+                new PointD(left, outline.Bottom),
                 style
             )
         );
@@ -604,8 +638,8 @@ public static class FrameBandsBuilder
                 "chart:frame:right",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(outline.Right, outline.Top),
-                new PointD(outline.Right, outline.Bottom),
+                new PointD(right, outline.Top),
+                new PointD(right, outline.Bottom),
                 style
             )
         );

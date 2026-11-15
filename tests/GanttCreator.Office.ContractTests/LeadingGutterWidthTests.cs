@@ -1,5 +1,4 @@
 using GanttCreator.Core;
-using GanttCreator.Office;
 using Moq;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -16,8 +15,27 @@ namespace GanttCreator.Office.ContractTests;
 /// </remarks>
 public sealed class LeadingGutterWidthTests
 {
-    /// <summary>The framing rows' padding height, which the gutter matches.</summary>
-    private static double TargetPt => GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt");
+    /// <summary>The chart's outer padding, which all four frame margins measure.</summary>
+    private static double TargetPt => GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+
+    [Fact]
+    public void The_gutter_targets_the_charts_outer_padding_not_one_padding_row()
+    {
+        // Owner ruling 2026-11-15: the left margin must match the frame's top, right and
+        // bottom margins. Those read ChartOuterPaddingPt (the two rows below the body sum
+        // to it by ADR-0038 D4), so the gutter reads the same token rather than the bottom
+        // padding row alone -- which left it 0.25pt short before the affine residual turned
+        // that into a visible 6pt difference.
+        Assert.Equal(TargetPt, ExcelWorkbookInitialiser.LeadingGutterTargetPt);
+
+        // The same figure is the bottom margin: the anchor row plus the padding row
+        // (ADR-0038 D4). All four margins therefore read one number.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt")
+                + GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+            TargetPt,
+            6);
+    }
 
     [Fact]
     public void A_width_already_at_the_target_is_not_rewritten()

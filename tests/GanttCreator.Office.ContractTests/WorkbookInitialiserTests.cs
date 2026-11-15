@@ -127,6 +127,44 @@ public class WorkbookInitialiserTests
         public List<(int Index, string Pattern)> NumberFormatWrites { get; } = [];
 
         /// <summary>
+        /// Whole worksheet columns by one-based index, for the pass that hides the engine
+        /// columns BEFORE the header row is written. Each mock records its own writes, so a
+        /// test can assert which columns were hidden and when relative to the header.
+        /// </summary>
+        public Dictionary<int, Mock<Excel.Range>> WorksheetColumns { get; } = [];
+
+        /// <summary>
+        /// The order of the two writes the flash report is about: <c>hidden</c> for each
+        /// engine-column hide and <c>header</c> for the header row's value write.
+        /// </summary>
+        public List<string> WriteOrder { get; } = [];
+
+        /// <summary>
+        /// Returns, and lazily creates, the mock for one whole worksheet column.
+        /// </summary>
+        /// <param name="columnIndex">The one-based worksheet column.</param>
+        /// <returns>The column's mock range.</returns>
+        public Mock<Excel.Range> WorksheetColumn(int columnIndex)
+        {
+            if (WorksheetColumns.TryGetValue(columnIndex, out Mock<Excel.Range>? existing))
+            {
+                return existing;
+            }
+
+            var mock = new Mock<Excel.Range>();
+            object hidden = false;
+            _ = mock.SetupGet(range => range.Hidden).Returns(() => hidden);
+            _ = mock.SetupSet(range => range.Hidden = It.IsAny<object>())
+                .Callback<object>(value =>
+                {
+                    hidden = RequireBool(value);
+                    WriteOrder.Add("hidden");
+                });
+            WorksheetColumns[columnIndex] = mock;
+            return mock;
+        }
+
+        /// <summary>
         /// Pre-sets each column's current <c>Hidden</c> state, so a test can start from
         /// a sheet that already matches (or deliberately contradicts) the schema.
         /// </summary>
@@ -279,7 +317,11 @@ public class WorkbookInitialiserTests
             _ = Hyperlinks.SetupGet(h => h.Count).Returns(() => HyperlinkCount);
 
             _ = HeaderRange.SetupSet(r => r.Value2 = It.IsAny<object>())
-                .Callback<object>(value => WrittenValues.Add(value));
+                .Callback<object>(value =>
+                {
+                    WrittenValues.Add(value);
+                    WriteOrder.Add("header");
+                });
 
             // The title is a CELL, not a shape (ADR-0030 D6), so it is asserted on its
             // own range rather than through the header's capture list. Sharing the
@@ -742,6 +784,25 @@ public class WorkbookInitialiserTests
             => ColumnAt(columns, index);
 
         /// <summary>
+        /// Resolves a whole worksheet column by its one-based index, for the pass that hides
+        /// the engine columns before the table exists.
+        /// </summary>
+        public Func<Excel.Worksheet, int, Excel.Range?> WorksheetColumnAt { get; set; } =
+            (_, _) => null;
+
+        internal override Excel.Range? GetWorksheetColumn(Excel.Worksheet target, int columnIndex)
+            => WorksheetColumnAt(target, columnIndex);
+
+        /// <summary>
+        /// The window the gridline switch writes to, or <see langword="null"/> when the test
+        /// models a host that reports no window.
+        /// </summary>
+        public Mock<Excel.Window>? Window { get; set; }
+
+        internal override Excel.Window? GetActiveWindow(Excel.Application application) =>
+            Window?.Object;
+
+        /// <summary>
         /// Answers the two shapes of this seam the product asks for: one column's entire
         /// column inside the presentation loop, and the WHOLE TABLE's entire columns once
         /// before it (the theme's body font and vertical centring are identical for every
@@ -856,8 +917,9 @@ public class WorkbookInitialiserTests
         /// delegates. Returns the initialiser under test.
         /// </summary>
         /// <param name="activeSheet">The active worksheet graph, or <see langword="null"/> for a non-worksheet active object.</param>
+        /// <param name="window">The window the gridline switch writes to, or <see langword="null"/> for a host that reports none.</param>
         /// <returns>The initialiser over the mocked application.</returns>
-        public TestableInitialiser Build(WorksheetGraph? activeSheet)
+        public TestableInitialiser Build(WorksheetGraph? activeSheet, Mock<Excel.Window>? window = null)
         {
             _ = Workbook.SetupGet(w => w.ActiveSheet)
                 .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
@@ -887,7 +949,7 @@ public class WorkbookInitialiserTests
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .PivotTableCount,
                 catalogueWriter: catalogueWriter.Object);
-            WireColumnPresentationFor(graphs, initialiser);
+            WireColumnPresentationFor(graphs, initialiser, window);
             return initialiser;
         }
 
@@ -897,14 +959,25 @@ public class WorkbookInitialiserTests
         /// </summary>
         /// <param name="graphs">The sheet graphs, which own the list columns.</param>
         /// <param name="initialiser">The initialiser to wire.</param>
+        /// <param name="window">The window the gridline switch writes to, or <see langword="null"/> for a host that reports none.</param>
         private static void WireColumnPresentationFor(
             IReadOnlyCollection<WorksheetGraph> graphs,
-            TestableInitialiser initialiser) =>
+            TestableInitialiser initialiser,
+            Mock<Excel.Window>? window = null)
+        {
             initialiser.WireColumnPresentation(
                 table => graphs.Single(g => ReferenceEquals(g.Table.Object, table)).ListColumns.Object,
                 (columns, index) => graphs
                     .Single(g => ReferenceEquals(g.ListColumns.Object, columns))
                     .Columns[index - 1].Object);
+
+            // The pre-header hide addresses WHOLE worksheet columns, before any table
+            // exists, so it resolves through the sheet graph that owns the worksheet.
+            initialiser.WorksheetColumnAt = (target, index) => graphs
+                .Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                .WorksheetColumn(index).Object;
+            initialiser.Window = window;
+        }
         /// <summary>
         /// Completes the graph with an explicit catalogue writer instead of
         /// the default no-op stub: the given writer's outcome drives the
@@ -917,7 +990,8 @@ public class WorkbookInitialiserTests
             WorksheetGraph? activeSheet,
             IConfigCatalogueWriter catalogueWriter,
             IWorksheetProtectionGuard? protectionGuard = null,
-            ITypeOptionsMaterialiser? typeOptions = null)
+            ITypeOptionsMaterialiser? typeOptions = null,
+            Mock<Excel.Window>? window = null)
         {
             _ = Workbook.SetupGet(w => w.ActiveSheet)
                 .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
@@ -947,7 +1021,7 @@ public class WorkbookInitialiserTests
                 catalogueWriter: catalogueWriter,
                 protectionGuard: protectionGuard,
                 typeOptions: typeOptions);
-            WireColumnPresentationFor(graphs, initialiser);
+            WireColumnPresentationFor(graphs, initialiser, window);
             return initialiser;
         }
     }
@@ -1269,6 +1343,76 @@ public class WorkbookInitialiserTests
             Assert.True(hidden[index]);
             Assert.True(active.LockedWrites[index]);
         }
+    }
+
+    [Fact]
+    public void Initialise_hides_the_engine_columns_before_it_writes_the_header_row()
+    {
+        // Live report 2026-11-15: the whole schema flashed at its default column width
+        // before the presentation pass hid the engine columns. The pre-header hide is only
+        // a fix if it lands BEFORE the header write, which is what this pins -- the final
+        // hidden state alone would pass with the old order too.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        int headerAt = active.WriteOrder.IndexOf("header");
+        Assert.True(
+            headerAt >= 0,
+            $"the header row was never written; writes seen: {string.Join(',', active.WriteOrder)}");
+        int engineColumns = GanttTableSchema.Default.Columns.Count(column => column.IsHidden);
+        Assert.Equal(
+            engineColumns,
+            active.WriteOrder.Take(headerAt).Count(step => step == "hidden"));
+    }
+
+    [Fact]
+    public void Initialise_switches_the_window_gridlines_off()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var window = WindowWithGridlines(visible: true);
+
+        _ = graph.Build(active, window).Initialise();
+
+        _ = window.SetupGet(w => w.DisplayGridlines).Returns(false);
+        window.VerifySet(w => w.DisplayGridlines = false, Times.Once());
+    }
+
+    [Fact]
+    public void Initialise_leaves_a_window_whose_gridlines_are_already_off_alone()
+    {
+        // Read-before-write, like every other presentation write: a converged window must
+        // not be rewritten, or every Initialise would dirty the workbook for no change.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var window = WindowWithGridlines(visible: false);
+
+        _ = graph.Build(active, window).Initialise();
+
+        window.VerifySet(w => w.DisplayGridlines = It.IsAny<bool>(), Times.Never());
+    }
+
+    /// <summary>
+    /// A window mock whose <c>DisplayGridlines</c> reads back whatever was last written.
+    /// </summary>
+    /// <param name="visible">The state the host starts in.</param>
+    /// <returns>The window mock.</returns>
+    private static Mock<Excel.Window> WindowWithGridlines(bool visible)
+    {
+        bool current = visible;
+        var window = new Mock<Excel.Window>();
+        _ = window.SetupGet(w => w.DisplayGridlines).Returns(() => current);
+        _ = window.SetupSet(w => w.DisplayGridlines = It.IsAny<bool>())
+            .Callback<bool>(value => current = value);
+        return window;
     }
 
     /// <summary>

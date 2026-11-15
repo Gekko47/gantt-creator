@@ -905,7 +905,9 @@ public sealed class FrameBandsBuilderTests
 
     private static FrameBandsRequest CreateRequest(
         double plotBandHeaderOverlapPt = 0.5,
-        double chartAnchorRowHeightPt = 0.25)
+        double chartAnchorRowHeightPt = 0.25,
+        bool sheetCoordinates = false,
+        RectD? dataPanelBounds = null)
     {
         TimeScale scale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400).Scale!;
         return new FrameBandsRequest(
@@ -928,8 +930,76 @@ public sealed class FrameBandsBuilderTests
             true,
             plotBandHeaderOverlapPt,
             chartAnchorRowHeightPt,
-            _theme
+            _theme,
+            SheetCoordinates: sheetCoordinates,
+            DataPanelBounds: dataPanelBounds
         );
+    }
+
+    [Fact]
+    public void On_the_live_sheet_every_frame_stroke_is_drawn_inside_the_outline()
+    {
+        // Live report 2026-11-15: the left frame line sat on the sheet's own left edge and
+        // lost half of its stroke outside the worksheet, so the border read as three sides;
+        // the plot's left line lost half to the panel's last cell fill, so the table and the
+        // chart had no separator. Both are one rule: on the LIVE sheet a stroke is drawn
+        // INSIDE the rectangle it closes. The EXTENTS still span the whole outline, which is
+        // what keeps the four corners closed instead of notching them.
+        FrameBandsRequest request = CreateRequest(
+            sheetCoordinates: true,
+            dataPanelBounds: new RectD(0, 100, 100, 100));
+        FrameBandsResult result = Build(request).Result!;
+
+        // Half of the theme's 1pt major boundary: the theme's own width, not the token.
+        const double half = 0.5;
+        RectD chart = result.Geometry.ChartBounds;
+        RectD panel = request.DataPanelBounds!.Value;
+        double outlineLeft = Math.Min(chart.Left, panel.Left);
+        double outlineRight = Math.Max(chart.Right, panel.Right);
+        double outlineTop = Math.Min(chart.Top, panel.Top);
+        double outlineBottom = Math.Max(chart.Bottom, panel.Bottom);
+
+        SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+        SceneLine left = lines.Single(line => line.PrimitiveId == "chart:frame:left");
+        Assert.Equal(outlineLeft + half, left.From.X, 6);
+        Assert.Equal(outlineTop, left.From.Y, 6);
+        Assert.Equal(outlineBottom, left.To.Y, 6);
+
+        SceneLine right = lines.Single(line => line.PrimitiveId == "chart:frame:right");
+        Assert.Equal(outlineRight - half, right.From.X, 6);
+
+        SceneLine top = lines.Single(line => line.PrimitiveId == "chart:frame:top");
+        Assert.Equal(outlineTop + half, top.From.Y, 6);
+        Assert.Equal(outlineLeft, top.From.X, 6);
+        Assert.Equal(outlineRight, top.To.X, 6);
+
+        SceneLine bottom = lines.Single(line => line.PrimitiveId == "chart:frame:bottom");
+        Assert.Equal(outlineBottom - half, bottom.From.Y, 6);
+
+        // The separator: the plot's left edge, drawn inside the plot and above the bands.
+        SceneLine separator = lines.Single(
+            line => line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)
+                && Math.Abs(line.From.X - (request.PlotBounds.Left + half)) < 1e-9);
+        Assert.Equal(ZLayer.Frame, separator.ZLayer);
+    }
+
+    [Fact]
+    public void The_export_frame_keeps_its_strokes_on_the_outline()
+    {
+        // The inset is a LIVE-sheet rule. An export composition draws its own panel with
+        // nothing abutting the frame, so its geometry must stay exactly where it was --
+        // otherwise the export fidelity contract would move by half a point with no
+        // reported defect behind it.
+        FrameBandsRequest request = CreateRequest();
+        FrameBandsResult result = Build(request).Result!;
+        RectD chart = result.Geometry.ChartBounds;
+        SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+        SceneLine left = lines.Single(line => line.PrimitiveId == "chart:frame:left");
+        SceneLine top = lines.Single(line => line.PrimitiveId == "chart:frame:top");
+        Assert.Equal(chart.Left, left.From.X, 6);
+        Assert.Equal(chart.Top, top.From.Y, 6);
     }
 
     [Fact]

@@ -113,7 +113,10 @@
              exactly the ids the Core contract's toggleable set names, so the rows are a
              projection of the catalogue rather than a second list. -->
         <group id="grpColumns" label="Columns" getVisible="GetVisible">
-          <menu id="mnuColumnVisibility" label="Show columns" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled">
+          <!-- `size="large"` is what makes the menu a big ribbon button: without it the
+               host renders a one-row dropdown and leaves the group's height empty
+               (live report 2026-11-15, "still 1 row high, should be 3 rows high"). -->
+          <menu id="mnuColumnVisibility" label="Show columns" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" size="large">
             <button id="colType" keytip="1" screentip="Show or hide Type" supertip="Shows or hides the Type column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
             <button id="colDescription" keytip="2" screentip="Show or hide Description" supertip="Shows or hides the Description column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
             <button id="colStart" keytip="3" screentip="Show or hide Start" supertip="Shows or hides the Start column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>

@@ -721,12 +721,17 @@ public sealed class SceneBuilderTests
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         GanttScene scene = outcome.Result!.Scene;
 
-        // The vertical rule sits at the table's first column - the same number the
-        // live title textbox is placed at - and not at the plot's left edge.
+        // The vertical rule closes the table's first column - the same number the live
+        // title textbox is placed at - and not at the plot's left edge. Its CENTRE sits
+        // half the 1pt frame stroke INSIDE that edge: on the live sheet a stroke is drawn
+        // inside the rectangle it closes, because the sheet's own edge would otherwise
+        // clip it in half (live report 2026-11-15). The stroke therefore still spans the
+        // table's edge exactly.
+        const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(40, left.From!.X, precision: 9);
-        Assert.Equal(40, left.To!.X, precision: 9);
+        Assert.Equal(40 + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(40 + halfStroke, left.To!.X, precision: 9);
 
         // The top and bottom rules now START at the table and run to the plot's
         // right edge, so the frame is ONE rectangle rather than a step.
@@ -787,19 +792,21 @@ public sealed class SceneBuilderTests
         GanttScene scene = outcome.Result!.Scene;
 
         // The left edge is the table's own edge moved left by the measured gutter
-        // (40 - 10), not the raw origin and not the plot's left edge.
+        // (40 - 10), not the raw origin and not the plot's left edge. As above, the
+        // stroke's centre sits half a stroke inside the outline it closes.
+        const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(30, left.From!.X, precision: 9);
-        Assert.Equal(30, left.To!.X, precision: 9);
+        Assert.Equal(30 + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(30 + halfStroke, left.To!.X, precision: 9);
 
         // The right edge is the origin plus the SUM of the measured column widths
         // (40 + 200 + 400). The largest column alone would close the frame at 440,
         // and swapping the subtraction for an addition would put it far past 640.
         SceneLine right = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:right", StringComparison.Ordinal));
-        Assert.Equal(640, right.From!.X, precision: 9);
-        Assert.Equal(640, right.To!.X, precision: 9);
+        Assert.Equal(640 - halfStroke, right.From!.X, precision: 9);
+        Assert.Equal(640 - halfStroke, right.To!.X, precision: 9);
     }
 
     [Fact]

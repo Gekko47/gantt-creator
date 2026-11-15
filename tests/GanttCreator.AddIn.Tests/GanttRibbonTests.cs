@@ -690,6 +690,11 @@ public class GanttRibbonTests
             expected,
             menu.Elements(ns + "button").Select(element => element.Attribute("id")!.Value));
 
+        // A menu without `size="large"` is a one-row dropdown; the owner asked for the
+        // three-row button (live report 2026-11-15). The attribute is the whole control
+        // height contract, so it is asserted rather than left to a screenshot.
+        Assert.Equal("large", menu.Attribute("size")?.Value);
+
         Assert.All(
             menu.Elements(ns + "button"),
             row =>

@@ -59,6 +59,7 @@
 | ADR-0057 | Repair rebuilds a missing data table, and no repair path is silent | Accepted (amended 2026-11-11) | 2026-11-11 | [`adr/0057-repair-rebuilds-a-missing-data-table.md`](adr/0057-repair-rebuilds-a-missing-data-table.md) |
 | ADR-0058 | Ribbon tab context: active-sheet gating and tab activation | Accepted | 2026-11-12 | [`adr/0058-ribbon-tab-context-and-active-sheet-gating.md`](adr/0058-ribbon-tab-context-and-active-sheet-gating.md) |
 | ADR-0060 | The live table's header type and outside border match the chart | Accepted | 2026-11-14 | [`adr/0060-live-table-header-and-outside-border-match-the-chart.md`](adr/0060-live-table-header-and-outside-border-match-the-chart.md) |
+| ADR-0061 | Initialise presents the chart surface: no gridlines, engine columns hidden first, one margin, strokes inside the frame | Accepted | 2026-11-15 | [`adr/0061-initialise-presents-the-chart-surface.md`](adr/0061-initialise-presents-the-chart-surface.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,

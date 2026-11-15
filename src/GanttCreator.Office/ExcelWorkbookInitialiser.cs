@@ -251,6 +251,11 @@ public class ExcelWorkbookInitialiser(
 
         try
         {
+            // The engine columns are hidden BEFORE their names are written, so the header
+            // row never paints a schema name at a visible width before the presentation
+            // pass hides it (live report 2026-11-15: "i briefly see all the table headings
+            // before they are hidden").
+            HideSchemaHiddenColumns(target);
             WriteHeaderRow(target);
             wroteHeader = true;
             if (_trace is not null)
@@ -379,6 +384,11 @@ public class ExcelWorkbookInitialiser(
 
             throw;
         }
+
+        // Last, and outside the try: the sheet is complete, so the window's own gridlines
+        // come off only once there is a chart for them to be under, and a refused
+        // Initialise leaves the user's view exactly as it was.
+        HideGridlines(application);
 
         _trace?.Invoke(string.Create(
             CultureInfo.InvariantCulture,
@@ -814,6 +824,12 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private void RollBackHeaderRow(Worksheet target)
     {
+        // First, and unconditionally: the engine columns are now hidden BEFORE the header
+        // is written, so a failure at that write or at the Add leaves no table for
+        // RestoreColumnVisibility to find. Unhiding the schema's hidden set here is what
+        // keeps the zero-mutation promise on that path too.
+        RestoreSchemaHiddenColumns(target);
+
         try
         {
             Excel.Range headerRange = GetHeaderRange(
@@ -956,6 +972,91 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
+    /// Hides the schema's engine columns BEFORE the header row is written, so no engine
+    /// column name is ever painted at a visible width.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the order matters.</b> The header row carries every schema name, including
+    /// the engine columns, and <see cref="ApplyColumnPresentation"/> only hides them after
+    /// the table has been added and presented. Between the two, the host paints those
+    /// names at the sheet's default column width — a visible flash of the whole schema
+    /// (live report 2026-11-15: "i briefly see all the table headings before they are
+    /// hidden"). Hiding the columns first makes the header write invisible exactly where
+    /// it should be invisible; the presentation pass still owns the locked state and
+    /// every other column's visibility.
+    /// </para>
+    /// <para>
+    /// Read-before-write, like the presentation pass: a column the host already reports
+    /// hidden is not rewritten, so a converged sheet stays clean. The columns are
+    /// addressed by the same schema-index arithmetic the presentation pass uses, from
+    /// <see cref="GanttSheetLayout.TableOriginColumnIndex"/>, so the two cannot drift.
+    /// </para>
+    /// </remarks>
+    private void HideSchemaHiddenColumns(Worksheet target) => ApplySchemaHiddenState(target, hidden: true);
+
+    /// <summary>
+    /// Unhides the schema's engine columns, undoing <see cref="HideSchemaHiddenColumns"/>
+    /// on the rollback path.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    private void RestoreSchemaHiddenColumns(Worksheet target) => ApplySchemaHiddenState(target, hidden: false);
+
+    /// <summary>Writes <paramref name="hidden"/> onto every column the schema hides.</summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <param name="hidden">Whether the engine columns must be hidden.</param>
+    private void ApplySchemaHiddenState(Worksheet target, bool hidden)
+    {
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (int index = 0; index < schema.Count; index++)
+        {
+            if (!schema[index].IsHidden)
+            {
+                continue;
+            }
+
+            Excel.Range? column = GetWorksheetColumn(
+                target,
+                GanttSheetLayout.TableOriginColumnIndex + index);
+            if (column is null || ReadColumnHidden(column) == hidden)
+            {
+                continue;
+            }
+
+            column.Hidden = hidden;
+        }
+    }
+
+    /// <summary>
+    /// Turns the window's gridlines off, so the chart's own frame is the only ruling on
+    /// the sheet.
+    /// </summary>
+    /// <param name="application">The running Excel application.</param>
+    /// <remarks>
+    /// <para>
+    /// A WINDOW setting, not a workbook one: the chart is a composed surface, and empty
+    /// cells inside the frame would otherwise carry Excel's own grid through it. The
+    /// owner asked for it on Initialise (2026-11-15) because the frame is now one clean
+    /// border and the sheet's grid lines were the remaining ruling inside it.
+    /// </para>
+    /// <para>
+    /// Read first, so a window that already hides them is not rewritten, and a host that
+    /// reports no window is left alone rather than failed on. It runs only on the success
+    /// path, so a refused Initialise leaves the user's view untouched.
+    /// </para>
+    /// </remarks>
+    private void HideGridlines(Application application)
+    {
+        if (GetActiveWindow(application) is not { } window || !window.DisplayGridlines)
+        {
+            return;
+        }
+
+        window.DisplayGridlines = false;
+    }
+
+    /// <summary>
     /// Adds the <c>tblGanttData</c> table over the header row, and returns it
     /// WITHOUT naming or presenting it.
     /// </summary>
@@ -1014,19 +1115,42 @@ public class ExcelWorkbookInitialiser(
     private const double _gutterWidthTolerancePt = 0.5;
 
     /// <summary>
+    /// How many measured corrections the gutter width may take.
+    /// </summary>
+    /// <remarks>
+    /// Two, because the characters-to-points relation is affine (a fixed cell padding
+    /// plus a per-character advance) and one ratio therefore cannot land on the target.
+    /// The second pass measures the width the first wrote and converges. A bound rather
+    /// than "until it converges" keeps a host that never reports the width it was given
+    /// from looping.
+    /// </remarks>
+    private const int _gutterCorrectionPasses = 2;
+
+    /// <summary>
     /// Makes column A the chart's left margin by setting its width to the framing rows'
     /// padding height (ADR-0059, R5.18k).
     /// </summary>
     /// <param name="table">The Gantt data table, whose worksheet owns the gutter column.</param>
     /// <remarks>
     /// <para>
-    /// <b>Why one provisional write and one correction rather than a formula.</b> Excel
-    /// expresses a column width in CHARACTERS of the Normal font and reports it in
-    /// POINTS, and the conversion depends on the workbook's font. The existing width and
-    /// its measured points give that ratio for THIS workbook, so one correction lands on
-    /// the target without guessing a characters-per-point constant. There is no second
-    /// correction: a value still outside the tolerance afterwards is left alone rather
-    /// than iterated, because the scene measures whatever is really there.
+    /// <b>Two measured corrections, because the conversion is affine.</b> Excel expresses
+    /// a column width in CHARACTERS of the Normal font and reports it in POINTS, and the
+    /// relation is a fixed cell padding plus a per-character advance — not a ratio through
+    /// the origin. One ratio therefore cannot land on the target, and with a first column
+    /// near one character the residual is large: live report 2026-11-15 measured the
+    /// gutter at 12pt after a single correction that aimed at 6pt. Each pass re-measures
+    /// the width the previous pass wrote and corrects again; the second pass converges
+    /// because the affine term is unchanged between them. The passes are BOUNDED rather
+    /// than "until it converges", so a host that never reports the width it was given
+    /// cannot loop.
+    /// </para>
+    /// <para>
+    /// <b>The target is the chart's outer padding, not one of the padding rows.</b> The
+    /// gutter is the frame's LEFT margin, so it reads the same token the frame's top,
+    /// right and bottom margins read — <c>ChartOuterPaddingPt</c>, which ADR-0038 D4 keeps
+    /// equal to the anchor row plus the bottom padding row. It used to read the bottom
+    /// padding row alone, which left the left margin 0.25pt short before the affine
+    /// residual made it 6pt short.
     /// </para>
     /// <para>
     /// <b>Zero writes on a correct sheet.</b> A column already at the target is not
@@ -1042,20 +1166,33 @@ public class ExcelWorkbookInitialiser(
             return;
         }
 
-        if (ReadColumnWidthCharacters(column) is not { } characters
-            || characters <= 0
-            || ReadColumnWidthPoints(column) is not { } points
-            || points <= 0)
+        double targetPt = LeadingGutterTargetPt;
+        for (int pass = 0; pass < _gutterCorrectionPasses; pass++)
         {
-            return;
-        }
+            if (ReadColumnWidthCharacters(column) is not { } characters
+                || characters <= 0
+                || ReadColumnWidthPoints(column) is not { } points
+                || points <= 0
+                || CorrectedColumnWidthCharacters(characters, points, targetPt) is not { } corrected)
+            {
+                return;
+            }
 
-        double targetPt = GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt");
-        if (CorrectedColumnWidthCharacters(characters, points, targetPt) is { } corrected)
-        {
             SetColumnWidthCharacters(column, corrected);
         }
     }
+
+    /// <summary>
+    /// The width the leading gutter column must measure, in points: the chart's own
+    /// outer padding, which is what the frame's other three margins measure.
+    /// </summary>
+    /// <remarks>
+    /// One authority for the four margins. The value is the <c>ChartOuterPaddingPt</c>
+    /// token rather than a literal, and rather than the bottom padding row's height alone,
+    /// so the gutter and the frame cannot disagree about how much margin the chart has.
+    /// </remarks>
+    internal static double LeadingGutterTargetPt =>
+        GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
 
     /// <summary>
     /// Converts a column's current character width and measured point width into the
@@ -1584,6 +1721,47 @@ public class ExcelWorkbookInitialiser(
         ArgumentNullException.ThrowIfNull(column);
 
         column.ColumnWidth = width;
+    }
+
+    /// <summary>
+    /// Returns one whole worksheet column by its one-based index. Test seam over the
+    /// <c>Columns</c> indexer, which the pre-header engine-column pass addresses before
+    /// the table exists.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="columnIndex">The one-based worksheet column.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? GetWorksheetColumn(Worksheet worksheet, int columnIndex)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[columnIndex];
+    }
+
+    /// <summary>
+    /// Reads a whole column's <c>Hidden</c> flag as a real boolean.
+    /// </summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>Whether the host reports the column hidden; a non-boolean reads as visible.</returns>
+    /// <remarks>
+    /// <c>Range.Hidden</c> is declared <see langword="object"/> in this interop assembly
+    /// (probed), so it is unwrapped rather than compared boxed. A host that reports
+    /// something other than a flag is treated as "not hidden", which makes the caller
+    /// write the state the schema wants instead of assuming it is already there.
+    /// </remarks>
+    private static bool ReadColumnHidden(Excel.Range column) => column.Hidden is bool hidden && hidden;
+
+    /// <summary>
+    /// Returns the application's active window. Test seam over
+    /// <c>Application.ActiveWindow</c>, because the gridline switch is a window setting.
+    /// </summary>
+    /// <param name="application">The running Excel application.</param>
+    /// <returns>The active window, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Window? GetActiveWindow(Application application)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+
+        return application.ActiveWindow;
     }
 
     /// <summary>
