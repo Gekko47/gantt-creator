@@ -96,6 +96,16 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
+    public void The_table_style_is_the_neutral_builtin_one()
+    {
+        // Owner ruling 2026-11-14: hiding and re-showing a table column makes Excel re-apply
+        // the table's own style, and the default style is not the neutral one the guide
+        // describes. The assigned style must therefore be the light, unbanded built-in one,
+        // so the host's own re-application keeps the same thin grey lines.
+        Assert.Equal("TableStyleLight1", GanttTableAppearance.TableStyleName);
+    }
+
+    [Fact]
     public void The_header_text_colour_never_equals_the_header_fill()
     {
         // Live evidence 2026-11-14: the initialiser wrote the fill alone, so the table

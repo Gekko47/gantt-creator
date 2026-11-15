@@ -1130,6 +1130,17 @@ public class ExcelWorkbookInitialiser(
         ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
 
+        // The host's own table style is the BASE the theme's cell formatting sits on. A
+        // hide/show re-applies it, so a neutral built-in style is what keeps the table's
+        // lines stable when the user toggles a column (owner ruling 2026-11-14). Read
+        // first: a table already carrying the style is not rewritten, so a converged
+        // initialise still leaves the workbook clean.
+        string? liveStyle = ReadTableStyleName(table);
+        if (!string.Equals(liveStyle, GanttTableAppearance.TableStyleName, StringComparison.Ordinal))
+        {
+            SetTableStyle(table, GanttTableAppearance.TableStyleName);
+        }
+
         // The theme's body font and vertical centring are the SAME for every column, so
         // they are written once over the table's whole columns rather than once per
         // column. Measured 2026-11-14 on the live host: the presentation pass cost
@@ -1292,6 +1303,32 @@ public class ExcelWorkbookInitialiser(
         Border border = borders[edge];
         border.Weight = weight;
     }
+
+    /// <summary>Reads the table's own Excel table-style name.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <returns>The style's name, or <see langword="null"/> when the host reports none.</returns>
+    /// <remarks>
+    /// <c>ListObject.TableStyle</c> is <c>object</c>-typed and reports either a
+    /// <c>TableStyle</c> proxy or the name it was assigned by. The proxy's <c>Name</c> is
+    /// read through a local rather than chained, per the COM ownership rule; the
+    /// comparison itself lives at the call site so this stays a seam.
+    /// </remarks>
+    internal virtual string? ReadTableStyleName(ListObject table)
+    {
+        object style = table.TableStyle;
+        return style switch
+        {
+            TableStyle named => named.Name,
+            string text => text,
+            _ => null,
+        };
+    }
+
+    /// <summary>Assigns a built-in table style by name.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <param name="styleName">The built-in style's name.</param>
+    internal virtual void SetTableStyle(ListObject table, string styleName) =>
+        table.TableStyle = styleName;
 
     /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>
     /// <param name="entireColumn">The worksheet column behind the table column.</param>

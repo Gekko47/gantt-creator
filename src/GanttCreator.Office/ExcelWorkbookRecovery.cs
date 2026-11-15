@@ -1152,6 +1152,19 @@ public class ExcelWorkbookRecovery(
         return false;
     }
 
+    /// <summary>
+    /// Makes the table carry the neutral built-in style, writing only when it differs.
+    /// </summary>
+    /// <param name="table">The rebuilt or repaired table.</param>
+    private void EnsureTableStyle(Excel.ListObject table)
+    {
+        string? liveStyle = ReadTableStyleName(table);
+        if (!string.Equals(liveStyle, GanttTableAppearance.TableStyleName, StringComparison.Ordinal))
+        {
+            SetTableStyle(table, GanttTableAppearance.TableStyleName);
+        }
+    }
+
     private void PresentTable(Excel.ListObject table)
     {
         SetTableName(table, GanttTableSchema.TableName);
@@ -1294,6 +1307,12 @@ public class ExcelWorkbookRecovery(
     private void ApplyColumnPresentation(Excel.ListObject table)
     {
         SetLeadingGutterWidth(table);
+
+        // The host's own table style is the BASE the theme's cell formatting sits on. A
+        // hide/show of a table column re-applies that style, so a neutral built-in one is
+        // what keeps the table's lines stable when the user toggles a column (owner
+        // ruling 2026-11-14). Read first: a repair of a converged table writes nothing.
+        EnsureTableStyle(table);
 
         // R5.18h: the loop below forces only the engine columns' visibility, so the
         // user's stored choice has to be applied separately or a rebuilt sheet would
@@ -1512,6 +1531,31 @@ public class ExcelWorkbookRecovery(
     internal virtual void SetTableName(Excel.ListObject table, string name) => table.Name = name;
 
     internal virtual void SetShowAutoFilter(Excel.ListObject table, bool value) => table.ShowAutoFilter = value;
+
+    /// <summary>Reads the table's own Excel table-style name.</summary>
+    /// <param name="table">The table to read.</param>
+    /// <returns>The style's name, or <see langword="null"/> when the host reports none.</returns>
+    /// <remarks>
+    /// <c>ListObject.TableStyle</c> is <c>object</c>-typed and reports either a
+    /// <c>TableStyle</c> proxy or the name it was assigned by. The proxy's <c>Name</c> is
+    /// read through a local rather than chained, per the COM ownership rule.
+    /// </remarks>
+    internal virtual string? ReadTableStyleName(Excel.ListObject table)
+    {
+        object style = table.TableStyle;
+        return style switch
+        {
+            Excel.TableStyle named => named.Name,
+            string text => text,
+            _ => null,
+        };
+    }
+
+    /// <summary>Assigns a built-in table style by name.</summary>
+    /// <param name="table">The table to style.</param>
+    /// <param name="styleName">The built-in style's name.</param>
+    internal virtual void SetTableStyle(Excel.ListObject table, string styleName) =>
+        table.TableStyle = styleName;
 
     internal virtual void SetShowTableStyleRowStripes(Excel.ListObject table, bool value) =>
         table.ShowTableStyleRowStripes = value;

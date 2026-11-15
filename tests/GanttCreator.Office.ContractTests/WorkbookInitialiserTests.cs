@@ -224,6 +224,16 @@ public class WorkbookInitialiserTests
         public List<bool> RowStripeSettings { get; } = new();
         public List<bool> ColumnStripeSettings { get; } = new();
 
+        /// <summary>The table-style names assigned, in write order.</summary>
+        public List<string> TableStyleWrites { get; } = [];
+
+        /// <summary>The style the table already carries; absent means Excel's default.</summary>
+        private string? _tableStyle;
+
+        /// <summary>Pretends the table already carries a built-in style.</summary>
+        /// <param name="styleName">The style's name.</param>
+        public void SetExistingTableStyle(string styleName) => _tableStyle = styleName;
+
         private string _name;
         private string? _existingTableName;
         private bool _tableWasCreated;
@@ -340,6 +350,17 @@ public class WorkbookInitialiserTests
             _ = TableRange.SetupGet(r => r.Borders).Returns(TableBorders.Object);
             _ = TableBorders.SetupSet(b => b.Color = It.IsAny<object>())
                 .Callback<object>(value => TableBorderColour = value);
+
+            // The table's own Excel style: `ListObject.TableStyle` is object-typed and
+            // reports the name it was assigned by. The getter reflects the recorded write,
+            // so an initialiser that skips a converged style is visible here.
+            _ = Table.SetupGet(t => t.TableStyle).Returns(() => _tableStyle!);
+            _ = Table.SetupSet(t => t.TableStyle = It.IsAny<object>())
+                .Callback<object>(value =>
+                {
+                    _tableStyle = value as string;
+                    TableStyleWrites.Add(_tableStyle ?? string.Empty);
+                });
 
             // `ListColumns.Count` is read by every column walk, including the
             // rollback's visibility restore. Unconfigured, Moq returns 0 and the
@@ -1099,6 +1120,41 @@ public class WorkbookInitialiserTests
         Assert.Equal(false, active.HeaderFontBold);
         Assert.Equal(GanttTableAppearance.HeaderTextColour.ARGB, active.HeaderFontColour);
         Assert.Equal(GanttTableAppearance.HeaderFill.ARGB, active.HeaderFillColour);
+    }
+
+    [Fact]
+    public void Initialise_assigns_the_neutral_built_in_table_style()
+    {
+        // Owner ruling 2026-11-14: hiding and re-showing a table column makes Excel
+        // re-apply the table's own style, and its default style is not the neutral one the
+        // guide describes. Assigning "Table Style Light 1" during Initialise is what makes
+        // the host's own re-application keep the same thin grey lines.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal([GanttTableAppearance.TableStyleName], active.TableStyleWrites);
+        Assert.Equal("TableStyleLight1", GanttTableAppearance.TableStyleName);
+    }
+
+    [Fact]
+    public void Initialise_leaves_a_table_already_carrying_the_style_alone()
+    {
+        // The same read-before-write discipline as the hidden flag and the date format:
+        // rewriting an unchanged style would mark the workbook dirty for a sheet already in
+        // the intended state.
+        var active = BlankActiveSheet();
+        active.SetExistingTableStyle(GanttTableAppearance.TableStyleName);
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Empty(active.TableStyleWrites);
     }
 
     [Fact]

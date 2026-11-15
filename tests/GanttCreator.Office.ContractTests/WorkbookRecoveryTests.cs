@@ -163,6 +163,17 @@ public class WorkbookRecoveryTests
         internal override void SetHorizontalAlignment(Excel.Range range, Excel.XlHAlign alignment) =>
             HorizontalAlignments.Add(alignment);
 
+        /// <summary>The table-style names the mirror assigned, in write order.</summary>
+        public List<string> TableStyleWrites { get; } = [];
+
+        /// <summary>The style the table pretends to already carry.</summary>
+        public string? ExistingTableStyle { get; set; }
+
+        internal override string? ReadTableStyleName(Excel.ListObject table) => ExistingTableStyle;
+
+        internal override void SetTableStyle(Excel.ListObject table, string styleName) =>
+            TableStyleWrites.Add(styleName);
+
         /// <summary>How many times the header band was themed; it is table-wide, so once.</summary>
         public int HeaderFormatWrites { get; private set; }
 
@@ -786,6 +797,11 @@ public class WorkbookRecoveryTests
             recovery.HeaderType);
         Assert.Equal(9.0, recovery.HeaderType!.Value.SizePt);
         Assert.False(recovery.HeaderType!.Value.Bold);
+
+        // Owner ruling 2026-11-14: the host's own table style must be the neutral one, so a
+        // later column hide/show re-applies the same thin grey lines.
+        Assert.Equal([GanttTableAppearance.TableStyleName], recovery.TableStyleWrites);
+
         Excel.XlBordersIndex[] expectedEdges =
         [
             Excel.XlBordersIndex.xlEdgeTop,

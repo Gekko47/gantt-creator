@@ -45,6 +45,15 @@ where the frame meets the table on all four sides.
 4. **Both writes live in one seam per adapter** (`ApplyHeaderType`, `SetBorderWeight`), so the
    initialiser and the recovery mirror cannot disagree about the header's type or the
    edge weight.
+5. **The host owns the table's style, and it is the neutral built-in one.**
+   `GanttTableAppearance.TableStyleName` names Excel's *Table Style Light 1* (no banding, no
+   fill, thin grey lines), assigned by Initialise and Repair with a read-before-write so a
+   converged table is not dirtied. Hiding or re-showing a table column makes Excel re-apply
+   the table style, and it can drop the add-in's **direct** cell formatting in the process —
+   header fill and type included. With the style assigned, the host's own re-application
+   produces the same lines every time and the theme's colour and weight are written on top.
+   This supersedes the 2026-11-13 line that the add-in replaces no table style: it now
+   replaces the *style*, not the user's cells, and only with a neutral built-in.
 
 ## Consequences
 
@@ -56,7 +65,12 @@ where the frame meets the table on all four sides.
   `CatalogueHashMismatch`, which the Repair command auto-classifies; the full remedy is
   Initialise (ADR-0029 D6, no migration).
 - **The fill change moves no hash.** It reads a chrome role's default; the catalogue values it
-  reads are unchanged, so only the type change above moved the pin.
+  reads are unchanged, so only the type change above moved the pin. The table-style name is a
+  code constant, so it moves no hash either.
+- **Hide/unhide is a host operation the add-in cannot intercept.** The style assignment makes
+  the host's re-application produce the guide's lines; it does not re-run the presentation
+  pass. A workbook whose direct formatting was already dropped is restored by Initialise or
+  Repair, which is where the pass lives, and never by a Refresh.
 - **Cell presentation is written by Initialise and Repair, never by Refresh.** A workbook
   opened with an older theme shows the older header until one of those runs — the same rule
   the body font and the date format already follow, stated here because a header fill is the

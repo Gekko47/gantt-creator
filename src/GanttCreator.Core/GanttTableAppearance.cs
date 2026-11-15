@@ -46,6 +46,24 @@ public static class GanttTableAppearance
     /// </summary>
     public static IReadOnlyList<string> CentredColumnNames { get; } = ["Start", "Finish", "Duration"];
 
+    /// <summary>The built-in Excel table style the add-in assigns to the data table.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a style as well as direct formatting (owner ruling 2026-11-14).</b> Hiding and
+    /// re-showing a table column makes Excel re-apply the table's own style; the add-in's
+    /// <em>direct</em> cell formatting — header fill and type, border colour and the
+    /// outside weight — can be dropped by that re-application, and a Refresh deliberately
+    /// never rewrites cell formatting. Assigning a neutral built-in style during Initialise
+    /// and Repair means the host's re-application produces the same thin grey lines every
+    /// time, with the theme's colour and weight written on top by the adapters.
+    /// </para>
+    /// <para>
+    /// "Table Style Light 1" is the neutral one: no banding, no fill, thin grey grid lines —
+    /// the closest built-in to the presentation this guide describes.
+    /// </para>
+    /// </remarks>
+    public static string TableStyleName => "TableStyleLight1";
+
     /// <summary>The theme's font family for table text.</summary>
     public static string FontFamily => GanttCatalogues.TypographyDefaultText("FontFamily");
 
