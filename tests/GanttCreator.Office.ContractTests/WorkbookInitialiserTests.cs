@@ -746,12 +746,6 @@ public class WorkbookInitialiserTests
             Excel.XlBordersIndex edge,
             Excel.XlBorderWeight weight) => OutsideBorders.Add((edge, weight));
 
-        /// <summary>The interior borders the real border pass drew, in write order.</summary>
-        public List<Excel.XlBordersIndex> InteriorBorders { get; } = [];
-
-        internal override void SetInteriorBorder(Excel.Borders borders, Excel.XlBordersIndex edge) =>
-            InteriorBorders.Add(edge);
-
         private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
         private Func<Excel.Range, string> UsedRangeAddressAt { get; }
@@ -1241,9 +1235,8 @@ public class WorkbookInitialiserTests
     public void Initialise_weights_only_the_four_outside_borders()
     {
         // The table's outside edge and the chart frame are one boundary (owner ruling
-        // 2026-11-14). The WEIGHT pass writes only the four edge indices; the interior
-        // indices are a separate pass (see the fact below), so this list must stay exactly
-        // four long.
+        // 2026-11-14). Only the four edge indices are written: an interior index here
+        // would redraw the cell grid the table style owns.
         var active = BlankActiveSheet();
         var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
         var graph = new WorkbookGraph(active);
@@ -1264,33 +1257,6 @@ public class WorkbookInitialiserTests
             initialiser.OutsideBorders,
             border => Assert.Equal(Excel.XlBorderWeight.xlThin, border.Weight));
         Assert.Equal(GanttTableAppearance.BorderColour.ARGB, active.TableBorderColour);
-    }
-
-    [Fact]
-    public void Initialise_draws_the_interior_grid_as_direct_formatting()
-    {
-        // Owner report 2026-11-15: "some table rows are missing the vertical line between
-        // Start and Finish". Measured on a live host, those cells hold a CONTINUOUS rule in
-        // both the direct and the displayed border APIs, before and after CalculateFull, on
-        // rows created by the real Add-row path - so the formatting was never missing. The
-        // host simply does not PAINT a table-style border on every row: a style rule is one
-        // device pixel, and it drops out where the row's height or position rounds to a
-        // sub-pixel. Drawing the interior indices as direct formatting makes the grid the
-        // cell's own, which the host paints from the cell instead of the style consult.
-        var active = BlankActiveSheet();
-        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
-        var graph = new WorkbookGraph(active);
-        graph.EnqueueCreated(config);
-
-        TestableInitialiser initialiser = graph.Build(active);
-        _ = initialiser.Initialise();
-
-        Excel.XlBordersIndex[] expected =
-        [
-            Excel.XlBordersIndex.xlInsideVertical,
-            Excel.XlBordersIndex.xlInsideHorizontal,
-        ];
-        Assert.Equal(expected, initialiser.InteriorBorders);
     }
 
     [Fact]

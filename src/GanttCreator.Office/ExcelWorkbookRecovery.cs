@@ -52,19 +52,6 @@ public class ExcelWorkbookRecovery(
         Excel.XlBordersIndex.xlEdgeRight,
     ];
 
-    /// <summary>The two border indices that form the cell grid INSIDE the table.</summary>
-    /// <remarks>
-    /// Drawn as direct formatting for the reason recorded in
-    /// <see cref="ExcelWorkbookInitialiser.ApplyBorderColour"/>: a table-style rule is painted
-    /// by the host at one device pixel and drops out on some rows, while a directly formatted
-    /// one is painted from the cell. The two adapters must agree, so both write it.
-    /// </remarks>
-    private static readonly Excel.XlBordersIndex[] _interiorBorderEdges =
-    [
-        Excel.XlBordersIndex.xlInsideVertical,
-        Excel.XlBordersIndex.xlInsideHorizontal,
-    ];
-
     /// <summary>
     /// Reads the persisted settings, so a repair can re-apply the user's column
     /// visibility after recreating a sheet (R5.18h).
@@ -1419,26 +1406,14 @@ public class ExcelWorkbookRecovery(
     }
 
     /// <summary>
-    /// Colours every border of the table, gives its outside edge the frame's weight, and draws
-    /// the interior cell grid as direct formatting.
+    /// Recolours every border of the table and gives its outside edge the frame's weight.
     /// </summary>
     /// <param name="table">The visible data table.</param>
     /// <remarks>
-    /// <para>
     /// <c>Borders.Color</c> sets the colour of every border the range contains and leaves each
-    /// border's line style and weight alone. The outside edge is the one exception on weight
-    /// (owner ruling 2026-11-14): it takes the chart frame's weight, so the two boundaries meet
-    /// at the same 1pt.
-    /// </para>
-    /// <para>
-    /// <b>The interior grid is drawn too (owner report 2026-11-15).</b> A table-style rule is
-    /// one device pixel painted through the style, and the host drops individual rules on rows
-    /// whose height or position rounds to a sub-pixel — reported as "some rows are missing the
-    /// vertical line between Start and Finish". The live measurements that cleared this code
-    /// base of a formatting defect are recorded on
-    /// <see cref="ExcelWorkbookInitialiser.ApplyBorderColour"/>; this mirror exists because a
-    /// repaired sheet must look like an initialised one.
-    /// </para>
+    /// border's line style and weight alone: the table style owns the interior grid, the theme
+    /// owns the colour. The outside edge is the one exception (owner ruling 2026-11-14): it
+    /// takes the chart frame's weight, so the two boundaries meet at the same 1pt.
     /// </remarks>
     internal virtual void ApplyBorderColour(Excel.ListObject table)
     {
@@ -1451,29 +1426,6 @@ public class ExcelWorkbookRecovery(
             // the 1pt weight, which is the frame token's default (MajorBoundaryPt).
             SetBorderWeight(borders, edge, Excel.XlBorderWeight.xlThin);
         }
-
-        foreach (Excel.XlBordersIndex edge in _interiorBorderEdges)
-        {
-            SetInteriorBorder(borders, edge);
-        }
-    }
-
-    /// <summary>
-    /// Draws one interior border as direct formatting: a continuous thin rule in the theme's
-    /// border colour.
-    /// </summary>
-    /// <param name="borders">The table range's border collection.</param>
-    /// <param name="edge">Which interior border to draw.</param>
-    /// <remarks>
-    /// <c>Borders.Item</c> is an indexed COM property, so it is a documented seam: expression
-    /// trees cannot contain it (CS0855) and the contract tests substitute this member. The one
-    /// proxy is held in a local rather than chained.
-    /// </remarks>
-    internal virtual void SetInteriorBorder(Excel.Borders borders, Excel.XlBordersIndex edge)
-    {
-        Excel.Border border = borders[edge];
-        border.LineStyle = Excel.XlLineStyle.xlContinuous;
-        border.Weight = Excel.XlBorderWeight.xlThin;
     }
 
     /// <summary>Writes one border's weight.</summary>

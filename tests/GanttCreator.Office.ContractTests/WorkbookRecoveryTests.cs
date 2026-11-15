@@ -210,12 +210,6 @@ public class WorkbookRecoveryTests
             Excel.XlBordersIndex edge,
             Excel.XlBorderWeight weight) => OutsideBorders.Add((edge, weight));
 
-        /// <summary>The interior borders the mirror drew, in write order.</summary>
-        public List<Excel.XlBordersIndex> InteriorBorders { get; } = [];
-
-        internal override void SetInteriorBorder(Excel.Borders borders, Excel.XlBordersIndex edge) =>
-            InteriorBorders.Add(edge);
-
         internal override Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
         {
             Mock<Excel.ListObject> table = new();
@@ -768,12 +762,6 @@ public class WorkbookRecoveryTests
         Assert.Null(outcome.Refusal);
         Assert.NotNull(recovery.CreatedSheet);
         Assert.Equal(GanttWorkbookContract.GanttSheetLabel, recovery.CreatedSheet!.Name);
-        Excel.XlBordersIndex[] expectedInterior =
-        [
-            Excel.XlBordersIndex.xlInsideVertical,
-            Excel.XlBordersIndex.xlInsideHorizontal,
-        ];
-        Assert.Equal(expectedInterior, recovery.InteriorBorders);
         Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.HeaderWrites);
         Assert.Single(recovery.CreatedTables);
 

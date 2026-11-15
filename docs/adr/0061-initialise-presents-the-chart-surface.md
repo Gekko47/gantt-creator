@@ -183,41 +183,6 @@ column's left edge with no inset: the inset is a width-budget decision, not a me
   table's right edge is where the engine columns end. It is not — they are hidden.
 - Export compositions are unchanged: the inset is live-only chrome, not a scene rule.
 
-## D12 — the interior cell grid is drawn, not inherited from the table style
-
-**Report.** "There are some table rows where the vertical line between Start and Finish does
-not appear."
-
-**Measured.** Live Excel 16.0, four independent runs. Every body row, including rows created
-by the real Add-row path, holds a continuous Start|Finish rule in **both** the direct border
-API and `Range.DisplayFormat`, before and after `CalculateFull`, with and without the
-Type-options port. A bare worksheet-row insert below the table, with either
-`xlFormatFromRightOrBelow` or `xlFormatFromLeftOrAbove`, is equally clean. There is no
-formatting defect in this code base.
-
-**Cause.** A table-style border is one device pixel painted through a style consult, and the
-host does not paint every rule: on rows whose height or position rounds to a sub-pixel,
-individual rules drop out. That is why the report is per ROW rather than per column, and why it
-moves with zoom and scroll.
-
-**Decision.** Initialise and Repair draw the two interior indices (`xlInsideVertical`,
-`xlInsideHorizontal`) as direct formatting — a continuous thin rule in the theme's border
-colour — instead of leaving the grid to the style. A direct border is painted from the cell
-rather than from the style consult, so the grid stops depending on that rounding.
-
-- `GanttTableAppearance.BorderColour`'s doctrine changes: the theme now owns the colour of
-  every border **and** the grid's shape. Its remark records the measured reason.
-- `ExcelWorkbookInitialiser.ApplyBorderColour` and its `ExcelWorkbookRecovery` mirror both
-  draw it, through a `SetInteriorBorder` seam, because both own cell presentation; a Refresh
-  still writes no cell formatting. The weight is one `xlThin`, the same as the outside edge and
-  every drawn chart border (D5).
-- Facts: `Initialise_draws_the_interior_grid_as_direct_formatting` (initialiser) and the
-  recovery mirror's assertion in
-  `Recover_creates_the_gantt_sheet_with_the_contract_header_and_table`.
-- Recorded, so it is not repeated: `Range.DisplayFormat.Borders[xlInsideVertical]` read over a
-  **multi-cell** range is ambiguous and reported "all lines" for a row whose per-cell edges
-  were `xlLineStyleNone`; only a per-cell or direct query is trustworthy.
-
 ## Consequences
 
 - No catalogue value, schema version, or catalogue hash moves: every decision is a
