@@ -510,12 +510,13 @@ public static class FrameBandsBuilder
         // move inwards by half their own stroke. The export compositions are unaffected:
         // nothing there abuts the plot, so their geometry stays exactly as specified.
         //
-        // The edges take the MINOR weight and colour (owner ruling 2026-11-15): the plot's
-        // border is the same line as the table's cells, so the frame reads as the one
-        // heavy boundary and everything inside it as structure. They were major (1pt),
-        // which is what made the plot's bottom and right look like a second frame.
+        // The edges take the MAJOR weight (owner ruling 2026-11-15, second pass): every
+        // BORDER on the sheet is one weight - the table's lines, the year and period cells,
+        // this plot's rectangle, and the frame - while the interior grid between periods
+        // stays minor. The first pass made these minor to stop them reading as a second
+        // frame, but that left the plot's border visibly lighter than the table beside it.
         double halfStroke = request.SheetCoordinates
-            ? (request.Theme.MinorGrid.OutlineWidthPt ?? request.GridLinePt) / 2d
+            ? (request.Theme.MajorGrid.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
             : 0d;
 
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
@@ -541,9 +542,7 @@ public static class FrameBandsBuilder
                     isEdge ? ZLayer.Frame : ZLayer.Grid,
                     new PointD(x, plotSpan.Y),
                     new PointD(x, plotSpan.Bottom),
-                    isEdge
-                        ? request.Theme.MinorGrid
-                        : line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid
+                    line.Value || isEdge ? request.Theme.MajorGrid : request.Theme.MinorGrid
                 )
             );
         }
@@ -552,8 +551,7 @@ public static class FrameBandsBuilder
         // The band above it is a filled rect and the body below is the user's cells, so
         // without this line the labels and the first lane share an edge with nothing
         // between them (owner report 2026-11-15: the plot's border was a backwards L).
-        // Minor weight and colour, like the other three sides, so the plot's border is one
-        // thin rectangle INSIDE the heavy frame rather than a second frame of its own.
+        // Same weight as the other three sides and as every other border on the sheet.
         primitives.Add(
             new SceneLine(
                 "chart:plot:top",
@@ -561,7 +559,7 @@ public static class FrameBandsBuilder
                 ZLayer.Frame,
                 new PointD(request.PlotBounds.Left, request.PlotBounds.Top + halfStroke),
                 new PointD(request.PlotBounds.Right, request.PlotBounds.Top + halfStroke),
-                request.Theme.MinorGrid
+                request.Theme.MajorGrid
             )
         );
     }
@@ -612,10 +610,10 @@ public static class FrameBandsBuilder
                 new PointD(request.PlotBounds.Left, closingPt),
                 new PointD(request.PlotBounds.Right, closingPt),
 
-                // Minor, not major (owner ruling 2026-11-15): this line closes the plot and
-                // terminates the band overhang, and it is the plot's bottom BORDER. At the
-                // major weight it read as a second frame running along the bottom only.
-                request.Theme.MinorGrid
+                // The plot's bottom BORDER, and therefore the same weight as the other three
+                // sides (owner ruling 2026-11-15). Its other job - terminating the band
+                // overhang - is unaffected by changing the weight.
+                request.Theme.MajorGrid
             )
         );
     }

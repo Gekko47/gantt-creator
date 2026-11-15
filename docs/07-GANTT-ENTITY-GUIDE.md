@@ -339,7 +339,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Tests:** exact union/crop bounds, zero/invalid dimensions, chart-only versus data-plus-chart export, no surrounding PNG whitespace, grouped export bounds.
 
-**Margin size and border weights (owner ruling 2026-11-15).** The chart's four margins are **4pt**: `ChartOuterPaddingPt` is 4 and `ChartPaddingRowHeightPt` is 3.75, so the anchor row plus the padding row is still exactly the outer padding (ADR-0038 D4) and the leading gutter, which reads the same token, matches all three. The weights form one hierarchy: the **frame** is the chart's single heavy boundary, **header label cells** (each year, each period) are boxed at the major weight (1pt), and everything inside the plot - its own border and the grid - is the **minor** weight, the same line the table's cells carry. The plot's border is therefore a thin rectangle on all four sides rather than a heavier line on two of them.
+**Margin size and border weights (owner ruling 2026-11-15).** The chart's four margins are **4pt**: `ChartOuterPaddingPt` is 4 and `ChartPaddingRowHeightPt` is 3.75, so the anchor row plus the padding row is still exactly the outer padding (ADR-0038 D4) and the leading gutter, which reads the same token, matches all three. **Every border is one weight** — the table's own lines, each year and period cell, the plot's four-sided rectangle, and the frame all take the major weight (1pt) — because the rendered sheet showed a plot border at the minor weight looking lighter than the table beside it. Only the **interior grid** between periods keeps the minor weight. Uniformity across the table and the chart is the rule; the grid is the one thing that is deliberately not a border.
 
 ## 2. Chart title
 
@@ -457,7 +457,7 @@ Export compositions carry no worksheet rows to anchor to, so they pass `0` and p
 
 **Source:** period/year boundaries and show/hide settings.
 
-**Geometry:** vertical lines use exact `TimeScale` X positions. Minor lines use `GridLinePt`. The plot's own border - its left and right edges, the closing line at its bottom, and the top edge added 2026-11-15 - uses the **minor** weight and colour too, so the plot is one thin rectangle inside the heavy frame; a line *between* periods inside the plot stays minor, and the year transition keeps a major line there. Horizontal lane separators span the data panel and plot only when configured.
+**Geometry:** vertical lines use exact `TimeScale` X positions. Interior lines use `GridLinePt`. The plot's own border - its left and right edges, the closing line at its bottom, and the top edge added 2026-11-15 - takes the **major** weight, the same 1pt as the table's lines, the header cells and the frame (owner ruling 2026-11-15: borders are one weight, only the grid between periods is minor). Horizontal lane separators span the data panel and plot only when configured.
 
 **Style:** `MinorGridStroke` or `MajorGridStroke`; solid unless an approved style specifies a dash pattern.
 

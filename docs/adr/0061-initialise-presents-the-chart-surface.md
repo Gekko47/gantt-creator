@@ -6,19 +6,21 @@
 > and `ChartPaddingRowHeightPt` 5.75 -> 3.75, so the anchor row plus the padding
 > row still equals the outer padding (ADR-0038 D4) and the leading gutter, which
 > reads that token, still matches all three. The catalogue hash moves and the pin
-> advances; no schema version changes. **D6** the plot's border is one thin
-> rectangle: the left/right edge lines and the closing line take the **minor**
-> weight and colour instead of the major, and a new `chart:plot:top` line closes
-> the top edge at the period band's own bottom. The major weight at two of four
-> sides read as a second frame ("a backwards L along the bottom and right"), and
-> a weight of 1pt against the table's 0.5 made the plot look heavier than the
-> data it frames. **D7** every year band and every period cell is **boxed at the
-> major weight** by a new `AddHeaderBorder`, so labels separate like the table's
-> own header cells instead of running together on one neutral fill. The result is
-> one hierarchy: frame (heavy), label cells (major 1pt), plot border and grid
-> (minor 0.5pt), table cells (minor). The scene baseline is regenerated for the
-> new band borders, the plot's top line, and the two restyled edges, with this
-> note as the stated reason; no golden image is involved.
+> advances; no schema version changes. **D6** the plot's border is a **complete
+> rectangle on all four sides**: a new `chart:plot:top` line closes the top edge at
+> the period band's own bottom, because the left and right edges plus the closing
+> line had read as "a backwards L along the bottom and right". **D7** every year
+> band and every period cell is **boxed** by a new `AddHeaderBorder`, so labels
+> separate like the table's own header cells instead of running together on one
+> neutral fill. **One weight, measured twice:** the first pass drew the plot's
+> rectangle at the minor weight (0.5pt) on the theory that only the frame should
+> be heavy; the rendered sheet then showed the plot's border visibly lighter than
+> the table's lines beside it, so the second pass gives **every border the major
+> weight** — table lines, header cells, the plot's rectangle and the frame — and
+> leaves only the interior grid between periods at the minor weight. The scene
+> baseline is regenerated for the band borders, the plot's top line and the plot
+> rectangle's weight, with this note as the stated reason; no golden image is
+> involved.
 
 - **Status**: Accepted
 - **Date**: 2026-11-15

@@ -950,10 +950,10 @@ public sealed class FrameBandsBuilderTests
             dataPanelBounds: new RectD(0, 100, 100, 100));
         FrameBandsResult result = Build(request).Result!;
 
-        // The frame's stroke is the theme's 1pt major boundary; the plot's border is the
-        // 0.5pt minor grid, so the two insets differ and each is derived from its own style.
+        // Every border on the sheet is the theme's 1pt major boundary - the frame, the plot's
+        // rectangle and the header cells - so all four insets are half of that one stroke.
         const double frameHalf = 0.5;
-        const double borderHalf = 0.25;
+        const double borderHalf = 0.5;
         RectD chart = result.Geometry.ChartBounds;
         RectD panel = request.DataPanelBounds!.Value;
         double outlineLeft = Math.Min(chart.Left, panel.Left);
@@ -985,14 +985,15 @@ public sealed class FrameBandsBuilderTests
                 && Math.Abs(line.From.X - (request.PlotBounds.Left + borderHalf)) < 1e-9);
         Assert.Equal(ZLayer.Frame, separator.ZLayer);
 
-        // The plot's border is the table's line, not the frame's: minor weight on all four
-        // sides, and the top edge now closes the rectangle (owner ruling 2026-11-15).
-        Assert.Equal("MinorGrid", separator.Style.StyleKey);
+        // Every border is one weight - the table's lines, the header cells, the plot's
+        // rectangle and the frame - while the grid between periods stays minor, and the top
+        // edge closes the rectangle (owner ruling 2026-11-15).
+        Assert.Equal("MajorGrid", separator.Style.StyleKey);
         SceneLine plotTop = lines.Single(line => line.PrimitiveId == "chart:plot:top");
-        Assert.Equal("MinorGrid", plotTop.Style.StyleKey);
+        Assert.Equal("MajorGrid", plotTop.Style.StyleKey);
         Assert.Equal(request.PlotBounds.Top + borderHalf, plotTop.From.Y, 6);
         SceneLine closing = lines.Single(line => line.PrimitiveId == "chart:plot-closing");
-        Assert.Equal("MinorGrid", closing.Style.StyleKey);
+        Assert.Equal("MajorGrid", closing.Style.StyleKey);
 
         // Each year band and each period cell is boxed at the major weight, which is what
         // separates the labels (owner ruling 2026-11-15).
