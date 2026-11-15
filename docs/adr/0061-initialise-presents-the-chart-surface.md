@@ -12,15 +12,22 @@
 > line had read as "a backwards L along the bottom and right". **D7** every year
 > band and every period cell is **boxed** by a new `AddHeaderBorder`, so labels
 > separate like the table's own header cells instead of running together on one
-> neutral fill. **One weight, measured twice:** the first pass drew the plot's
-> rectangle at the minor weight (0.5pt) on the theory that only the frame should
-> be heavy; the rendered sheet then showed the plot's border visibly lighter than
-> the table's lines beside it, so the second pass gives **every border the major
-> weight** — table lines, header cells, the plot's rectangle and the frame — and
-> leaves only the interior grid between periods at the minor weight. The scene
-> baseline is regenerated for the band borders, the plot's top line and the plot
-> rectangle's weight, with this note as the stated reason; no golden image is
-> involved.
+> neutral fill. **D8 — one weight, and it is a hairline.** The weight was settled by
+> looking twice. The first pass drew the plot's rectangle at 0.5pt on the theory that
+> only the frame should be heavier; the second gave every border 1pt; the rendered
+> sheet showed **no visible difference**, because at 100 % display 0.5pt and 1pt both
+> occupy one pixel. `GridLinePt` and `MajorBoundaryPt` are therefore both **0.25pt**,
+> Excel's thinnest line, so the frame, the plot's rectangle and every year and period
+> cell share one hairline weight and the grid between periods is the same hairline.
+> Three facts follow. A **cell** border cannot express 0.25pt - Excel's
+> `Border.Weight` is a closed enum - so `GanttTableAppearance.OuterBorderWeightPt`
+> keeps reading the frame token and the adapter maps it to `xlThin`; the table's
+> outside edge is therefore as thin as a cell border goes, not as thin as the frame.
+> The live stroke inset is half of the hairline. And the catalogue hash moves again
+> (the pin advances a third time for values, not schema), while no schema version
+> changes. The scene baseline is regenerated for the band borders, the plot's top
+> line and the hairline widths, with this note as the stated reason; no golden image
+> is involved.
 
 - **Status**: Accepted
 - **Date**: 2026-11-15

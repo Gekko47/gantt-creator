@@ -66,13 +66,16 @@ public sealed class GanttTableAppearanceTests
     public void The_outside_border_weight_is_the_frame_token()
     {
         // The table's outside edge and the chart frame are one boundary (owner ruling
-        // 2026-11-14). The Office adapter writes Excel's xlThin, which IS the 1pt weight,
-        // so the token must stay at 1pt for the two boundaries to meet: this fact is the
-        // guard that fails if the frame token moves away from the mapping.
+        // 2026-11-14), so both read the SAME token rather than restating a width. That
+        // equality is the guard; the value itself is the token's, and since 2026-11-15 the
+        // token is 0.25pt (a hairline) because 1pt and 0.5pt both render as one pixel at
+        // 100 %. Excel's cell-border weight is a CLOSED enum, so the Office adapter maps
+        // the token onto xlThin instead of writing 0.25 as points -- a cell border cannot
+        // be finer than that -- and the frame is what carries the token's own width.
         Assert.Equal(
             GanttCatalogues.MetricDefault("MajorBoundaryPt"),
             GanttTableAppearance.OuterBorderWeightPt);
-        Assert.Equal(1, GanttTableAppearance.OuterBorderWeightPt);
+        Assert.Equal(0.25, GanttTableAppearance.OuterBorderWeightPt, 6);
     }
 
     [Fact]

@@ -236,8 +236,11 @@ public static class GanttCatalogues
         new("LabelGapPt", 3, 0, 18),
         new("LabelHeightPt", 10, 6, 36),
         new("StandardOutlinePt", 0.75, 0, 6),
-        new("GridLinePt", 0.5, 0.25, 3),
-        new("MajorBoundaryPt", 1, 0.25, 6),
+        // Owner ruling 2026-11-15: the chart's lines are hairlines. 1pt and 0.5pt both
+        // render as one pixel at 100 %, so the earlier "one weight" pass was invisible on
+        // the sheet; 0.25pt is Excel's thinnest line and is what actually reads differently.
+        new("GridLinePt", 0.25, 0.25, 3),
+        new("MajorBoundaryPt", 0.25, 0.25, 6),
         new("DelineatorLinePt", 0.75, 0.25, 6),
         new("HatchPitchPt", 4, 2, 18),
         new("HatchLinePt", 0.5, 0.25, 3),
