@@ -663,16 +663,7 @@ public static class FrameBandsBuilder
             ? (style.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
             : 0d;
         double top = outline.Top + half;
-        // The live bottom is the LAST BODY ROW's bottom, not the padding row's (owner
-        // request 2026-11-15, after the frame's bottom line never appeared and could not
-        // be found among the shapes). Hypothesis under test: a shape whose top-left
-        // resolves to the bottom padding row - below every populated row - is anchored
-        // outside the host's used range and is not painted. Anchoring it on a row the
-        // table owns puts it back inside the range, at the cost of the 4pt bottom margin
-        // while this is under test. The export compositions keep the full outline.
-        double bottom = request.SheetCoordinates
-            ? request.PlotBounds.Bottom - half
-            : outline.Bottom - half;
+        double bottom = outline.Bottom - half;
         double left = outline.Left + half;
         double right = outline.Right - half;
 
@@ -701,8 +692,8 @@ public static class FrameBandsBuilder
                 "chart:frame:left",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(left, top),
-                new PointD(left, bottom),
+                new PointD(left, outline.Top),
+                new PointD(left, outline.Bottom),
                 style
             )
         );
@@ -711,8 +702,8 @@ public static class FrameBandsBuilder
                 "chart:frame:right",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(right, top),
-                new PointD(right, bottom),
+                new PointD(right, outline.Top),
+                new PointD(right, outline.Bottom),
                 style
             )
         );
