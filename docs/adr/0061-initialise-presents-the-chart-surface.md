@@ -143,6 +143,46 @@ move.
 - **Inset the frame on export too**: would move the export fidelity contract by half
   a point with no reported defect behind it.
 
+## D11 — the live plot starts a measured inset inside the anchor column
+
+**Report.** "The plot is still plotting from column G even though the anchor is in S."
+The anchor measurement (D10) was correct and changed nothing visible.
+
+**Measured, not reasoned.** `scripts/probe-plot-origin.ps1` builds a workbook with the
+real column layout (table in B..R, engine columns G..R 2 characters wide and hidden,
+anchor column S) and reads each shape's `TopLeftCell` on Excel 16.0:
+
+| plot start (S.Left + x) | anchor while G..R hidden | moves with S when un-hidden |
+|---|---|---|
+| 0pt / 0.25pt / 0.5pt | `G3` (first **hidden** engine column) | no — 0pt |
+| 1pt / 2pt / 4pt / 8pt | `S3` (the anchor column) | yes — 171pt |
+
+**Why.** A hidden column has zero width, so the twelve engine columns and the anchor
+column all share one x coordinate. Excel resolves a shape's `TopLeftCell` to the first
+column whose left edge is at or before the shape's `Left`, which with that run of
+zero-width columns is the first hidden one. The nudge in D10 (0.25pt) therefore landed
+inside column G: the plot was anchored in a hidden column (the owner's original
+observation), did not follow the anchor, and its 0.25pt stroke fell inside the table's
+own 1pt outside border and disappeared.
+
+**Decision.** The live plot starts `GanttSheetLayout.LivePlotOriginInsetPt` (2pt) to the
+right of the anchor column's left edge, applied as the plot's **left chrome** in
+`ExcelSceneBuildRequestFactory` (and mirrored by `RibbonStateService.MeasurePlotWidth`, so
+the displayed width stays the rendered width). `ReadPlotAnchorLeft` returns the anchor
+column's left edge with no inset: the inset is a width-budget decision, not a measurement.
+
+- 2pt, not 1pt: 1pt is the exact threshold measured above, and a display-scaling change
+  must not be able to push the anchor back behind a hidden column.
+- 2pt, not more: it is chrome taken out of the plot's width, so it stays inside the
+  chart's own 4pt outer padding. A fact asserts both bounds.
+- `LiveFrameAnchorNudgePt` (0.25pt) is unchanged and is now documented as the **frame's**
+  anchor nudge only. The frame closes on the table's first column, which is visible, so
+  the threshold above does not apply to it.
+- ADR-0031 D2's "flush against the table" is superseded for the live composition only:
+  an inset was rejected in 2026-11-14 as visibly off the edge, but that ruling assumed the
+  table's right edge is where the engine columns end. It is not — they are hidden.
+- Export compositions are unchanged: the inset is live-only chrome, not a scene rule.
+
 ## Consequences
 
 - No catalogue value, schema version, or catalogue hash moves: every decision is a

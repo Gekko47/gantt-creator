@@ -113,6 +113,36 @@ public static class GanttSheetLayout
     public const double LiveFrameAnchorNudgePt = 0.25;
 
     /// <summary>
+    /// How far right of the plot anchor column's left edge the LIVE plot starts, in points.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a measured host threshold, not a taste value.</b> The twelve engine columns
+    /// between the visible table and the plot anchor column are hidden, and a hidden column
+    /// occupies ZERO width, so the anchor column's left edge and the table's visible right
+    /// edge are the same coordinate. Excel resolves a shape's <c>TopLeftCell</c> to the first
+    /// column whose left edge is at or before the shape's <c>Left</c>, and with a run of
+    /// zero-width columns that is the FIRST of them - the engine columns, not the anchor.
+    /// The shape is then anchored in a hidden column, stays behind it when the columns are
+    /// un-hidden, and its 0.25pt stroke lands inside the table's own 1pt outside border.
+    /// </para>
+    /// <para>
+    /// <b>Measured on Excel 16.0 (2026-11-15, scripts/probe-plot-origin.ps1 against a fixture
+    /// with the real column layout).</b> With the engine columns hidden, an offset of 0, 0.25
+    /// or 0.5pt resolves to the first engine column (G3) and does not move when the columns
+    /// are un-hidden; 1pt and above resolves to the anchor column (S3) and moves with it. One
+    /// point is the exact threshold, so the value here is 2 - above the threshold by the same
+    /// margin the chart's own 4pt outer padding can absorb, so a display-scaling change cannot
+    /// silently put the plot back behind a hidden column.
+    /// </para>
+    /// <para>
+    /// It is applied as the plot's LEFT CHROME, because that is what it is: two points of the
+    /// preset's width budget that the plot gives up so its origin can be anchored and drawn.
+    /// </para>
+    /// </remarks>
+    public const double LivePlotOriginInsetPt = 2.0;
+
+    /// <summary>
     /// The one-based worksheet column the table's first column occupies.
     /// </summary>
     /// <remarks>

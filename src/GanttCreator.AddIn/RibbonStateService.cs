@@ -1180,16 +1180,16 @@ internal class RibbonStateService
 
             PanelCellGrid grid = outcome.Grid;
             double marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
-            // Same chrome split the Refresh pipeline uses (ADR-0031 D2): the plot starts
-            // at the measured panel's right edge, on the column boundary, so the R5.2
-            // margin (twice) plus the frame's outer padding rides on the right.
-            // Reading the SAME two numbers the factory passes is what keeps the
-            // displayed width the width that is rendered.
+            // Same chrome split the Refresh pipeline uses: the plot starts the measured
+            // inset inside the anchor column (GanttSheetLayout.LivePlotOriginInsetPt, so
+            // its shapes anchor in a visible column), so the R5.2 margin (twice) plus the
+            // frame's outer padding rides on the right. Reading the SAME three numbers the
+            // factory passes is what keeps the displayed width the width that is rendered.
             double chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
             return PlotGeometryResolver.MeasurePlotWidth(
                 preset,
                 grid.PanelRightPt,
-                leftChromePt: 0,
+                leftChromePt: GanttSheetLayout.LivePlotOriginInsetPt,
                 rightChromePt: (marginPt * 2) + chrome);
         }
         catch

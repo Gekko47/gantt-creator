@@ -295,7 +295,16 @@ public class ExcelSceneBuildRequestFactoryTests
         // with the `!.Value`/`!` form the rest of this file already uses. The factory
         // only emits a request whose grid and plot both resolved, so a null here is a
         // defect the equality assertion reports as a mismatch rather than a null crash.
-        Assert.Equal(request.Grid!.PanelRightPt, request.PlotBounds!.Value.X, precision: 6);
+        //
+        // The plot starts the measured inset INSIDE the anchor column, not on the
+        // panel's right edge: while the engine columns are hidden that edge is also the
+        // first hidden column's left edge, and Excel anchors the chart's shapes there
+        // instead of in the anchor column (measured on the host, see
+        // GanttSheetLayout.LivePlotOriginInsetPt).
+        Assert.Equal(
+            request.Grid!.PanelRightPt + GanttSheetLayout.LivePlotOriginInsetPt,
+            request.PlotBounds!.Value.X,
+            precision: 6);
 
         // The right margin is NOT removed: the plot's right edge is the sheet's own
         // edge, and the chrome there is what keeps the last period label off it.
@@ -351,7 +360,35 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         Assert.Equal(240, grid.PanelRightPt, precision: 6);
         Assert.Equal(30, grid.PanelLeftPt, precision: 6);
-        Assert.Equal(240, outcome.Request!.PlotBounds!.Value.X, precision: 6);
+
+        // The anchor column's left edge plus the live inset, so the plot's origin is
+        // anchored in the anchor column rather than in the hidden engine columns.
+        Assert.Equal(
+            240 + GanttSheetLayout.LivePlotOriginInsetPt,
+            outcome.Request!.PlotBounds!.Value.X,
+            precision: 6);
+    }
+
+    [Fact]
+    public void The_plot_origin_inset_clears_the_hosts_shape_anchor_threshold()
+    {
+        // MEASURED, not chosen. scripts/probe-plot-origin.ps1 built a workbook with this
+        // layout on Excel 16.0 and read every shape's TopLeftCell: with the engine columns
+        // hidden, a shape at 0, 0.25 or 0.5pt right of the anchor column's left edge is
+        // anchored in the FIRST hidden column (G3) and stays there when those columns are
+        // un-hidden, while 1pt and above is anchored in the anchor column (S3) and follows
+        // it. Excel resolves a shape's cell with its own rounding, so the threshold is not
+        // a number this code chooses - it must stay above the measured one.
+        Assert.True(
+            GanttSheetLayout.LivePlotOriginInsetPt > 1.0,
+            "the live plot origin inset (" + GanttSheetLayout.LivePlotOriginInsetPt
+                + "pt) must exceed the 1pt host threshold, or the plot anchors behind a hidden column");
+
+        // It is chrome taken out of the plot's width budget, so it must stay inside the
+        // chart's own outer padding: a larger value would be a layout change, not an inset.
+        Assert.True(
+            GanttSheetLayout.LivePlotOriginInsetPt <= GanttCatalogues.MetricDefault("ChartOuterPaddingPt"),
+            "the live plot origin inset must not exceed the chart's outer padding");
     }
 
     [Fact]

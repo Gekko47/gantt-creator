@@ -587,9 +587,16 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     {
         ArgumentNullException.ThrowIfNull(table);
 
+        // The ANCHOR COLUMN's left edge, with no inset. While the engine columns are
+        // hidden this is the same coordinate as the table's visible right edge (a hidden
+        // column has zero width), which is why it must be measured rather than summed:
+        // the sum of the measured columns stops at the last VISIBLE one and the two only
+        // agree by accident. The plot's own inset away from this edge is a width-budget
+        // decision (GanttSheetLayout.LivePlotOriginInsetPt), applied as the plot's left
+        // chrome by the scene-request factory, not here.
         return table.Parent is Excel.Worksheet worksheet
             && GetPlotAnchorColumn(worksheet) is { } column
-            ? ToPoints(column.Left) + GanttSheetLayout.LiveFrameAnchorNudgePt
+            ? ToPoints(column.Left)
             : null;
     }
 

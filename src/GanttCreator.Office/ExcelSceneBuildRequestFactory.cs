@@ -307,13 +307,22 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             preset,
             panelRightPt,
 
-            // ADR-0031 D2: the plot begins exactly where the data table ends — on the
-            // column boundary, which is the alignment the owner ruled (2026-11-14) after
-            // a 1pt inset was measured and rejected as visibly off the edge. The RIGHT
-            // chrome carries the R5.2 margin (twice) plus the frame's own outer padding,
-            // so the plot's right edge sits inside the page with the margin as breathing
-            // room.
-            leftChromePt: 0,
+            // ADR-0031 D2 put the plot flush against the table's right edge, and a 1pt
+            // inset was rejected then as visibly off the edge. That ruling assumed the
+            // table's right edge is where the engine columns end, but they are HIDDEN and
+            // a hidden column has zero width, so the anchor column's left edge and the
+            // table's visible right edge are one coordinate. Excel then anchors every
+            // chart shape in the FIRST of those zero-width columns, which is why the plot
+            // read as starting in column G and its left border vanished inside the table's
+            // own 1pt border (owner report 2026-11-15).
+            //
+            // The plot therefore starts a measured inset INSIDE the anchor column
+            // (GanttSheetLayout.LivePlotOriginInsetPt: 2pt, above the 1pt host threshold
+            // measured by scripts/probe-plot-origin.ps1). It is passed as LEFT CHROME
+            // because that is what it is — width budget the plot gives up so its origin is
+            // anchored in a visible column and its edge is drawable. The RIGHT chrome is
+            // unchanged: the R5.2 margin (twice) plus the frame's own outer padding.
+            leftChromePt: GanttSheetLayout.LivePlotOriginInsetPt,
             rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,

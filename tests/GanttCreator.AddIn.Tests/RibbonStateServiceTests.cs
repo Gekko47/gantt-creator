@@ -1474,10 +1474,14 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm);
         var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+
+        // The left chrome is the live plot's origin inset (ADR-0061 D11): the display
+        // must read the SAME chrome the composition passes, or it shows a width two
+        // points wider than the plot that is drawn.
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.LivePlotOriginInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
@@ -1540,7 +1544,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.LivePlotOriginInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
