@@ -589,7 +589,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
 
         return table.Parent is Excel.Worksheet worksheet
             && GetPlotAnchorColumn(worksheet) is { } column
-            ? ToPoints(column.Left)
+            ? ToPoints(column.Left) + GanttSheetLayout.LiveFrameAnchorNudgePt
             : null;
     }
 
