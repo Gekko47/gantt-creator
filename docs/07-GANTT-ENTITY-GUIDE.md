@@ -339,6 +339,8 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Tests:** exact union/crop bounds, zero/invalid dimensions, chart-only versus data-plus-chart export, no surrounding PNG whitespace, grouped export bounds.
 
+**Margin size and border weights (owner ruling 2026-11-15).** The chart's four margins are **4pt**: `ChartOuterPaddingPt` is 4 and `ChartPaddingRowHeightPt` is 3.75, so the anchor row plus the padding row is still exactly the outer padding (ADR-0038 D4) and the leading gutter, which reads the same token, matches all three. The weights form one hierarchy: the **frame** is the chart's single heavy boundary, **header label cells** (each year, each period) are boxed at the major weight (1pt), and everything inside the plot - its own border and the grid - is the **minor** weight, the same line the table's cells carry. The plot's border is therefore a thin rectangle on all four sides rather than a heavier line on two of them.
+
 ## 2. Chart title
 
 **Purpose:** identify the visual, for example “As-Built with Critical Path”.
@@ -403,7 +405,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Geometry:** one clipped rectangle per year intersecting the plot. Left/right edges use exact date mapping. Text centres in the visible portion. Height is `YearBandHeightPt`.
 
-**Style:** `YearHeaderFill`, major border, `YearFontSizePt`, bold.
+**Style:** `YearHeaderFill`, major border drawn as four `:border:*` lines from [`AddHeaderBorder`](../src/GanttCreator.Core/Scene/FrameBandsBuilder.cs) (owner ruling 2026-11-15), `YearFontSizePt`, bold. The border is what separates one year from the next at the same fill.
 
 **Labels:** four-digit year. A partial year remains labelled if its visible width is at least `MinimumHeaderLabelWidthPt`; otherwise it suppresses text but keeps boundaries.
 
@@ -417,7 +419,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Geometry:** one clipped cell per period below the year band. Height is `PeriodBandHeightPt`; period boundaries continue into the plot as grid lines.
 
-**Style:** alternating neutral fills may follow plot bands; minor borders within a year and major border at year transitions.
+**Style:** alternating neutral fills may follow plot bands; every period cell is **boxed at the major weight** (1pt) by `AddHeaderBorder`, and period boundaries continue into the plot as grid lines. Owner ruling 2026-11-15: a 1pt border around each period and each year, so the label cells separate like the table's own header cells and the header reads as a heading rather than a wash of fill.
 
 **Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. The selected form is emitted **verbatim** — there is no width-driven substitution of any kind, so the whole band carries one form and the choice is the user's, made from the two `Month` rows of the Plot Time Scale dropdown (revision 11, ADR-0040). A period label is shown only when its interval is at least as wide as the label **measures** at the shared text seam, so `MM` survives on narrower intervals than `MMM`; a period whose measurement is unavailable falls back to the `MinimumHeaderLabelWidthPt` floor (revision 12, ADR-0041). Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
 
@@ -455,7 +457,7 @@ Export compositions carry no worksheet rows to anchor to, so they pass `0` and p
 
 **Source:** period/year boundaries and show/hide settings.
 
-**Geometry:** vertical lines use exact `TimeScale` X positions. Minor lines use `GridLinePt`; year/plot edges use `MajorBoundaryPt`. Horizontal lane separators span the data panel and plot only when configured.
+**Geometry:** vertical lines use exact `TimeScale` X positions. Minor lines use `GridLinePt`. The plot's own border - its left and right edges, the closing line at its bottom, and the top edge added 2026-11-15 - uses the **minor** weight and colour too, so the plot is one thin rectangle inside the heavy frame; a line *between* periods inside the plot stays minor, and the year transition keeps a major line there. Horizontal lane separators span the data panel and plot only when configured.
 
 **Style:** `MinorGridStroke` or `MajorGridStroke`; solid unless an approved style specifies a dash pattern.
 

@@ -950,8 +950,10 @@ public sealed class FrameBandsBuilderTests
             dataPanelBounds: new RectD(0, 100, 100, 100));
         FrameBandsResult result = Build(request).Result!;
 
-        // Half of the theme's 1pt major boundary: the theme's own width, not the token.
-        const double half = 0.5;
+        // The frame's stroke is the theme's 1pt major boundary; the plot's border is the
+        // 0.5pt minor grid, so the two insets differ and each is derived from its own style.
+        const double frameHalf = 0.5;
+        const double borderHalf = 0.25;
         RectD chart = result.Geometry.ChartBounds;
         RectD panel = request.DataPanelBounds!.Value;
         double outlineLeft = Math.Min(chart.Left, panel.Left);
@@ -962,26 +964,40 @@ public sealed class FrameBandsBuilderTests
         SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
 
         SceneLine left = lines.Single(line => line.PrimitiveId == "chart:frame:left");
-        Assert.Equal(outlineLeft + half, left.From.X, 6);
+        Assert.Equal(outlineLeft + frameHalf, left.From.X, 6);
         Assert.Equal(outlineTop, left.From.Y, 6);
         Assert.Equal(outlineBottom, left.To.Y, 6);
 
         SceneLine right = lines.Single(line => line.PrimitiveId == "chart:frame:right");
-        Assert.Equal(outlineRight - half, right.From.X, 6);
+        Assert.Equal(outlineRight - frameHalf, right.From.X, 6);
 
         SceneLine top = lines.Single(line => line.PrimitiveId == "chart:frame:top");
-        Assert.Equal(outlineTop + half, top.From.Y, 6);
+        Assert.Equal(outlineTop + frameHalf, top.From.Y, 6);
         Assert.Equal(outlineLeft, top.From.X, 6);
         Assert.Equal(outlineRight, top.To.X, 6);
 
         SceneLine bottom = lines.Single(line => line.PrimitiveId == "chart:frame:bottom");
-        Assert.Equal(outlineBottom - half, bottom.From.Y, 6);
+        Assert.Equal(outlineBottom - frameHalf, bottom.From.Y, 6);
 
         // The separator: the plot's left edge, drawn inside the plot and above the bands.
         SceneLine separator = lines.Single(
             line => line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)
-                && Math.Abs(line.From.X - (request.PlotBounds.Left + half)) < 1e-9);
+                && Math.Abs(line.From.X - (request.PlotBounds.Left + borderHalf)) < 1e-9);
         Assert.Equal(ZLayer.Frame, separator.ZLayer);
+
+        // The plot's border is the table's line, not the frame's: minor weight on all four
+        // sides, and the top edge now closes the rectangle (owner ruling 2026-11-15).
+        Assert.Equal("MinorGrid", separator.Style.StyleKey);
+        SceneLine plotTop = lines.Single(line => line.PrimitiveId == "chart:plot:top");
+        Assert.Equal("MinorGrid", plotTop.Style.StyleKey);
+        Assert.Equal(request.PlotBounds.Top + borderHalf, plotTop.From.Y, 6);
+        SceneLine closing = lines.Single(line => line.PrimitiveId == "chart:plot-closing");
+        Assert.Equal("MinorGrid", closing.Style.StyleKey);
+
+        // Each year band and each period cell is boxed at the major weight, which is what
+        // separates the labels (owner ruling 2026-11-15).
+        Assert.Contains(lines, line => line.PrimitiveId.EndsWith(":border:top", StringComparison.Ordinal)
+            && line.Style.StyleKey == "MajorGrid");
     }
 
     [Fact]

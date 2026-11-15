@@ -1,4 +1,24 @@
-# ADR-0061 — Initialise presents the chart surface: no gridlines, engine columns hidden first, one margin, strokes inside the frame
+# ADR-0061 — Initialise presents the chart surface: no gridlines, engine columns hidden first, one margin, strokes inside the frame, and one weight hierarchy
+
+> **Amendment, 2026-11-15 — border weights and the margin size.** Three further
+> live reports turned the first cut into a system instead of a set of lines.
+> **D5** the chart's four margins are **4pt** (was 6): `ChartOuterPaddingPt` 6 -> 4
+> and `ChartPaddingRowHeightPt` 5.75 -> 3.75, so the anchor row plus the padding
+> row still equals the outer padding (ADR-0038 D4) and the leading gutter, which
+> reads that token, still matches all three. The catalogue hash moves and the pin
+> advances; no schema version changes. **D6** the plot's border is one thin
+> rectangle: the left/right edge lines and the closing line take the **minor**
+> weight and colour instead of the major, and a new `chart:plot:top` line closes
+> the top edge at the period band's own bottom. The major weight at two of four
+> sides read as a second frame ("a backwards L along the bottom and right"), and
+> a weight of 1pt against the table's 0.5 made the plot look heavier than the
+> data it frames. **D7** every year band and every period cell is **boxed at the
+> major weight** by a new `AddHeaderBorder`, so labels separate like the table's
+> own header cells instead of running together on one neutral fill. The result is
+> one hierarchy: frame (heavy), label cells (major 1pt), plot border and grid
+> (minor 0.5pt), table cells (minor). The scene baseline is regenerated for the
+> new band borders, the plot's top line, and the two restyled edges, with this
+> note as the stated reason; no golden image is involved.
 
 - **Status**: Accepted
 - **Date**: 2026-11-15

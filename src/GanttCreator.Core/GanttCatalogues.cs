@@ -150,7 +150,11 @@ public static class GanttCatalogues
     /// </summary>
     public static IReadOnlyList<GanttMetricToken> Metrics { get; } =
     [
-        new("ChartOuterPaddingPt", 6, 0, 36),
+        // Owner ruling 2026-11-15: the chart's four margins are 4pt, not 6. The four
+        // margins are one figure by design - this token is the frame's top, right and
+        // left (the leading gutter) margin, and ADR-0038 D4 keeps the bottom equal to
+        // the anchor row plus the padding row, which the row height below preserves.
+        new("ChartOuterPaddingPt", 4, 0, 36),
 
         // ADR-0031 D2: the height of the worksheet rows that form the chart's top
         // and bottom margins. It defaults to the SAME 6pt the ChartOuterPaddingPt
@@ -172,7 +176,9 @@ public static class GanttCatalogues
         // row Excel needs to anchor the plot-spanning shapes into. Writing 6 here
         // instead would silently make the total 6.25pt, i.e. a second, unrequested
         // change to the margin wearing the costume of a structural one.
-        new("ChartPaddingRowHeightPt", 5.75, 0, 72),
+        // 3.75, so that the anchor row (0.25) plus this row is the 4pt outer padding
+        // above (owner ruling 2026-11-15). It was 5.75 beside a 6pt outer padding.
+        new("ChartPaddingRowHeightPt", 3.75, 0, 72),
 
         // ADR-0038 D1: the height of the reserved ANCHOR row, immediately below the
         // last body row. The bands, vertical grid lines, and delineators paint

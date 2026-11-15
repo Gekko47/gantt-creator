@@ -362,6 +362,7 @@ public static class FrameBandsBuilder
             primitives.Add(
                 new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
             );
+            AddHeaderBorder(primitives, request, id, bounds);
             if (year.ShowLabel)
             {
                 primitives.Add(
@@ -396,6 +397,7 @@ public static class FrameBandsBuilder
                 geometry.PeriodBounds.Height
             );
             primitives.Add(new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.PeriodHeader));
+            AddHeaderBorder(primitives, request, id, bounds);
             if (period.ShowLabel)
             {
                 primitives.Add(
@@ -411,6 +413,42 @@ public static class FrameBandsBuilder
                 );
             }
         }
+    }
+
+    /// <summary>
+    /// Draws the 1pt border around one header band, so each year and each period is a
+    /// visibly separate label cell.
+    /// </summary>
+    /// <param name="primitives">The primitive list to append to.</param>
+    /// <param name="request">The frame/band request.</param>
+    /// <param name="id">The band rect's identifier; each border line appends its own suffix.</param>
+    /// <param name="bounds">The band cell's rectangle.</param>
+    /// <remarks>
+    /// The label cells are boxes, not just fill (owner ruling 2026-11-15). Two adjacent
+    /// month labels on a neutral fill ran together, while the table's own header row beside
+    /// them is a grid of cells. The border takes the MAJOR weight and colour - the same
+    /// line the table's outside edge takes - so a label separator is visibly stronger than
+    /// the plot's minor grid: the header reads as a heading and the plot as its body.
+    /// </remarks>
+    private static void AddHeaderBorder(
+        List<ScenePrimitive> primitives,
+        FrameBandsRequest request,
+        string id,
+        RectD bounds)
+    {
+        SceneStyle style = request.Theme.MajorGrid;
+        primitives.Add(
+            new SceneLine($"{id}:border:top", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Right, bounds.Top), style)
+        );
+        primitives.Add(
+            new SceneLine($"{id}:border:bottom", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Bottom), new PointD(bounds.Right, bounds.Bottom), style)
+        );
+        primitives.Add(
+            new SceneLine($"{id}:border:left", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Left, bounds.Bottom), style)
+        );
+        primitives.Add(
+            new SceneLine($"{id}:border:right", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Right, bounds.Top), new PointD(bounds.Right, bounds.Bottom), style)
+        );
     }
 
     private static void AddTitle(
@@ -471,8 +509,13 @@ public static class FrameBandsBuilder
         // separating line between the table and the chart"). The two edge lines therefore
         // move inwards by half their own stroke. The export compositions are unaffected:
         // nothing there abuts the plot, so their geometry stays exactly as specified.
+        //
+        // The edges take the MINOR weight and colour (owner ruling 2026-11-15): the plot's
+        // border is the same line as the table's cells, so the frame reads as the one
+        // heavy boundary and everything inside it as structure. They were major (1pt),
+        // which is what made the plot's bottom and right look like a second frame.
         double halfStroke = request.SheetCoordinates
-            ? (request.Theme.MajorGrid.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
+            ? (request.Theme.MinorGrid.OutlineWidthPt ?? request.GridLinePt) / 2d
             : 0d;
 
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
@@ -498,10 +541,29 @@ public static class FrameBandsBuilder
                     isEdge ? ZLayer.Frame : ZLayer.Grid,
                     new PointD(x, plotSpan.Y),
                     new PointD(x, plotSpan.Bottom),
-                    line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid
+                    isEdge
+                        ? request.Theme.MinorGrid
+                        : line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid
                 )
             );
         }
+
+        // The plot's TOP edge - the period band's own bottom - completes the rectangle.
+        // The band above it is a filled rect and the body below is the user's cells, so
+        // without this line the labels and the first lane share an edge with nothing
+        // between them (owner report 2026-11-15: the plot's border was a backwards L).
+        // Minor weight and colour, like the other three sides, so the plot's border is one
+        // thin rectangle INSIDE the heavy frame rather than a second frame of its own.
+        primitives.Add(
+            new SceneLine(
+                "chart:plot:top",
+                SceneOwnerId.Chart,
+                ZLayer.Frame,
+                new PointD(request.PlotBounds.Left, request.PlotBounds.Top + halfStroke),
+                new PointD(request.PlotBounds.Right, request.PlotBounds.Top + halfStroke),
+                request.Theme.MinorGrid
+            )
+        );
     }
 
     /// <summary>
@@ -549,7 +611,11 @@ public static class FrameBandsBuilder
                 ZLayer.Frame,
                 new PointD(request.PlotBounds.Left, closingPt),
                 new PointD(request.PlotBounds.Right, closingPt),
-                request.Theme.MajorGrid
+
+                // Minor, not major (owner ruling 2026-11-15): this line closes the plot and
+                // terminates the band overhang, and it is the plot's bottom BORDER. At the
+                // major weight it read as a second frame running along the bottom only.
+                request.Theme.MinorGrid
             )
         );
     }
