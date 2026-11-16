@@ -852,6 +852,51 @@ public sealed class SceneBuilderTests
         Assert.Equal(gutterPt, 40 - (left.From!.X - halfStroke), precision: 9);
     }
 
+    /// <summary>
+    /// An intentionally empty live chart is built, carries the reason it is empty, and draws
+    /// only the chart's own furniture (owner ruling 2026-11-16).
+    /// </summary>
+    /// <remarks>
+    /// The orchestrator used to refuse "no row can be drawn" outright, which raised a modal
+    /// error for the normal first-Add step. The scene now reports the state instead, so the
+    /// Warnings panel can say why the plot is blank after the refresh has finished.
+    /// </remarks>
+    [Fact]
+    public void An_empty_live_chart_carries_the_reason_it_is_empty()
+    {
+        GanttEvent removed = Event(1);
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 120)],
+            [10.0],
+            10,
+            ["Type"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            allowEmptyRows: true).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(removed) with
+            {
+                Events = [],
+                AllowEmptyEvents = true,
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // Why the plot is blank travels with the scene, not only with a dialog.
+        Assert.Contains(scene.Warnings, warning => warning.Code == SceneWarningCodes.EmptyChart);
+
+        // The frame and the period bands are drawn; nothing row-owned is.
+        Assert.Contains(scene.Primitives, primitive => primitive.PrimitiveId == "chart:frame:left");
+        Assert.DoesNotContain(
+            scene.Primitives,
+            primitive => primitive.PrimitiveId.StartsWith(removed.Id.Value, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship()
     {

@@ -121,18 +121,24 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// A refresh that finds a blocking error still highlights its row/cell so the user
-    /// can identify what to fix.
+    /// A refresh that finds a blocking error still highlights its row — and with no chart on
+    /// the sheet it renders the EMPTY chart and says why (owner ruling 2026-11-16).
     /// </summary>
     /// <remarks>
-    /// The counterweight to the empty-list assertion above, and the reason the reporter
-    /// is called before the render decision rather than after it. Calling it only on the
-    /// success path would mean a blocked refresh left the PREVIOUS report in place —
-    /// the notes would never show the current error, and the user would be chasing a
-    /// message about a problem they had already fixed.
+    /// <para>
+    /// The counterweight to the empty-list assertion above, and the reason the reporter is
+    /// called before the render decision rather than after it: a blocked refresh must show the
+    /// CURRENT error set, not the previous one.
+    /// </para>
+    /// <para>
+    /// The empty-chart half is the first-Add case — one scaffold row, no dates, nothing else on
+    /// the sheet. It used to raise a modal error for a normal step, with no chart to protect;
+    /// the decision now depends on whether a chart EXISTS, and the reason the plot is blank is
+    /// carried by the scene so the Warnings panel can report it after the dialog would have gone.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void A_blocked_refresh_still_highlights_the_errors_it_found()
+    public void A_blocked_refresh_with_no_chart_highlights_its_errors_and_renders_an_empty_chart()
     {
         RefreshFakes fakes = new()
         {
@@ -145,11 +151,23 @@ public class GanttRefreshOrchestratorTests
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal);
 
         IReadOnlyList<HighlightTarget> reported = Assert.Single(fakes.HighlightReconciliations);
         Assert.Contains(reported, target => target.Row == 1);
+
+        // The reason a blank plot is blank lives in the scene, not in a dialog.
+        Assert.Contains(
+            outcome.Warnings,
+            warning => warning.Code == GanttCreator.Core.Scene.SceneWarningCodes.EmptyChart);
+
+        // The frame and its period bands ARE what an empty chart draws (owner ruling
+        // 2026-11-16: "frame and bands, no bars"), so the chart-owned primitives are expected.
+        // What must not appear is any ROW-owned entity: a bar, milestone, label or delineator.
+        Assert.DoesNotContain(
+            fakes.Shapes.Calls,
+            call => call.StartsWith("Create:", StringComparison.Ordinal)
+                && !call["Create:".Length..].StartsWith("chart:", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -913,16 +931,18 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// A blocking validation error stops the refresh before any write, and the
-    /// previous chart is untouched.
+    /// A blocking validation error with a chart ALREADY on the sheet stops the refresh, so a
+    /// transient all-invalid table cannot wipe it (owner ruling 2026-11-16).
     /// </summary>
     /// <remarks>
-    /// The issue list is carried on the outcome even though the refresh refused, so
-    /// the caller can report exactly which row and field is wrong rather than a bare
-    /// "something is invalid".
+    /// The issue list is carried on the outcome even though the refresh refused, so the caller
+    /// can report exactly which row and field is wrong rather than a bare "something is
+    /// invalid". The single <c>ListOwned</c> read is the decision itself: it is how the
+    /// pipeline tells "a chart exists" from "nothing has been drawn yet", and it mutates
+    /// nothing.
     /// </remarks>
     [Fact]
-    public void A_blocking_validation_error_stops_the_refresh_and_reports_the_issues()
+    public void A_blocking_validation_error_with_an_existing_chart_stops_the_refresh_and_reports_the_issues()
     {
         RefreshFakes fakes = new()
         {
@@ -932,6 +952,7 @@ public class GanttRefreshOrchestratorTests
                 Row(1, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
+        _ = fakes.Shapes.Owned("chart:background");
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
@@ -939,7 +960,9 @@ public class GanttRefreshOrchestratorTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
         Assert.NotEmpty(outcome.ValidationIssues);
-        Assert.Empty(fakes.Shapes.Calls);
+
+        // No mutation of any kind: the only shape call is the ownership read that decided this.
+        Assert.All(fakes.Shapes.Calls, call => Assert.Equal("ListOwned", call));
 
         // The worksheet writes are downstream of validation and must not have run.
         Assert.DoesNotContain("Duration", fakes.Steps);

@@ -433,14 +433,34 @@ public sealed class GanttRefreshOrchestrator(
         // painted for the invalid rows so the user sees the current error set.
         // validation.Events already contains only rows without blocking errors.
         //
-        // When every row is blocked there is nothing to render: refuse before any
-        // downstream worksheet write so the existing chart and sheet are untouched.
+        // When NO row can be drawn, there are two different situations and they are not
+        // the same decision (owner ruling 2026-11-16):
+        //
+        //   * a chart is already on the sheet - refuse, so a transient all-invalid table
+        //     (the user cleared a date) cannot wipe a chart they were looking at;
+        //   * nothing has been drawn yet - build the EMPTY chart instead. Refusing there
+        //     gave a modal "could not complete the last action" for adding a first row,
+        //     which is a normal step, and there was no chart to protect.
+        //
+        // The ownership read is the discriminator: no owned shape means no chart exists.
+        // It is a READ, so this branch still performs no shape mutation (D3); the empty
+        // scene carries a warning that the Warnings panel reports, because the reason a
+        // blank plot is blank must outlive the refresh that produced it.
         if (validation.Events.Count == 0 && validation.Issues.Any(i => i.Severity == GanttValidationSeverity.Error))
         {
-            return GanttRefreshOutcome.Refused(
-                GanttRefreshRefusal.BlockingValidationErrors,
-                "The table has errors, so the chart was not rebuilt. The existing chart is unchanged.",
-                validation.Issues);
+            IReadOnlyList<string> owned = _shapeWriter.ListOwned();
+            if (owned.Count > 0)
+            {
+                TraceRefresh(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.refresh blocked-validation refused ownedShapes={owned.Count}"));
+                return GanttRefreshOutcome.Refused(
+                    GanttRefreshRefusal.BlockingValidationErrors,
+                    "The table has errors, so the chart was not rebuilt. The existing chart is unchanged.",
+                    validation.Issues);
+            }
+
+            TraceRefresh("gantt.refresh blocked-validation empty-chart ownedShapes=0");
         }
 
         // The events carry each row's StyleKey straight from column K as read at

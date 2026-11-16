@@ -1,5 +1,12 @@
 namespace GanttCreator.Core.Scene;
 
+/// <summary>The scene warning code carried by an intentionally empty live chart.</summary>
+public static class SceneWarningCodes
+{
+    /// <summary>No row could be drawn, so the chart is empty by decision rather than by failure.</summary>
+    public const string EmptyChart = "chart:empty";
+}
+
 /// <summary>The reason a scene could not be built.</summary>
 public enum SceneBuilderRefusal
 {
@@ -601,6 +608,19 @@ public static class SceneBuilder
         // authoritative source for lane warnings; the placement feed adds none of
         // its own.
         List<SceneWarning> warnings = [.. laneLayout.Warnings];
+
+        // An intentionally EMPTY live chart says why it is empty (owner ruling 2026-11-16).
+        // The orchestrator used to refuse this state outright, which turned "I added my first
+        // row and it has no dates yet" into a modal error on a sheet with no chart to protect.
+        // The empty scene is built instead and carries its reason, so the Warnings panel
+        // reports it rather than a dialog that has already gone.
+        if (laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
+        {
+            warnings.Add(new SceneWarning(
+                SceneOwnerId.Chart,
+                SceneWarningCodes.EmptyChart,
+                "No row could be drawn because every row has a blocking error. Enter the missing data and refresh."));
+        }
 
         // The critical overlay clips to the parent's post-plot-clip visible span, so
         // the map is filled over the span events before any overlay is built.
