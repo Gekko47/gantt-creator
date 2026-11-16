@@ -14,15 +14,16 @@
       1. dotnet --version
       2. skill tree in sync
       3. status accuracy
-      4. ribbon icon ids
-      5. script analyzer (PSScriptAnalyzer)
-      6. workflow lint (actionlint)
-      7. script lint (Pester)
-      8. restore
-      9. format (production only; tests/ tolerated per tests/Directory.Build.props)
-     10. build Release -warnaserror
-     11. publish AddIn (packed XLL)
-     12. test (OfficeIntegration excluded)
+      4. ribbon glyph assets
+      5. ribbon icon ids
+      6. script analyzer (PSScriptAnalyzer)
+      7. workflow lint (actionlint)
+      8. script lint (Pester)
+      9. restore
+     10. format (production only; tests/ tolerated per tests/Directory.Build.props)
+     11. build Release -warnaserror
+     12. publish AddIn (packed XLL)
+     13. test (OfficeIntegration excluded)
 #>
 
 [CmdletBinding()]
