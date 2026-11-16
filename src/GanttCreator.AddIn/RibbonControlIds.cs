@@ -101,6 +101,21 @@ internal static class RibbonControlIds
     internal const string ToggleChartLock = "btnToggleChartLock";
 
     /// <summary>
+    /// The Refresh split button (R5.20). Its primary is <see cref="RefreshSheet"/>; its menu holds
+    /// the automatic-refresh toggle, so the switch sits inside the action it governs.
+    /// </summary>
+    internal const string RefreshSplit = "spbRefresh";
+
+    /// <summary>The Refresh split button's menu (R5.20).</summary>
+    internal const string RefreshMenu = "mnuRefresh";
+
+    /// <summary>
+    /// The automatic-refresh toggle (R5.20): one control whose pressed state and label reflect the
+    /// persisted <c>AutoRefreshEnabled</c> setting, and whose action writes it.
+    /// </summary>
+    internal const string ToggleAutoRefresh = "btnToggleAutoRefresh";
+
+    /// <summary>
     /// The CELL lock toggle (owner ruling 2026-11-09): one control for the sheet's cells OUTSIDE the
     /// visible table. The table itself is always editable and is not affected.
     /// </summary>

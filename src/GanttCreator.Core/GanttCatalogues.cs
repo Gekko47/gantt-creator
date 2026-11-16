@@ -58,7 +58,7 @@ public static class GanttCatalogues
 
     /// <summary>
     /// The anchor cell of <see cref="ConfigTableName"/> (ADR-0007 D7).
-    /// A99 rather than the original A90: the catalogue writer writes each
+    /// A100 rather than the original A90: the catalogue writer writes each
     /// table's cell values BEFORE creating the ListObject (so a refused add
     /// leaves clearable cells), and values written directly adjacent to an
     /// existing table are claimed by Excel's table auto-expand before the
@@ -68,11 +68,12 @@ public static class GanttCatalogues
     /// live Initialise began failing (defect 2026-10-09). R5.6a's six
     /// chart-chrome colour settings grew it again, to 25 keys reaching row
     /// 95, so the anchor moved to A98; R5.18h's <c>HiddenColumns</c> key took
-    /// it to 27 keys reaching row 97, so it moved once more to A99. The
-    /// blank-row invariant test ties every anchor to the catalogue sizes, so
-    /// future growth fails there first.
+    /// it to 27 keys reaching row 97, so it moved once more to A99; R5.20's
+    /// <c>AutoRefreshEnabled</c> key took it to 28 keys reaching row 98, so it
+    /// moved again to A100. The blank-row invariant test ties every anchor to
+    /// the catalogue sizes, so future growth fails there first.
     /// </summary>
-    public const string ConfigAnchor = "A99";
+    public const string ConfigAnchor = "A100";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";
@@ -401,6 +402,22 @@ public static class GanttCatalogues
         // as "nothing hidden", which would un-hide the user's columns and look like a
         // fresh workbook. A blank default means nothing is hidden.
         new(GanttColumnVisibility.SettingKey, string.Empty),
+
+        // Schema version 25 (R5.20). `AutoRefreshEnabled` is the user's switch for
+        // the coalesced automatic refresh, persisted with the workbook so the choice
+        // survives opening the file in another instance.
+        //
+        // It is required rather than session state for the reason the column-visibility
+        // key is required: the user switches it off to work without COM churn and would
+        // not expect the next file open to switch it back on. `TRUE` is the default every
+        // release has shipped, so a workbook written before the key existed behaves
+        // exactly as it did (GanttAutoRefresh.Parse treats an absent or unreadable value
+        // as enabled, so a typo cannot silently stop every automatic pass).
+        //
+        // The switch never relaxes the render contract: an explicit Refresh is still a
+        // full validation and repair pass, and an enabled automatic pass still reads and
+        // validates the complete table before mutating a shape (ADR-0050 D6).
+        new(GanttAutoRefresh.SettingKey, GanttAutoRefresh.EnabledValue),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

@@ -79,6 +79,19 @@ internal class RibbonStateService
     /// whenever the dropdown changes it.
     /// </summary>
     private HashSet<string> _hiddenColumns = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether the next successful settings read should re-seed the persisted session switches
+    /// (R5.20).
+    /// </summary>
+    /// <remarks>
+    /// True until the first read, and set again on a workbook change, because those are the two
+    /// moments the workbook's own value is authoritative. The settings read also runs on every
+    /// Refresh, and re-seeding there would undo a switch the user had just pressed whose persist
+    /// Excel had refused — the ribbon would silently disagree with the click until the file was
+    /// reopened.
+    /// </remarks>
+    private bool _seedPersistedSwitches = true;
     private RibbonState _state = RibbonState.Initial;
     private IReadOnlyList<SceneWarning> _lastSuccessfulSceneWarnings = [];
     private IReadOnlyList<GanttValidationIssue> _currentValidationIssues = [];
@@ -1551,6 +1564,24 @@ internal class RibbonStateService
     /// display and the Refresh pipeline cannot disagree on what AUTO means.
     /// Never throws.
     /// </summary>
+    /// <summary>
+    /// Adopts the workbook's persisted automatic-refresh switch into the session (R5.20).
+    /// </summary>
+    /// <param name="settings">The settings map the activation read produced.</param>
+    /// <remarks>
+    /// The parse belongs to <see cref="GanttAutoRefresh.Parse"/> so an absent or unreadable row
+    /// means enabled, exactly as it did before the key existed. This runs only on the two occasions
+    /// the workbook is authoritative — first load and a workbook change — because re-seeding on
+    /// every Refresh would undo a switch the user had just pressed whose persist Excel refused.
+    /// </remarks>
+    internal static void SeedPersistedSwitches(IReadOnlyDictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        AutoRefreshPreferences.Shared.ApplyStored(
+            settings.TryGetValue(GanttAutoRefresh.SettingKey, out string? stored) ? stored : null);
+    }
+
     private void LoadPlotSettingsFromWorkbook()
     {
         if (_catalogueReader is null)
@@ -1610,6 +1641,15 @@ internal class RibbonStateService
                 // The same activation read seeds the column dropdown: its ticks are
                 // worksheet state, not a second setting to parse.
                 LoadColumnVisibilityFromWorksheet();
+
+                // R5.20: the persisted automatic-refresh switch rides the same read on the two
+                // occasions the workbook is authoritative (first load, workbook change) and is
+                // left alone on every other Refresh. No second catalogue read is spent on it.
+                if (_seedPersistedSwitches)
+                {
+                    SeedPersistedSwitches(settings);
+                    _seedPersistedSwitches = false;
+                }
             }
         }
         catch
@@ -1997,7 +2037,9 @@ internal class RibbonStateService
         // Owner ruling 2026-11-09: the two toggles replace the shape pair. A toggle is always
         // available on an initialised sheet â€” what varies is the state it reports, not whether it
         // can be pressed. R5.16b adds the active-sheet gate like every other chart command.
-        RibbonControlIds.ToggleChartLock or RibbonControlIds.ToggleCellLock =>
+        RibbonControlIds.ToggleChartLock
+            or RibbonControlIds.ToggleCellLock
+            or RibbonControlIds.ToggleAutoRefresh =>
             _state.HasActiveWorkbook && _state.SheetInitialised && _state.ActiveSheetIsGanttSheet,
         _ => _state.IsEnabled(controlId),
     };
@@ -2318,6 +2360,46 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Gets whether the automatic-refresh toggle is pressed, which is the switch's state (R5.20).
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> while the automatic refresh is enabled.</returns>
+    /// <remarks>
+    /// Pressed means enabled, which is the conventional reading of a toggle and matches the lock
+    /// toggles beside it. The value comes from <see cref="AutoRefreshPreferences"/>, the same object
+    /// <see cref="GanttRefreshScheduler"/> reads, so the button cannot disagree with the pipeline.
+    /// </remarks>
+    internal static bool GetToggleAutoRefreshPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return AutoRefreshPreferences.Shared.AutoRefreshEnabled;
+    }
+
+    /// <summary>
+    /// The wording the automatic-refresh toggle shows for a state (R5.20), the parallel of
+    /// <see cref="ChartLockLabel"/>.
+    /// </summary>
+    /// <param name="enabled">Whether the automatic refresh is enabled.</param>
+    /// <returns>The control's label.</returns>
+    /// <remarks>
+    /// The label states the current state rather than an action, because the pressed state already
+    /// says what is true. A separate function keeps the wording in one place and pins it without a
+    /// host.
+    /// </remarks>
+    internal static string AutoRefreshLabel(bool enabled) => enabled ? "Auto refresh on" : "Auto refresh off";
+
+    /// <summary>
+    /// Gets the automatic-refresh toggle's current label (R5.20).
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The label for the current state.</returns>
+    internal static string GetToggleAutoRefreshLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return AutoRefreshLabel(AutoRefreshPreferences.Shared.AutoRefreshEnabled);
+    }
+
+    /// <summary>
     /// Returns how many items the description-label dropdown offers: the row's
     /// projected positions plus the leading <c>Default</c> item that clears the
     /// cell (R5.5 ruling 5 â€” blank resolves to the style default / Auto
@@ -2361,6 +2443,58 @@ internal class RibbonStateService
                     : RibbonGlyphCatalog.ColumnVisible,
                 16)
             : null;
+
+    /// <summary>
+    /// Applies the automatic-refresh switch from the ribbon: records it, discards any pass already
+    /// inside its debounce window, and persists it to the workbook (R5.20).
+    /// </summary>
+    /// <param name="enabled">The state the toggle has moved to.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The requested state is assigned, never flipped</b>, so a duplicate or re-entrant callback
+    /// cannot invert the user's intent — the same rule the lock toggles follow.
+    /// </para>
+    /// <para>
+    /// <b>Switching off cancels the pending pass.</b> A pass queued before the click would render
+    /// after it, which is exactly the surprise the switch exists to remove; cancelling also clears
+    /// the sticky command flag, so the first edit after switching back on is not swallowed as a
+    /// command's own write. Switching on schedules nothing: the next chart-affecting edit or an
+    /// explicit Refresh reconciles, so the switch itself costs no pass.
+    /// </para>
+    /// <para>
+    /// <b>Persisted last.</b> The runtime switch is applied before the write, because the click must
+    /// take effect even when the workbook cannot record it; a refused write is reported and the
+    /// choice simply does not survive reopening. The write is the single
+    /// <see cref="GanttAutoRefresh.SettingKey"/> row, so no other setting is touched.
+    /// </para>
+    /// </remarks>
+    internal void SetAutoRefresh(bool enabled)
+    {
+        AutoRefreshPreferences.Shared.AutoRefreshEnabled = enabled;
+
+        if (!enabled)
+        {
+            _refreshScheduler?.CancelPendingRefresh();
+        }
+
+        Dictionary<string, string> values = new(StringComparer.Ordinal)
+        {
+            [GanttAutoRefresh.SettingKey] = GanttAutoRefresh.Format(enabled),
+        };
+        ConfigWriteOutcome? write = _catalogueWriter?.WriteSettings(values);
+        if (write is not null && !write.Succeeded)
+        {
+            PresentWarning($"Failed to persist the automatic refresh setting: {write.Refusal}");
+        }
+
+        InvalidateControl(RibbonControlIds.ToggleAutoRefresh);
+
+        // The settings write moves Excel's selection, which activates the contextual Table Design
+        // tab and leaves the user looking at it (reported from the host 2026-11-16). Every refresh
+        // already restores the add-in tab for exactly this reason (ADR-0058, owner ruling D-4), so
+        // the toggle does the same. It is a no-op unless the surface is Ready on the Gantt sheet.
+        ActivateGanttTab();
+    }
 
     /// <summary>
     /// Flips one column's visibility from the dropdown: parsed through the Core
@@ -3766,6 +3900,10 @@ internal class RibbonStateService
         _refreshScheduler?.CancelPendingRefresh();
         RefreshSheetCommand.ResetDeltaCache();
 
+        // R5.20: the switch belongs to the workbook, so the next settings read adopts this
+        // workbook's stored value before the refresh below runs.
+        _seedPersistedSwitches = true;
+
         // ADR-0055: the workbook the user has switched to may be protected from an earlier session,
         // whose UserInterfaceOnly did not survive the reopen. Forgetting the arming makes the next
         // refresh release and re-apply the protection on the sheet it actually has.
@@ -3865,6 +4003,7 @@ internal class RibbonStateService
         _errorPresenter = CommandErrorDialog.Show;
         _warningPresenter = RibbonStatusBar.Warn;
         _commandBoundary = CommandBoundary.Instance;
+        AutoRefreshPreferences.Shared.AutoRefreshEnabled = true;
 
         _state = RibbonState.Initial;
         _lastSuccessfulSceneWarnings = [];

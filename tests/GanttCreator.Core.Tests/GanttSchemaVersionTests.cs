@@ -82,7 +82,11 @@ public class GanttSchemaVersionTests
         // visibility choice survives reopening the workbook. A blank value means
         // nothing is hidden; a value that does not parse is refused, never
         // defaulted. No migration (ADR-0029 D6); Initialise is the remedy.
-        Assert.Equal(24, GanttSchemaVersion.CurrentSchemaVersion);
+        // 25 adds `AutoRefreshEnabled` to tblGanttSettings so the R5.20 switch
+        // survives reopening the workbook. It is read fail-open (absent or
+        // unreadable means enabled), and the config table's anchor moves from
+        // A99 to A100 to keep the blank row between the tables.
+        Assert.Equal(25, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

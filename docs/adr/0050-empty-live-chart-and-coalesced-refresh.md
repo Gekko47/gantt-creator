@@ -65,3 +65,30 @@ request allows empty events and no row can be drawn. The two blocked-refresh fac
 warning and zero row-owned shapes; the other seeds one owned shape and asserts the refusal and zero
 mutations. The single `ListOwned` read on the refusal path is the decision itself, and the test says
 so. `SceneBuilderTests.An_empty_live_chart_carries_the_reason_it_is_empty` pins the scene half.
+
+## Amendment 2026-11-16 — D6: the automatic refresh is switchable, and the switch is persisted
+
+**Ruling.** The owner asked for a control that turns the coalesced automatic refresh off, leaving
+the explicit **Refresh chart** command as the only rebuild, and that remembers the choice in the
+file. D3's "chart-affecting edits … use one debounced scheduler" therefore becomes conditional on
+the user's switch.
+
+**Decision.**
+
+- One persisted key, `tblGanttSettings.AutoRefreshEnabled` (schema version 25), written by exactly
+  one command and re-read when a workbook is activated or switched. Parsing is fail-open: absent or
+  unreadable means enabled, which is the behaviour every earlier release had.
+- The switch suspends **edit- and command-driven** passes only, in the scheduler's three existing
+  check sites, with `CancelPendingRefresh` discarding a pass already inside its window. It does not
+  touch the explicit Refresh, which remains the full validation and repair pass D4 requires, and it
+  does not touch the activation and workbook-switch reconciliation ADR-0058 depends on.
+- Switching the automatic refresh back on schedules no pass. The next chart-affecting edit or an
+  explicit Refresh reconciles, so the control itself adds no render.
+- The surface is a `toggleButton` inside the Refresh split button's menu — the switch belongs to
+  the action it governs — with its pressed state and label stating the setting.
+
+**Consequences.** With the switch off, engine-derived `Duration`, row heights, outline levels,
+hidden columns, protection re-arm and error fills are reconciled only by a pass, and the Warnings
+list keeps the last render's findings; R5.20 records this and the control's supertip states it. A
+version-24 workbook reports a catalogue-hash mismatch and is repaired by Initialise (ADR-0029 D6,
+no migration).

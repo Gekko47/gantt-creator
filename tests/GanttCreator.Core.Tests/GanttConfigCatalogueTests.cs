@@ -357,13 +357,14 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_27_approved_keys()
+    public void Settings_contains_exactly_the_28_approved_keys()
     {
         // R5.6a added the six chart-chrome colour keys (schema version 20),
         // taking 19 to 25. ADR-0055 added ProtectGanttSheet (schema version
         // 22), taking 25 to 26. R5.18h added HiddenColumns (schema version 24),
-        // taking 26 to 27.
-        Assert.Equal(27, GanttCatalogues.Settings.Count);
+        // taking 26 to 27. R5.20 added AutoRefreshEnabled (schema version 25),
+        // taking 27 to 28.
+        Assert.Equal(28, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -399,6 +400,7 @@ public class GanttConfigCatalogueTests
         "PeriodHeaderColour",
         "ProtectGanttSheet",
         "HiddenColumns",
+        "AutoRefreshEnabled",
     ];
 
     [Fact]
@@ -944,6 +946,16 @@ public class GanttConfigCatalogueTests
     /// Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// <para>
+    /// <b>Advanced to 25 by R5.20</b>: <c>tblGanttSettings</c> gains the
+    /// <c>AutoRefreshEnabled</c> key (<c>TRUE</c> by default, so every workbook
+    /// keeps the behaviour it had) and the schema seed line moves from 24 to 25,
+    /// so both halves of the hashed text change. The config table's anchor moves
+    /// from A99 to A100 to keep the required blank row between the two tables,
+    /// which the anchor invariant test enforces but the hash does not cover. A
+    /// version-24 workbook reports <c>CatalogueHashMismatch</c>; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
     /// <b>Advanced to 24 by R5.18h</b>: <c>tblGanttSettings</c> gains the
     /// <c>HiddenColumns</c> key (blank by default, meaning nothing is hidden)
     /// and the schema seed line moves from 23 to 24, so both halves of the
@@ -968,7 +980,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "829c78fe342538a24f5cc3481404c756cda4b48a09e4b11230b43d7a6a3dd8aa";
+        "272526c2aec99d435e3b33a21bf229ea3f7d65d393874c5d43b862abfe8dd2f0";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

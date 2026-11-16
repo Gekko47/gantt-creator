@@ -80,7 +80,13 @@ internal sealed class GanttRefreshScheduler : IDisposable
     private volatile bool _commandRefreshPending;
 
     internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
-        : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel, ProtectionPreferences.Shared)
+        : this(
+            adapter,
+            analyzer,
+            QueueMacro,
+            RefreshSheetCommand.RunSilentForExcel,
+            ProtectionPreferences.Shared,
+            AutoRefreshPreferences.Shared)
     {
     }
 
@@ -89,13 +95,15 @@ internal sealed class GanttRefreshScheduler : IDisposable
         ISheetChangeAnalyzer analyzer,
         Action<ExcelDna.Integration.ExcelAction> queueAsMacro,
         Action refresh,
-        IProtectionPreferenceSource? preferences = null)
+        IProtectionPreferenceSource? preferences = null,
+        IAutoRefreshPreferenceSource? autoRefresh = null)
     {
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
         _queueAsMacro = queueAsMacro ?? throw new ArgumentNullException(nameof(queueAsMacro));
         _refresh = refresh ?? throw new ArgumentNullException(nameof(refresh));
         _preferences = preferences;
+        _autoRefresh = autoRefresh;
     }
 
     /// <summary>
@@ -111,8 +119,37 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// </remarks>
     private readonly IProtectionPreferenceSource? _preferences;
 
+    /// <summary>
+    /// The user's persisted automatic-refresh switch, or <see langword="null"/> when nothing tracks
+    /// it (R5.20). Null means enabled, so every existing test and every caller that does not care
+    /// about the switch keeps the behaviour it had.
+    /// </summary>
+    private readonly IAutoRefreshPreferenceSource? _autoRefresh;
+
     /// <summary>Gets whether automatic refresh is suspended by an unlocked chart.</summary>
     private bool IsSuspendedByUnlock => _preferences?.ChartLocked == false;
+
+    /// <summary>
+    /// Gets whether an automatic pass may be scheduled at all.
+    /// </summary>
+    /// <remarks>
+    /// Two independent reasons suspend it, and they compose: an unlocked chart is a manual edit in
+    /// progress, and the persisted switch is the user asking for the explicit Refresh to be the only
+    /// rebuild. Either keeps both scheduling paths quiet. An explicit Refresh is never affected by
+    /// this predicate — it does not come through this class.
+    /// </remarks>
+    private bool IsSuspended => IsSuspendedByUnlock || _autoRefresh?.AutoRefreshEnabled == false;
+
+    /// <summary>
+    /// Returns the switch this scheduler reads, for test verification only.
+    /// </summary>
+    /// <remarks>
+    /// The production constructor must hand the process-wide
+    /// <see cref="AutoRefreshPreferences.Shared"/> to the pipeline, or the ribbon's toggle writes
+    /// a value nothing consults and every test still passes. That wiring fact is asserted through
+    /// this accessor rather than by scheduling a real pass into Excel.
+    /// </remarks>
+    internal IAutoRefreshPreferenceSource? GetAutoRefreshSource() => _autoRefresh;
 
     private static void QueueMacro(ExcelDna.Integration.ExcelAction macro) =>
         ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(macro);
@@ -148,7 +185,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
 
     internal void ScheduleCommandRefresh()
     {
-        if (_disposed || IsSuspendedByUnlock)
+        if (_disposed || IsSuspended)
         {
             return;
         }
@@ -176,9 +213,10 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// <param name="changedAddress">The Excel-style address of the changed range.</param>
     private void OnSheetChanged(string? changedAddress)
     {
-        if (IsSuspendedByUnlock)
+        if (IsSuspended)
         {
-            // The chart is unlocked for manual editing; any rebuild now would undo the edit.
+            // Either the chart is unlocked for manual editing — any rebuild now would undo the
+            // edit — or the user has switched the automatic refresh off. Neither queues a pass.
             return;
         }
 
@@ -228,9 +266,9 @@ internal sealed class GanttRefreshScheduler : IDisposable
             return;
         }
 
-        // Re-check at the last moment: the chart can be unlocked between the debounce and this
-        // callback.
-        if (IsSuspendedByUnlock)
+        // Re-check at the last moment: the chart can be unlocked, or the switch turned off,
+        // between the debounce and this callback.
+        if (IsSuspended)
         {
             return;
         }

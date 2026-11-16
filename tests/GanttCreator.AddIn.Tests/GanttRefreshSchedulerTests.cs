@@ -230,6 +230,113 @@ public sealed class GanttRefreshSchedulerTests
             "Unlocking the cells suspended the automatic refresh; it must not.");
     }
 
+    /// <summary>
+    /// R5.20: the persisted switch suspends both scheduling paths, and turning it back on
+    /// re-enables them. Mirrors the chart-unlock fact beside it, with the same positive control
+    /// first so the negative assertion cannot pass on a harness that never queues anything.
+    /// </summary>
+    [Fact]
+    public void An_off_switch_suspends_both_scheduling_paths()
+    {
+        var autoRefresh = new AutoRefreshPreferences();
+        int queued = 0;
+        Mock<IExcelApplicationAdapter> adapter = new();
+        Action<string?>? onChanged = null;
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            _ => Interlocked.Increment(ref queued),
+            () => { },
+            preferences: null,
+            autoRefresh);
+        scheduler.Activate();
+
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) == 1, TimeSpan.FromSeconds(5)),
+            "With the switch on, a command did not schedule a refresh.");
+
+        autoRefresh.AutoRefreshEnabled = false;
+        int before = Volatile.Read(ref queued);
+        scheduler.ScheduleCommandRefresh();
+        onChanged!("\"book|Sheet\"!D5");
+
+        // A negative assertion needs a bound: 400 ms is longer than any timer could hide behind.
+        Assert.False(
+            SpinWait.SpinUntil(
+                () => Volatile.Read(ref queued) > before,
+                TimeSpan.FromMilliseconds(400)),
+            "The scheduler queued a refresh while the switch was off.");
+
+        autoRefresh.AutoRefreshEnabled = true;
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > before, TimeSpan.FromSeconds(5)),
+            "Turning the switch back on did not re-enable scheduling.");
+    }
+
+    /// <summary>
+    /// R5.20: the two suspensions compose. An off switch keeps scheduling quiet even when the
+    /// chart is locked, and unlocking the chart does not resurrect it.
+    /// </summary>
+    [Fact]
+    public void The_switch_and_the_chart_lock_compose_independently()
+    {
+        var preferences = new ProtectionPreferences();
+        var autoRefresh = new AutoRefreshPreferences { AutoRefreshEnabled = false };
+        int queued = 0;
+        using GanttRefreshScheduler scheduler = new(
+            Mock.Of<IExcelApplicationAdapter>(),
+            Mock.Of<ISheetChangeAnalyzer>(),
+            _ => Interlocked.Increment(ref queued),
+            () => { },
+            preferences,
+            autoRefresh);
+
+        scheduler.ScheduleCommandRefresh();
+        Assert.False(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > 0, TimeSpan.FromMilliseconds(400)),
+            "An off switch queued a refresh with the chart locked.");
+
+        preferences.ChartLocked = false;
+        scheduler.ScheduleCommandRefresh();
+        Assert.Equal(0, Volatile.Read(ref queued));
+
+        autoRefresh.AutoRefreshEnabled = true;
+        scheduler.ScheduleCommandRefresh();
+        Assert.False(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > 0, TimeSpan.FromMilliseconds(400)),
+            "An unlocked chart scheduled a refresh once the switch was on; the lock must still suspend.");
+
+        preferences.ChartLocked = true;
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > 0, TimeSpan.FromSeconds(5)),
+            "Both suspensions lifted and the command still did not schedule.");
+    }
+
+    /// <summary>
+    /// R5.20: the production constructor must hand the process-wide switch to the pipeline, or the
+    /// ribbon's toggle writes a value the scheduler never reads and every other test still passes.
+    /// </summary>
+    [Fact]
+    public void The_production_constructor_tracks_the_shared_switch()
+    {
+        using GanttRefreshScheduler scheduler = new(
+            Mock.Of<IExcelApplicationAdapter>(),
+            Mock.Of<ISheetChangeAnalyzer>());
+
+        // Identity only: the singleton's VALUE is session state other test classes mutate, so
+        // asserting it here would make this fact depend on collection ordering.
+        Assert.Same(AutoRefreshPreferences.Shared, scheduler.GetAutoRefreshSource());
+    }
+
     private static GanttRefreshScheduler CreateScheduler(Action<ExcelAction> queue, Action refresh) =>
         new(
             Mock.Of<IExcelApplicationAdapter>(),

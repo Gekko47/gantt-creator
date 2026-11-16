@@ -187,8 +187,20 @@
         <group id="grpSheet" label="Sheet" getVisible="GetVisible">
           <!-- R5.18e (owner ruling 2026-11-13): Refresh is the group's primary action, so
                it is large and the three secondary controls stack beside it in one
-               vertical box, in the order the owner asked for: warnings, cells, chart. -->
-          <button id="btnRefreshSheet" label="Refresh chart" size="large" getImage="GetGlyph" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
+               vertical box, in the order the owner asked for: warnings, cells, chart.
+               R5.20: the primary is the button of a splitButton so the automatic-refresh
+               switch can live in its menu - the switch belongs to the action it governs,
+               and `size` belongs on the splitButton, never on its child button. -->
+          <splitButton id="spbRefresh" size="large" getEnabled="GetEnabled">
+            <button id="btnRefreshSheet" label="Refresh chart" getImage="GetGlyph" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits and ribbon commands also refresh automatically while automatic refresh is switched on in this button's menu." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
+            <menu id="mnuRefresh">
+              <!-- The owner's ruling for R5.20: one toggleButton, the same control family as the
+                   lock cells and lock chart toggles, whose pressed state and label state the
+                   persisted `AutoRefreshEnabled` setting. No picture: a menu row states its own
+                   state through the tick, and the Size menu already ships without pictures. -->
+              <toggleButton id="btnToggleAutoRefresh" getLabel="GetToggleAutoRefreshLabel" keytip="AT" screentip="Switch the automatic refresh on or off" supertip="Pressed means edits and ribbon commands rebuild the chart after a short pause. Unpressed means nothing rebuilds until you press Refresh chart. The choice is saved in this workbook." getEnabled="GetEnabled" getPressed="GetToggleAutoRefreshPressed" onAction="OnToggleAutoRefreshClick"/>
+            </menu>
+          </splitButton>
           <box id="boxSheetStack" boxStyle="vertical">
             <button id="btnWarnings" label="Warnings..." getImage="GetGlyph" keytip="WN" screentip="Open the warnings list" supertip="Lists warnings from the last chart render and the current validation findings. The list is read-only." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
             <!-- ADR-0055: the chart's shapes are locked while the sheet is protected. Unlock acts on

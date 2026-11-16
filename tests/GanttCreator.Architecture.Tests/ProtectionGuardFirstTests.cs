@@ -234,6 +234,11 @@ public sealed class ProtectionGuardFirstTests
         // No COM object, no workbook state, and no guard to consult — it changes nothing until
         // a protect runs.
         "src/GanttCreator.Office/ProtectionPreferences.cs",
+        // R5.20: the automatic-refresh switch, the same shape as the protection pair — one
+        // boolean the ribbon writes and the refresh scheduler reads. It holds no COM proxy and
+        // performs no workbook write itself: persisting the row is delegated to the registered
+        // IConfigCatalogueWriter, which consults the guard, so there is nothing here to guard.
+        "src/GanttCreator.Office/AutoRefreshPreferences.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",

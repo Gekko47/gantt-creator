@@ -306,6 +306,26 @@ public class GanttRibbon : ExcelRibbon
             () => ToggleCellLockCommand.RunForExcel(pressed),
             nameof(OnToggleCellLockClick));
 
+    /// <summary>
+    /// The automatic-refresh toggle (R5.20), which sits inside the Refresh split button's menu: the
+    /// switch belongs to the action it governs.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="pressed">
+    /// The state the toggle has moved to. RibbonX supplies it for a <c>toggleButton</c>; the handler
+    /// must declare it or Excel reports "Callback signature mismatch" and refuses to run it.
+    /// </param>
+    /// <remarks>
+    /// The state service owns the write, the pending-pass cancellation and the invalidation, exactly
+    /// as it does for the column-visibility rows, so this handler stays a boundary call with the
+    /// requested state — never a flip of a flag Excel has already changed.
+    /// </remarks>
+    public void OnToggleAutoRefreshClick(IRibbonControl control, bool pressed) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnToggleAutoRefreshClick)),
+            () => RibbonStateService.Instance.SetAutoRefresh(pressed),
+            nameof(OnToggleAutoRefreshClick));
+
     /// <summary>Opens the read-only warnings list for the last successful render.</summary>
     public void OnWarningsClick(IRibbonControl control) =>
         CommandBoundary.Instance.Run(
@@ -749,6 +769,15 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService.GetToggleCellLockPressed(control);
 
     /// <summary>
+    /// Reports whether the automatic-refresh toggle is pressed (R5.20): <see langword="true"/>
+    /// while an edit or command may schedule the coalesced pass.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> while the persisted switch is on.</returns>
+    public bool GetToggleAutoRefreshPressed(IRibbonControl control) =>
+        RibbonStateService.GetToggleAutoRefreshPressed(control);
+
+    /// <summary>
     /// Reports the CHART lock toggle's label for its current state (R5.18f, owner ruling
     /// 2026-11-13): "Chart locked" while pressed, "Chart unlocked" while not.
     /// </summary>
@@ -770,6 +799,16 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>The label for the current state.</returns>
     public string GetToggleCellLockLabel(IRibbonControl control) =>
         RibbonStateService.GetToggleCellLockLabel(control);
+
+    /// <summary>
+    /// Reports the automatic-refresh toggle's label for its current state (R5.20), the parallel of
+    /// <see cref="GetToggleChartLockLabel"/>: "Auto refresh on" while pressed, "Auto refresh off"
+    /// while not.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label for the current state.</returns>
+    public string GetToggleAutoRefreshLabel(IRibbonControl control) =>
+        RibbonStateService.GetToggleAutoRefreshLabel(control);
 
     /// <summary>
     /// Reports the CHART lock toggle's picture for its current state (D1, D7).

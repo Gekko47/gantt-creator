@@ -153,6 +153,9 @@ public class GanttRibbonTests
         // R5.18e (owner ruling 2026-11-13): Refresh is the group's primary action, so it
         // is large and the three secondary controls stack beside it in one vertical box,
         // in the owner's order: warnings, cells, chart.
+        // R5.20 (owner ruling 2026-11-16): the primary is now a splitButton so the automatic
+        // refresh switch lives in its menu, and `size="large"` belongs on the splitButton —
+        // every other split button in this document puts it there and nowhere else.
         XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = doc.Root!.Name.Namespace;
         XElement group = Assert.Single(
@@ -162,9 +165,19 @@ public class GanttRibbonTests
         XElement[] children = [.. group.Elements()];
         Assert.Equal(2, children.Length);
 
-        XElement refresh = children[0];
+        XElement split = children[0];
+        Assert.Equal("splitButton", split.Name.LocalName);
+        Assert.Equal(RibbonControlIds.RefreshSplit, (string?)split.Attribute("id"));
+        Assert.Equal("large", (string?)split.Attribute("size"));
+
+        XElement refresh = Assert.Single(split.Elements(ns + "button"));
         Assert.Equal(RibbonControlIds.RefreshSheet, (string?)refresh.Attribute("id"));
-        Assert.Equal("large", (string?)refresh.Attribute("size"));
+        Assert.Null(refresh.Attribute("size"));
+
+        XElement menu = Assert.Single(split.Elements(ns + "menu"));
+        Assert.Equal(RibbonControlIds.RefreshMenu, (string?)menu.Attribute("id"));
+        XElement toggle = Assert.Single(menu.Elements(ns + "toggleButton"));
+        Assert.Equal(RibbonControlIds.ToggleAutoRefresh, (string?)toggle.Attribute("id"));
 
         XElement stack = children[1];
         Assert.Equal("box", stack.Name.LocalName);
@@ -189,6 +202,10 @@ public class GanttRibbonTests
         {
             (RibbonControlIds.ToggleCellLock, nameof(GanttRibbon.GetToggleCellLockLabel)),
             (RibbonControlIds.ToggleChartLock, nameof(GanttRibbon.GetToggleChartLockLabel)),
+            // R5.20: the automatic-refresh toggle follows the same rule. Its state is a
+            // persisted setting rather than a protection flag, and the wording is owned by
+            // RibbonStateService.AutoRefreshLabel so the three toggles read alike.
+            (RibbonControlIds.ToggleAutoRefresh, nameof(GanttRibbon.GetToggleAutoRefreshLabel)),
         })
         {
             XElement toggle = Assert.Single(
@@ -608,6 +625,12 @@ public class GanttRibbonTests
                 // because its state is what the user came to change. R5.18e stacks them with the
                 // Warnings button in the Sheet group's vertical box, cells before chart, so the
                 // document order follows the owner's requested stack.
+                // R5.20 adds the automatic-refresh toggle inside the Refresh split button's menu.
+                // It is a toggleButton like the lock pair, so the query picks it up, and it is
+                // gated on the same facts for the same reason: an off switch must stay pressable
+                // or the user could never turn it back on. It appears first because the Sheet
+                // group precedes the Diagnostics group in document order.
+                RibbonControlIds.ToggleAutoRefresh,
                 RibbonControlIds.ToggleCellLock,
                 RibbonControlIds.ToggleChartLock,
                 // R5.5: the description-label dropdown is the first

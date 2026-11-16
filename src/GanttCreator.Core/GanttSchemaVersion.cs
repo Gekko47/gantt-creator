@@ -200,6 +200,21 @@ public static class GanttSchemaVersion
     /// is Initialise.
     /// </para>
     /// <para>
+    /// <b>Version 25 is R5.20's persisted automatic-refresh switch.</b>
+    /// <c>tblGanttSettings</c> gains <c>AutoRefreshEnabled</c>, which records whether a
+    /// chart-affecting table edit or a successful chart-setting command may rebuild the
+    /// chart automatically. The key is required rather than session state because the
+    /// user switches the automatic refresh off to work without COM churn, and a reopening
+    /// that switched it back on would silently resume the passes they turned off. The
+    /// stored value is read fail-open: absent or unreadable means enabled, which is the
+    /// behaviour every earlier release had. The extra row moves the settings table's extent
+    /// from row 97 to row 98, so the config table's anchor moves from A99 to A100 to keep
+    /// the blank row Excel's table auto-expand requires. No table column, order or
+    /// entity-style value changes. A version-24 workbook's settings table lacks the row, so
+    /// its stored catalogue hash no longer matches and it reports a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
     /// <b>Version 24 is R5.18h's persisted column visibility.</b>
     /// <c>tblGanttSettings</c> gains <c>HiddenColumns</c>, which stores the schema display
     /// names of the table columns the user hid from the ribbon's column dropdown. The key
@@ -236,5 +251,5 @@ public static class GanttSchemaVersion
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 24;
+    public const int CurrentSchemaVersion = 25;
 }
