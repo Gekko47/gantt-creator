@@ -408,9 +408,96 @@ public sealed class ExcelRowWarningHighlighterTests
         ]);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(5, outcome.NotesWritten);
+
+        // 4 (whole-row fill) + 4 (the cell row's adoption clear) + 1 (the cell fill).
+        Assert.Equal(9, outcome.NotesWritten);
         Assert.Equal([_pastelRed], harness.RowColours(1));
+        Assert.Equal([_cleared], harness.RowColours(3));
         Assert.Equal([_pastelAmber], harness.CellColours(3, 2));
+    }
+
+    /// <summary>
+    /// A row whose cell findings are new is cleared before its cells are painted.
+    /// </summary>
+    /// <remarks>
+    /// This is the repair for the reported milestone: a new row inherits the previous row's
+    /// pastel fill, and a fill this add-in never wrote is absent from the tracker, so an
+    /// address-only diff could never clear it. The row clear is what makes the sheet the
+    /// authority for a row whose findings changed.
+    /// </remarks>
+    [Fact]
+    public void Reconcile_adopts_a_cell_row_by_clearing_it_before_painting()
+    {
+        Harness harness = new();
+
+        _ = harness.Highlighter.ReconcileHighlights(
+            [new HighlightTarget(2, 3, GanttValidationSeverity.Error)]);
+
+        Assert.Equal([_cleared], harness.RowColours(2));
+        Assert.Equal([_pastelRed], harness.CellColours(2, 3));
+    }
+
+    /// <summary>
+    /// A cell whose finding changes severity is repainted at the new colour.
+    /// </summary>
+    /// <remarks>
+    /// The tracker used to hold addresses only, so an address present in both the previous
+    /// and the current target list was "unchanged" and skipped — the amber fill of a
+    /// warning stayed amber after the finding became an error.
+    /// </remarks>
+    [Fact]
+    public void Reconcile_recolours_a_cell_whose_severity_changed()
+    {
+        Harness harness = new();
+        _ = harness.Highlighter.ReconcileHighlights(
+            [new HighlightTarget(2, 3, GanttValidationSeverity.Warning)]);
+
+        GanttValidationReportOutcome outcome = harness.Highlighter.ReconcileHighlights(
+            [new HighlightTarget(2, 3, GanttValidationSeverity.Error)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal([_pastelAmber, _pastelRed], harness.CellColours(2, 3));
+    }
+
+    /// <summary>
+    /// One cell carrying both an error and a warning takes the error colour, in either order.
+    /// </summary>
+    /// <remarks>
+    /// Two issues can name the same cell — a <c>Finish</c> cell on a Start-only type is both
+    /// "not used by this Type" and, if unreadable, "unsupported value". The previous code
+    /// painted whichever target the list yielded first, which is colour by argument order.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Reconcile_paints_the_worst_severity_when_two_targets_share_a_cell(bool errorFirst)
+    {
+        Harness harness = new();
+        HighlightTarget error = new(2, 3, GanttValidationSeverity.Error);
+        HighlightTarget warning = new(2, 3, GanttValidationSeverity.Warning);
+
+        _ = harness.Highlighter.ReconcileHighlights(errorFirst ? [error, warning] : [warning, error]);
+
+        Assert.Equal([_pastelRed], harness.CellColours(2, 3));
+    }
+
+    /// <summary>
+    /// A cell row whose recorded findings already match costs no COM write at all.
+    /// </summary>
+    [Fact]
+    public void Reconcile_costs_nothing_when_a_cell_rows_findings_are_unchanged()
+    {
+        Harness harness = new();
+        _ = harness.Highlighter.ReconcileHighlights(
+            [new HighlightTarget(2, 3, GanttValidationSeverity.Warning)]);
+
+        GanttValidationReportOutcome second = harness.Highlighter.ReconcileHighlights(
+            [new HighlightTarget(2, 3, GanttValidationSeverity.Warning)]);
+
+        Assert.True(second.Succeeded);
+        Assert.Equal(0, second.NotesWritten);
+        Assert.Equal([_cleared], harness.RowColours(2));
+        Assert.Equal([_pastelAmber], harness.CellColours(2, 3));
     }
 
     [Fact]
@@ -521,12 +608,13 @@ public sealed class ExcelRowWarningHighlighterTests
         GanttValidationReportOutcome outcome = harness.Highlighter.ReconcileHighlights(
             [new HighlightTarget(2, 3, GanttValidationSeverity.Warning)]);
 
-        // Already tracked, so nothing is written - and crucially no whole-row
-        // clear or fill happens on row 2. Reading the column from the wrong field
-        // used to turn this into a four-cell row write.
+        // The persisted form carries the address but not the severity, so the colour is
+        // unverified and the first reconcile after a reopen re-asserts it once: 4 (the
+        // adoption clear) + 1 (the cell). What must NOT happen is a row FILL - reading the
+        // column from the wrong field once turned this into a four-cell row write.
         Assert.True(outcome.Succeeded);
-        Assert.Equal(0, outcome.NotesWritten);
-        Assert.Empty(harness.RowColours(2));
+        Assert.Equal(5, outcome.NotesWritten);
+        Assert.Equal([_cleared], harness.RowColours(2));
     }
 
     [Fact]

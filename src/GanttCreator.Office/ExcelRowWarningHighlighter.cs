@@ -90,12 +90,27 @@ public class ExcelRowWarningHighlighter(
     private const string _highlightsPropertyName = "GanttCreator.RowHighlights";
 
     /// <summary>
-    /// Every address previously highlighted by this instance, as
-    /// <c>(Row, Column)</c> where <c>Column</c> is <see langword="null"/>
-    /// for a whole-row fill. Used by <see cref="ReconcileHighlights"/> to
-    /// compute the minimal diff against the current targets.
+    /// Every address this instance has filled, as <c>(Row, Column)</c> — <c>Column</c> is
+    /// <see langword="null"/> for a whole-row fill — with the severity it was painted at.
+    /// Used by <see cref="ReconcileHighlights"/> to compute the minimal diff.
     /// </summary>
-    private readonly HashSet<(int Row, int? Column)> _previousHighlights = [];
+    /// <remarks>
+    /// <para>
+    /// <b>The severity is part of the record (measured 2026-11-16).</b> This used to be an
+    /// address-only set, so an address present in both the previous and the current target
+    /// list read as "unchanged" and was skipped. A cell whose finding changed from
+    /// <see cref="GanttValidationSeverity.Warning"/> to
+    /// <see cref="GanttValidationSeverity.Error"/> therefore kept its amber fill for the
+    /// life of the workbook: the one thing the reconcile maintains is the colour, and the
+    /// colour was the one thing it never compared.
+    /// </para>
+    /// <para>
+    /// <see langword="null"/> means "recorded by a build that did not store severities"
+    /// (a workbook reopened after an upgrade). The address is known and its colour is not,
+    /// so the next reconcile re-asserts that one cell once instead of trusting it.
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<(int Row, int? Column), GanttValidationSeverity?> _previousHighlights = [];
 
     /// <summary>Set once <see cref="LoadHighlights"/> has run for the current workbook.</summary>
     private bool _highlightsLoaded;
@@ -128,7 +143,7 @@ public class ExcelRowWarningHighlighter(
         int color = ResolveOleColor(severity);
         (int Row, int? Column) addressKey = (rowNumber, null);
 
-#pragma warning disable IDE0045 // If/else can't be simplified: Remove vs Add are different methods
+#pragma warning disable IDE0045 // If/else can't be simplified: Remove and assignment are different operations
 #pragma warning disable IDE0011 // Braces required by project style
         if (color == (int)XlColorIndex.xlColorIndexNone)
         {
@@ -136,7 +151,7 @@ public class ExcelRowWarningHighlighter(
         }
         else
         {
-            _ = _previousHighlights.Add(addressKey);
+            _previousHighlights[addressKey] = severity;
         }
 #pragma warning restore IDE0011
 #pragma warning restore IDE0045
@@ -178,7 +193,14 @@ public class ExcelRowWarningHighlighter(
         int color = ResolveOleColor(severity);
         (int rowNumber, int column) addressKey = (rowNumber, column);
 
-        _ = color == (int)XlColorIndex.xlColorIndexNone ? _previousHighlights.Remove(addressKey) : _previousHighlights.Add(addressKey);
+        if (color == (int)XlColorIndex.xlColorIndexNone)
+        {
+            _ = _previousHighlights.Remove(addressKey);
+        }
+        else
+        {
+            _previousHighlights[addressKey] = severity;
+        }
 
         Excel.Range? cell = GetCellRange(setup.Body, rowNumber, column);
         if (cell is null)
@@ -228,7 +250,12 @@ public class ExcelRowWarningHighlighter(
         }
         else
         {
-            _ = _previousHighlights.RemoveWhere(addr => addr.Row == rowNumber);
+            foreach ((int Row, int? Column) address in _previousHighlights.Keys
+                         .Where(entry => entry.Row == rowNumber)
+                         .ToArray())
+            {
+                _ = _previousHighlights.Remove(address);
+            }
 
             if (setup.Body is not null && rowNumber >= 1 && rowNumber <= setup.Body.Rows.Count)
             {
@@ -280,15 +307,15 @@ public class ExcelRowWarningHighlighter(
             ? new(rowsToReconcile)
             : null;
 
-        // Build the set of current targets for fast lookup.
-        HashSet<(int Row, int? Column)> currentSet = [];
-        foreach (HighlightTarget target in currentTargets)
-        {
-            _ = currentSet.Add((target.Row, target.Column));
-        }
-
-        // Bounds-check all targets up front; skip anything outside the table body.
-        List<HighlightTarget> validTargets = [];
+        // The desired state, one entry per address. Bounds are checked up front and a
+        // severity with no fill colour is dropped rather than written as "clear".
+        //
+        // WORST SEVERITY WINS. Two issues can name the same cell - a Finish cell on a
+        // Start-only type is both "not used by this Type" (Warning) and, if it holds
+        // something unreadable, "unsupported value" (Error) - and the previous code
+        // painted whichever target the list happened to yield first. Colour by argument
+        // order is not a rule, so Error outranks Warning explicitly.
+        Dictionary<(int Row, int? Column), GanttValidationSeverity> desired = [];
         foreach (HighlightTarget target in currentTargets)
         {
             if (target.Row < 1 || target.Row > setup.Body.Rows.Count)
@@ -300,78 +327,149 @@ public class ExcelRowWarningHighlighter(
             {
                 continue;
             }
-            validTargets.Add(target);
+            if (ResolveOleColor(target.Severity) == (int)XlColorIndex.xlColorIndexNone)
+            {
+                continue;
+            }
+
+            (int Row, int? Column) key = (target.Row, target.Column);
+            if (!desired.TryGetValue(key, out GanttValidationSeverity existing) ||
+                SeverityRank(target.Severity) > SeverityRank(existing))
+            {
+                desired[key] = target.Severity;
+            }
         }
 
         int written = 0;
 
-        // Clear addresses that were highlighted before but are no longer needed.
-        // When a row scope is active, only clear entries whose row is in scope;
-        // entries for unchanged rows are left intact on the sheet and in tracking.
-        foreach ((int row, int? column) in _previousHighlights.ToArray())
+        // 1. Clear addresses that were highlighted before but are no longer wanted. When a
+        // row scope is active, only entries whose row is in scope are touched; entries for
+        // unchanged rows stay on the sheet and in tracking.
+        foreach (KeyValuePair<(int Row, int? Column), GanttValidationSeverity?> entry
+                     in _previousHighlights.ToArray())
         {
-            if (scope is not null && !scope.Contains(row))
+            (int Row, int? Column) address = entry.Key;
+            if (scope is not null && !scope.Contains(address.Row))
             {
                 continue;
             }
-            if (!currentSet.Contains((row, column)))
+            if (desired.ContainsKey(address))
             {
-                if (column is null)
+                continue;
+            }
+
+            if (address.Column is null)
+            {
+                // Whole-row clear: batch write on the row range.
+                if (address.Row >= 1 && address.Row <= setup.Body.Rows.Count)
                 {
-                    // Whole-row clear: batch write on the row range.
-                    if (row >= 1 && row <= setup.Body.Rows.Count)
-                    {
-                        Excel.Range rowRange = GetRowRange(setup.Body, row);
-                        rowRange.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
-                        _ = _previousHighlights.Remove((row, null));
-                        written += setup.Body.Columns.Count;
-                    }
+                    Excel.Range rowRange = GetRowRange(setup.Body, address.Row);
+                    rowRange.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
+                    _ = _previousHighlights.Remove(address);
+                    written += setup.Body.Columns.Count;
                 }
-                else
+            }
+            else if (address.Column >= 1 && address.Column <= setup.Body.Columns.Count)
+            {
+                // Single-cell clear.
+                Excel.Range? cell = GetCellRange(setup.Body, address.Row, address.Column.Value);
+                if (cell is not null)
                 {
-                    // Single-cell clear.
-                    if (row >= 1 && row <= setup.Body.Rows.Count &&
-                        column >= 1 && column <= setup.Body.Columns.Count)
-                    {
-                        Excel.Range? cell = GetCellRange(setup.Body, row, column.Value);
-                        if (cell is not null)
-                        {
-                            cell.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
-                            _ = _previousHighlights.Remove((row, column.Value));
-                            written++;
-                        }
-                    }
+                    cell.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
+                    _ = _previousHighlights.Remove(address);
+                    written++;
                 }
             }
         }
 
-        // Fill addresses that are newly needed (not previously highlighted).
-        foreach (HighlightTarget target in validTargets)
+        // 2. Whole-row targets: painted once, and repainted when the recorded severity
+        // changed (or is unknown, which is what a reopened workbook reports).
+        HashSet<int> rowsCoveredWholly = [];
+        foreach (KeyValuePair<(int Row, int? Column), GanttValidationSeverity> entry in desired)
         {
-            if (!_previousHighlights.Contains((target.Row, target.Column)))
+            if (entry.Key.Column is not null)
             {
-                int color = ResolveOleColor(target.Severity);
-                if (target.Column is null)
+                continue;
+            }
+            if (scope is not null && !scope.Contains(entry.Key.Row))
+            {
+                continue;
+            }
+            if (_previousHighlights.TryGetValue(entry.Key, out GanttValidationSeverity? recorded) &&
+                recorded == entry.Value)
+            {
+                continue;
+            }
+
+            Excel.Range rowRange = GetRowRange(setup.Body, entry.Key.Row);
+            rowRange.Interior.Color = ResolveOleColor(entry.Value);
+            _previousHighlights[entry.Key] = entry.Value;
+            _ = rowsCoveredWholly.Add(entry.Key.Row);
+            written += setup.Body.Columns.Count;
+        }
+
+        // 3. Cell targets. A row whose recorded fills already match this finding set costs
+        // nothing; a row whose findings changed is ADOPTED: one row clear, then its cells.
+        //
+        // Why the row clear matters (measured 2026-11-16). A new table row inherits the
+        // previous row's cell formats - including the pastel diagnostic fill - so a
+        // milestone added under an invalid activity is born pink on Start and Finish. A
+        // fill this add-in never wrote is absent from the tracker, so the old diff could
+        // never clear it: the milestone's Finish stayed pink for the life of the workbook
+        // even though a milestone does not use Finish. Clearing the row makes the SHEET,
+        // not the tracker, the authority for a row whose findings changed.
+        foreach (IGrouping<int, KeyValuePair<(int Row, int? Column), GanttValidationSeverity>> row in desired
+                     .Where(entry => entry.Key.Column is not null)
+                     .GroupBy(entry => entry.Key.Row))
+        {
+            int rowNumber = row.Key;
+            if (scope is not null && !scope.Contains(rowNumber))
+            {
+                continue;
+            }
+            if (rowsCoveredWholly.Contains(rowNumber))
+            {
+                continue;
+            }
+
+            bool converged = true;
+            foreach (KeyValuePair<(int Row, int? Column), GanttValidationSeverity> entry in row)
+            {
+                if (!_previousHighlights.TryGetValue(entry.Key, out GanttValidationSeverity? recorded) ||
+                    recorded != entry.Value)
                 {
-                    // Whole-row fill: batch write on the row range.
-                    Excel.Range rowRange = GetRowRange(setup.Body, target.Row);
-                    rowRange.Interior.Color = color;
-                    _ = _previousHighlights.Add((target.Row, null));
-                    written += setup.Body.Columns.Count;
-                }
-                else
-                {
-                    // Single-cell fill.
-                    Excel.Range? cell = GetCellRange(setup.Body, target.Row, target.Column.Value);
-                    if (cell is not null)
-                    {
-                        cell.Interior.Color = color;
-                        _ = _previousHighlights.Add((target.Row, target.Column.Value));
-                        written++;
-                    }
+                    converged = false;
+                    break;
                 }
             }
-            // Addresses in both sets are skipped — no COM call needed.
+            if (converged)
+            {
+                continue;
+            }
+
+            Excel.Range rowRange = GetRowRange(setup.Body, rowNumber);
+            rowRange.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
+            written += setup.Body.Columns.Count;
+
+            foreach ((int Row, int? Column) tracked in _previousHighlights.Keys
+                         .Where(entry => entry.Row == rowNumber)
+                         .ToArray())
+            {
+                _ = _previousHighlights.Remove(tracked);
+            }
+
+            foreach (KeyValuePair<(int Row, int? Column), GanttValidationSeverity> entry in row)
+            {
+                Excel.Range? cell = GetCellRange(setup.Body, entry.Key.Row, entry.Key.Column!.Value);
+                if (cell is null)
+                {
+                    continue;
+                }
+
+                cell.Interior.Color = ResolveOleColor(entry.Value);
+                _previousHighlights[entry.Key] = entry.Value;
+                written++;
+            }
         }
 
         // Persist the updated tracking set so highlights survive workbook close
@@ -400,6 +498,18 @@ public class ExcelRowWarningHighlighter(
             GanttValidationSeverity.Warning => _olePastelAmber,
             _ => (int)XlColorIndex.xlColorIndexNone,
         };
+
+    /// <summary>
+    /// Orders severities so one address carrying two findings keeps the stronger colour.
+    /// </summary>
+    /// <param name="severity">The severity to rank.</param>
+    /// <returns>2 for <see cref="GanttValidationSeverity.Error"/>, 1 for a warning, 0 otherwise.</returns>
+    private static int SeverityRank(GanttValidationSeverity severity) => severity switch
+    {
+        GanttValidationSeverity.Error => 2,
+        GanttValidationSeverity.Warning => 1,
+        _ => 0,
+    };
 
     /// <summary>Loads previously persisted highlight addresses from a workbook-scoped defined name.</summary>
     private void LoadHighlights(Workbook workbook)
@@ -464,7 +574,10 @@ public class ExcelRowWarningHighlighter(
                 if (parts.Length >= 2 && int.TryParse(parts[0], out int row))
                 {
                     int? column = int.TryParse(parts[1], out int col) ? col : null;
-                    _ = _previousHighlights.Add((row, column));
+                    // Severity is not persisted (the name format is row|column and a third
+                    // field is what once reloaded cell fills as whole-row ones). An unknown
+                    // severity makes the next reconcile re-assert the colour once.
+                    _previousHighlights[(row, column)] = null;
                 }
             }
         }
@@ -485,8 +598,8 @@ public class ExcelRowWarningHighlighter(
 #pragma warning disable CA1031
         try
         {
-            string value = string.Join(";", _previousHighlights.Select(h =>
-                h.Column is { } col ? $"{h.Row}|{col}" : $"{h.Row}|"));
+            string value = string.Join(";", _previousHighlights.Keys.Select(address =>
+                address.Column is { } col ? $"{address.Row}|{col}" : $"{address.Row}|"));
             string refersTo = "=\"" + value + "\"";
 
             Name? name = null;

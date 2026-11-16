@@ -585,9 +585,20 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     /// <para>
     /// <b>Why live.</b> The copy origin is an Excel decision made inside
     /// <c>Rows[n].Insert</c>; no contract test can observe it, because the adapter's
-    /// insert seam is substituted in every behavioural test. This test paints the last
-    /// body row the way the validation report would, appends an activity, and asserts the
-    /// new row's two date cells carry no fill.
+    /// insert seam is substituted in every behavioural test.
+    /// </para>
+    /// <para>
+    /// <b>Why the copy origin alone was not enough (measured 2026-11-16).</b>
+    /// <c>xlFormatFromRightOrBelow</c> stopped the row BELOW the table from being painted,
+    /// which is what the original report described — but the new body row still arrives
+    /// carrying the fill, because <c>ListRows.Add</c> formats it from the last body row. The
+    /// reported symptom is a <b>milestone</b>: a milestone reads <c>Start</c> only, so a
+    /// pastel <c>Finish</c> cell on a milestone is never a finding — it was an inherited fill
+    /// that the report's tracker could not clear, because the tracker only clears addresses it
+    /// wrote. The adapter now clears the new row's fill explicitly
+    /// (<c>ExcelGanttRowInserter.ClearRowFill</c>), and that is what the milestone assertion
+    /// pins. The milestone's <c>Start</c> may legitimately be pink: a milestone with no date
+    /// yet is an error.
     /// </para>
     /// </remarks>
     [Trait("Category", "OfficeIntegration")]
@@ -622,43 +633,37 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 () => FixedId('a'));
             Assert.True(first.Succeeded, $"first insert refused: {first.Refusal}");
 
-            // Paint the last body row exactly as the error report does, so the row above
-            // the next append carries a fill that must not be cloned.
+            // Paint the last body row exactly as the error report does, so the row the
+            // milestone is created in is formatted from a pink row.
             Excel.Range lastRow = table.ListRows[table.ListRows.Count].Range;
-            Excel.Range lastStart = lastRow.Cells[1, ColumnIndex(table, "Start")];
-            Excel.Range lastFinish = lastRow.Cells[1, ColumnIndex(table, "Finish")];
-            lastStart.Interior.Color = pastelRed;
-            lastFinish.Interior.Color = pastelRed;
+            lastRow.Cells[1, ColumnIndex(table, "Start")].Interior.Color = pastelRed;
+            lastRow.Cells[1, ColumnIndex(table, "Finish")].Interior.Color = pastelRed;
 
-            GanttRowInsertOutcome appended = inserter.Insert(
-                GanttEntityType.AsPlannedActivity,
+            GanttRowInsertOutcome milestone = inserter.Insert(
+                GanttEntityType.AsPlannedMilestone,
                 () => FixedId('b'));
-            Assert.True(appended.Succeeded, $"append refused: {appended.Refusal}");
+            Assert.True(milestone.Succeeded, $"milestone insert refused: {milestone.Refusal}");
 
-            // The REPORTED defect: a pastel-red block under the table that grew one row with every
-            // add. The rows below the table are the ones that must be clean, so that is what this
-            // asserts - the inserted worksheet row takes its format from below, not from the painted
-            // activity row above it.
-            //
-            // Deliberately NOT asserting the appended row itself. This harness paints the row above by
-            // hand, which is a stricter setup than the product produces: the add-in only paints rows
-            // that are invalid, and the owner confirmed on 2026-11-09 that adding at the end of the
-            // table no longer produces erroneous fills. Pinning the harness artefact would fail on a
-            // correct product, so the assertion is the reported rule: the rows BELOW the table stay
-            // clean.
+            // The reported defect: a milestone has no use for Finish, so a pastel Finish cell
+            // on a milestone row is never a finding - it is the inherited fill.
+            Excel.Range milestoneRow = table.ListRows[table.ListRows.Count].Range;
+            Excel.Range milestoneFinish = milestoneRow.Cells[1, ColumnIndex(table, "Finish")];
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(milestoneFinish.Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
+
+            // The original half of the report: the rows BELOW the table stay clean.
             int belowTableRow = table.Range.Row + table.Range.Rows.Count;
             Excel.Range belowTable = sheet.Rows[belowTableRow];
-            Excel.Range belowStart = belowTable.Cells[1, ColumnIndex(table, "Start")];
-            Excel.Range belowFinish = belowTable.Cells[1, ColumnIndex(table, "Finish")];
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(belowTable.Cells[1, ColumnIndex(table, "Start")].Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(belowTable.Cells[1, ColumnIndex(table, "Finish")].Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
 
-            Assert.NotEqual(
-                pastelRed,
-                Convert.ToInt32(belowStart.Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
-            Assert.NotEqual(
-                pastelRed,
-                Convert.ToInt32(belowFinish.Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
             _output.WriteLine(
-                "The appended row copied its format from below, so the error fill above was not cloned.");
+                "The milestone's Finish cell is clean, and the rows below the table kept no fill.");
         }
         finally
         {

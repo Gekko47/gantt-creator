@@ -271,6 +271,58 @@ public class ExcelGanttRowInserter(
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
         }
 
+        // A NEW ROW INHERITS THE PREVIOUS ROW'S DIAGNOSTIC FILL.
+        //
+        // Measured on Excel 16.0 (scripts/probe-insert-border-inheritance.ps1, phase B): the
+        // row an Add creates comes out carrying the pastel Start/Finish fill of the row it
+        // was formatted from, even with xlFormatFromRightOrBelow. Clearing the fill here is
+        // what stops that inheritance at the source: the validation report then paints
+        // exactly the findings it reads, and a row that a Type does not date (a milestone's
+        // Finish) is never born pink. Without it the fill is invisible to the highlighter's
+        // tracker - it never wrote it - so nothing could ever clear it.
+        //
+        // One COM call on the new row only, and only after the values are written. A host
+        // refusal is cosmetic and is traced rather than thrown (ADR-0008 D4).
+        try
+        {
+            ClearRowFill(rowRange);
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _trace?.Invoke(
+                "gantt.add.fill-clear refused: the new row may keep the previous row's diagnostic fill. "
+                + ex.Message);
+        }
+
+
+        // The table's EXTENSION is what loses the one rule the validation report paints
+        // over. Measured on Excel 16.0 by scripts/probe-insert-border-inheritance.ps1
+        // (phases B and G): with the report's pastel fill on BOTH cells of a body row, the
+        // next Add leaves that row's shared Start|Finish rule reading xlNone through
+        // Borders AND DisplayFormat, while every other boundary on the same row keeps its
+        // rule - so the pair reads as one continuous fill and the report looks like "the
+        // Start/Finish divider is missing on the rows that were added". Those two cells
+        // are the only adjacent pair the report fills, which is why only that boundary was
+        // ever reported, and why a LineStyle-only assertion on the unfilled table passes.
+        //
+        // The repair is the write Initialise already makes, re-asserted after the insert:
+        // phase G3 reads every boundary back as continuous on every row, and G4 shows the
+        // repair survives the next Add. COLOUR ONLY - the outside weights are untouched by
+        // the defect, and Border.Weight is a closed set this pass must not second-guess.
+        //
+        // A host refusal here is cosmetic and must not fail an insert that already landed:
+        // it is traced, not thrown (ADR-0008 D4).
+        try
+        {
+            EnsureTableBorderColour(table);
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _trace?.Invoke(
+                "gantt.add.border-colour refused: the table's cell-border colour was not re-asserted. "
+                + ex.Message);
+        }
+
         // R5.13: rebuild the native outline from the post-insert table so the
         // -/+ controls reflect the new row's parent immediately, mirroring the
         // parent/child mutator's Finish. A regroup refusal degrades to the
@@ -1078,6 +1130,52 @@ public class ExcelGanttRowInserter(
     /// <param name="heightPt">The height to write, in points.</param>
     internal virtual void SetRowHeight(Excel.Range range, double heightPt) =>
         range.RowHeight = heightPt;
+
+    /// <summary>
+    /// Clears the diagnostic cell fill from a newly created row before the refresh paints it.
+    /// </summary>
+    /// <param name="rowRange">The new row's range, across every table column.</param>
+    /// <remarks>
+    /// A visible cell fill is copied with the row's format, so a new row can arrive already
+    /// carrying the validation report's pastel colour from the row it was formatted from. The
+    /// report's own reconcile can only clear addresses it wrote, so an inherited fill is
+    /// otherwise permanent — reported as a milestone whose <c>Finish</c> cell, a column a
+    /// milestone does not use, staying pink for the life of the workbook.
+    /// </remarks>
+    internal virtual void ClearRowFill(Excel.Range rowRange) =>
+        rowRange.Interior.Color = (int)Excel.XlColorIndex.xlColorIndexNone;
+
+
+    /// <summary>
+    /// Re-asserts the theme's cell-border colour across the whole table after a row insert.
+    /// </summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the same write as Initialise.</b> <c>Borders.Color</c> is already the single
+    /// authority for a cell border's colour (<see cref="GanttTableAppearance.BorderColour"/>),
+    /// and it is what Initialise and Repair apply. Re-asserting it here does not draw a
+    /// different grid — it restores the one the table style supplies after the host drops it.
+    /// </para>
+    /// <para>
+    /// <b>Why after the insert.</b> Measured on Excel 16.0
+    /// (<c>scripts/probe-insert-border-inheritance.ps1</c>): the loss happens when the table is
+    /// <em>extended</em>, and only for the pair of cells the validation report has filled. Both
+    /// facts matter — a fill with no following insert is harmless (phase D), and an insert with
+    /// no fill is harmless (phase A).
+    /// </para>
+    /// <para>
+    /// <b>Not sealed and virtual.</b> The two calls are real COM work on a
+    /// <c>ListObject</c> and a <c>Borders</c> collection, so contract tests substitute the whole
+    /// seam rather than a fake COM graph.
+    /// </para>
+    /// </remarks>
+    internal virtual void EnsureTableBorderColour(Excel.ListObject table)
+    {
+        Excel.Range range = GetTableRange(table);
+        Excel.Borders borders = range.Borders;
+        borders.Color = GanttTableAppearance.BorderColour.ARGB;
+    }
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
 

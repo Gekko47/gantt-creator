@@ -171,9 +171,10 @@ public class GanttRowInserterTests
         Func<Excel.ListObject, Excel.Range?> dataBodyRangeAt,
         ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
         IRowHeightNormalisationPort? rowHeightNormaliser = null,
-        IOutlineGroupPort? outlineGroups = null)
-        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser, outlineGroups)
-    {
+        IOutlineGroupPort? outlineGroups = null,
+        Action<string>? trace = null)
+        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser, outlineGroups, trace)
+{
         private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt = sheetAt;
         private readonly Func<Excel.ListObjects, int, Excel.ListObject> _tableAt = tableAt;
         private readonly Func<Excel.ListColumns, int, Excel.ListColumn> _columnAt = columnAt;
@@ -262,6 +263,60 @@ public class GanttRowInserterTests
         internal override Excel.ListRow GetListRowAt(Excel.ListRows rows, int index) =>
             _listRowAt(rows, index);
 
+        /// <summary>
+        /// How many times the theme's cell-border colour was re-asserted over the table after
+        /// a row was written.
+        /// </summary>
+        /// <remarks>
+        /// The defect this repair answers is host-only — Excel drops the shared Start|Finish
+        /// rule when the table is extended and both cells carry the report's fill — so a
+        /// contract test can assert that the repair is reached and where, never what the host
+        /// paints. The painted half is proven by
+        /// <c>TableGridBorderIntegrationTests.Every_boundary_survives_the_reports_fill_followed_by_an_add</c>
+        /// and by <c>scripts/probe-insert-border-inheritance.ps1</c> phase G3.
+        /// </remarks>
+        public int BorderColourWrites { get; private set; }
+
+        /// <summary>Whether the host refuses the border-colour write, so its guard has a case.</summary>
+        public bool ThrowsOnBorderColour { get; set; }
+
+        /// <summary>
+        /// How many times the new row's cell fill was cleared after the values were written.
+        /// </summary>
+        /// <remarks>
+        /// A visible cell fill is copied with the row's format, so a row added under an
+        /// invalid activity arrives carrying the report's pastel colour. Measured on
+        /// Excel 16.0 (<c>scripts/probe-insert-border-inheritance.ps1</c>, phase B); the live
+        /// half of this assertion is
+        /// <c>AddRowIntegrationTests.An_appended_row_does_not_clone_the_error_fill_of_the_row_above</c>.
+        /// </remarks>
+        public int RowFillClears { get; private set; }
+
+        /// <summary>Whether the host refuses the fill clear, so its guard has a case.</summary>
+        public bool ThrowsOnRowFillClear { get; set; }
+
+        internal override void ClearRowFill(Excel.Range rowRange)
+        {
+            if (ThrowsOnRowFillClear)
+            {
+                throw RefusedComException();
+            }
+
+            RowFillClears++;
+            _callOrder.Add("ClearRowFill");
+        }
+
+        internal override void EnsureTableBorderColour(Excel.ListObject table)
+        {
+            if (ThrowsOnBorderColour)
+            {
+                throw RefusedComException();
+            }
+
+            BorderColourWrites++;
+            _callOrder.Add("EnsureTableBorderColour");
+        }
+
         /// <summary>Whether the simulated host reserved the row. Defaults to success.</summary>
         internal bool PaddingRowReservedByHost { get; set; } = true;
     }
@@ -329,6 +384,12 @@ public class GanttRowInserterTests
         /// target rather than the mere presence of either call.
         /// </summary>
         public List<string> CallOrder { get; } = [];
+
+        /// <summary>
+        /// The technical records the adapter traced, so the refusal path of the border-colour
+        /// repair can be asserted rather than merely tolerated.
+        /// </summary>
+        public List<string> Traces { get; } = [];
 
         /// <summary>Every row height the adapter wrote, as (range, points).</summary>
         public List<(Excel.Range Range, double HeightPt)> RowHeightsWritten { get; } = [];
@@ -525,7 +586,8 @@ public class GanttRowInserterTests
             },
             typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser(),
             rowHeightNormaliser ?? RowHeightNormaliser,
-            outlineGroups);
+            outlineGroups,
+            Traces.Add);
     }
 
     [Fact]
@@ -574,6 +636,164 @@ public class GanttRowInserterTests
         // writer coalesces a null cell value to string.Empty, so "blank" is an
         // empty string here, not null.
         Assert.Equal(string.Empty, matrix[0, Of("SiblingOrder")]);
+    }
+
+    /// <summary>
+    /// Every successful Add re-asserts the theme's cell-border colour over the table, and it
+    /// does so AFTER the insert that damaged the grid.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measured defect (2026-11-16, <c>scripts/probe-insert-border-inheritance.ps1</c>
+    /// phases B and G): a body row carrying the validation report's pastel fill on BOTH
+    /// <c>Start</c> and <c>Finish</c> loses the shared rule between them when the next Add
+    /// extends the table — the only pair of adjacent cells the report fills, which is why
+    /// the report names exactly that boundary and no other. Phase G3 measures the repair:
+    /// re-writing <c>GanttTableAppearance.BorderColour</c> over the table range brings every
+    /// boundary back on every row, and phase G4 shows it survives the following Add.
+    /// </para>
+    /// <para>
+    /// <b>The order is the assertion.</b> The insert is what creates the loss, so a repair
+    /// written before it would be undone by the same extension it is meant to answer.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_successful_add_re_asserts_the_tables_border_colour_after_the_insert()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, inserter.BorderColourWrites);
+
+        int addRow = graph.CallOrder.IndexOf("AddRow");
+        int repair = graph.CallOrder.IndexOf("EnsureTableBorderColour");
+        Assert.True(
+            addRow >= 0 && repair > addRow,
+            "The repair must follow the row creation. Observed order: " + string.Join(", ", graph.CallOrder));
+    }
+
+    /// <summary>
+    /// A refused row creation never reaches the border-colour repair.
+    /// </summary>
+    /// <remarks>
+    /// This is the positive test for the repair's placement after <c>WriteRow</c>: the row is
+    /// not on the sheet, so there is nothing to repair and the command must not pay for a
+    /// second host call on a failure path.
+    /// </remarks>
+    [Fact]
+    public void A_refused_row_creation_does_not_re_assert_the_border_colour()
+    {
+        var graph = new Graph { Refusal = Graph.HostRefusal.AddRow };
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.RowWriteRefused, outcome.Refusal);
+        Assert.Equal(0, inserter.BorderColourWrites);
+    }
+
+    /// <summary>
+    /// A host refusal of the border-colour write is traced and does not fail an insert that
+    /// already landed.
+    /// </summary>
+    /// <remarks>
+    /// The repair is cosmetic: the row exists and its values are written, so reporting the
+    /// command as failed would be a claim the user can disprove by looking at the sheet
+    /// (ADR-0008 D4). It is traced rather than swallowed, because a worksheet that keeps
+    /// losing the grid after an Add needs the refusal named in the rolling log.
+    /// </remarks>
+    [Fact]
+    public void A_refused_border_colour_write_is_traced_and_the_add_still_succeeds()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+        inserter.ThrowsOnBorderColour = true;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, inserter.BorderColourWrites);
+        Assert.Contains(
+            graph.Traces,
+            line => line.Contains("gantt.add.border-colour refused", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Every successful Add clears the new row's inherited diagnostic fill, after creating it.
+    /// </summary>
+    /// <remarks>
+    /// A visible cell fill is part of the row's format, and the row an Add creates is
+    /// formatted from an existing row: measured on Excel 16.0
+    /// (<c>scripts/probe-insert-border-inheritance.ps1</c>, phase B) the appended row came out
+    /// carrying the previous row's pastel <c>Start</c>/<c>Finish</c> colour even with
+    /// <c>xlFormatFromRightOrBelow</c>. The owner's report was a milestone whose <c>Finish</c>
+    /// cell — a column a milestone does not use — stayed pink. The clear must follow the row's
+    /// creation, because before it there is nothing to clear.
+    /// </remarks>
+    [Fact]
+    public void A_successful_add_clears_the_new_rows_inherited_fill_after_the_insert()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedMilestone,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, inserter.RowFillClears);
+
+        int addRow = graph.CallOrder.IndexOf("AddRow");
+        int clear = graph.CallOrder.IndexOf("ClearRowFill");
+        Assert.True(
+            addRow >= 0 && clear > addRow,
+            "The fill clear must follow the row creation. Observed order: " + string.Join(", ", graph.CallOrder));
+    }
+
+    /// <summary>
+    /// A refused fill clear is traced and does not fail an insert that already landed.
+    /// </summary>
+    /// <remarks>
+    /// The clear is cosmetic: the row and its values are already on the sheet, so reporting the
+    /// command as failed would contradict what the user can see (ADR-0008 D4). It is traced
+    /// rather than swallowed, because a row that keeps a stale colour needs the refusal named.
+    /// </remarks>
+    [Fact]
+    public void A_refused_row_fill_clear_is_traced_and_the_add_still_succeeds()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+        inserter.ThrowsOnRowFillClear = true;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedMilestone,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, inserter.RowFillClears);
+        Assert.Contains(
+            graph.Traces,
+            line => line.Contains("gantt.add.fill-clear refused", StringComparison.Ordinal));
     }
 
     /// <summary>

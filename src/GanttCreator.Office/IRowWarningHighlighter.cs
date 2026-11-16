@@ -88,12 +88,23 @@ public interface IRowWarningHighlighter
     /// <summary>
     /// Reconciles the highlight fills against the supplied targets, performing
     /// only the minimal set of COM writes needed to bring the sheet in line
-    /// with <paramref name="currentTargets"/>. Addresses that were highlighted
-    /// in a previous call but are absent from <paramref name="currentTargets"/>
-    /// are cleared; addresses present in <paramref name="currentTargets"/> but
-    /// not previously highlighted are filled; addresses in both sets are
-    /// skipped.
+    /// with <paramref name="currentTargets"/>.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Addresses highlighted in a previous call but absent from
+    /// <paramref name="currentTargets"/> are cleared. Addresses in both sets are skipped only
+    /// when the colour they were painted at still matches, so a finding that changes severity
+    /// is repainted instead of keeping the old colour. One address carrying several findings
+    /// takes the worst severity.
+    /// </para>
+    /// <para>
+    /// A row whose recorded fills no longer match its finding set is <em>adopted</em>: its fill
+    /// is cleared in one write and the findings are painted on top. That is what removes a fill
+    /// this instance never wrote — a new row inherits the previous row's diagnostic colour with
+    /// its format, so an address-only diff could never clear it.
+    /// </para>
+    /// </remarks>
     /// <param name="currentTargets">
     /// The complete set of row/cell targets that should be highlighted after
     /// this refresh, in any order. An empty list clears all previous highlights

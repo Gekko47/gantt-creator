@@ -104,6 +104,99 @@ public class TableGridBorderIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// Production order: the validation report fills the initial body row, and THEN an Add
+    /// extends the table.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sibling fact inserts four rows and only then fills, which is the one order the host
+    /// tolerates. Production is the other way round — the coalesced refresh fills after every
+    /// Add, so the next Add always extends a table whose <c>Start</c> and <c>Finish</c> cells
+    /// are already pink.
+    /// </para>
+    /// <para>
+    /// Measured on Excel 16.0 (<c>scripts/probe-insert-border-inheritance.ps1</c>, phases B
+    /// and G): in that order the host drops the shared <c>Start|Finish</c> rule on the filled
+    /// row <em>and</em> on the row the Add creates — through <c>Borders</c> and through
+    /// <c>DisplayFormat</c> — while every other boundary on those rows keeps its rule. Those
+    /// two cells are the only adjacent pair the report fills, which is why the owner reported
+    /// exactly that boundary and no other. This fact fails without the insert-time repair in
+    /// <c>ExcelGanttRowInserter.EnsureTableBorderColour</c> and passes with it.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Every_boundary_survives_the_reports_fill_followed_by_an_add()
+    {
+        OfficeFixture fixture = new() { SuppressLeakSignal = true };
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath), "RegisterXLL returned false.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            WorkbookInitialiseOutcome initialised = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
+            OfficeFixture.DisableChartProtection(workbook);
+
+            Excel.Worksheet sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+
+            // Add #1 puts a real body row on the sheet. The body is EMPTY straight after
+            // Initialise, and HighlightCell reports Ok(0) for a row beyond the body's
+            // current extent -- so filling before this insert would fill nothing and make
+            // the rest of this fact vacuous.
+            ExcelGanttRowInserter inserter = new(fixture.Excel);
+            GanttRowInsertOutcome first = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('1'));
+            Assert.True(first.Succeeded, $"First insert refused: {first.Refusal}");
+            Assert.Equal(1, table.ListRows.Count);
+
+            // The state a Refresh leaves after that Add: the row has no dates, so the report
+            // fills both of its date cells.
+            ExcelRowWarningHighlighter highlighter = new(fixture.Excel);
+            int startOffset = ColumnOffset(table, "Start");
+            int finishOffset = ColumnOffset(table, "Finish");
+            GanttValidationReportOutcome startFill =
+                highlighter.HighlightCell(1, startOffset, GanttValidationSeverity.Error);
+            GanttValidationReportOutcome finishFill =
+                highlighter.HighlightCell(1, finishOffset, GanttValidationSeverity.Error);
+
+            // The premise of this fact is the pink state, so it is asserted rather than
+            // assumed, and asserted by the WRITE COUNT: a refused or out-of-extent fill is
+            // "successful" with zero writes, which is the shape that let an earlier gate stay
+            // green over a visible defect. 0x00C8C8FF is the report's pastel red
+            // (RGB 255,200,200) as the host reports it.
+            Assert.True(startFill.Succeeded, $"The Start fill was refused: {startFill.Refusal}");
+            Assert.True(finishFill.Succeeded, $"The Finish fill was refused: {finishFill.Refusal}");
+            Assert.Equal(1, startFill.NotesWritten);
+            Assert.Equal(1, finishFill.NotesWritten);
+            Excel.Range filledRow = sheet.Cells[table.Range.Row + 1, table.Range.Column];
+            Excel.Range filledStart = (Excel.Range)filledRow.Offset[0, startOffset - 1];
+            Excel.Range filledFinish = (Excel.Range)filledRow.Offset[0, finishOffset - 1];
+            Assert.Equal(
+                0x00C8C8FF,
+                Convert.ToInt32(filledStart.Interior.Color, CultureInfo.InvariantCulture));
+            Assert.Equal(
+                0x00C8C8FF,
+                Convert.ToInt32(filledFinish.Interior.Color, CultureInfo.InvariantCulture));
+
+            // Then the user's next Add, which is what extends the table.
+            GanttRowInsertOutcome second = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('2'));
+            Assert.True(second.Succeeded, $"Second insert refused: {second.Refusal}");
+
+            AssertEveryBoundaryHasRule(sheet, table, "after the report's fill, then one more Add");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
     private static int ColumnOffset(Excel.ListObject table, string headerName)
     {
         for (int index = 1; index <= table.ListColumns.Count; index++)

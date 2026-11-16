@@ -82,3 +82,53 @@ where the frame meets the table on all four sides.
   supplied by the caller's panel theme; this ADR rules on the live worksheet's header row.
 - **No new setting, command, or schema row.** The change is a catalogue value, two adapter
   seams, and the facts that pin them.
+
+## Amendment 2026-11-16 — D6: the border colour is re-asserted after a row insert
+
+**Report.** "The right border of the start column and the left border of the finish column are
+not plotting when new entities are added; the primary initialisation row is correct, but every
+row after that is formatted incorrectly."
+
+**Measured, not reasoned.** `scripts/probe-insert-border-inheritance.ps1` (new, read-only,
+disposable) builds the initialisation-shaped table in a private Excel 16.0 instance and reads
+each cell edge three ways — direct `Borders`, per-cell `DisplayFormat`, and the painted fill —
+through four orderings. The discriminating pair:
+
+| sequence | the Start-to-Finish boundary on the row the Add creates |
+|---|---|
+| Add with no fill anywhere | `direct=1/1/1 display=1` → painted |
+| report fill on both cells, no Add | `direct=1/1/1 display=1` → painted |
+| report fill on both cells, **then** Add | `direct=-4142/-4142/-4142 display=-4142` → **no rule** |
+
+In the failing case every OTHER boundary on the same rows still reads `1`, so the loss is
+confined to the one boundary whose two cells both carry the report's fill. That is why the
+report names exactly the `Start|Finish` divider, and why an assertion that reads only the
+unfilled table is green. The live gate missed it because it inserts first and fills afterwards;
+production fills after every Add, so the next Add always extends a filled table.
+
+**D6.** `ExcelGanttRowInserter` re-asserts `GanttTableAppearance.BorderColour` over the whole
+`table.Range` after the row has been written, through one `internal virtual` seam
+(`EnsureTableBorderColour`). Three bounds:
+
+- **Colour only.** `Border.Weight` is not touched: the defect does not move a weight, and
+  Excel's weight set is closed, so this pass must not second-guess it (D2).
+- **Never fatal.** A host refusal is traced (`gantt.add.border-colour refused`) and the insert
+  still reports success — the row is on the sheet, and ADR-0008 D4 forbids a cosmetic failure
+  becoming a command failure.
+- **Still not a Refresh write.** Measured: a fill with no following Add is harmless, so the loss
+  is created by the table's extension and the repair belongs where the extension happens.
+  Initialise and Repair keep owning the full presentation pass, so an already-damaged workbook
+  is healed by either of them or by its next Add.
+
+**Verified.** The probe reads every boundary back as `1/1/1 display=1` on every row after the
+write, and the repair survives the following Add. `TableGridBorderIntegrationTests` gains a
+second fact in production order (Add → fill both date cells → Add); it fails on the pre-fix
+adapter (`row 5 Start|Finish: pairDirect=-4142 display=-4142 direct=no -> MISSING`) and passes
+with it. `GanttRowInserterTests` gains three facts: the repair runs after the row is created, it
+does not run when the row creation is refused, and a refused border write is traced without
+failing the Add.
+
+**Not established.** Why the host drops only that shared edge. The same cells read the rule
+before the extension, and the sibling boundary in the same rows keeps its rule, so the trigger
+is the extension itself rather than any single write. Recorded as an unknown; the repair is
+justified by the measurement, not by a mechanism.
