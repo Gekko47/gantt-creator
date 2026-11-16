@@ -45,24 +45,22 @@ public class ParentChildRibbonTests
     }
 
     [Fact]
-    public void Outline_buttons_use_excel_outline_and_sort_images()
+    public void Outline_buttons_name_the_themed_glyph_callback()
     {
-        // R5.16a: the pair no longer borrows the table glyph. Each id is in
-        // the Office 2010 Icons Gallery and in the Excel block of the
-        // [MS-CUSTOMUI] idMso table: OutlineGroup = "Group...",
-        // OutlineUngroup = "Ungroup...", SortAscendingExcel =
-        // "Sort Ascending", SortDescendingExcel = "Sort Descending".
+        // R5.19: promote, demote, up and down are served by the themed glyph provider.
+        // The glyph each control resolves is pinned by RibbonGlyphAssetsTests against the
+        // generated catalogue, so this test owns only the wiring.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
-        string? ImageMso(string id) => doc.Descendants(ns + "button")
+        string? ImageCallback(string id) => doc.Descendants(ns + "button")
             .Single(element => element.Attribute("id")?.Value == id)
-            .Attribute("imageMso")?.Value;
+            .Attribute("getImage")?.Value;
 
-        Assert.Equal("OutlineUngroup", ImageMso(RibbonControlIds.PromoteToParent));
-        Assert.Equal("OutlineGroup", ImageMso(RibbonControlIds.DemoteToChild));
-        Assert.Equal("SortAscendingExcel", ImageMso(RibbonControlIds.MoveUp));
-        Assert.Equal("SortDescendingExcel", ImageMso(RibbonControlIds.MoveDown));
+        Assert.Equal("GetGlyph", ImageCallback(RibbonControlIds.PromoteToParent));
+        Assert.Equal("GetGlyph", ImageCallback(RibbonControlIds.DemoteToChild));
+        Assert.Equal("GetGlyph", ImageCallback(RibbonControlIds.MoveUp));
+        Assert.Equal("GetGlyph", ImageCallback(RibbonControlIds.MoveDown));
     }
 
     [Theory]

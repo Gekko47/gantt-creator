@@ -106,8 +106,12 @@ if (-not (Test-Path -LiteralPath $ribbonFile)) {
 
 $imageMsoIds = @(Get-RibbonImageMsoIds -Xml (Get-Content -LiteralPath $ribbonFile -Raw))
 if ($imageMsoIds.Count -eq 0) {
-    Write-Error "No imageMso attributes found in $ribbonFile"
-    exit 1
+    # R5.19 moved every glyph on this tab to the themed provider in
+    # check-ribbon-glyphs.ps1, so an empty set is the expected state. This check
+    # stays wired rather than deleted: if an imageMso is ever reintroduced, it is
+    # still held to the gallery and idMso bases.
+    Write-Host 'OK: no imageMso ids remain in the ribbon; nothing to verify here.'
+    exit 0
 }
 
 $galleryFile = Join-Path $repoRoot $GalleryPath

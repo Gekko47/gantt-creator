@@ -757,7 +757,7 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void Ribbon_buttons_use_gallery_verified_imageMso_ids()
+    public void Ribbon_buttons_are_served_by_the_themed_glyph_callback()
     {
         // imageMso fails silently on unknown IDs (no error, no log): the
         // Diagnostics button showed no icon with imageMso="Information",
@@ -808,79 +808,84 @@ public class GanttRibbonTests
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
-        string? ImageMso(string id) =>
+        string? ImageCallback(string id) =>
             doc.Descendants(ns + "button")
                 .First(b => b.Attribute("id")?.Value == id)
-                .Attribute("imageMso")?.Value;
+                .Attribute("getImage")?.Value;
 
-        Assert.Equal("Help", ImageMso(RibbonControlIds.Diagnostics));
-        Assert.Equal("FileOpen", ImageMso(RibbonControlIds.OpenLog));
-        Assert.Equal("TableInsertExcel", ImageMso(RibbonControlIds.InitialiseSheet));
+        // R5.19: every control-level action names the one themed callback. What each id
+        // then resolves — a Lucide slug at a declared size, present in both palettes — is
+        // pinned once in RibbonGlyphAssetsTests against the generated catalogue, so this
+        // test owns the wiring rather than a second copy of the map.
+        foreach (string id in new[]
+                 {
+                     RibbonControlIds.Diagnostics,
+                     RibbonControlIds.OpenLog,
+                     RibbonControlIds.InitialiseSheet,
+                     RibbonControlIds.RepairConfig,
+                     RibbonControlIds.ValidateSheet,
+                     RibbonControlIds.Remove,
+                     RibbonControlIds.PromoteToParent,
+                     RibbonControlIds.DemoteToChild,
+                     RibbonControlIds.MoveUp,
+                     RibbonControlIds.MoveDown,
+                     RibbonControlIds.ExpandAllGroups,
+                     RibbonControlIds.CollapseAllGroups,
+                     RibbonControlIds.ThemeSettings,
+                     RibbonControlIds.ChartTitle,
+                     RibbonControlIds.RefreshSheet,
+                     RibbonControlIds.Warnings,
+                 })
+        {
+            Assert.Equal("GetGlyph", ImageCallback(id));
+        }
 
-        // R5.16a: one glyph per control. The Data group no longer repeats
-        // TableInsertExcel five times, and the outline actions use Excel's
-        // own group/ungroup and sort glyphs instead of the table glyph.
-        Assert.Equal("DataValidation", ImageMso(RibbonControlIds.RepairConfig));
-        Assert.Equal("DataValidationCircleInvalid", ImageMso(RibbonControlIds.ValidateSheet));
-        Assert.Equal("TableRowsInsertAboveExcel", ImageMso(RibbonControlIds.AddActivity));
-        Assert.Equal("CalendarInsert", ImageMso(RibbonControlIds.AddMilestone));
-        Assert.Equal("ShapesInsertGallery", ImageMso(RibbonControlIds.AddDelineator));
-        Assert.Equal("TableRowsDeleteExcel", ImageMso(RibbonControlIds.Remove));
-        Assert.Equal("OutlineUngroup", ImageMso(RibbonControlIds.PromoteToParent));
-        Assert.Equal("OutlineGroup", ImageMso(RibbonControlIds.DemoteToChild));
-        Assert.Equal("SortAscendingExcel", ImageMso(RibbonControlIds.MoveUp));
-        Assert.Equal("SortDescendingExcel", ImageMso(RibbonControlIds.MoveDown));
-        Assert.Equal("ThemesGallery", ImageMso(RibbonControlIds.ThemeSettings));
-        Assert.Equal("ChartTitle", ImageMso(RibbonControlIds.ChartTitle));
-        Assert.Equal("RefreshAll", ImageMso(RibbonControlIds.RefreshSheet));
-        Assert.Equal("ErrorChecking", ImageMso(RibbonControlIds.Warnings));
+        // The three add primaries show a glyph that follows the label beside it, so they
+        // name their own callback; RibbonGlyphAssetsTests pins that pairing and the slugs.
+        foreach (string id in new[]
+                 {
+                     RibbonControlIds.AddActivity,
+                     RibbonControlIds.AddMilestone,
+                     RibbonControlIds.AddDelineator,
+                 })
+        {
+            Assert.Equal("GetAddEntityPrimaryImage", ImageCallback(id));
+        }
 
-        // R5.4: the Outline group's two buttons. Both IDs satisfy the two
-        // bases. The gallery (customUI14.xml, 7344 unique IDs) lists
-        // "OutlineExpand" and "OutlineCollapse". The Excel idMso table rows
-        // are idMso=OutlineExpand, control=button, label="Expand" and
-        // idMso=OutlineCollapse, control=button, label="Collapse" — the
-        // semantically exact match for each action.
-        //
-        // The alternatives were measured and rejected: "ExpandAll" is absent
-        // from the gallery entirely, and "CollapseAll" IS gallery-present but
-        // names a different Excel command (a slide master layout action), so
-        // it is the wrong glyph for a row group even though it would pass a
-        // gallery-only check. The outline IDs name the outline operation
-        // itself, which is what these buttons drive.
-        Assert.Equal("OutlineExpand", ImageMso(RibbonControlIds.ExpandAllGroups));
-        Assert.Equal("OutlineCollapse", ImageMso(RibbonControlIds.CollapseAllGroups));
+        // The migration is complete only when no control still falls back to a gallery id.
+        Assert.DoesNotContain(
+            doc.Descendants(ns + "button"),
+            button => button.Attribute("imageMso") is not null);
     }
 
     [Fact]
-    public void Ribbon_icons_are_unique_per_control()
+    public void Control_level_glyphs_are_unique_while_menu_rows_may_repeat()
     {
-        // R5.16a: a duplicated glyph makes two different actions look the same.
-        // Nine controls shared TableInsertExcel before this row. Menu items are
-        // excluded because a dropdown legitimately repeats a glyph (the two
-        // landscape size presets share the landscape orientation icon).
+        // R5.16a D4 still holds: two different actions must not look the same. Menu rows
+        // are exempt, because a dropdown legitimately repeats a family glyph and the row
+        // label carries the variant. The comparison runs on the generated catalogue, so it
+        // measures the glyph actually served rather than the attribute in the XML.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
-        string[] images =
+        string[] controlGlyphs =
         [
-            .. doc.Descendants()
-                .Where(element => element.Name.LocalName is "button" or "toggleButton" or "dropDown")
-                .Select(element => element.Attribute("imageMso")?.Value)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!),
+            .. doc.Descendants(ns + "button")
+                .Where(button => !button.Ancestors(ns + "menu").Any())
+                .Select(button => button.Attribute("id")?.Value)
+                .Where(id => id is not null)
+                .Select(id => RibbonGlyphCatalog.TryGet(id, out RibbonGlyphCatalog.Entry entry)
+                    ? entry.Glyph
+                    : null)
+                .Where(slug => slug is not null)
+                .Select(slug => slug!),
         ];
 
-        string[] duplicates =
-        [
-            .. images
-                .GroupBy(value => value, StringComparer.Ordinal)
-                .Where(group => group.Count() > 1)
-                .Select(group => group.Key),
-        ];
-
-        Assert.Empty(duplicates);
+        Assert.NotEmpty(controlGlyphs);
+        Assert.Equal(
+            controlGlyphs.Length,
+            controlGlyphs.Distinct(StringComparer.Ordinal).Count());
     }
 
     [Fact]

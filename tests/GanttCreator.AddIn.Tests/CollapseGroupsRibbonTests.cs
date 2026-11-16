@@ -71,22 +71,20 @@ public class CollapseGroupsRibbonTests
     }
 
     [Fact]
-    public void The_outline_buttons_carry_their_verified_icons()
+    public void The_outline_buttons_carry_their_themed_glyphs()
     {
-        // Both IDs satisfy the two bases the R2.2 D8 protocol requires: the
-        // Office 2010 Icons Gallery (customUI14.xml, 7344 unique IDs) and the
-        // Excel idMso table of [MS-CUSTOMUI]-250218, where the rows are
-        // idMso=OutlineExpand, control=button, label="Expand" and
-        // idMso=OutlineCollapse, control=button, label="Collapse".
+        // R5.19: both outline buttons name the shared themed-glyph callback. The
+        // expand/collapse glyphs are the chevron pair, chosen so they cannot be confused
+        // with the delineator or spacer glyphs at 16 px.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
-        string? ImageMso(string id) => doc.Descendants(ns + "button")
+        string? ImageCallback(string id) => doc.Descendants(ns + "button")
             .Single(button => button.Attribute("id")?.Value == id)
-            .Attribute("imageMso")?.Value;
+            .Attribute("getImage")?.Value;
 
-        Assert.Equal("OutlineExpand", ImageMso(RibbonControlIds.ExpandAllGroups));
-        Assert.Equal("OutlineCollapse", ImageMso(RibbonControlIds.CollapseAllGroups));
+        Assert.Equal("GetGlyph", ImageCallback(RibbonControlIds.ExpandAllGroups));
+        Assert.Equal("GetGlyph", ImageCallback(RibbonControlIds.CollapseAllGroups));
     }
 
     [Theory]

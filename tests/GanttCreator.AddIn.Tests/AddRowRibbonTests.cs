@@ -58,27 +58,29 @@ public class AddRowRibbonTests
     }
 
     [Fact]
-    public void Add_row_buttons_carry_their_own_verified_icons()
+    public void Add_row_buttons_carry_their_own_themed_glyphs()
     {
-        // R5.16a: the three add buttons no longer share one glyph. Each id
-        // below is in the Office 2010 Icons Gallery and in the Excel block of
-        // the [MS-CUSTOMUI] idMso table; the live host render check is the
-        // remaining gate, recorded in the R5.16a work item.
+        // R5.19: the three add buttons are served by the themed glyph provider, so each
+        // names the shared callback instead of an Office gallery id. What the callback
+        // then resolves — a Lucide slug at a declared size, in both palettes — is pinned
+        // by RibbonGlyphAssetsTests.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
-        Dictionary<string, string> expected = new(StringComparer.Ordinal)
-        {
-            [RibbonControlIds.AddActivity] = "TableRowsInsertAboveExcel",
-            [RibbonControlIds.AddMilestone] = "CalendarInsert",
-            [RibbonControlIds.AddDelineator] = "ShapesInsertGallery",
-        };
-
-        foreach ((string id, string imageMso) in expected)
+        foreach (string id in new[]
+                 {
+                     RibbonControlIds.AddActivity,
+                     RibbonControlIds.AddMilestone,
+                     RibbonControlIds.AddDelineator,
+                 })
         {
             XElement button = doc.Descendants(ns + "button")
                 .Single(element => element.Attribute("id")?.Value == id);
-            Assert.Equal(imageMso, button.Attribute("imageMso")?.Value);
+
+            // The picture follows the same remembered menu choice the label does, so a
+            // button reading "Spacer" cannot draw a delineator.
+            Assert.Equal("GetAddEntityPrimaryImage", button.Attribute("getImage")?.Value);
+            Assert.Null(button.Attribute("imageMso"));
         }
     }
 

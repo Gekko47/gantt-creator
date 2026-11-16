@@ -2206,6 +2206,59 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// The glyph slug for an add-entity primary, chosen so the picture agrees with the
+    /// label beside it.
+    /// </summary>
+    /// <param name="type">The type the primary currently names.</param>
+    /// <returns>The glyph slug.</returns>
+    /// <remarks>
+    /// R5.18g made the three primaries follow the last menu pick in their LABEL. R5.19
+    /// gave them a glyph, and a glyph that did not follow the same pick reintroduced the
+    /// original defect one channel over: a button reading "Spacer" while drawing a
+    /// delineator. Only the element family splits per type; activities and milestones keep
+    /// one family glyph because their variants differ by timing, not by shape.
+    /// </remarks>
+    internal static string AddEntityPrimaryGlyph(GanttEntityType type) => type switch
+    {
+        GanttEntityType.Splitter => "splitter",
+        GanttEntityType.Spacer => "spacer",
+        GanttEntityType.Delineator => "delineator",
+        GanttEntityType.AsBuiltMilestone
+            or GanttEntityType.AsPlannedMilestone
+            or GanttEntityType.BaselineMilestone
+            or GanttEntityType.CriticalMilestone
+            or GanttEntityType.CustomMilestone => "add-milestone",
+        GanttEntityType.AsBuiltActivity
+            or GanttEntityType.AsPlannedActivity
+            or GanttEntityType.BaselineActivity
+            or GanttEntityType.CriticalInterval
+            or GanttEntityType.DelayEvent
+            or GanttEntityType.AsBuiltProcurement
+            or GanttEntityType.AsPlannedProcurement
+            or GanttEntityType.BaselineProcurement
+            or GanttEntityType.CustomActivity => "add-activity",
+
+        // An unnamed value cannot reach here — the remembered type always comes from the
+        // catalogue — but the enum is not a closed set to the compiler, so it needs an arm.
+        _ => "add-activity",
+    };
+
+    /// <summary>
+    /// The picture for an add-entity primary, read from the same remembered choice the
+    /// label reads.
+    /// </summary>
+    /// <param name="controlId">The primary's control id.</param>
+    /// <param name="state">The state service holding the remembered choice.</param>
+    /// <returns>The picture, or null when the id is not one of the three primaries.</returns>
+    internal static object? AddEntityPrimaryImage(string? controlId, RibbonStateService state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return FamilyOfPrimary(controlId) is { } family
+            ? RibbonGlyphAssets.ForState(AddEntityPrimaryGlyph(state.PrimaryTypeFor(family)), 32)
+            : null;
+    }
+
+    /// <summary>
     /// Gets the CHART toggle's current label, read from the same preference object the protection
     /// port uses, so the wording cannot disagree with what the sheet enforces.
     /// </summary>
@@ -2241,7 +2294,11 @@ internal class RibbonStateService
     internal static object? GetToggleChartLockImage(IRibbonControl? control)
     {
         _ = control;
-        return LockGlyphImages.For(ProtectionPreferences.Shared.ChartLocked);
+        return RibbonGlyphAssets.ForState(
+            ProtectionPreferences.Shared.ChartLocked
+                ? RibbonGlyphCatalog.ChartLockClosed
+                : RibbonGlyphCatalog.ChartLockOpen,
+            16);
     }
 
     /// <summary>
@@ -2253,7 +2310,11 @@ internal class RibbonStateService
     internal static object? GetToggleCellLockImage(IRibbonControl? control)
     {
         _ = control;
-        return LockGlyphImages.For(!ProtectionPreferences.Shared.CellsUnlocked);
+        return RibbonGlyphAssets.ForState(
+            ProtectionPreferences.Shared.CellsUnlocked
+                ? RibbonGlyphCatalog.CellLockOpen
+                : RibbonGlyphCatalog.CellLockClosed,
+            16);
     }
 
     /// <summary>
@@ -2294,7 +2355,11 @@ internal class RibbonStateService
     /// </remarks>
     internal object? GetColumnVisibilityImage(string? itemId) =>
         TryParseColumnItemId(itemId, out string? name)
-            ? ColumnVisibilityImages.For(!_hiddenColumns.Contains(name))
+            ? RibbonGlyphAssets.ForState(
+                _hiddenColumns.Contains(name)
+                    ? RibbonGlyphCatalog.ColumnHidden
+                    : RibbonGlyphCatalog.ColumnVisible,
+                16)
             : null;
 
     /// <summary>

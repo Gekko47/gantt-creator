@@ -12,16 +12,16 @@
              no add-in configuration; see RibbonState.IsVisible and ADR-0056.
              Diagnostics stays visible in every mode (owner ruling 2026-11-10). -->
         <group id="grpGetStarted" label="Get started" getVisible="GetVisible">
-          <button id="btnInitialiseSheet" label="Initialise sheet" size="large" imageMso="TableInsertExcel" keytip="I" screentip="Initialise the Gantt sheet" supertip="Creates the Gantt table, the chart area, and the workbook configuration. Run it once per workbook before adding activities." getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
+          <button id="btnInitialiseSheet" label="Initialise sheet" size="large" getImage="GetGlyph" keytip="I" screentip="Initialise the Gantt sheet" supertip="Creates the Gantt table, the chart area, and the workbook configuration. Run it once per workbook before adding activities." getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
         </group>
         <!-- R5.16a: the Data group keeps its owner-tooled five large controls.
              Only the two labels (Repair, Elements) and the per-control glyphs
              changed; ids, menus, keytips and actions are unchanged. -->
         <group id="grpData" label="Data" getVisible="GetVisible">
           <splitButton id="spbFix" size="large" getEnabled="GetEnabled">
-            <button id="btnRepairConfig" label="Repair" imageMso="DataValidation" keytip="R" screentip="Repair the configuration" supertip="Checks the hidden configuration sheet and repairs safe damage. A repair that could touch visible schedule rows asks for confirmation first." getEnabled="GetEnabled" onAction="OnRepairConfigClick"/>
+            <button id="btnRepairConfig" label="Repair" getImage="GetGlyph" keytip="R" screentip="Repair the configuration" supertip="Checks the hidden configuration sheet and repairs safe damage. A repair that could touch visible schedule rows asks for confirmation first." getEnabled="GetEnabled" onAction="OnRepairConfigClick"/>
             <menu id="mnuFix">
-              <button id="btnValidateSheet" label="Validate" imageMso="DataValidationCircleInvalid" keytip="QV" screentip="Validate the schedule table" supertip="Checks every row and reports errors and warnings as cell notes. Validation never changes your schedule data." getEnabled="GetEnabled" onAction="OnValidateSheetClick"/>
+              <button id="btnValidateSheet" label="Validate" getImage="GetGlyph" keytip="QV" screentip="Validate the schedule table" supertip="Checks every row and reports errors and warnings as cell notes. Validation never changes your schedule data." getEnabled="GetEnabled" onAction="OnValidateSheetClick"/>
             </menu>
           </splitButton>
 
@@ -29,42 +29,42 @@
                follow the last menu pick, so the button never promises one type and adds
                another. The label text lives in EntityTypeCatalog, not here. -->
           <splitButton id="spbAddActivity" size="large" getEnabled="GetEnabled">
-            <button id="btnAddActivity" getLabel="GetAddEntityPrimaryLabel" imageMso="TableRowsInsertAboveExcel" keytip="AA" screentip="Add an activity row" supertip="Adds the activity type named on the button. Open the list for every activity type." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
+            <button id="btnAddActivity" getLabel="GetAddEntityPrimaryLabel" getImage="GetAddEntityPrimaryImage" keytip="AA" screentip="Add an activity row" supertip="Adds the activity type named on the button. Open the list for every activity type." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
             <menu id="mnuAddActivity">
-              <button id="entAsPlannedActivity" getLabel="GetEntityMenuLabel" keytip="AP" screentip="Add an As-Planned Activity" supertip="Adds an as-planned activity row." onAction="OnAddEntityClick"/>
-              <button id="entAsBuiltActivity" getLabel="GetEntityMenuLabel" keytip="AB" screentip="Add an As-Built Activity" supertip="Adds an as-built activity row." onAction="OnAddEntityClick"/>
-              <button id="entBaselineActivity" getLabel="GetEntityMenuLabel" keytip="AL" screentip="Add a Baseline Activity" supertip="Adds a baseline activity row." onAction="OnAddEntityClick"/>
-              <button id="entCustomActivity" getLabel="GetEntityMenuLabel" keytip="AU" screentip="Add a Custom Activity" supertip="Adds a custom activity row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
-              <button id="entDelayEvent" getLabel="GetEntityMenuLabel" keytip="AV" screentip="Add a Delay Event" supertip="Adds a delay event row under an activity." onAction="OnAddEntityClick"/>
-              <button id="entCriticalInterval" getLabel="GetEntityMenuLabel" getEnabled="GetCriticalIntervalEnabled" keytip="AI" screentip="Add a Critical Interval" supertip="Adds a critical interval under the nearest activity that can own it. Disabled when no row can own one." onAction="OnAddEntityClick"/>
+              <button id="entAsPlannedActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AP" screentip="Add an As-Planned Activity" supertip="Adds an as-planned activity row." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AB" screentip="Add an As-Built Activity" supertip="Adds an as-built activity row." onAction="OnAddEntityClick"/>
+              <button id="entBaselineActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AL" screentip="Add a Baseline Activity" supertip="Adds a baseline activity row." onAction="OnAddEntityClick"/>
+              <button id="entCustomActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AU" screentip="Add a Custom Activity" supertip="Adds a custom activity row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
+              <button id="entDelayEvent" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AV" screentip="Add a Delay Event" supertip="Adds a delay event row under an activity." onAction="OnAddEntityClick"/>
+              <button id="entCriticalInterval" getImage="GetGlyph" getLabel="GetEntityMenuLabel" getEnabled="GetCriticalIntervalEnabled" keytip="AI" screentip="Add a Critical Interval" supertip="Adds a critical interval under the nearest activity that can own it. Disabled when no row can own one." onAction="OnAddEntityClick"/>
               <menuSeparator id="sepProcurement" title="Procurement"/>
-              <button id="entAsPlannedProcurement" getLabel="GetEntityMenuLabel" keytip="AQ" screentip="Add an As-Planned Procurement row" supertip="Adds an as-planned procurement row." onAction="OnAddEntityClick"/>
-              <button id="entAsBuiltProcurement" getLabel="GetEntityMenuLabel" keytip="AR" screentip="Add an As-Built Procurement row" supertip="Adds an as-built procurement row." onAction="OnAddEntityClick"/>
-              <button id="entBaselineProcurement" getLabel="GetEntityMenuLabel" keytip="AS" screentip="Add a Baseline Procurement row" supertip="Adds a baseline procurement row." onAction="OnAddEntityClick"/>
+              <button id="entAsPlannedProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AQ" screentip="Add an As-Planned Procurement row" supertip="Adds an as-planned procurement row." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AR" screentip="Add an As-Built Procurement row" supertip="Adds an as-built procurement row." onAction="OnAddEntityClick"/>
+              <button id="entBaselineProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AS" screentip="Add a Baseline Procurement row" supertip="Adds a baseline procurement row." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
           <splitButton id="spbAddMilestone" size="large" getEnabled="GetEnabled">
-            <button id="btnAddMilestone" getLabel="GetAddEntityPrimaryLabel" imageMso="CalendarInsert" keytip="AM" screentip="Add a milestone row" supertip="Adds the milestone type named on the button. Open the list for every milestone type." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
+            <button id="btnAddMilestone" getLabel="GetAddEntityPrimaryLabel" getImage="GetAddEntityPrimaryImage" keytip="AM" screentip="Add a milestone row" supertip="Adds the milestone type named on the button. Open the list for every milestone type." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
             <menu id="mnuAddMilestone">
-              <button id="entAsPlannedMilestone" getLabel="GetEntityMenuLabel" keytip="BP" screentip="Add an As-Planned Milestone" supertip="Adds an as-planned milestone row. A milestone plots from its Start date only." onAction="OnAddEntityClick"/>
-              <button id="entAsBuiltMilestone" getLabel="GetEntityMenuLabel" keytip="BB" screentip="Add an As-Built Milestone" supertip="Adds an as-built milestone row." onAction="OnAddEntityClick"/>
-              <button id="entBaselineMilestone" getLabel="GetEntityMenuLabel" keytip="BL" screentip="Add a Baseline Milestone" supertip="Adds a baseline milestone row." onAction="OnAddEntityClick"/>
-              <button id="entCriticalMilestone" getLabel="GetEntityMenuLabel" keytip="BI" screentip="Add a Critical Milestone" supertip="Adds a critical milestone row." onAction="OnAddEntityClick"/>
-              <button id="entCustomMilestone" getLabel="GetEntityMenuLabel" keytip="BU" screentip="Add a Custom Milestone" supertip="Adds a custom milestone row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
+              <button id="entAsPlannedMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BP" screentip="Add an As-Planned Milestone" supertip="Adds an as-planned milestone row. A milestone plots from its Start date only." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BB" screentip="Add an As-Built Milestone" supertip="Adds an as-built milestone row." onAction="OnAddEntityClick"/>
+              <button id="entBaselineMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BL" screentip="Add a Baseline Milestone" supertip="Adds a baseline milestone row." onAction="OnAddEntityClick"/>
+              <button id="entCriticalMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BI" screentip="Add a Critical Milestone" supertip="Adds a critical milestone row." onAction="OnAddEntityClick"/>
+              <button id="entCustomMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BU" screentip="Add a Custom Milestone" supertip="Adds a custom milestone row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
           <splitButton id="spbAddElements" size="large" getEnabled="GetEnabled">
-            <button id="btnAddDelineator" getLabel="GetAddEntityPrimaryLabel" imageMso="ShapesInsertGallery" keytip="AD" screentip="Add a delineator or a structural row" supertip="Adds the element type named on the button. Open the list for a spacer or a splitter." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+            <button id="btnAddDelineator" getLabel="GetAddEntityPrimaryLabel" getImage="GetAddEntityPrimaryImage" keytip="AD" screentip="Add a delineator or a structural row" supertip="Adds the element type named on the button. Open the list for a spacer or a splitter." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
             <menu id="mnuAddElements">
-              <button id="entDelineator" getLabel="GetEntityMenuLabel" keytip="JD" screentip="Add a Delineator" supertip="Adds a delineator row. A delineator draws a full-height line at its Start date." onAction="OnAddEntityClick"/>
-              <button id="entSpacer" getLabel="GetEntityMenuLabel" keytip="JS" screentip="Add a Spacer" supertip="Adds a spacer row that separates sections of the table." onAction="OnAddEntityClick"/>
-              <button id="entSplitter" getLabel="GetEntityMenuLabel" keytip="JP" screentip="Add a Splitter" supertip="Adds a splitter band that separates sections of the table." onAction="OnAddEntityClick"/>
+              <button id="entDelineator" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="JD" screentip="Add a Delineator" supertip="Adds a delineator row. A delineator draws a full-height line at its Start date." onAction="OnAddEntityClick"/>
+              <button id="entSpacer" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="JS" screentip="Add a Spacer" supertip="Adds a spacer row that separates sections of the table." onAction="OnAddEntityClick"/>
+              <button id="entSplitter" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="JP" screentip="Add a Splitter" supertip="Adds a splitter band that separates sections of the table." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
-          <button id="btnRemove" label="Remove" size="large" imageMso="TableRowsDeleteExcel" keytip="X" screentip="Remove the selected row" supertip="Deletes the selected row and re-homes its children. A confirmation is shown unless you opted out this session." getEnabled="GetEnabled" onAction="OnRemoveClick"/>
+          <button id="btnRemove" label="Remove" size="large" getImage="GetGlyph" keytip="X" screentip="Remove the selected row" supertip="Deletes the selected row and re-homes its children. A confirmation is shown unless you opted out this session." getEnabled="GetEnabled" onAction="OnRemoveClick"/>
         </group>
         <!-- R5.16a: Ordering and Outline are one group. Promote and Demote are
              Excel's own outline group/ungroup operations, and Up/Down reorder
@@ -72,19 +72,19 @@
              two-wide, three-storey grid keeps the group narrow. -->
         <group id="grpOutline" label="Outline" getVisible="GetVisible">
           <box id="boxOutlineRow1" boxStyle="horizontal">
-            <button id="btnPromoteToParent" label="Promote" imageMso="OutlineUngroup" keytip="P" screentip="Promote the row to top level" supertip="Moves the selected row out of its group and resequences the top-level rows." getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
-            <button id="btnDemoteToChild" label="Demote" imageMso="OutlineGroup" keytip="E" screentip="Demote the row under the group above" supertip="Moves the selected row into the group above it and re-homes its own children." getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
+            <button id="btnPromoteToParent" label="Promote" getImage="GetGlyph" keytip="P" screentip="Promote the row to top level" supertip="Moves the selected row out of its group and resequences the top-level rows." getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
+            <button id="btnDemoteToChild" label="Demote" getImage="GetGlyph" keytip="E" screentip="Demote the row under the group above" supertip="Moves the selected row into the group above it and re-homes its own children." getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
           </box>
           <!-- TODO(R5.10): Up/Down are gated on workbook + initialised only. Once the add-in
                tracks the active cell (R5.10 cell tracking), gate them on a resolved table body
                selection so a boundary no-op cannot be requested from the ribbon. -->
           <box id="boxOutlineRow2" boxStyle="horizontal">
-            <button id="btnMoveUp" label="Up" imageMso="SortAscendingExcel" keytip="U" screentip="Move the row up" supertip="Swaps the selected row with the row above. At the top of the table the command does nothing." getEnabled="GetEnabled" onAction="OnMoveUpClick"/>
-            <button id="btnMoveDown" label="Down" imageMso="SortDescendingExcel" keytip="N" screentip="Move the row down" supertip="Swaps the selected row with the row below. At the bottom of the table the command does nothing." getEnabled="GetEnabled" onAction="OnMoveDownClick"/>
+            <button id="btnMoveUp" label="Up" getImage="GetGlyph" keytip="U" screentip="Move the row up" supertip="Swaps the selected row with the row above. At the top of the table the command does nothing." getEnabled="GetEnabled" onAction="OnMoveUpClick"/>
+            <button id="btnMoveDown" label="Down" getImage="GetGlyph" keytip="N" screentip="Move the row down" supertip="Swaps the selected row with the row below. At the bottom of the table the command does nothing." getEnabled="GetEnabled" onAction="OnMoveDownClick"/>
           </box>
           <box id="boxOutlineRow3" boxStyle="horizontal">
-            <button id="btnExpandAllGroups" label="Expand all" imageMso="OutlineExpand" keytip="G" screentip="Expand every outline group" supertip="Shows every grouped child row. The chart is unchanged because hidden rows still keep their place." getEnabled="GetEnabled" onAction="OnExpandAllGroupsClick"/>
-            <button id="btnCollapseAllGroups" label="Collapse all" imageMso="OutlineCollapse" keytip="C" screentip="Collapse every outline group" supertip="Hides every grouped child row using the same row state as Excel's own outline controls." getEnabled="GetEnabled" onAction="OnCollapseAllGroupsClick"/>
+            <button id="btnExpandAllGroups" label="Expand all" getImage="GetGlyph" keytip="G" screentip="Expand every outline group" supertip="Shows every grouped child row. The chart is unchanged because hidden rows still keep their place." getEnabled="GetEnabled" onAction="OnExpandAllGroupsClick"/>
+            <button id="btnCollapseAllGroups" label="Collapse all" getImage="GetGlyph" keytip="C" screentip="Collapse every outline group" supertip="Hides every grouped child row using the same row state as Excel's own outline controls." getEnabled="GetEnabled" onAction="OnCollapseAllGroupsClick"/>
           </box>
         </group>
         <group id="grpLabels" label="Labels" getVisible="GetVisible">
@@ -116,7 +116,7 @@
           <!-- `size="large"` is what makes the menu a big ribbon button: without it the
                host renders a one-row dropdown and leaves the group's height empty
                (live report 2026-11-15, "still 1 row high, should be 3 rows high"). -->
-          <menu id="mnuColumnVisibility" label="Show columns" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" size="large">
+          <menu id="mnuColumnVisibility" getImage="GetGlyph" label="Show columns" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" size="large">
             <button id="colType" keytip="1" screentip="Show or hide Type" supertip="Shows or hides the Type column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
             <button id="colDescription" keytip="2" screentip="Show or hide Description" supertip="Shows or hides the Description column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
             <button id="colStart" keytip="3" screentip="Show or hide Start" supertip="Shows or hides the Start column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
@@ -125,8 +125,8 @@
           </menu>
         </group>
         <group id="grpStyleTheme" label="Style" getVisible="GetVisible">
-          <button id="btnThemeSettings" label="Theme settings..." imageMso="ThemesGallery" keytip="T" screentip="Open the theme settings" supertip="Edits entity styles, chart chrome, and custom styles. Changes apply to the chart after they are saved." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>
-          <button id="btnChartTitle" label="Chart title..." imageMso="ChartTitle" keytip="H" screentip="Edit the chart title" supertip="Sets the title shown above the Gantt chart. Clearing the title hides it." getEnabled="GetEnabled" onAction="OnChartTitleClick"/>
+          <button id="btnThemeSettings" label="Theme settings..." getImage="GetGlyph" keytip="T" screentip="Open the theme settings" supertip="Edits entity styles, chart chrome, and custom styles. Changes apply to the chart after they are saved." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>
+          <button id="btnChartTitle" label="Chart title..." getImage="GetGlyph" keytip="H" screentip="Edit the chart title" supertip="Sets the title shown above the Gantt chart. Clearing the title hides it." getEnabled="GetEnabled" onAction="OnChartTitleClick"/>
         </group>
         <!-- R5.16a: Plot Area and Plot Time Scale were one subject split across
              two groups. They are now one "Chart" group with a per-date row.
@@ -159,10 +159,10 @@
           <box id="boxSizePreset" boxStyle="horizontal">
             <labelControl id="lblSize" label="Size"/>
             <dropDown id="ddnSize" keytip="SZ" screentip="Output size" supertip="Chooses the page or slide size the chart is generated for. The current size is shown." getSelectedItemIndex="GetSize" getEnabled="GetEnabled" onAction="OnSizeChange">
-              <item id="A4Portrait" label="A4 (portrait)" imageMso="PageOrientationPortrait"/>
-              <item id="A4Landscape" label="A4 (landscape)" imageMso="PageOrientationLandscape"/>
-              <item id="Presentation16x9" label="Presentation 16:9" imageMso="PageOrientationLandscape"/>
-              <item id="Presentation4x3" label="Presentation 4:3" imageMso="PageOrientationPortrait"/>
+              <item id="A4Portrait" label="A4 (portrait)"/>
+              <item id="A4Landscape" label="A4 (landscape)"/>
+              <item id="Presentation16x9" label="Presentation 16:9"/>
+              <item id="Presentation4x3" label="Presentation 4:3"/>
             </dropDown>
           </box>
           <box id="boxMargin" boxStyle="horizontal">
@@ -188,9 +188,9 @@
           <!-- R5.18e (owner ruling 2026-11-13): Refresh is the group's primary action, so
                it is large and the three secondary controls stack beside it in one
                vertical box, in the order the owner asked for: warnings, cells, chart. -->
-          <button id="btnRefreshSheet" label="Refresh chart" size="large" imageMso="RefreshAll" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
+          <button id="btnRefreshSheet" label="Refresh chart" size="large" getImage="GetGlyph" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
           <box id="boxSheetStack" boxStyle="vertical">
-            <button id="btnWarnings" label="Warnings..." imageMso="ErrorChecking" keytip="WN" screentip="Open the warnings list" supertip="Lists warnings from the last chart render and the current validation findings. The list is read-only." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
+            <button id="btnWarnings" label="Warnings..." getImage="GetGlyph" keytip="WN" screentip="Open the warnings list" supertip="Lists warnings from the last chart render and the current validation findings. The list is read-only." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
             <!-- ADR-0055: the chart's shapes are locked while the sheet is protected. Unlock acts on
                  ONE selected shape the add-in drew, releases the protection so it can be dragged, and
                  suspends the automatic refresh until Lock shapes or an explicit Refresh puts it back. -->
@@ -199,8 +199,8 @@
           </box>
         </group>
         <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">
-          <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>
-          <button id="btnOpenLog" label="Open log file" imageMso="FileOpen" keytip="L" screentip="Open the log file" supertip="Opens the add-in log in your default text editor." getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
+          <button id="btnDiagnostics" label="Diagnostics" getImage="GetGlyph" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>
+          <button id="btnOpenLog" label="Open log file" getImage="GetGlyph" keytip="L" screentip="Open the log file" supertip="Opens the add-in log in your default text editor." getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
         </group>
       </tab>
     </tabs>

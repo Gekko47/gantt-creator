@@ -440,6 +440,19 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService.AddEntityPrimaryLabel(TryReadControlId(control), RibbonStateService.Instance);
 
     /// <summary>
+    /// Reports the picture for an add-entity split button's primary, following the same
+    /// remembered menu choice its label follows.
+    /// </summary>
+    /// <param name="control">The primary button's control.</param>
+    /// <returns>The picture, or null when the control is not one of the three primaries.</returns>
+    /// <remarks>
+    /// The label already followed the last pick (R5.18g); without this the glyph would not,
+    /// and the button would read "Spacer" while drawing a delineator.
+    /// </remarks>
+    public object? GetAddEntityPrimaryImage(IRibbonControl control) =>
+        RibbonStateService.AddEntityPrimaryImage(TryReadControlId(control), RibbonStateService.Instance);
+
+    /// <summary>
     /// Excel's <c>getEnabled</c> callback for the Critical Interval menu item
     /// (R5.16). The truth table answers by id; this named callback exists so the
     /// XML declares the gate explicitly rather than sharing the general enabled
@@ -779,6 +792,42 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>The picture the host displays, or null when the asset is missing.</returns>
     public object? GetToggleCellLockImage(IRibbonControl control) =>
         RibbonStateService.GetToggleCellLockImage(control);
+
+    /// <summary>
+    /// Serves the themed picture for one control: the single <c>getImage</c> callback the
+    /// whole tab shares.
+    /// </summary>
+    /// <param name="control">The ribbon control whose id names the glyph.</param>
+    /// <returns>The picture, or null when the control carries no glyph or the asset is missing.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>One callback, not one per control.</b> RibbonX resolves <c>getImage</c> by name,
+    /// so a control's own id selects its entry in <see cref="RibbonGlyphCatalog"/>; adding
+    /// a glyph is a table entry and an asset, never a new method.
+    /// </para>
+    /// <para>
+    /// <b>Null in, null out.</b> An unmapped id, or a glyph whose asset is missing,
+    /// returns null — the state an image-less control is already in. Nothing on this path
+    /// throws, because an exception raised inside a ribbon callback takes the ribbon down.
+    /// </para>
+    /// </remarks>
+    public object? GetGlyph(IRibbonControl control) =>
+        RibbonGlyphAssets.ForControl(control?.Id);
+
+    /// <summary>
+    /// Runs <see cref="GetGlyph(IRibbonControl)"/> against an injected resolver.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null.</param>
+    /// <param name="resolve">The resolver to call with the control id.</param>
+    /// <returns>Whatever the resolver returns.</returns>
+    /// <remarks>
+    /// Internal so contract tests can prove the id routing without a live host.
+    /// </remarks>
+    internal static object? GetGlyph(IRibbonControl? control, Func<string?, object?> resolve)
+    {
+        ArgumentNullException.ThrowIfNull(resolve);
+        return resolve(control?.Id);
+    }
 
     /// <summary>
     /// Runs <see cref="GetEnabled(IRibbonControl)"/> against an injected state
