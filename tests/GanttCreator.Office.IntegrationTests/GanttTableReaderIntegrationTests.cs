@@ -22,12 +22,32 @@ namespace GanttCreator.Office.IntegrationTests;
 /// serials must produce identical <see cref="GanttRowDto"/>s under both supported
 /// locale display formats (GB <c>DD/MM/YYYY</c> and US <c>MM/DD/YYYY</c>), which
 /// proves the reader parses cell values rather than display text (Checklist F).
+/// <para>
+/// The packed XLL is deliberately NOT registered here. These facts drive the
+/// Office adapters directly, and a loaded add-in coalesces an automatic pass on
+/// the test's own writes; that pass repairs row identity (it fills a blank or
+/// malformed Id) between the write and the read, which is the product behaving
+/// correctly and the test racing it. Measured 2026-11-16: with the add-in
+/// loaded, the locale fact read a generated Id on a row the test had left
+/// blank. The live add-in path is covered by
+/// <c>AutoRefreshTriggerIntegrationTests</c>, so nothing is lost by not loading
+/// it here.
+/// </para>
 /// </remarks>
 public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 {
-    private readonly ITestOutputHelper _output = output;
+    /// <summary>
+    /// The span row's schema-valid identifier. It must satisfy
+    /// <see cref="GanttRowId"/> (34 characters: <c>G-</c> plus 32 lowercase
+    /// hex), otherwise the add-in's coalesced automatic pass legitimately
+    /// repairs it and this test stops asserting what it wrote.
+    /// </summary>
+    private const string SpanRowId = "G-0000000000000000000000000000000a";
 
-    private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
+    /// <summary>The milestone row's schema-valid identifier.</summary>
+    private const string MilestoneRowId = "G-0000000000000000000000000000000b";
+
+    private readonly ITestOutputHelper _output = output;
 
     /// <summary>
     /// Resolves the Gantt sheet and table through a scope that releases every
@@ -67,8 +87,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
 
@@ -76,6 +94,13 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
             WorkbookInitialiseOutcome outcome = initialiser.Initialise();
             Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
+
+            // The add-in is loaded here, so its scheduler coalesces a pass on the
+            // writes below. Since ADR-0055 that pass arms and protects the sheet,
+            // which would refuse the later NumberFormat write; switch the chart
+            // lock off through the user setting, as every other operating body
+            // does, so this test proves the reader rather than racing the product.
+            OfficeFixture.DisableChartProtection(workbook);
 
             // Locate the table on the now-labelled sheet and clear any
             // pre-existing body rows so the geometry read below is the
@@ -130,14 +155,14 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             const double finishSerial = 44931.0; // 2023-01-05
             const double milestoneSerial = 44932.0; // 2023-01-06
 
-            SetBodyCell(body, spanOffset, "Id", "G-span", scope);
+            SetBodyCell(body, spanOffset, "Id", SpanRowId, scope);
             SetBodyCell(body, spanOffset, "LaneId", "L-1", scope);
             SetBodyCell(body, spanOffset, "StackIndex", 1.0, scope);
             SetBodyCell(body, spanOffset, "Type", "As-Planned Activity", scope);
             SetBodyCell(body, spanOffset, "Start", startSerial, scope);
             SetBodyCell(body, spanOffset, "Finish", finishSerial, scope);
             SetBodyCell(body, spanOffset, "Visible", true, scope);
-            SetBodyCell(body, milestoneOffset, "Id", "G-milestone", scope);
+            SetBodyCell(body, milestoneOffset, "Id", MilestoneRowId, scope);
             SetBodyCell(body, milestoneOffset, "LaneId", "L-1", scope);
             SetBodyCell(body, milestoneOffset, "StackIndex", 2.0, scope);
             SetBodyCell(body, milestoneOffset, "Type", "Milestone", scope);
@@ -217,8 +242,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             workbook.Date1904 = true;
@@ -258,8 +281,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
 
@@ -362,7 +383,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 
         GanttRowDto span = outcome.Rows[spanOffset - 1];
         Assert.Equal(spanOffset, span.RowNumber);
-        Assert.Equal("G-span", span.Id);
+        Assert.Equal(SpanRowId, span.Id);
         Assert.Equal("L-1", span.LaneId);
         Assert.Equal(1, span.StackIndex);
         Assert.Equal("As-Planned Activity", span.TypeText);
@@ -372,7 +393,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 
         GanttRowDto milestone = outcome.Rows[milestoneOffset - 1];
         Assert.Equal(milestoneOffset, milestone.RowNumber);
-        Assert.Equal("G-milestone", milestone.Id);
+        Assert.Equal(MilestoneRowId, milestone.Id);
         Assert.Equal("L-1", milestone.LaneId);
         Assert.Equal(2, milestone.StackIndex);
         Assert.Equal("Milestone", milestone.TypeText);
@@ -418,9 +439,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(
-                fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
 
@@ -565,8 +583,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);

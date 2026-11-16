@@ -548,6 +548,27 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task Teardown_records_the_graceful_wait_before_the_forced_kill()
+    {
+        // The leak ratchet counts bodies, which cannot tell a slow host shutdown
+        // from a proxy chain that never releases. Recording how long the graceful
+        // poll actually ran is what makes a widened-bound run decisive: a kill at
+        // the bound is latency; a kill that survives a longer bound is a leak.
+        var fixture = new StubbornFixture { LivePid = 4243 };
+
+        await fixture.DisposeStubbornAsync().ConfigureAwait(true);
+
+        Assert.Equal(1, fixture.ForcedKillCount);
+        Assert.True(
+            fixture.LastGracefulExitElapsedMs >= 100,
+            $"Expected the graceful wait to be recorded; observed {fixture.LastGracefulExitElapsedMs} ms.");
+        Assert.True(
+            fixture.LastGracefulExitElapsedMs < 5_000,
+            $"Expected the recorded wait to be near the 150 ms test bound; observed {fixture.LastGracefulExitElapsedMs} ms.");
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task Teardown_reports_a_process_that_outlives_the_forced_kill()
     {
         // A kill that does not take effect must not be tolerated silently: the
