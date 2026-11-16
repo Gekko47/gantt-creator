@@ -848,21 +848,19 @@ public static class SceneBuilder
             return null;
         }
 
-        // The frame's left edge is the TABLE's left edge, not the gutter's outer edge
-        // (owner report 2026-11-15: "the left border line of the chart is missing"). The
-        // gutter is the chart's outer left margin, and the frame used to close on its
-        // outer edge — which is the worksheet's own left edge, x = 0. Excel clips a shape
-        // at that boundary, so a 1pt stroke showed only a sliver and a 0.25pt hairline
-        // showed nothing at all. Closing the frame on the table's first column keeps the
-        // margin (it is now OUTSIDE the frame, like a page margin) and puts the stroke on
-        // a cell boundary the host can draw. The right edge is unchanged: it is the
-        // plotted panel's right edge, which is also what the live plot starts from.
+        // The frame's left edge is the GUTTER's outer edge - the chart's own 4pt left
+        // margin - so the frame encloses the same margin on all four sides (owner ruling
+        // 2026-11-16: "the left framing border has mistakenly been moved inward ... move it
+        // to the edge and reassert the 4pt frame border like the other three sides").
         //
-        // The quarter-point nudge is the ANCHOR, not the drawing (owner ruling 2026-11-15):
-        // a shape whose top-left is exactly on a column boundary resolves to the column on
-        // its left, which is the gutter — "it is plotting in a hidden column". A quarter
-        // point puts it inside the table's first column and is invisible.
-        double left = grid.OriginLeftPt + GanttSheetLayout.LiveFrameAnchorNudgePt;
+        // It closed on the table's first column between 2026-11-15 and this ruling, because
+        // a stroke CENTRED on the worksheet's own left edge was clipped by the host and the
+        // left side read as missing. That cause is gone: on the live sheet every frame
+        // stroke is drawn inside the rectangle it closes (ADR-0061 D4), so the left rule
+        // sits half a stroke inside the gutter's outer edge and is wholly on the sheet.
+        // The right edge is the plotted panel's right edge, which is where the live plot
+        // starts.
+        double left = grid.PanelLeftPt;
         double right = grid.PanelRightPt;
         double top = grid.OriginTopPt - grid.HeaderHeightPt;
         double bottom = grid.OriginTopPt + grid.RowHeightsPt.Sum();

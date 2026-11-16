@@ -721,23 +721,23 @@ public sealed class SceneBuilderTests
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         GanttScene scene = outcome.Result!.Scene;
 
-        // The vertical rule closes the table's first column - the same number the live
-        // title textbox is placed at - and not at the plot's left edge. Its CENTRE sits
-        // half the 1pt frame stroke INSIDE that edge: on the live sheet a stroke is drawn
-        // inside the rectangle it closes, because the sheet's own edge would otherwise
-        // clip it in half (live report 2026-11-15). The stroke therefore still spans the
-        // table's edge exactly.
+        // The vertical rule closes on the GUTTER's outer edge - the chart's own left
+        // margin - not on the table's first column and not at the plot's left edge (owner
+        // ruling 2026-11-16). Its CENTRE sits half the frame stroke INSIDE that edge,
+        // because on the live sheet a stroke is drawn inside the rectangle it closes
+        // (ADR-0061 D4), so the stroke spans the margin boundary exactly. This grid
+        // declares no gutter, so its outer edge and the table's origin are one coordinate.
         const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.From!.X, precision: 9);
-        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.To!.X, precision: 9);
 
-        // The top and bottom rules now START at the table and run to the plot's
+        // The top and bottom rules START at the frame's left edge and run to the plot's
         // right edge, so the frame is ONE rectangle rather than a step.
         SceneLine top = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:top", StringComparison.Ordinal));
-        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt, top.From!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt, top.From!.X, precision: 9);
         Assert.Equal(600, top.To!.X, precision: 9);
 
         // The BACKGROUND is untouched: a background over the table would paint
@@ -791,16 +791,16 @@ public sealed class SceneBuilderTests
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         GanttScene scene = outcome.Result!.Scene;
 
-        // The left edge is the TABLE's left edge (40), not the gutter's outer edge (30)
-        // and not the plot's left edge: the gutter is now an OUTER margin, because a
-        // stroke on the worksheet's own left edge is clipped by the host (owner report
-        // 2026-11-15: the chart's left border was missing). As above, the stroke's centre
-        // sits half a stroke inside the outline it closes.
+        // The left edge is the GUTTER's outer edge (30), not the table's origin (40) and not
+        // the plot's left edge: the gutter is the chart's left margin and sits INSIDE the
+        // frame, so the margin reads the same on all four sides (owner ruling 2026-11-16).
+        // As above, the stroke centre sits half a stroke inside the outline it closes.
         const double halfStroke = 0.5;
         SceneLine left = scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
-        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.From!.X, precision: 9);
-        Assert.Equal(40 + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(30 + halfStroke, left.From!.X, precision: 9);
 
         // The right edge is the origin plus the SUM of the measured column widths
         // (40 + 200 + 400). The largest column alone would close the frame at 440,
@@ -809,6 +809,47 @@ public sealed class SceneBuilderTests
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:right", StringComparison.Ordinal));
         Assert.Equal(640 - halfStroke, right.From!.X, precision: 9);
         Assert.Equal(640 - halfStroke, right.To!.X, precision: 9);
+    }
+
+    /// <summary>
+    /// The live frame's LEFT margin reads the measured gutter, the same 4pt the other three
+    /// sides take from <c>ChartOuterPaddingPt</c> (owner ruling 2026-11-16).
+    /// </summary>
+    /// <remarks>
+    /// The other three sides are the chart bounds' own margins; the gutter is sized from the
+    /// same token (ADR-0061 D3). This pins the coupling rather than the number: whatever the
+    /// gutter measures, the frame closes on its OUTER edge, so a frame drawn at the table's
+    /// first column - the 2026-11-15 interim state, reported as "the left framing border has
+    /// mistakenly been moved inward" - fails here.
+    /// </remarks>
+    [Fact]
+    public void The_live_frames_left_margin_is_the_measured_gutter()
+    {
+        double gutterPt = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 120)],
+            [10.0],
+            10,
+            ["Type"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            leadingGutterPt: gutterPt).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine left = outcome.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+
+        // The stroke centre is half a stroke inside the outline; the OUTLINE is the margin.
+        const double halfStroke = 0.5;
+        Assert.Equal(gutterPt, 40 - (left.From!.X - halfStroke), precision: 9);
     }
 
     [Fact]

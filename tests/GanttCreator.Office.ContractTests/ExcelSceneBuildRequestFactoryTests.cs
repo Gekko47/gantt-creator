@@ -392,11 +392,14 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     [Fact]
-    public void The_live_charts_border_starts_at_the_measured_table_origin()
+    public void The_live_charts_border_starts_at_the_charts_left_margin()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
-        PanelCellGrid grid = Grid(widthPt: 120);
+        // A measured gutter, so the frame's edge and the table's origin are two different
+        // numbers: without one, "the margin" and "the table" pass for each other.
+        double gutterPt = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        PanelCellGrid grid = Grid(widthPt: 120, originLeftPt: 40, leadingGutterPt: gutterPt);
 
         SceneBuildRequestOutcome outcome = factory.Create(
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
@@ -414,13 +417,15 @@ public class ExcelSceneBuildRequestFactoryTests
         SceneLine left = scene.Result!.Scene.Primitives.OfType<SceneLine>()
             .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
 
-        // The centre sits half the frame's own stroke INSIDE the measured origin, because a
-        // live stroke is drawn inside the rectangle it closes (ADR-0061 D4): the sheet's own
-        // left edge would otherwise clip half of it. The stroke still spans the origin, so
-        // this still asserts what it was written to assert - the frame starts at the table.
+        // The centre sits half the frame's own stroke INSIDE the gutter's outer edge, because
+        // a live stroke is drawn inside the rectangle it closes (ADR-0061 D4). The frame
+        // closes on the chart's left margin, not on the table's origin (owner ruling
+        // 2026-11-16), so the outline - not the stroke centre - is the margin boundary.
         double halfStroke = GanttCatalogues.MetricDefault("MajorBoundaryPt") / 2d;
-        Assert.Equal(grid.OriginLeftPt + GanttSheetLayout.LiveFrameAnchorNudgePt + halfStroke, left.From!.X, precision: 6);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.From!.X, precision: 6);
+        Assert.NotEqual(grid.OriginLeftPt + halfStroke, left.From!.X, precision: 6);
         Assert.NotEqual(outcome.Request!.PlotBounds!.Value.X, left.From!.X, precision: 6);
+        Assert.Equal(gutterPt, grid.OriginLeftPt - (left.From!.X - halfStroke), precision: 6);
     }
 
     /// <summary>

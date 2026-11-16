@@ -200,3 +200,40 @@ column's left edge with no inset: the inset is a width-budget decision, not a me
 - Guide sections 1, 3 and 8 record the rules.
 - Office host gate: **required and still owed** — none of the five reports is
   observable outside Excel.
+
+## D12 — the live frame closes on the gutter's outer edge again (2026-11-16)
+
+**Report.** "The left framing border has mistakenly been moved inward as shown in the image ...
+can you move it to the edge and reassert the 4pt frame border like the other three sides around
+the table and chart."
+
+**What D9 did, and why it is now wrong.** D9 moved the live frame's left edge from the gutter's
+outer edge to the table's first column, because a stroke *centred* on the worksheet's own left
+edge was clipped by the host and the left side read as missing. That produced a frame with a
+margin on three sides and none on the left: the gutter became a page-style margin **outside**
+the border, and the border sat on the table's own column edge.
+
+The clipping cause was already removed by D4: on the live sheet every frame stroke is drawn
+**inside** the rectangle it closes, so the left rule's centre is half a stroke (0.125pt at the
+hairline) inside the outline and lies wholly on the sheet. With that compensation in place the
+clipping argument no longer applies, and the frame can enclose the same margin on all four
+sides.
+
+**Decision.** `SceneBuilder.LiveDataPanelBounds` returns `grid.PanelLeftPt` as the frame's left
+edge — the gutter's outer edge, which the layout sizes from `ChartOuterPaddingPt` (D3) — so the
+left margin is the same 4pt as the top, right and bottom. `GanttSheetLayout.LiveFrameAnchorNudgePt`
+is retired: it existed to put the shape inside the table's first column, and there is no column
+to its left at the sheet edge.
+
+**Verified.** `SceneBuilderTests.A_live_charts_border_encloses_the_visible_data_table` and
+`The_live_frames_edges_are_the_tables_edges_and_its_width_is_the_summed_columns` now pin the
+outline on `PanelLeftPt`; a new fact,
+`The_live_frames_left_margin_is_the_measured_gutter`, pins the margin itself (the outline is
+`OriginLeftPt − leadingGutterPt`), so a frame drawn on the table's column edge fails it.
+`ExcelSceneBuildRequestFactoryTests.The_live_charts_border_starts_at_the_charts_left_margin`
+carries a measured gutter for the same reason.
+
+**Risk and its bound.** The live host's clipping behaviour is the reason D9 existed; if the left
+rule is again not painted, the compensation to check first is the stroke-inside inset, not the
+geometry. This is live-only: export compositions draw their own panel and are unchanged. The
+scene baseline is not regenerated.
