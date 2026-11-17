@@ -126,6 +126,14 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             Excel.Range body = scope.Track(table.DataBodyRange);
             Assert.NotNull(body);
 
+            // R5.21's 60 px visible-column default is too narrow for a ten-character
+            // date, so Excel paints "#########" and the GB/US display comparison below
+            // would compare two clipped strings. Widen Finish for this fact so it proves
+            // locale formatting rather than column width; whether a default-width date
+            // is readable is R5.21's product question, not this reader fact's.
+            Excel.Range finishColumn = scope.Track(body.Cells[1, GetColumnIndex("Finish")].EntireColumn);
+            finishColumn.ColumnWidth = 12;
+
             Excel.Range bodyRows = scope.Track(body.Rows);
             Excel.Range spanRange = scope.Track(spanRow.Range);
             Excel.Range milestoneRange = scope.Track(milestoneRow.Range);

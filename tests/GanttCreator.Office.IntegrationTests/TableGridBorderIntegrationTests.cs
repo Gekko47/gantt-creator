@@ -233,7 +233,10 @@ public class TableGridBorderIntegrationTests(ITestOutputHelper output)
             visible.Add((table.ListColumns[offset + 1].Name, column));
         }
 
-        Assert.Equal(5, visible.Count);
+        // Derived from the schema rather than restated: R5.21 added the sixth visible
+        // column (Activity ID), and a literal here fails a correct table for the old count.
+        int expectedVisible = GanttTableSchema.Default.Columns.Count(column => !column.IsHidden);
+        Assert.Equal(expectedVisible, visible.Count);
         _output.WriteLine("visible columns: " + string.Join(", ", visible.Select(entry => entry.Header)));
 
         List<string> failures = [];
