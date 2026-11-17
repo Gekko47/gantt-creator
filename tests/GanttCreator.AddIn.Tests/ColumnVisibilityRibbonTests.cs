@@ -151,14 +151,17 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         (RibbonStateService service, Mock<IConfigCatalogueWriter> writer) = Arm(port);
 
         service.ToggleColumnVisibility("colType");
+        service.ToggleColumnVisibility("colActivity ID");
         service.ToggleColumnVisibility("colDescription");
         service.ToggleColumnVisibility("colStart");
-        int appliedAfterThree = port.Applied.Count;
+        int appliedAfterFour = port.Applied.Count;
 
         service.ToggleColumnVisibility("colFinish");
 
-        Assert.Equal(appliedAfterThree, port.Applied.Count);
-        Assert.Equal("Type,Description,Start", LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
+        Assert.Equal(appliedAfterFour, port.Applied.Count);
+        Assert.Equal(
+            "Type,Activity ID,Description,Start",
+            LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
         Assert.Equal("Finish (shown)", service.GetColumnVisibilityLabel("colFinish"));
     }
 

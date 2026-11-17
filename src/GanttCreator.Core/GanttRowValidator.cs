@@ -696,6 +696,7 @@ public static class GanttRowValidator
             row.Visible ?? true,
             sortOrder)
         {
+            ActivityId = row.ActivityId,
             DateLabelPosition = dateLabelPosition,
             DateLabelPlacement = dateLabelPlacement
         };

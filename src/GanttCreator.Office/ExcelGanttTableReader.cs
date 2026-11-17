@@ -437,7 +437,8 @@ public class ExcelGanttTableReader(
             ToTextCell(byName["FillColour"]),
             ToTextCell(byName["StrokeColour"]),
             ToBoolCell(byName["Visible"], visible),
-            ToTextCell(byName["SortOrder"]));
+            ToTextCell(byName["SortOrder"]),
+            ToTextCell(byName["Activity ID"]));
     }
     private static bool IsBlank(object? value)
         => value is null || (value is string text && string.IsNullOrWhiteSpace(text));

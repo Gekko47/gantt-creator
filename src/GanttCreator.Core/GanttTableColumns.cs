@@ -24,8 +24,9 @@ namespace GanttCreator.Core;
 public enum GanttColumnAccess
 {
     /// <summary>
-    /// User-visible and editable: <c>Type</c>, <c>Description</c>, <c>Start</c>,
-    /// <c>Finish</c>. Unlocked, so protecting the sheet still allows authoring.
+    /// User-visible and editable: <c>Type</c>, <c>Activity ID</c>,
+    /// <c>Description</c>, <c>Start</c>, <c>Finish</c>. Unlocked, so protecting the
+    /// sheet still allows authoring.
     /// </summary>
     Authoring = 0,
 
@@ -222,7 +223,9 @@ public sealed class GanttTableSchema
     /// R4.7C added <c>Duration</c> immediately after <c>Finish</c>, classified
     /// every column, and advanced 4 → 5. R5.14 added <c>DateLabelPosition</c>
     /// immediately after <c>LabelPosition</c> and advanced 14 → 15. R5.18k led the
-    /// table with the visible columns and advanced 22 → 23.
+    /// table with the visible columns and advanced 22 → 23. R5.21 added the
+    /// user-authored <c>Activity ID</c> immediately after <c>Type</c> and advanced
+    /// 25 → 26 (ADR-0064).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -232,9 +235,17 @@ public sealed class GanttTableSchema
     /// reversed: the table starts at
     /// <see cref="GanttSheetLayout.TableOriginColumnIndex"/> (column B), the leading
     /// column is the add-in's spacer gutter and is NOT a table column at all, and the
-    /// engine columns follow the five the user reads and edits. A user who scrolls
+    /// engine columns follow the six the user reads and edits. A user who scrolls
     /// right still finds them, hidden; a user who opens the table sees
     /// <c>Type</c> first, which is the column the table is authored by.
+    /// </para>
+    /// <para>
+    /// <b><c>Activity ID</c> is the analyst's own reference, not the engine
+    /// identity (R5.21, ADR-0064).</b> It sits directly after <c>Type</c> so a row
+    /// reads as "what this is, what it is called elsewhere, what it says". It is
+    /// <c>Authoring</c> and optional in value while remaining a required column:
+    /// a blank cell is legal, and the engine <c>Id</c> stays hidden and locked
+    /// because <c>ParentId</c>, scene ownership and outline planning all key on it.
     /// </para>
     /// <para>
     /// <c>DateLabelPosition</c> is OPTIONAL (the <c>SortOrder</c> precedent):
@@ -250,6 +261,7 @@ public sealed class GanttTableSchema
     public static GanttTableSchema Default { get; } = new(
     [
         new GanttTableColumn("Type", isRequired: true, GanttColumnAccess.Authoring),
+        new GanttTableColumn("Activity ID", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Description", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Start", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Finish", isRequired: true, GanttColumnAccess.Authoring),

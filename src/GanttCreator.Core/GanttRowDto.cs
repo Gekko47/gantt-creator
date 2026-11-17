@@ -26,7 +26,8 @@ public sealed record GanttRowDto
         GanttCell<string> fillColourCell,
         GanttCell<string> strokeColourCell,
         GanttCell<bool?> visibleCell,
-        GanttCell<string> sortOrderCell)
+        GanttCell<string> sortOrderCell,
+        GanttCell<string>? activityIdCell = null)
     {
         RowNumber = rowNumber;
         IdCell = idCell;
@@ -46,6 +47,7 @@ public sealed record GanttRowDto
         StrokeColourCell = strokeColourCell;
         VisibleCell = visibleCell;
         SortOrderCell = sortOrderCell;
+        ActivityIdCell = activityIdCell ?? GanttCells.Empty<string>();
     }
 
     /// <summary>
@@ -71,7 +73,8 @@ public sealed record GanttRowDto
         string? strokeColourText,
         bool? visible,
         string? sortOrder,
-        string? dateLabelPositionText = null)
+        string? dateLabelPositionText = null,
+        string? activityId = null)
         : this(
             rowNumber,
             Cell(id),
@@ -90,7 +93,8 @@ public sealed record GanttRowDto
             Cell(fillColourText),
             Cell(strokeColourText),
             Cell(visible),
-            Cell(sortOrder))
+            Cell(sortOrder),
+            Cell(activityId))
     {
     }
 
@@ -99,6 +103,13 @@ public sealed record GanttRowDto
 
     /// <summary>Raw typed Id cell state.</summary>
     public GanttCell<string> IdCell { get; init; }
+
+    /// <summary>
+    /// Raw typed <c>Activity ID</c> cell state (R5.21). The analyst's own reference
+    /// for the row: free text, visible, and unrelated to the engine <see cref="Id"/>,
+    /// which <c>ParentId</c>, scene ownership and outline planning key on.
+    /// </summary>
+    public GanttCell<string> ActivityIdCell { get; init; }
 
     /// <summary>Raw typed LaneId cell state.</summary>
     public GanttCell<string> LaneIdCell { get; init; }
@@ -159,6 +170,9 @@ public sealed record GanttRowDto
 
     /// <summary>Raw typed SortOrder cell state.</summary>
     public GanttCell<string> SortOrderCell { get; init; }
+    /// <summary>Normalized Activity ID compatibility view.</summary>
+    public string? ActivityId => ActivityIdCell.Value;
+
     /// <summary>Normalized Id compatibility view.</summary>
     public string? Id => IdCell.Value;
 

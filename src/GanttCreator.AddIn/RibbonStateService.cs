@@ -2729,9 +2729,12 @@ internal class RibbonStateService
         ColumnVisibilityOutcome outcome = GanttColumnVisibility.Toggle(_hiddenColumns, columnName);
         if (!outcome.Succeeded)
         {
+            // Derived from the contract rather than restated: a column added to the
+            // offered set must not leave the message naming the old set.
             PresentWarning(
-                "At least one of Type, Description, Start, Finish or Duration must stay "
-                + "visible, or the table could not be typed into.");
+                "At least one of "
+                + string.Join(", ", GanttColumnVisibility.ToggleableColumnNames)
+                + " must stay visible, or the table could not be typed into.");
             return;
         }
 

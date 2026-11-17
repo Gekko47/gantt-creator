@@ -4,9 +4,10 @@ public class GanttTableSchemaTests
 {
     private static readonly (string Name, bool IsRequired)[] s_columnContract =
     [
-        // R5.18k: the five visible columns lead, and the engine columns follow.
-        ("Type", true), ("Description", true), ("Start", true), ("Finish", true),
-        ("Duration", true),
+        // R5.18k: the visible columns lead, and the engine columns follow.
+        // R5.21 (ADR-0064) adds the user-authored Activity ID directly after Type.
+        ("Type", true), ("Activity ID", true), ("Description", true), ("Start", true),
+        ("Finish", true), ("Duration", true),
         ("Id", true), ("LaneId", true), ("StackIndex", true),
         ("ParentId", true), ("SiblingOrder", true), ("StyleKey", true),
         ("LabelPosition", true), ("DateLabelPosition", false),
@@ -25,9 +26,10 @@ public class GanttTableSchemaTests
     {
         var columns = GanttTableSchema.Default.Columns;
 
-        // 15 required + two optional. R4.7A added SiblingOrder, taking
+        // 16 required + two optional. R4.7A added SiblingOrder, taking
         // the required count from 13 to 14; R4.7C added Duration, taking
-        // it to 15. R5.14 added DateLabelPosition as the second OPTIONAL
+        // it to 15; R5.21 added the required Activity ID, taking it to 16.
+        // R5.14 added DateLabelPosition as the second OPTIONAL
         // column (the SortOrder precedent): a workbook saved before
         // R5.14 legitimately lacks it, and a missing optional column
         // reads as a blank cell (= Auto) instead of failing the table
@@ -81,6 +83,7 @@ public class GanttTableSchemaTests
 
     [Theory]
     [InlineData("Type", GanttColumnAccess.Authoring)]
+    [InlineData("Activity ID", GanttColumnAccess.Authoring)]
     [InlineData("Description", GanttColumnAccess.Authoring)]
     [InlineData("Start", GanttColumnAccess.Authoring)]
     [InlineData("Finish", GanttColumnAccess.Authoring)]

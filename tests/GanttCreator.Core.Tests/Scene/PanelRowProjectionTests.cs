@@ -158,9 +158,9 @@ public sealed class PanelRowProjectionTests
         // per schema field plus a column the schema does not map.
         string[] names =
         [
-            "Id", "Type", "Description", "Start", "Finish", "LaneId", "StackIndex",
-            "ParentId", "StyleKey", "LabelPosition", "FillColour", "StrokeColour",
-            "Visible", "SortOrder", "ApprovedNote",
+            "Id", "Type", "Activity ID", "Description", "Start", "Finish", "LaneId",
+            "StackIndex", "ParentId", "StyleKey", "LabelPosition", "FillColour",
+            "StrokeColour", "Visible", "SortOrder", "ApprovedNote",
         ];
         PanelCellGrid grid = PanelCellGrid.TryCreate(
             [.. names.Select(name => new PanelColumn(name, 100))],
@@ -176,7 +176,10 @@ public sealed class PanelRowProjectionTests
         GanttRowId parent = GanttRowId.New();
         GanttEvent full = new(
             1, id, lane, 2, GanttEntityType.AsPlannedActivity, "work", start, finish,
-            parent, "Phase", position, "#112233", "#445566", true, 7);
+            parent, "Phase", position, "#112233", "#445566", true, 7)
+        {
+            ActivityId = "A-100",
+        };
         GanttEvent blank = new(
             2, GanttRowId.New(), null, null, GanttEntityType.AsPlannedMilestone, null, null, null,
             null, null, null, null, null, false, null);
@@ -189,6 +192,7 @@ public sealed class PanelRowProjectionTests
             [
                 id.Value,
                 EntityTypeCatalog.GetDefinition(GanttEntityType.AsPlannedActivity)!.DisplayName,
+                "A-100",
                 "work",
                 GanttDateFormatting.Format(start, GanttDateDisplayFormat.DdMMyyyy),
                 GanttDateFormatting.Format(finish, GanttDateDisplayFormat.DdMMyyyy),
@@ -211,7 +215,7 @@ public sealed class PanelRowProjectionTests
             [
                 result.Rows[1].RowId.Value,
                 EntityTypeCatalog.GetDefinition(GanttEntityType.AsPlannedMilestone)!.DisplayName,
-                null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
+                null, null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
             ],
             result.Rows[1].Cells);
     }

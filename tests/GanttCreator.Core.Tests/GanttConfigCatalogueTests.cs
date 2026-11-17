@@ -966,6 +966,15 @@ public class GanttConfigCatalogueTests
     /// Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// <para>
+    /// <b>Advanced to 26 by R5.21 (ADR-0064)</b>: <c>tblGanttData</c> gains the
+    /// required, user-authored <c>Activity ID</c> column directly after
+    /// <c>Type</c>, and the schema seed line moves from 25 to 26. No catalogue
+    /// row, style, or setting changes, so the settings table's extent and the
+    /// config anchor do not move; the hash moves through the seed alone. A
+    /// version-25 workbook carries the older hash and is reported as a mismatch;
+    /// the remedy is Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
     /// <b>Moved at schema 24 by the header-type ruling (ADR-0060)</b>: the
     /// <c>HeaderFontSizePt</c> typography value becomes <c>9</c>, so the live
     /// table's header row and the chart's period band are one heading (owner
@@ -980,7 +989,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "272526c2aec99d435e3b33a21bf229ea3f7d65d393874c5d43b862abfe8dd2f0";
+        "ddd3434dc1648cc96c9f81b303a8ddc01b3ce938c11405033d6c79b45ce57285";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

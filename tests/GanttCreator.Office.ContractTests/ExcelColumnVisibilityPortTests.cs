@@ -28,7 +28,11 @@ public sealed class ExcelColumnVisibilityPortTests
     /// <param name="worksheet">The resolved worksheet.</param>
     /// <param name="hidden">Each offered column's live hidden flag.</param>
     /// <param name="writes">The flag writes the test double records.</param>
-    /// <param name="liveColumnCount">How many columns the fake live table reports.</param>
+    /// <param name="liveColumnCount">
+    /// How many columns the fake live table reports, or <see langword="null"/> for one per
+    /// offered column. Derived rather than restated so a schema column added to the contract
+    /// does not silently shrink the fake table and turn every case into an unknown-column refusal.
+    /// </param>
     private sealed class TestablePort(
         object? application,
         IWorksheetProtectionGuard guard,
@@ -36,7 +40,7 @@ public sealed class ExcelColumnVisibilityPortTests
         Excel.Worksheet? worksheet,
         Dictionary<string, bool> hidden,
         List<string> writes,
-        int liveColumnCount = 5)
+        int? liveColumnCount = null)
         : ExcelColumnVisibilityPort(application, guard)
     {
         internal override bool TryFindGanttTable(
@@ -52,7 +56,8 @@ public sealed class ExcelColumnVisibilityPortTests
         internal override Excel.ListColumns GetTableColumns(Excel.ListObject target)
         {
             Mock<Excel.ListColumns> columns = new();
-            columns.Setup(c => c.Count).Returns(liveColumnCount);
+            columns.Setup(c => c.Count).Returns(
+                liveColumnCount ?? GanttColumnVisibility.ToggleableColumnNames.Count);
             return columns.Object;
         }
 
@@ -114,7 +119,7 @@ public sealed class ExcelColumnVisibilityPortTests
         List<string> writes,
         Excel.ListObject? table = null,
         ProtectionGuardOutcome protection = ProtectionGuardOutcome.NotProtected,
-        int liveColumnCount = 5) =>
+        int? liveColumnCount = null) =>
         new(
             Application().Object,
             Guard(protection).Object,

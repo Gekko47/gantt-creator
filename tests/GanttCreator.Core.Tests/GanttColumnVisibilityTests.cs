@@ -82,11 +82,11 @@ public sealed class GanttColumnVisibilityTests
     [Fact]
     public void Hiding_the_last_visible_authoring_column_is_refused()
     {
-        // Type, Description and Start are already hidden; hiding Finish would leave no
-        // authoring column at all, so the table could not be typed into by hand.
-        // `Duration` does not count: the schema classifies it as read-only.
+        // Type, Activity ID, Description and Start are already hidden; hiding Finish
+        // would leave no authoring column at all, so the table could not be typed into
+        // by hand. `Duration` does not count: the schema classifies it as read-only.
         ColumnVisibilityOutcome outcome = GanttColumnVisibility.Toggle(
-            Set("Type", "Description", "Start"),
+            Set("Type", "Activity ID", "Description", "Start"),
             "Finish");
 
         Assert.False(outcome.Succeeded);

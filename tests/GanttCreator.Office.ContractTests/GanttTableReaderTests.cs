@@ -148,11 +148,13 @@ public class GanttTableReaderTests
         object? type = null,
         object? start = null,
         object? finish = null,
-        object? visible = null)
+        object? visible = null,
+        object? activityId = null)
     {
         Dictionary<string, object?> values = new(StringComparer.Ordinal)
         {
             ["Id"] = id,
+            ["Activity ID"] = activityId,
             ["StackIndex"] = stackIndex,
             ["Type"] = type,
             ["Start"] = start,
@@ -865,6 +867,30 @@ public class GanttTableReaderTests
         Assert.True(outcome.Succeeded);
         Assert.Equal("G-reordered", outcome.Rows[0].Id);
         Assert.Equal(new DateOnly(2023, 1, 1), outcome.Rows[0].Start);
+    }
+
+    /// <summary>
+    /// The user-authored Activity ID is read into its own cell (R5.21, ADR-0064):
+    /// trimmed like every text cell, blank as null, and never confused with the
+    /// engine Id beside it.
+    /// </summary>
+    [Fact]
+    public void Read_carries_the_activity_id_into_its_own_cell()
+    {
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var sheet = new SheetGraph(table);
+        var matrix = BodyMatrix(
+            FullRow(id: "G-1", activityId: "  A-100  "),
+            FullRow(id: "G-2"));
+
+        var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => matrix);
+
+        var outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("A-100", outcome.Rows[0].ActivityId);
+        Assert.Equal("G-1", outcome.Rows[0].Id);
+        Assert.Null(outcome.Rows[1].ActivityId);
     }
 
     [Fact]

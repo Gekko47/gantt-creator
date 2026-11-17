@@ -86,7 +86,12 @@ public class GanttSchemaVersionTests
         // survives reopening the workbook. It is read fail-open (absent or
         // unreadable means enabled), and the config table's anchor moves from
         // A99 to A100 to keep the blank row between the tables.
-        Assert.Equal(25, GanttSchemaVersion.CurrentSchemaVersion);
+        // 26 adds the user-authored `Activity ID` column directly after Type
+        // (R5.21, ADR-0064). It is visible and editable, is measured into the data
+        // panel, and moves the plot anchor from column S to column T because the
+        // anchor is the origin plus the column count. No migration (ADR-0029 D6);
+        // Initialise is the remedy.
+        Assert.Equal(26, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

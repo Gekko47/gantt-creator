@@ -46,6 +46,14 @@ public sealed record GanttEvent(
     int? SortOrder)
 {
     /// <summary>
+    /// The analyst's own reference for the row (R5.21, ADR-0064), or
+    /// <see langword="null"/> when blank. Free text, unrelated to <see cref="Id"/>:
+    /// it never resolves a parent, an owner, or an ordering, and it is reproduced
+    /// only as the <c>Activity ID</c> data-panel cell.
+    /// </summary>
+    public string? ActivityId { get; init; }
+
+    /// <summary>
     /// The explicit date-label choice, or <see langword="null"/> when blank
     /// (blank and <c>Auto</c> both mean the type default, which is <c>None</c>
     /// since the 2026-11-13 ruling; <c>Both</c> is the explicit both-dates

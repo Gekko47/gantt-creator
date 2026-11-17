@@ -144,6 +144,9 @@ public static class PanelRowProjection
                 // as an empty worksheet cell.
                 "Id" => atEvent.Id.Value,
                 "Type" => EntityTypeCatalog.GetDefinition(atEvent.Type)?.DisplayName,
+                // R5.21: the analyst's reference, reproduced exactly as typed. It is
+                // not the engine Id and is never used to resolve an owner.
+                "Activity ID" => atEvent.ActivityId,
                 "Description" => atEvent.Description,
                 "Start" => atEvent.Start is { } start ? GanttDateFormatting.Format(start, dateFormat) : null,
                 "Finish" => atEvent.Finish is { } finish ? GanttDateFormatting.Format(finish, dateFormat) : null,

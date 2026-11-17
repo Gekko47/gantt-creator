@@ -200,6 +200,21 @@ public static class GanttSchemaVersion
     /// is Initialise.
     /// </para>
     /// <para>
+    /// <b>Version 26 is R5.21's user-authored <c>Activity ID</c> column (ADR-0064).</b>
+    /// <c>tblGanttData</c> gains a required, user-visible <c>Activity ID</c> column
+    /// directly after <c>Type</c>, so the analyst has a place to record their own
+    /// reference for a row without hand-editing the hidden, locked engine <c>Id</c>.
+    /// The column is classified <c>Authoring</c>, is measured as part of the data
+    /// panel, and is offered by the ribbon's column dropdown as
+    /// <c>colActivity ID</c>. No catalogue row, style, or setting changes, so the
+    /// settings table's extent and the config anchor do not move; the hash moves
+    /// through the schema seed alone. The column count moves 17 → 18, so
+    /// <see cref="GanttSheetLayout.PlotAnchorColumnIndex"/> moves from column S to
+    /// column T. A version-25 workbook's table lacks the column, so its stored
+    /// catalogue hash no longer matches and it reports a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
     /// <b>Version 25 is R5.20's persisted automatic-refresh switch.</b>
     /// <c>tblGanttSettings</c> gains <c>AutoRefreshEnabled</c>, which records whether a
     /// chart-affecting table edit or a successful chart-setting command may rebuild the
@@ -251,5 +266,5 @@ public static class GanttSchemaVersion
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 25;
+    public const int CurrentSchemaVersion = 26;
 }

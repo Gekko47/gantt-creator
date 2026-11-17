@@ -29,8 +29,8 @@ public sealed record ColumnVisibilityOutcome(
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Five columns, and only these.</b> The dropdown offers the five the user reads and
-/// edits. The eleven engine columns are hidden by the schema's own classification
+/// <b>Six columns, and only these.</b> The dropdown offers the six the user reads and
+/// edits. The twelve engine columns are hidden by the schema's own classification
 /// (<see cref="GanttColumnAccess.EngineHidden"/>) and are not the user's to show: an
 /// engine column made visible is a column whose cells the add-in owns, and the whole
 /// point of ADR-0029 D8 is that those stay out of sight.
@@ -64,7 +64,7 @@ public static class GanttColumnVisibility
     /// a visible column would offer the user a toggle that hides nothing they can see.
     /// </remarks>
     public static IReadOnlyList<string> ToggleableColumnNames { get; } =
-        ["Type", "Description", "Start", "Finish", "Duration"];
+        ["Type", "Activity ID", "Description", "Start", "Finish", "Duration"];
 
     /// <summary>
     /// Returns whether the schema, rather than the user, owns a column's hidden flag.

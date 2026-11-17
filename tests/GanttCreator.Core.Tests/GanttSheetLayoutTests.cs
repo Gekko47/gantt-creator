@@ -421,9 +421,10 @@ public sealed class GanttSheetLayoutTests
         Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleEndColumnIndex);
 
         // The derived reference is the single cell above Description. The table starts
-        // in column B and Description is the second schema column, so the title is C2.
+        // in column B and Description is the third schema column since R5.21 added
+        // Activity ID after Type, so the title is D2.
         Assert.Equal(
-            "C2",
+            "D2",
             GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleRowIndex));
 
         // It starts AFTER the leading gutter: a title in column A would sit over the
