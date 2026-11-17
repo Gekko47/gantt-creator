@@ -1055,7 +1055,7 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
     }
 
     It 'pins actionlint version + SHA-256' {
-        $script:versions.actionlint.Version | Should -Be '1.7.7'
+        $script:versions.actionlint.Version | Should -Be '1.7.12'
         $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
     }
 

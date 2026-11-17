@@ -6,7 +6,7 @@
 # local and CI cannot recur. See AGENTS.md "Test layers" and
 # docs/04-TEST-STRATEGY.md.
 @{
-    # Pester. CI installs newest >= 6.0; local runs 6.1.0. When a
+    # Pester. CI installs newest >= 6.0; local runs 6.2.0. When a
     # known-broken version ships, add a minimum here and assert it from
     # Pester.
     Pester = @{
@@ -22,14 +22,14 @@
 
     # actionlint. Both the CI workflow and scripts/lint-ci.ps1 verify the
     # SHA-256 below before using the downloaded binary. Sha256 pins the
-    # published actionlint 1.7.7 windows/amd64 zip; ExeSha256 pins the
+    # published actionlint 1.7.12 windows/amd64 zip; ExeSha256 pins the
     # actionlint.exe inside that archive (computed from a fresh download
     # whose archive hash matched the pin) so scripts/lint-ci.ps1 can also
     # re-verify an already-cached executable before every execution.
     actionlint = @{
-        Version     = '1.7.7'
-        Sha256      = '7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731'
-        ExeSha256   = '6d470a52039a433bccdf57bd65170885a5b23e511155d0de587c2c3ce0eb1c24'
+        Version     = '1.7.12'
+        Sha256      = '6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9'
+        ExeSha256   = '54ca21be3de4c7cfa26914aa8b61bd76bf573ef3caac5f80d110558cdf241718'
         DownloadUrl = 'https://github.com/rhysd/actionlint/releases/download/v{0}/actionlint_{0}_windows_amd64.zip'
     }
 
@@ -38,7 +38,8 @@
     # PackageReference: it is test-only and must not reach a production
     # project). Pinned here so local and CI cannot diverge (W11).
     #
-    # 5.0.0 is the current latest and the version the R3.13 probe ran against.
+    # 5.1.0 is the current latest stable (R3.13's first probe ran 5.0.0; the
+    # diff-gate flags below were re-verified against 5.1.0 on 2026-11-17).
     # VERIFIED against the installed CLI, not from memory (evidence ledger in
     # docs/work-items/R3.13-mutation-testing.md):
     #   * `--since[:<committish>]` exists and enables diff-compare mode, so the
@@ -49,7 +50,7 @@
     #     does NOT depend on Stryker parsing the .slnx solution file - the
     #     guide's ".slnx gaps" stop condition does not apply.
     'dotnet-stryker' = @{
-        Version       = '5.0.0'
+        Version       = '5.1.0'
         ToolId        = 'dotnet-stryker'
         # The changed-code mutation threshold from docs/04-TEST-STRATEGY.md
         # "Coverage policy" (80%). Scoped to changed Core code, not the whole
@@ -67,11 +68,11 @@
     # PackageReference: it is a dev tool and must not reach a production
     # project). Pinned here so local and CI cannot diverge (W11).
     #
-    # 5.5.12 VERIFIED against the installed CLI, not from memory:
-    # `dotnet tool install --global dotnet-reportgenerator-globaltool`
-    # reported "version '5.5.12'" and `dotnet tool list --global` agrees.
+    # 5.6.0 VERIFIED against the installed CLI, not from memory:
+    # `dotnet tool update --global dotnet-reportgenerator-globaltool`
+    # reported "version '5.6.0'" and `dotnet tool list --global` agrees.
     'dotnet-reportgenerator-globaltool' = @{
-        Version = '5.5.12'
+        Version = '5.6.0'
         ToolId  = 'dotnet-reportgenerator-globaltool'
     }
 }

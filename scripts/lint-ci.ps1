@@ -12,7 +12,8 @@
     Exit 0 on clean; exit 1 with annotated failures.
 
 .NOTES
-    Pinned version: 1.7.7 (latest stable at time of R0.8).
+    Pinned version: see scripts/tool-versions.psd1 (1.7.12 at the
+    time of the 2026-11-17 tool bump; the psd1 is authoritative).
     Download URL pattern: https://github.com/rhysd/actionlint/releases/download/v{VERSION}/actionlint_{VERSION}_windows_amd64.zip
 #>
 

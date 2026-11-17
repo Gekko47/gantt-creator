@@ -24,14 +24,7 @@
         "type": "Project",
         "dependencies": {
           "ExcelDna.Interop": "[16.0.0, )",
-          "GanttCreator.Core": "[1.0.0, )"
-        }
-      },
-      "ganttcreator.raster": {
-        "type": "Project",
-        "dependencies": {
-          "ExcelDna.Interop": "[16.0.0, )",
-          "GanttCreator.Core": "[1.0.0, )"
+          "GanttCreator.Core": "[0.0.0, )"
         }
       },
       "ExcelDna.Integration": {
