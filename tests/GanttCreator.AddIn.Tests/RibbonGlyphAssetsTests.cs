@@ -261,8 +261,8 @@ public sealed class RibbonGlyphAssetsTests
             [
                 "add-activity",
                 "add-milestone",
+                "circle-dashed",
                 "delineator",
-                "pen",
                 "procurement",
                 "spacer",
                 "span-delay",
@@ -284,8 +284,12 @@ public sealed class RibbonGlyphAssetsTests
 
         Assert.Equal("span-delay", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.DelayEvent));
         Assert.Equal("procurement", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.AsBuiltProcurement));
-        Assert.Equal("pen", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomActivity));
-        Assert.Equal("pen", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomMilestone));
+
+        // The style-defined pair uses the draft ring, not a pen: the owner's live
+        // review found the pen's nib reading as a padlock at 16 px, and a padlock on
+        // this tab states that the cells or chart are locked.
+        Assert.Equal("circle-dashed", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomActivity));
+        Assert.Equal("circle-dashed", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomMilestone));
     }
 
     // Ported from ColumnVisibilityImagesTests: the column menu offers the five authoring

@@ -98,9 +98,12 @@ $glyphs = [ordered]@{
     # needed a picture that differs at 16 px, where detail is lost and only a
     # silhouette survives. `procurement` doubles each bar of the activity motif, which
     # is how the chart shows hatch; `span-delay` is the same motif collapsed to one
-    # bar whose second half has slipped; `pen` is Lucide's own pen, the only
-    # diagonal-dominant shape on the tab. Geometry is a deterministic composition of
-    # Lucide's 24 x 24 bar metrics, not a traced screenshot.
+    # bar whose second half has slipped. `procurement` and `span-delay` are
+    # deterministic compositions of Lucide's 24 x 24 bar metrics, not traced
+    # screenshots. `circle-dashed` is Lucide's own draft ring, adopted on the owner's
+    # live review after `pen` was rejected: at 16 px the pen's nib read as a padlock
+    # beside the two real padlock glyphs, which is the worst possible confusion on a
+    # tab where "locked" is a state.
     'procurement'       = @(
         'M6 4h12'
         'M6 7h12'
@@ -113,8 +116,15 @@ $glyphs = [ordered]@{
         'M3 10h9'
         'M12 15h9'
     )
-    'pen'               = @(
-        'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'
+    'circle-dashed'     = @(
+        'M10.1 2.182a10 10 0 0 1 3.8 0'
+        'M13.9 21.818a10 10 0 0 1-3.8 0'
+        'M17.609 3.721a10 10 0 0 1 2.69 2.7'
+        'M2.182 13.9a10 10 0 0 1 0-3.8'
+        'M20.279 17.609a10 10 0 0 1-2.7 2.69'
+        'M21.818 10.1a10 10 0 0 1 0 3.8'
+        'M3.721 6.391a10 10 0 0 1 2.7-2.69'
+        'M6.391 20.279a10 10 0 0 1-2.69-2.7'
     )
     'delineator'        = @(
         'M12 3v18'
@@ -258,7 +268,7 @@ $controlGlyphs = [ordered]@{
     entAsPlannedActivity    = @{ Glyph = 'add-activity'; Size = 16 }
     entAsBuiltActivity      = @{ Glyph = 'add-activity'; Size = 16 }
     entBaselineActivity     = @{ Glyph = 'add-activity'; Size = 16 }
-    entCustomActivity       = @{ Glyph = 'pen'; Size = 16 }
+    entCustomActivity       = @{ Glyph = 'circle-dashed'; Size = 16 }
     entDelayEvent           = @{ Glyph = 'span-delay'; Size = 16 }
     entCriticalInterval     = @{ Glyph = 'add-activity'; Size = 16 }
     entAsPlannedProcurement = @{ Glyph = 'procurement'; Size = 16 }
@@ -268,7 +278,7 @@ $controlGlyphs = [ordered]@{
     entAsBuiltMilestone     = @{ Glyph = 'add-milestone'; Size = 16 }
     entBaselineMilestone    = @{ Glyph = 'add-milestone'; Size = 16 }
     entCriticalMilestone    = @{ Glyph = 'add-milestone'; Size = 16 }
-    entCustomMilestone      = @{ Glyph = 'pen'; Size = 16 }
+    entCustomMilestone      = @{ Glyph = 'circle-dashed'; Size = 16 }
     entDelineator           = @{ Glyph = 'delineator'; Size = 16 }
     entSpacer               = @{ Glyph = 'spacer'; Size = 16 }
     entSplitter             = @{ Glyph = 'splitter'; Size = 16 }
@@ -308,7 +318,7 @@ $stateGlyphs = @(
     'splitter|32'
     'procurement|32'
     'span-delay|32'
-    'pen|32'
+    'circle-dashed|32'
 )
 
 # Positive guard: a table entry naming geometry that does not exist is a hard

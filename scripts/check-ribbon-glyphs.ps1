@@ -334,12 +334,12 @@ foreach ($match in [regex]::Matches($catalogueText, 'internal const string \w+ =
 $primaryGlyphs = @(
     'add-activity'
     'add-milestone'
+    'circle-dashed'
     'delineator'
     'spacer'
     'splitter'
     'procurement'
     'span-delay'
-    'pen'
 )
 foreach ($slug in $primaryGlyphs) {
     foreach ($palette in @('light', 'dark')) {

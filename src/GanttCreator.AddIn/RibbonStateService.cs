@@ -2472,13 +2472,17 @@ internal class RibbonStateService
         GanttEntityType.Delineator => "delineator",
 
         // R5.16a surface revision 2026-11-17: the three concept rows the menus draw
-        // differently from their family.
+        // differently from their family. The style-defined pair uses the draft ring
+        // rather than a pen: at 16 px the pen's nib read as a padlock on the owner's
+        // live review, and a padlock on this tab means the cells or the chart are
+        // locked, so the wrong reading is a state contradiction rather than a
+        // near-miss.
         GanttEntityType.AsPlannedProcurement
             or GanttEntityType.AsBuiltProcurement
             or GanttEntityType.BaselineProcurement => "procurement",
         GanttEntityType.DelayEvent => "span-delay",
         GanttEntityType.CustomActivity
-            or GanttEntityType.CustomMilestone => "pen",
+            or GanttEntityType.CustomMilestone => "circle-dashed",
 
         GanttEntityType.AsBuiltMilestone
             or GanttEntityType.AsPlannedMilestone
