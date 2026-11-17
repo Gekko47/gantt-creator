@@ -47,16 +47,17 @@ public static class GanttTableAppearance
     public static IReadOnlyList<string> CentredColumnNames { get; } = ["Start", "Finish", "Duration"];
 
     /// <summary>
-    /// The width, in points, Initialise gives every visible table column.
+    /// The width, in Excel's logical pixels, Initialise gives every visible table column.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>An owner ruling (2026-11-17), not a measured metric.</b> A freshly initialised
     /// table used Excel's Normal-font default, which made the data panel narrow and the
-    /// descriptions clipped; the owner asked for 60pt on every visible column. It is a
-    /// presentation default applied by Initialise (and by a sheet rebuild), never by a
-    /// Refresh or a Repair over an existing table, so a user's own column resize is not
-    /// undone by the next pass.
+    /// descriptions clipped; the owner asked for 60 pixels on every visible column. The
+    /// unit is deliberate: Excel's Column Width dialog reports characters and <em>pixels</em>
+    /// (never points), so the owner's figure and the host's own readout are the same unit.
+    /// A first cut targeted 60 <em>points</em> and the host showed 80 pixels, which is
+    /// exactly 60 × 96/72 — the conversion below is why that cannot recur.
     /// </para>
     /// <para>
     /// It is a code constant rather than a catalogue metric because it is not part of the
@@ -65,7 +66,17 @@ public static class GanttTableAppearance
     /// origin follows whatever width the sheet actually carries.
     /// </para>
     /// </remarks>
-    public static double DefaultVisibleColumnWidthPt => 60.0;
+    public static double DefaultVisibleColumnWidthPx => 60.0;
+
+    /// <summary>
+    /// The same default in points, which is the unit Excel's width properties use.
+    /// </summary>
+    /// <remarks>
+    /// Excel's points are 1/72 inch and its logical pixel is 1/96 inch, so
+    /// <c>points = pixels × 72/96</c>; 60px is 45pt. One conversion, in one place, so an
+    /// adapter can never apply the pixel figure as a point value again.
+    /// </remarks>
+    public static double DefaultVisibleColumnWidthPt => DefaultVisibleColumnWidthPx * 72.0 / 96.0;
 
     /// <summary>The built-in Excel table style the add-in assigns to the data table.</summary>
     /// <remarks>

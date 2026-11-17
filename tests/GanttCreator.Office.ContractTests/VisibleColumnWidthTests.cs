@@ -6,9 +6,9 @@ namespace GanttCreator.Office.ContractTests;
 
 /// <summary>
 /// Contract tests for the visible-column width default Initialise applies (R5.21,
-/// owner ruling 2026-11-17): every user-visible column reaches 60pt through the same
-/// bounded characters-to-points conversion the gutter uses, and an engine column is
-/// never touched.
+/// owner ruling 2026-11-17): every user-visible column reaches 60 pixels (45pt) through
+/// the same bounded characters-to-points conversion the gutter uses, and an engine column
+/// is never touched.
 /// </summary>
 public sealed class VisibleColumnWidthTests
 {

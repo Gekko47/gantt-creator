@@ -109,12 +109,15 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
-    public void The_visible_column_default_width_is_sixty_points()
+    public void The_visible_column_default_width_is_sixty_pixels_which_is_forty_five_points()
     {
         // Owner ruling 2026-11-17: a freshly initialised table gives every visible column
-        // 60pt. It is a presentation constant, not a schema metric, so it must not move the
-        // catalogue hash.
-        Assert.Equal(60.0, GanttTableAppearance.DefaultVisibleColumnWidthPt);
+        // 60 pixels, the unit Excel's width dialog reports. The first cut targeted 60
+        // points and the host showed 80 pixels (60 × 96/72), so the conversion is pinned
+        // rather than left to an adapter. A presentation constant, not a schema metric, so
+        // it must not move the catalogue hash.
+        Assert.Equal(60.0, GanttTableAppearance.DefaultVisibleColumnWidthPx);
+        Assert.Equal(45.0, GanttTableAppearance.DefaultVisibleColumnWidthPt, 6);
         Assert.True(double.IsFinite(GanttTableAppearance.DefaultVisibleColumnWidthPt));
     }
 
