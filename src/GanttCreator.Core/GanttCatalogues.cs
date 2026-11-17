@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace GanttCreator.Core;
 
@@ -35,6 +36,14 @@ public static class GanttCatalogues
     /// <summary>The Excel Table name for the add-in metadata (schema version, hash, workbook ID).</summary>
     public const string ConfigTableName = "tblGanttConfig";
 
+    /// <summary>
+    /// The five contract tables materialised on the configuration worksheet.
+    /// The recovery locator counts how many of these a candidate sheet carries,
+    /// so a table name is never compared against a literal elsewhere.
+    /// </summary>
+    public static IReadOnlyList<string> ContractTableNames { get; } =
+        [TypesTableName, StylesTableName, MetricsTableName, SettingsTableName, ConfigTableName];
+
     /// <summary>The anchor cell of <see cref="TypesTableName"/> (ADR-0007 D7).</summary>
     public const string TypesAnchor = "A1";
 
@@ -49,18 +58,22 @@ public static class GanttCatalogues
 
     /// <summary>
     /// The anchor cell of <see cref="ConfigTableName"/> (ADR-0007 D7).
-    /// A92 rather than the original A90: the catalogue writer writes each
+    /// A100 rather than the original A90: the catalogue writer writes each
     /// table's cell values BEFORE creating the ListObject (so a refused add
     /// leaves clearable cells), and values written directly adjacent to an
     /// existing table are claimed by Excel's table auto-expand before the
     /// add runs — the add is then refused with "A table can't overlap
     /// another table". R5.2's 19th setting closed the last buffer row
     /// (tblGanttSettings reached row 89, making A90 adjacent) and every
-    /// live Initialise began failing (defect 2026-10-09). The blank-row
-    /// invariant test ties every anchor to the catalogue sizes, so future
-    /// growth fails there first.
+    /// live Initialise began failing (defect 2026-10-09). R5.6a's six
+    /// chart-chrome colour settings grew it again, to 25 keys reaching row
+    /// 95, so the anchor moved to A98; R5.18h's <c>HiddenColumns</c> key took
+    /// it to 27 keys reaching row 97, so it moved once more to A99; R5.20's
+    /// <c>AutoRefreshEnabled</c> key took it to 28 keys reaching row 98, so it
+    /// moved again to A100. The blank-row invariant test ties every anchor to
+    /// the catalogue sizes, so future growth fails there first.
     /// </summary>
-    public const string ConfigAnchor = "A92";
+    public const string ConfigAnchor = "A100";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";
@@ -104,6 +117,7 @@ public static class GanttCatalogues
         "DefaultLabelPosition",
         "AllowedLabelPositions",
         "ColourCapability",
+        "StrokeDash",
     ];
 
     /// <summary>The <see cref="MetricsTableName"/> header row, in contract order.</summary>
@@ -137,7 +151,11 @@ public static class GanttCatalogues
     /// </summary>
     public static IReadOnlyList<GanttMetricToken> Metrics { get; } =
     [
-        new("ChartOuterPaddingPt", 6, 0, 36),
+        // Owner ruling 2026-11-15: the chart's four margins are 4pt, not 6. The four
+        // margins are one figure by design - this token is the frame's top, right and
+        // left (the leading gutter) margin, and ADR-0038 D4 keeps the bottom equal to
+        // the anchor row plus the padding row, which the row height below preserves.
+        new("ChartOuterPaddingPt", 4, 0, 36),
 
         // ADR-0031 D2: the height of the worksheet rows that form the chart's top
         // and bottom margins. It defaults to the SAME 6pt the ChartOuterPaddingPt
@@ -159,7 +177,9 @@ public static class GanttCatalogues
         // row Excel needs to anchor the plot-spanning shapes into. Writing 6 here
         // instead would silently make the total 6.25pt, i.e. a second, unrequested
         // change to the margin wearing the costume of a structural one.
-        new("ChartPaddingRowHeightPt", 5.75, 0, 72),
+        // 3.75, so that the anchor row (0.25) plus this row is the 4pt outer padding
+        // above (owner ruling 2026-11-15). It was 5.75 beside a 6pt outer padding.
+        new("ChartPaddingRowHeightPt", 3.75, 0, 72),
 
         // ADR-0038 D1: the height of the reserved ANCHOR row, immediately below the
         // last body row. The bands, vertical grid lines, and delineators paint
@@ -217,8 +237,11 @@ public static class GanttCatalogues
         new("LabelGapPt", 3, 0, 18),
         new("LabelHeightPt", 10, 6, 36),
         new("StandardOutlinePt", 0.75, 0, 6),
-        new("GridLinePt", 0.5, 0.25, 3),
-        new("MajorBoundaryPt", 1, 0.25, 6),
+        // Owner ruling 2026-11-15: the chart's lines are hairlines. 1pt and 0.5pt both
+        // render as one pixel at 100 %, so the earlier "one weight" pass was invisible on
+        // the sheet; 0.25pt is Excel's thinnest line and is what actually reads differently.
+        new("GridLinePt", 0.25, 0.25, 3),
+        new("MajorBoundaryPt", 0.25, 0.25, 6),
         new("DelineatorLinePt", 0.75, 0.25, 6),
         new("HatchPitchPt", 4, 2, 18),
         new("HatchLinePt", 0.5, 0.25, 3),
@@ -252,21 +275,31 @@ public static class GanttCatalogues
         new("SplitterFill", "#FFE699"),
         new("AlternateBandFill", "#F2F2F2"),
         new("MinorGridStroke", "#D9D9D9"),
-        new("MajorGridStroke", "#000000"),
+        new("MajorGridStroke", "#D9D9D9"),
         new("DelineatorStroke", "#404040"),
         new("WarningFill", "#FFF2CC"),
     ];
+
+    /// <summary>The code-owned pastel warning fill used by non-blocking validation.</summary>
+    public static ColourHex WarningFill { get; } = ColourHex.Parse(ResolveColour("WarningFill"));
 
     /// <summary>
     /// The 6 typography tokens, in entity-guide order (bold flags for
     /// <c>YearFontSizePt</c>, <c>TitleFontSizePt</c>, and
     /// <c>DelineatorFontSizePt</c>).
     /// </summary>
+    /// <remarks>
+    /// <c>HeaderFontSizePt</c> is the 9pt regular type the chart's period band
+    /// already renders, so the live table's header row and the band above the plot
+    /// read as one heading rather than two (owner ruling 2026-11-14). The same
+    /// <c>isBold: false</c> flag drives the write, which is what makes the header
+    /// regular even though Excel's table style bolds it by default.
+    /// </remarks>
     public static IReadOnlyList<GanttTypographyToken> Typography { get; } =
     [
         new("FontFamily", "Aptos", isBold: false),
         new("BodyFontSizePt", "8", isBold: false),
-        new("HeaderFontSizePt", "8", isBold: false),
+        new("HeaderFontSizePt", "9", isBold: false),
         new("YearFontSizePt", "9", isBold: true),
         new("TitleFontSizePt", "11", isBold: true),
         new("DelineatorFontSizePt", "8", isBold: true),
@@ -324,6 +357,67 @@ public static class GanttCatalogues
         // `MarginCm` as a finite centimetre value in the permitted band.
         new("Margin", nameof(GanttPlotMargin.Normal)),
         new("MarginCm", GanttPlotMargins.DefaultCustomCm.ToString("R", CultureInfo.InvariantCulture)),
+
+        // Schema version 20 (R5.6a). The chart-chrome colours: the frame the
+        // entities sit on, rather than any entity's own style. They are
+        // settings rather than style rows because they belong to the chart as
+        // a whole, and the workbook owns them the same way it owns the chart
+        // title and the banding and grid switches above.
+        //
+        // Each default is the approved colour-token value, so the catalogue
+        // and the token table cannot disagree; a test pins that equality.
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.Background), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.AlternateBand), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.AlternateBand)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MinorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MajorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.YearHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.YearHeader)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.PeriodHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.PeriodHeader)),
+
+        // Schema version 22 (ADR-0055). `ProtectGanttSheet` records that the add-in
+        // OWNS protection of the visible Gantt worksheet, and is also the user's
+        // switch for the feature.
+        //
+        // Ownership has to be recorded, because the guard cannot otherwise tell its
+        // own protection from the user's: a protected sheet refuses every write
+        // (ADR-0008 D4), so protecting the sheet to lock the chart shapes would make
+        // the add-in refuse to refresh the very worksheet it protects. `FALSE` means
+        // the add-in neither protects nor re-protects, and the sheet behaves exactly
+        // as it did before this key existed.
+        //
+        // The sheet is protected with `DrawingObjects:=true` (without it `Shape.Locked`
+        // is inert), `Contents:=true` (locked cells, so the schema's `IsLocked` columns
+        // stay read-only) and `UserInterfaceOnly:=true` (so code may still write), and
+        // deliberately with NO password: this is accidental-edit prevention, not
+        // security, and a password we do not store could never be re-entered.
+        new("ProtectGanttSheet", "TRUE"),
+
+        // Schema version 24 (R5.18h). `HiddenColumns` stores the comma-separated schema
+        // display names of the table columns the USER has hidden from the ribbon's column
+        // dropdown, so the choice survives opening the workbook in another instance.
+        //
+        // It is one key rather than one key per column because the set is small, ordered
+        // and written by exactly one method (`GanttColumnVisibility.Format`), and because
+        // a per-column group would multiply the schema by five for the same information.
+        // The value is strictly parsed: an unreadable list is REFUSED, never silently read
+        // as "nothing hidden", which would un-hide the user's columns and look like a
+        // fresh workbook. A blank default means nothing is hidden.
+        new(GanttColumnVisibility.SettingKey, string.Empty),
+
+        // Schema version 25 (R5.20). `AutoRefreshEnabled` is the user's switch for
+        // the coalesced automatic refresh, persisted with the workbook so the choice
+        // survives opening the file in another instance.
+        //
+        // It is required rather than session state for the reason the column-visibility
+        // key is required: the user switches it off to work without COM churn and would
+        // not expect the next file open to switch it back on. `TRUE` is the default every
+        // release has shipped, so a workbook written before the key existed behaves
+        // exactly as it did (GanttAutoRefresh.Parse treats an absent or unreadable value
+        // as enabled, so a typo cannot silently stop every automatic pass).
+        //
+        // The switch never relaxes the render contract: an explicit Refresh is still a
+        // full validation and repair pass, and an enabled automatic pass still reads and
+        // validates the complete table before mutating a shape (ADR-0050 D6).
+        new(GanttAutoRefresh.SettingKey, GanttAutoRefresh.EnabledValue),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)
@@ -373,12 +467,28 @@ public static class GanttCatalogues
         ["DefaultDelineator"] = () => Preset(
             "DefaultDelineator", "Delineator", null, "DelineatorStroke",
             GanttHatchPattern.None, "DefaultText", "DelineatorLinePt", null, null),
+        // The two custom types carry a code-owned default preset so a row whose
+        // named style is absent - no custom style chosen, or the one it named was
+        // deleted - still resolves to a renderable style. The tokens are the
+        // As-Planned ones, so the fallback looks like the As-Planned family until
+        // the user assigns a custom style. An earlier revision passed null for
+        // every colour and metric token, which resolved to an empty fill, an
+        // empty stroke, and zero height and size: a degenerate style that drew
+        // nothing and produced a shape the host could refuse mid-refresh.
+        ["CustomActivity"] = () => Preset(
+            "CustomActivity", "Custom Activity", "PlannedFill", "PlannedOutline",
+            GanttHatchPattern.None, "DefaultText", "StandardOutlinePt", "ActivityHeightPt", null),
+        ["CustomMilestone"] = () => Preset(
+            "CustomMilestone", "Custom Milestone", "PlannedFill", "PlannedOutline",
+            GanttHatchPattern.None, "DefaultText", "StandardOutlinePt", null, "MilestoneSizePt"),
     };
 
     /// <summary>
     /// The built-in style presets, in <see cref="EntityTypeCatalog.Entries"/>
     /// order: one row per entry whose <c>DefaultStyleKey</c> is non-empty
-    /// (15 of 16; <c>Custom Activity</c> requires a user <c>StyleKey</c>).
+    /// (17 of 17; <c>Custom Activity</c> and <c>Custom Milestone</c> carry a
+    /// code-owned default preset so the scene always resolves a style even when
+    /// the user has not chosen a named style, or the one they named was deleted).
     /// Each preset resolves its colours and metrics from the token defaults
     /// above (ADR-0007 D7).
     /// </summary>
@@ -435,6 +545,25 @@ public static class GanttCatalogues
                 "Style key is not a built-in preset key.");
 
     /// <summary>
+    /// Tries to find a built-in style preset by key without throwing.
+    /// </summary>
+    /// <param name="styleKey">The style key to look up.</param>
+    /// <param name="preset">The matching preset, or null when not found.</param>
+    /// <returns>True when a preset exists for the key.</returns>
+    public static bool TryGetPreset(string styleKey, out GanttStylePreset? preset)
+    {
+        if (_resolvers.TryGetValue(styleKey, out Func<GanttStylePreset>? resolve)
+            && resolve is not null)
+        {
+            preset = resolve();
+            return true;
+        }
+
+        preset = null;
+        return false;
+    }
+
+    /// <summary>
     /// Resolves one preset from token names; a null token name means the
     /// column is not applicable and resolves to empty/0 (documented in
     /// ADR-0007 D7).
@@ -448,7 +577,8 @@ public static class GanttCatalogues
         string textToken,
         string? outlineToken,
         string? heightToken,
-        string? milestoneToken)
+        string? milestoneToken,
+        GanttStrokeDash strokeDash = GanttStrokeDash.Solid)
     {
         EntityTypeDefinition definition = EntityTypeCatalog.Entries.First(entry =>
             string.Equals(entry.DefaultStyleKey, styleKey, StringComparison.Ordinal));
@@ -456,12 +586,12 @@ public static class GanttCatalogues
         {
             "DelayEvent" => GanttLabelPosition.Inside,
             "CriticalInterval" or "Spacer" => GanttLabelPosition.None,
-            "Splitter" => GanttLabelPosition.DataPanelLeft,
+            "Splitter" => GanttLabelPosition.PlotCentre,
             _ => GanttLabelPosition.Auto,
         };
-        var outline = outlineToken is null ? 0 : ResolveMetric(outlineToken);
-        var height = heightToken is null ? 0 : ResolveMetric(heightToken);
-        var milestone = milestoneToken is null ? 0 : ResolveMetric(milestoneToken);
+        double outline = outlineToken is null ? 0 : ResolveMetric(outlineToken);
+        double height = heightToken is null ? 0 : ResolveMetric(heightToken);
+        double milestone = milestoneToken is null ? 0 : ResolveMetric(milestoneToken);
         return new GanttStylePreset(
             styleKey,
             displayName,
@@ -476,7 +606,8 @@ public static class GanttCatalogues
             milestone,
             defaultLabelPosition,
             definition.AllowedLabelPositions,
-            definition.ColourCapability);
+            definition.ColourCapability,
+            strokeDash);
     }
 
     /// <summary>
@@ -590,9 +721,9 @@ public static class GanttCatalogues
     /// </exception>
     public static double TypographyDefault(string tokenName)
     {
-        var value = TypographyDefaultText(tokenName);
-        var parsedOk =
-            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        string value = TypographyDefaultText(tokenName);
+        bool parsedOk =
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             && double.IsFinite(parsed)
             && parsed > 0;
 
@@ -601,6 +732,35 @@ public static class GanttCatalogues
             : throw new ArgumentException(
                 $"Typography token '{tokenName}' has a value that is not a positive point size: '{value}'.",
                 nameof(tokenName));
+    }
+
+    /// <summary>
+    /// The bold flag of a typography token.
+    /// </summary>
+    /// <param name="tokenName">The token name, matched Ordinal.</param>
+    /// <returns>The token's bold flag.</returns>
+    /// <exception cref="ArgumentException">
+    /// The name is not a typography token, for the same reason
+    /// <see cref="TypographyDefaultText"/> throws rather than defaulting.
+    /// </exception>
+    /// <remarks>
+    /// The flag belongs to the token, not to a call site: a header that is regular in
+    /// the entity guide and bold on the sheet is one decision with two spellings.
+    /// </remarks>
+    public static bool TypographyDefaultIsBold(string tokenName)
+    {
+        ArgumentNullException.ThrowIfNull(tokenName);
+        foreach (GanttTypographyToken token in Typography)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return token.IsBold;
+            }
+        }
+
+        throw new ArgumentException(
+            $"'{tokenName}' is not a typography token in the Gantt Creator catalogue.",
+            nameof(tokenName));
     }
 
     /// <summary>
@@ -673,7 +833,7 @@ public static class GanttCatalogues
     /// <returns>The 64-character lowercase hexadecimal digest.</returns>
     public static string ComputeCatalogueHash()
     {
-        var builder = new System.Text.StringBuilder();
+        StringBuilder builder = new StringBuilder();
         AppendLine(builder, $"schema|{GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)}");
         AppendTableHeader(builder, TypesTableName, TypesHeaders);
         foreach (GanttTypeCatalogueRow row in TypeRows)
@@ -701,7 +861,8 @@ public static class GanttCatalogues
                         preset.AllowedLabelPositions
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
-                    preset.ColourCapability.ToString()));
+                    preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString()));
         }
 
         AppendTableHeader(builder, MetricsTableName, MetricsHeaders);
@@ -730,15 +891,15 @@ public static class GanttCatalogues
             AppendLine(builder, Join(setting.Key, setting.DefaultValue));
         }
 
-        var digest = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(builder.ToString()));
+        byte[] digest = System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(builder.ToString()));
         return Convert.ToHexStringLower(digest);
     }
 
-    private static void AppendTableHeader(System.Text.StringBuilder builder, string tableName, string[] headers) =>
+    private static void AppendTableHeader(StringBuilder builder, string tableName, string[] headers) =>
         AppendLine(builder, $"{tableName}|{string.Join(",", headers)}");
 
-    private static void AppendLine(System.Text.StringBuilder builder, string line)
+    private static void AppendLine(StringBuilder builder, string line)
     {
         _ = builder.Append(line);
         _ = builder.Append('\n');

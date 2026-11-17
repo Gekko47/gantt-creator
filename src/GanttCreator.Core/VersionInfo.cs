@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace GanttCreator.Core;
 
 /// <summary>
@@ -26,9 +28,9 @@ public static class VersionInfo
         // from this assembly. Directory.Build.props sets InformationalVersion
         // at build time; if the attribute is absent (e.g., a partial-trust
         // host or a stripped assembly), fall back to "0.0.0+local".
-        var attr = typeof(VersionInfo).Assembly
-            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
+        AssemblyInformationalVersionAttribute? attr = typeof(VersionInfo).Assembly
+            .GetCustomAttributes(typeof(AssemblyInformationalVersionAttribute), false)
+            .FirstOrDefault() as AssemblyInformationalVersionAttribute;
         return string.IsNullOrEmpty(attr?.InformationalVersion) ? "0.0.0+local" : attr.InformationalVersion;
     }
 
@@ -47,19 +49,19 @@ public static class VersionInfo
         }
 
         // Strip build metadata after '+'
-        var plus = informational.IndexOf('+', StringComparison.Ordinal);
-        var core = plus >= 0 ? informational[..plus] : informational;
+        int plus = informational.IndexOf('+', StringComparison.Ordinal);
+        string core = plus >= 0 ? informational[..plus] : informational;
 
         // Strict semver major.minor.patch[-prerelease]. The numeric parts are
         // validated against ASCII digits only — never int.TryParse, whose
         // default NumberStyles accept signs and whitespace and whose digit
         // handling is culture-sensitive. Leading zeros are invalid semver
         // numeric identifiers and are rejected.
-        var dash = core.IndexOf('-', StringComparison.Ordinal);
-        var numbers = dash >= 0 ? core[..dash] : core;
-        var prerelease = dash >= 0 ? core[(dash + 1)..] : null;
+        int dash = core.IndexOf('-', StringComparison.Ordinal);
+        string numbers = dash >= 0 ? core[..dash] : core;
+        string? prerelease = dash >= 0 ? core[(dash + 1)..] : null;
 
-        var parts = numbers.Split('.');
+        string[] parts = numbers.Split('.');
         // Expressed as a single conditional expression because IDE0046
         // (enforced repo-wide now that the global suppression is scoped to
         // RollingLog.ValidateBaseName) flags guard-else returns in a tail
@@ -89,18 +91,18 @@ public static class VersionInfo
             return false;
         }
 
-        foreach (var identifier in prerelease.Split('.'))
+        foreach (string identifier in prerelease.Split('.'))
         {
             if (identifier.Length == 0)
             {
                 return false;
             }
 
-            var allDigits = true;
-            foreach (var c in identifier)
+            bool allDigits = true;
+            foreach (char c in identifier)
             {
-                var isDigit = c is >= '0' and <= '9';
-                var isLetter = c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z');
+                bool isDigit = c is >= '0' and <= '9';
+                bool isLetter = c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z');
                 if (!isDigit && !isLetter && c != '-')
                 {
                     return false;
@@ -131,7 +133,7 @@ public static class VersionInfo
             return false;
         }
 
-        foreach (var c in text)
+        foreach (char c in text)
         {
             if (c is < '0' or > '9')
             {

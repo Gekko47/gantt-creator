@@ -26,6 +26,15 @@ namespace GanttCreator.Core;
 /// <param name="StandardOutlinePt">The outline width in points.</param>
 /// <param name="ActivityHeightPt">The entity height in points.</param>
 /// <param name="MilestoneSizePt">The diamond tip-to-tip size in points.</param>
+/// <param name="DisplayName">
+/// The human-readable style name, or null when the registry does not carry
+/// one. A user-authored style row stores its display name in the second
+/// column, so the reader projects it; the built-in presets carry their own
+/// code-owned names.
+/// </param>
+/// <param name="StrokeDash">
+/// The resolved stroke dash pattern, or null when the style carries none.
+/// </param>
 public sealed record GanttStyleDefinition(
     string StyleKey,
     IReadOnlySet<GanttLabelPosition> AllowedLabelPositions,
@@ -39,7 +48,9 @@ public sealed record GanttStyleDefinition(
     double HatchLinePt = 0,
     double StandardOutlinePt = 0,
     double ActivityHeightPt = 0,
-    double MilestoneSizePt = 0)
+    double MilestoneSizePt = 0,
+    string? DisplayName = null,
+    GanttStrokeDash? StrokeDash = null)
 {
     /// <summary>
     /// Gets whether the catalogue supplied resolved formatting for this style.
@@ -125,7 +136,7 @@ public sealed class GanttStyleRegistry
     public GanttStyleRegistry(IEnumerable<GanttStyleDefinition> styles)
     {
         ArgumentNullException.ThrowIfNull(styles);
-        var map = new Dictionary<string, GanttStyleDefinition>(StringComparer.Ordinal);
+        Dictionary<string, GanttStyleDefinition> map = new Dictionary<string, GanttStyleDefinition>(StringComparer.Ordinal);
         foreach (GanttStyleDefinition style in styles)
         {
             ArgumentNullException.ThrowIfNull(style);
@@ -163,6 +174,9 @@ public sealed class GanttStyleRegistry
 
     /// <summary>Gets the number of registered styles.</summary>
     public int Count => _styles.Count;
+
+    /// <summary>Gets all registered style keys in catalogue order.</summary>
+    public IReadOnlyList<string> StyleKeys => [.. _styles.Keys];
 
     /// <summary>Finds a style by exact key.</summary>
     /// <param name="styleKey">The exact style key.</param>

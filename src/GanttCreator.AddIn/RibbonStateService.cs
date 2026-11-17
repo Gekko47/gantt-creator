@@ -15,7 +15,7 @@ namespace GanttCreator.AddIn;
 /// docs/02-ARCHITECTURE.md "Ribbon and commands": every callback is a thin error
 /// boundary and dynamic Ribbon state getters must be fast and side-effect-free.
 /// <see cref="GetEnabled"/> therefore reads one cached <see cref="RibbonState"/>
-/// — it never probes Excel, never touches the ribbon handle, and never writes a
+/// â€” it never probes Excel, never touches the ribbon handle, and never writes a
 /// log record. The snapshot changes only inside <see cref="Refresh"/>, which is
 /// driven by <c>onLoad</c>, by workbook-state events from the Office adapter,
 /// and by each command the ribbon runs.
@@ -46,8 +46,20 @@ internal class RibbonStateService
 
     private IRibbonUI? _ribbon;
     private IExcelApplicationAdapter? _applicationAdapter;
+
+    /// <summary>
+    /// The command boundary the setting writers report a failed persist through.
+    /// Defaults to the session singleton; injectable so a headless test can
+    /// install a capturing presenter instead of the modal dialog the production
+    /// boundary shows.
+    /// </summary>
+    private CommandBoundary _commandBoundary = CommandBoundary.Instance;
     private Func<bool?>? _logAvailabilitySource;
     private IDisposable? _workbookStateSubscription;
+    private GanttRefreshScheduler? _refreshScheduler;
+
+    /// <summary>The sheet-activation subscription (R5.16b), detached exactly once.</summary>
+    private IDisposable? _sheetActivationSubscription;
 
     /// <summary>The standalone selection identifier (R5.5 ruling 6), or null when not wired.</summary>
     private ISelectionIdentifier? _selectionIdentifier;
@@ -59,7 +71,127 @@ internal class RibbonStateService
     private IConfigCatalogueReader? _catalogueReader;
     private IGanttTableReader? _tableReader;
     private IPanelGridMeasurementPort? _panelGridMeasurementPort;
+    private IColumnVisibilityPort? _columnVisibilityPort;
+
+    /// <summary>
+    /// The columns the user has hidden through the column dropdown (R5.18h). Seeded
+    /// from the live worksheet so the items state the real state, and replaced
+    /// whenever the dropdown changes it.
+    /// </summary>
+    private HashSet<string> _hiddenColumns = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether the next successful settings read should re-seed the persisted session switches
+    /// (R5.20).
+    /// </summary>
+    /// <remarks>
+    /// True until the first read, and set again on a workbook change, because those are the two
+    /// moments the workbook's own value is authoritative. The settings read also runs on every
+    /// Refresh, and re-seeding there would undo a switch the user had just pressed whose persist
+    /// Excel had refused — the ribbon would silently disagree with the click until the file was
+    /// reopened.
+    /// </remarks>
+    private bool _seedPersistedSwitches = true;
     private RibbonState _state = RibbonState.Initial;
+    private IReadOnlyList<SceneWarning> _lastSuccessfulSceneWarnings = [];
+    private IReadOnlyList<GanttValidationIssue> _currentValidationIssues = [];
+    private DateTimeOffset? _lastSuccessfulRenderAtUtc;
+
+    /// <summary>
+    /// Replaces the command boundary the setting writers report through. A test
+    /// passes a boundary with a capturing presenter, because the production
+    /// boundary shows a modal dialog and a headless run of a failing persist
+    /// would block forever waiting for it to be dismissed.
+    /// </summary>
+    /// <param name="boundary">The boundary to use; the session singleton when null.</param>
+    internal void SetCommandBoundary(CommandBoundary? boundary) =>
+        _commandBoundary = boundary ?? CommandBoundary.Instance;
+
+    /// <summary>Stores warnings only after a complete successful render.</summary>
+    internal void UpdateWarnings(IReadOnlyList<SceneWarning> warnings)
+    {
+        ArgumentNullException.ThrowIfNull(warnings);
+        _lastSuccessfulSceneWarnings = [.. warnings];
+        _lastSuccessfulRenderAtUtc = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Gets warnings from the most recent successful render.</summary>
+    internal IReadOnlyList<SceneWarning> GetLastSuccessfulSceneWarnings() => _lastSuccessfulSceneWarnings;
+
+    internal DateTimeOffset? GetLastSuccessfulRenderAtUtc() => _lastSuccessfulRenderAtUtc;
+
+    /// <summary>
+    /// Refreshes the displayed automatic plot dates from a completed pass (R5.1a).
+    /// </summary>
+    /// <param name="plotStart">The inclusive plot start the pass rendered, or null when unknown.</param>
+    /// <param name="plotFinish">The inclusive plot finish the pass rendered, or null when unknown.</param>
+    /// <remarks>
+    /// Only an end in AUTO mode is written: an explicit end's display is the date
+    /// the user chose, and a pass must never rewrite it. An end whose formatted
+    /// text did not change is not invalidated, so an unrelated automatic pass costs
+    /// two comparisons and zero ribbon round-trips. Never throws and never
+    /// schedules a pass: it is the tail of one.
+    /// </remarks>
+    internal void UpdateEffectivePlotDates(DateOnly? plotStart, DateOnly? plotFinish)
+    {
+        bool startChanged = false;
+        bool finishChanged = false;
+        RibbonState next = _state;
+
+        if (_state.PlotStartAuto && plotStart is DateOnly start)
+        {
+            string text = GanttDateFormatting.FormatDdMMMyy(start);
+            if (!string.Equals(text, _state.EffectivePlotStartDate, StringComparison.Ordinal))
+            {
+                next = next with { EffectivePlotStartDate = text };
+                startChanged = true;
+            }
+        }
+
+        if (_state.PlotFinishAuto && plotFinish is DateOnly finish)
+        {
+            string text = GanttDateFormatting.FormatDdMMMyy(finish);
+            if (!string.Equals(text, _state.EffectivePlotFinishDate, StringComparison.Ordinal))
+            {
+                next = next with { EffectivePlotFinishDate = text };
+                finishChanged = true;
+            }
+        }
+
+        if (!startChanged && !finishChanged)
+        {
+            return;
+        }
+
+        _state = next;
+        if (startChanged)
+        {
+            InvalidateControl(RibbonControlIds.PlotStartDate);
+        }
+
+        if (finishChanged)
+        {
+            InvalidateControl(RibbonControlIds.PlotFinishDate);
+        }
+    }
+
+    internal void UpdateCurrentValidationIssues(IReadOnlyList<GanttValidationIssue> issues)
+    {
+        ArgumentNullException.ThrowIfNull(issues);
+        _currentValidationIssues = [.. issues];
+    }
+
+    internal IReadOnlyList<GanttValidationIssue> GetCurrentValidationIssues() => _currentValidationIssues;
+
+    /// <summary>Opens the read-only list for the last successful rendered scene.</summary>
+    internal void ShowWarningsPanel()
+    {
+        using WarningsPanelForm dialog = new(
+            _lastSuccessfulSceneWarnings, _lastSuccessfulRenderAtUtc, _currentValidationIssues);
+        _ = ShowWarningsPanelDialog(dialog);
+    }
+
+    protected virtual DialogResult ShowWarningsPanelDialog(WarningsPanelForm dialog) => dialog.ShowDialog();
 
     /// <summary>
     /// The description-label dropdown's per-selection context: whether the selection
@@ -105,6 +237,21 @@ internal class RibbonStateService
         IReadOnlyList<GanttLabelPosition>? Options);
 
     /// <summary>
+    /// The custom-style dropdown's per-selection context (R5.6a): whether the
+    /// selection resolves to exactly one style-key-type body row, that row's
+    /// stored style key (only when it names a user-created style), and the
+    /// user-created (non-built-in) style keys the configuration registry
+    /// offers, in catalogue order.
+    /// </summary>
+    /// <param name="Available">True when exactly one style-key-type body row is selected.</param>
+    /// <param name="SelectedKey">The row's stored custom style key, or null when blank/built-in.</param>
+    /// <param name="Options">The user-created style keys in catalogue order.</param>
+    private readonly record struct CustomStyleContext(
+        bool Available,
+        string? SelectedKey,
+        IReadOnlyList<string>? Options);
+
+    /// <summary>
     /// The metric token naming the frame's outer right padding, in points.
     /// Named once here rather than inlined so the display's chrome split and
     /// the Refresh pipeline's cannot drift (R4.8A D5: a literal here is a
@@ -115,6 +262,56 @@ internal class RibbonStateService
     internal RibbonStateService()
     {
     }
+
+    /// <summary>
+    /// The presenter for a user-facing failure. It is a seam rather than a
+    /// direct call to <see cref="CommandErrorDialog.Show"/> because that
+    /// dialog is modal: a test that drives a refused write would block on a
+    /// message box with nobody to dismiss it, so the test could never reach
+    /// its own assertion. Every other command in this assembly takes the same
+    /// seam (see <see cref="RefreshSheetCommand.Run"/>).
+    /// </summary>
+    private Action<string> _errorPresenter = CommandErrorDialog.Show;
+
+    /// <summary>
+    /// The presenter for a NON-BLOCKING advisory warning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a SEPARATE seam from <see cref="_errorPresenter"/> because the
+    /// two have different blocking behaviour, and the difference matters.
+    /// </para>
+    /// <para>
+    /// <b>Why a warning cannot use the modal error dialog.</b> The warnings
+    /// here are raised from a ribbon <c>editBox</c> callback -- the user has
+    /// typed a date and pressed Enter. A modal dialog there takes the Excel
+    /// UI thread hostage until it is dismissed, which also means a headless
+    /// test that drives the same path blocks forever: the test could never
+    /// reach its own assertion. The error dialog is modal by design (ADR-0006)
+    /// and is right for a command that has FAILED, but a rejected keystroke
+    /// is not a failed command -- it is a keystroke the ribbon declines.
+    /// </para>
+    /// <para>
+    /// The warning is therefore presented NON-MODALLY: the ribbon's own
+    /// status bar, which is where Excel itself reports a rejected edit, and
+    /// which needs no dismissal. The default presenter writes to it.
+    /// </para>
+    /// </remarks>
+    private Action<string> _warningPresenter = RibbonStatusBar.Warn;
+
+    /// <summary>
+    /// Injects the presenter used for a user-facing failure.
+    /// </summary>
+    /// <param name="presenter">The presenter; a null presenter restores the default dialog.</param>
+    internal void SetErrorPresenter(Action<string>? presenter) =>
+        _errorPresenter = presenter ?? CommandErrorDialog.Show;
+
+    /// <summary>
+    /// Injects the presenter used for a non-blocking advisory warning.
+    /// </summary>
+    /// <param name="presenter">The presenter; a null presenter restores the status bar.</param>
+    internal void SetWarningPresenter(Action<string>? presenter) =>
+        _warningPresenter = presenter ?? RibbonStatusBar.Warn;
 
     /// <summary>
     /// Injects the catalogue writer that persists plot-range settings to the
@@ -137,11 +334,19 @@ internal class RibbonStateService
         _selectionIdentifier = identifier;
 
     /// <summary>
+    /// The rows the last successful table read returned (R5.9b). The selection
+    /// change handler re-evaluates the structural gates against this snapshot
+    /// instead of re-reading the sheet on every cursor move; a failed read
+    /// leaves the previous rows in place.
+    /// </summary>
+    private IReadOnlyList<GanttRowDto> _lastTableRows = [];
+
+    /// <summary>
     /// Returns the injected catalogue writer, or <see langword="null"/> when
     /// the service was not armed. The Initialise-sheet command injects this
     /// instance into the workbook initialiser so the host-rejection evidence
     /// log (wired by <see cref="AddInHost"/>) reaches the writer the command
-    /// actually runs — the initialiser's default writer has no log, so
+    /// actually runs â€” the initialiser's default writer has no log, so
     /// without this injection the <c>CatalogueWriteRejected</c> record never
     /// fires.
     /// </summary>
@@ -163,6 +368,22 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="port">The measurement port, or null when unavailable.</param>
     internal void SetPanelGridMeasurementPort(IPanelGridMeasurementPort? port) => _panelGridMeasurementPort = port;
+
+    /// <summary>
+    /// Replaces the column-visibility port (R5.18h), or null when unavailable.
+    /// </summary>
+    /// <param name="port">The port that reads and applies a table column's visibility.</param>
+    /// <remarks>
+    /// Seeds the dropdown's state from the live table as soon as the port arrives, so a
+    /// ribbon loaded against an already-initialised workbook states the truth before any
+    /// sheet is activated. The read is best-effort — a refusal leaves the empty set, which
+    /// shows every column as visible until the next activation re-seeds it.
+    /// </remarks>
+    internal void SetColumnVisibilityPort(IColumnVisibilityPort? port)
+    {
+        _columnVisibilityPort = port;
+        LoadColumnVisibilityFromWorksheet();
+    }
 
     /// <summary>
     /// Injects the table reader that derives the effective AUTO plot dates
@@ -213,6 +434,22 @@ internal class RibbonStateService
     internal void SetApplicationAdapter(IExcelApplicationAdapter? adapter) => _applicationAdapter = adapter;
 
     /// <summary>
+    /// Returns the adapter <see cref="Activate"/> would subscribe, for test
+    /// verification only. A test asserts the adapter it injected survives
+    /// activation; that is the contract that keeps the suite independent of
+    /// whatever Excel instance the machine happens to have open.
+    /// </summary>
+    internal IExcelApplicationAdapter? GetApplicationAdapter() => _applicationAdapter;
+
+    /// <summary>Coalesces a successful command/configuration write into the automatic refresh queue.</summary>
+    /// <remarks>
+    /// Uses the command window rather than the cell-edit window: the command's writes are
+    /// already committed, so there is no user burst left to absorb and the full cell
+    /// window was 300ms of dead time between the click and the plot.
+    /// </remarks>
+    internal void ScheduleAutomaticRefresh() => _refreshScheduler?.ScheduleCommandRefresh();
+
+    /// <summary>
     /// Injects the log-availability source that supplies the second state fact.
     /// A null source leaves the fact at its previous value; the delegate is
     /// invoked inside <see cref="Refresh"/> only, never by a getter.
@@ -230,7 +467,7 @@ internal class RibbonStateService
     /// is restored when the user returns to explicit, and persists DataRange
     /// immediately. Unchecking AUTO seeds the edit box from the CURRENT plot
     /// bound (the month-snapped chart bound the AUTO box was displaying, per
-    /// the owner ruling 2026-10-08) — never from the stale stored date — and
+    /// the owner ruling 2026-10-08) â€” never from the stale stored date â€” and
     /// persists Explicit immediately, so the next Refresh renders exactly
     /// what the box shows and no volatile "armed but unpersisted" window
     /// remains. Only when no current bound is known does the uncheck arm the
@@ -242,8 +479,8 @@ internal class RibbonStateService
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotStartAuto(bool pressed)
     {
-        var nextAuto = pressed;
-        if (nextAuto)
+        RibbonState previous = _state;
+        if (pressed)
         {
             _state = _state with
             {
@@ -263,11 +500,22 @@ internal class RibbonStateService
             // the current plot bound when one is known. The stored date is
             // deliberately NOT reused: it may predate the latest data, and
             // the box was showing the bound, so Explicit must start from
-            // what the user saw. A parseable bound (always dd/MM/yyyy from
+            // what the user saw. A parseable bound (always dd/MM-yy from
             // the derivation, but parsed defensively) persists at once.
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly bound))
             {
-                var seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+                string seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+
+                // The seeded start is checked against the finish BEFORE the
+                // state is committed, for the same reason as the date commit:
+                // an inverted range must not reach ValidateSettings.
+                if (!TryAcceptExplicitStart(seeded, out string? warning))
+                {
+                    PresentWarning(warning!);
+                    InvalidatePlotDateRow(PlotDateRow.Start);
+                    return;
+                }
+
                 _state = _state with
                 {
                     PlotStartAuto = false,
@@ -287,29 +535,24 @@ internal class RibbonStateService
                 if (string.IsNullOrWhiteSpace(_state.PlotStartDate))
                 {
                     // Nothing coherent to persist yet: the date commit owns the
-                    // Explicit write. The ribbon is still invalidated so the
+                    // Explicit write. The row is still invalidated so the
                     // unchecked box and the enabled edit box repaint; without this
                     // the click's visual state never lands because ribbon getters
                     // only re-query on invalidate.
-                    Invalidate();
+                    InvalidatePlotDateRow(PlotDateRow.Start);
                     return;
                 }
             }
         }
 
-#pragma warning disable CA1031
-        try
+        // R5.1a: a refused write restores the row, so the box cannot show a
+        // date the workbook does not hold.
+        if (!TryPersistPlotRange())
         {
-            CommandBoundary.Instance.Run("SetPlotStartAuto", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Start);
     }
 
     /// <summary>
@@ -326,7 +569,7 @@ internal class RibbonStateService
     /// is restored when the user returns to explicit, and persists DataRange
     /// immediately. Unchecking AUTO seeds the edit box from the CURRENT plot
     /// bound (the month-snapped chart bound the AUTO box was displaying, per
-    /// the owner ruling 2026-10-08) — never from the stale stored date — and
+    /// the owner ruling 2026-10-08) â€” never from the stale stored date â€” and
     /// persists Explicit immediately, so the next Refresh renders exactly
     /// what the box shows and no volatile "armed but unpersisted" window
     /// remains. Only when no current bound is known does the uncheck arm the
@@ -338,8 +581,8 @@ internal class RibbonStateService
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotFinishAuto(bool pressed)
     {
-        var nextAuto = pressed;
-        if (nextAuto)
+        RibbonState previous = _state;
+        if (pressed)
         {
             _state = _state with
             {
@@ -355,7 +598,17 @@ internal class RibbonStateService
             // note above for why the stored date is not reused).
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly bound))
             {
-                var seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+                string seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+
+                // The symmetric check: see SetPlotStartAuto for why the range
+                // is checked BEFORE the state is committed.
+                if (!TryAcceptExplicitFinish(seeded, out string? warning))
+                {
+                    PresentWarning(warning!);
+                    InvalidatePlotDateRow(PlotDateRow.Finish);
+                    return;
+                }
+
                 _state = _state with
                 {
                     PlotFinishAuto = false,
@@ -375,29 +628,24 @@ internal class RibbonStateService
                 if (string.IsNullOrWhiteSpace(_state.PlotFinishDate))
                 {
                     // Nothing coherent to persist yet: the date commit owns the
-                    // Explicit write. The ribbon is still invalidated so the
+                    // Explicit write. The row is still invalidated so the
                     // unchecked box and the enabled edit box repaint; without this
                     // the click's visual state never lands because ribbon getters
                     // only re-query on invalidate.
-                    Invalidate();
+                    InvalidatePlotDateRow(PlotDateRow.Finish);
                     return;
                 }
             }
         }
 
-#pragma warning disable CA1031
-        try
+        // R5.1a: a refused write restores the row, so the box cannot show a
+        // date the workbook does not hold.
+        if (!TryPersistPlotRange())
         {
-            CommandBoundary.Instance.Run("SetPlotFinishAuto", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Finish);
     }
 
     /// <summary>
@@ -408,25 +656,140 @@ internal class RibbonStateService
     internal void TogglePlotFinishAuto() => SetPlotFinishAuto(!_state.PlotFinishAuto);
 
     /// <summary>
-    /// Commits a user-typed plot-start date in explicit mode. Parses the exact
-    /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
-    /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
-    /// pivots the start end to Explicit; an unparsable value is a no-op (the
-    /// edit box keeps showing the previously stored date on the next getter
-    /// query, which is the revert). Persists to the workbook configuration
-    /// sheet so it survives a close/reopen, and updates the display value
-    /// immediately since the commit happens outside a workbook load. Never
-    /// refreshes the chart: the next Refresh chart applies the stored settings.
+    /// The picker seam for the plot-date calendar buttons (R5.1a). Virtual so a
+    /// headless test can answer with a date, exactly as
+    /// <see cref="ShowWarningsPanelDialog"/> and <see cref="ShowThemeSettingsDialog()"/>
+    /// are substituted — and so no test builds a WinForms control off the STA thread.
     /// </summary>
-    /// <param name="dateText">The user-entered explicit plot start date text.</param>
-    internal void SetPlotStartDate(string dateText)
+    /// <param name="request">The month, bounds and caption to open with.</param>
+    /// <returns>The picked date, or null when the user cancelled.</returns>
+    protected virtual DateOnly? ShowPlotDatePicker(PlotDatePickerRequest request) =>
+        PlotDatePickerForm.Show(request);
+
+    /// <summary>Opens the start-date calendar and commits the picked date (R5.1a).</summary>
+    internal void PickPlotStartDate() => PickPlotDate(PlotDateRow.Start);
+
+    /// <summary>Opens the finish-date calendar and commits the picked date (R5.1a).</summary>
+    internal void PickPlotFinishDate() => PickPlotDate(PlotDateRow.Finish);
+
+    /// <summary>
+    /// Shows the picker for one end and commits the result through the normal
+    /// date setter, so parse, inversion check, persistence and scheduling stay one
+    /// path.
+    /// </summary>
+    /// <param name="row">The end being edited.</param>
+    /// <remarks>
+    /// Bounds come from the opposite end's EFFECTIVE date, which is what the
+    /// disabled box already shows; the calendar therefore cannot normally offer an
+    /// inverted pair, and the commit-time check still guards the keyboard path. A
+    /// cancelled dialog, or a pick equal to the date already in force, changes
+    /// nothing: no state, no write, no pass, no invalidation.
+    /// </remarks>
+    private void PickPlotDate(PlotDateRow row)
     {
-        if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
+        bool start = row == PlotDateRow.Start;
+        if (start ? _state.PlotStartAuto : _state.PlotFinishAuto)
+        {
+            // The button is disabled in AUTO mode; a callback that still arrives
+            // must not open a picker whose result the row would ignore.
+            return;
+        }
+
+        string effective = start ? _state.EffectivePlotStartDate : _state.EffectivePlotFinishDate;
+        DateOnly initial = PlotRangeResolver.TryParsePlotDate(effective, out DateOnly parsed)
+            ? parsed
+            : Today();
+
+        string opposite = start ? _state.EffectivePlotFinishDate : _state.EffectivePlotStartDate;
+        DateOnly? bound = PlotRangeResolver.TryParsePlotDate(opposite, out DateOnly oppositeDate)
+            ? oppositeDate
+            : null;
+        DateOnly? minimum = start ? null : bound;
+        DateOnly? maximum = start ? bound : null;
+
+        PlotDatePickerRequest request = new(
+            start ? "Plot start date" : "Plot finish date",
+            initial,
+            minimum,
+            maximum);
+
+        if (ShowPlotDatePicker(request) is not DateOnly picked)
         {
             return;
         }
 
-        var normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+        string text = GanttDateFormatting.FormatDdMMMyy(picked);
+        if (string.Equals(text, effective, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (start)
+        {
+            SetPlotStartDate(text);
+        }
+        else
+        {
+            SetPlotFinishDate(text);
+        }
+    }
+
+    /// <summary>
+    /// Commits a user-typed plot-start date in explicit mode. Parses the exact
+    /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
+    /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
+    /// pivots the start end to Explicit.
+    /// <para>
+    /// R5.1a D5: a blank entry is a SILENT revert — the stored date and the mode
+    /// are untouched, nothing is written and nothing is scheduled — because
+    /// clearing a box is "no input", not an instruction to switch the end to
+    /// Auto (which would be a settings round-trip plus a full rebuild, and would
+    /// duplicate the Auto checkbox beside it).
+    /// </para>
+    /// <para>
+    /// R5.1a D6: the inversion check runs before the state commit, before the
+    /// write and before any pass is scheduled, so a refused pair never reaches
+    /// the workbook or the renderer. A successful commit persists the plot-range
+    /// keys and schedules the coalesced automatic pass (R5.1a D1); a refused
+    /// write restores the previous row, so the box never shows a date the
+    /// workbook does not hold.
+    /// </para>
+    /// </summary>
+    /// <param name="dateText">The user-entered explicit plot start date text.</param>
+    internal void SetPlotStartDate(string dateText)
+    {
+        if (string.IsNullOrWhiteSpace(dateText))
+        {
+            InvalidatePlotDateRow(PlotDateRow.Start);
+            return;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
+        {
+            // R5.1 D3: a mode-change warning follows the R2.6 message
+            // discipline -- it says what was wrong and what to do. Silently
+            // reverting leaves the user pressing OK on a box that never
+            // took their value, with nothing to say why.
+            PresentWarning(
+                $"'{dateText}' is not a plot start date. Use dd-MMM-yy, for example 10-Jan-26. "
+                + "The previous start date has been kept.");
+            InvalidatePlotDateRow(PlotDateRow.Start);
+            return;
+        }
+
+        string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+
+        // The range is checked BEFORE the state is committed, so an inverted
+        // range changes neither the in-memory state nor the workbook, and it
+        // never reaches the write or the refresh.
+        if (!TryAcceptExplicitStart(normalised, out string? warning))
+        {
+            PresentWarning(warning!);
+            InvalidatePlotDateRow(PlotDateRow.Start);
+            return;
+        }
+
+        RibbonState previous = _state;
         _state = _state with
         {
             PlotStartAuto = false,
@@ -434,41 +797,226 @@ internal class RibbonStateService
             EffectivePlotStartDate = normalised,
         };
 
+        if (!TryPersistPlotRange())
+        {
+            _state = previous;
+        }
+
+        InvalidatePlotDateRow(PlotDateRow.Start);
+    }
+
+    /// <summary>
+    /// Accepts a candidate explicit plot-start date, or refuses it because it
+    /// would invert the range.
+    /// </summary>
+    /// <param name="normalisedStart">The candidate start date, formatted for storage.</param>
+    /// <param name="warning">The user-facing message when the candidate is refused.</param>
+    /// <returns>Whether the candidate may be committed.</returns>
+    /// <remarks>
+    /// R5.1a D6: the check reads the finish end's <b>effective</b> date, not its
+    /// stored date and not only when that end is explicit. In explicit mode the
+    /// effective date is the stored one; in AUTO mode it is the data-derived
+    /// date the disabled box is already displaying. The rule therefore matches
+    /// what the user can see, and an explicit start later than the derived
+    /// finish is refused here instead of failing an entire refresh later with
+    /// <c>StartAfterFinish</c>.
+    /// <para>
+    /// When the opposite end has no readable date — a freshly initialised
+    /// workbook with an AUTO finish and no data — there is nothing to invert
+    /// against, so the commit proceeds.
+    /// </para>
+    /// </remarks>
+    private bool TryAcceptExplicitStart(string normalisedStart, out string? warning)
+    {
+        warning = null;
+
+        if (!PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly finish))
+        {
+            return true;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(normalisedStart, out DateOnly start))
+        {
+            return true;
+        }
+
+        if (start <= finish)
+        {
+            return true;
+        }
+
+        warning =
+            $"The plot start {start:dd-MMM-yy} is after the plot finish {finish:dd-MMM-yy}. "
+            + "The chart cannot be drawn over that range, so the start date has been kept.";
+        return false;
+    }
+
+    /// <summary>
+    /// Accepts a candidate explicit plot-finish date, or refuses it because it
+    /// would invert the range. The symmetric counterpart of
+    /// <see cref="TryAcceptExplicitStart"/>.
+    /// </summary>
+    /// <param name="normalisedFinish">The candidate finish date, formatted for storage.</param>
+    /// <param name="warning">The user-facing message when the candidate is refused.</param>
+    /// <returns>Whether the candidate may be committed.</returns>
+    /// <remarks>
+    /// R5.1a D6: the start end is read from its <b>effective</b> date, so an
+    /// explicit finish before the data-derived start is refused here instead of
+    /// failing the whole refresh later with <c>StartAfterFinish</c>. See
+    /// <see cref="TryAcceptExplicitStart"/>.
+    /// </remarks>
+    private bool TryAcceptExplicitFinish(string normalisedFinish, out string? warning)
+    {
+        warning = null;
+
+        if (!PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly start))
+        {
+            return true;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(normalisedFinish, out DateOnly finish))
+        {
+            return true;
+        }
+
+        if (finish >= start)
+        {
+            return true;
+        }
+
+        warning =
+            $"The plot finish {finish:dd-MMM-yy} is before the plot start {start:dd-MMM-yy}. "
+            + "The chart cannot be drawn over that range, so the finish date has been kept.";
+        return false;
+    }
+
+    /// <summary>
+    /// Shows a user-facing warning, degrading to silence when the host refuses
+    /// to present one. A dialog failure must never turn a completed command
+    /// into an escaping exception.
+    /// </summary>
+    /// <param name="message">The message to present.</param>
+    private void PresentWarning(string message)
+    {
+        // CA1031: a presenter failure is outside command behaviour.
 #pragma warning disable CA1031
         try
         {
-            CommandBoundary.Instance.Run("SetPlotStartDate", PersistPlotSettings);
+            // The NON-MODAL presenter, deliberately: these warnings are
+            // raised from a ribbon editBox callback, where a modal dialog
+            // would hold the Excel UI thread until it is dismissed.
+            _warningPresenter(message);
         }
-        catch (Exception)
-#pragma warning restore CA1031
+        catch
         {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            // Intentionally empty: the state change already happened; only the
+            // message is lost.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Writes a message to Excel's status bar, non-modally.
+    /// </summary>
+    /// <param name="message">The message to show.</param>
+    /// <remarks>
+    /// A status-bar write is a presentation, not a state change, so it
+    /// invalidates nothing: the ribbon's enabled states are unaffected by a
+    /// message. The write is best-effort -- a host that refuses it loses the
+    /// message, nothing more.
+    /// </remarks>
+    internal static void WriteStatusBar(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        IExcelApplicationAdapter? adapter = Instance._applicationAdapter;
+        if (adapter is null)
+        {
+            return;
         }
 
-        Invalidate();
+        // CA1031: a failing status-bar write is outside command behaviour; it
+        // degrades to no message.
+#pragma warning disable CA1031
+        try
+        {
+            adapter.ShowStatusBar(message);
+        }
+        catch
+        {
+            // Intentionally empty: the message is lost; the state is not.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Clears any add-in status-bar text so Excel resumes its automatic status.</summary>
+    /// <remarks>Called after a successful refresh so a stale refusal message cannot persist.</remarks>
+    internal static void ClearStatusBar()
+    {
+        IExcelApplicationAdapter? adapter = Instance._applicationAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            adapter.ClearStatusBar();
+        }
+        catch
+        {
+            // Intentionally empty: clearing is best-effort.
+        }
+#pragma warning restore CA1031
     }
 
     /// <summary>
     /// Commits a user-typed plot-finish date in explicit mode. Parses the exact
     /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
     /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
-    /// pivots the finish end to Explicit; an unparsable value is a no-op (the
-    /// edit box keeps showing the previously stored date on the next getter
-    /// query, which is the revert). Persists to the workbook configuration
-    /// sheet so it survives a close/reopen, and updates the display value
-    /// immediately since the commit happens outside a workbook load. Never
-    /// refreshes the chart: the next Refresh chart applies the stored settings.
+    /// pivots the finish end to Explicit.
+    /// <para>
+    /// R5.1a D5: a blank entry is a silent revert, exactly as on the start end.
+    /// </para>
+    /// <para>
+    /// R5.1a D6: the inversion check runs before the state commit, the write and
+    /// any pass scheduling; a refused write restores the previous row.
+    /// </para>
     /// </summary>
     /// <param name="dateText">The user-entered explicit plot finish date text.</param>
     internal void SetPlotFinishDate(string dateText)
     {
-        if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
+        if (string.IsNullOrWhiteSpace(dateText))
         {
+            InvalidatePlotDateRow(PlotDateRow.Finish);
             return;
         }
 
-        var normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+        if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
+        {
+            // R5.1 D3: the same actionable warning the start date gives. See
+            // SetPlotStartDate for why a silent revert is not enough.
+            PresentWarning(
+                $"'{dateText}' is not a plot finish date. Use dd-MMM-yy, for example 10-Jan-26. "
+                + "The previous finish date has been kept.");
+            InvalidatePlotDateRow(PlotDateRow.Finish);
+            return;
+        }
+
+        string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+
+        // The symmetric check: see SetPlotStartDate for why the range is
+        // checked BEFORE the state is committed rather than left to
+        // ValidateSettings.
+        if (!TryAcceptExplicitFinish(normalised, out string? warning))
+        {
+            PresentWarning(warning!);
+            InvalidatePlotDateRow(PlotDateRow.Finish);
+            return;
+        }
+
+        RibbonState previous = _state;
         _state = _state with
         {
             PlotFinishAuto = false,
@@ -476,19 +1024,12 @@ internal class RibbonStateService
             EffectivePlotFinishDate = normalised,
         };
 
-#pragma warning disable CA1031
-        try
+        if (!TryPersistPlotRange())
         {
-            CommandBoundary.Instance.Run("SetPlotFinishDate", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Finish);
     }
 
     /// <summary>
@@ -540,17 +1081,10 @@ internal class RibbonStateService
 
         _state = _state with { TimeScale = scale, PeriodLabelFormat = format };
 
-#pragma warning disable CA1031
-        try
-        {
-            CommandBoundary.Instance.Run("SetTimeScale", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        // R5.1a: the layout commit carries only the layout keys, so it cannot
+        // rewrite the plot dates from a stale snapshot. A refused write leaves
+        // the in-memory value standing and tells the user (TryWriteSettings).
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -571,27 +1105,17 @@ internal class RibbonStateService
             return;
         }
 
-        var customCm = selected == GanttPlotMargin.Custom ? _state.MarginCm : GanttPlotMargins.DefaultCustomCm;
+        double customCm = selected == GanttPlotMargin.Custom ? _state.MarginCm : GanttPlotMargins.DefaultCustomCm;
         // Commit first, then re-measure: C# evaluates every `with`
         // initializer against the OLD snapshot, so measuring inside
         // the same expression would read the previous margin and
         // leave the width display one click behind (same two-step
         // shape as SetPreset, so the displayed figure and the
-        // rendered plot cannot drift — R5.2 D4).
+        // rendered plot cannot drift â€” R5.2 D4).
         _state = _state with { Margin = selected, MarginCm = customCm };
         _state = _state with { PlotWidthPt = MeasurePlotWidth() };
 
-#pragma warning disable CA1031
-        try
-        {
-            CommandBoundary.Instance.Run("SetMargin", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -606,7 +1130,7 @@ internal class RibbonStateService
     /// <param name="customCm">The custom margin, in centimetres.</param>
     internal void SetMarginCm(double customCm)
     {
-        var clamped = Math.Clamp(customCm, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.MaximumCustomCm);
+        double clamped = Math.Clamp(customCm, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.MaximumCustomCm);
         if (!double.IsFinite(clamped))
         {
             clamped = GanttPlotMargins.DefaultCustomCm;
@@ -617,17 +1141,7 @@ internal class RibbonStateService
         // display tracks the new margin rather than the previous one.
         _state = _state with { PlotWidthPt = MeasurePlotWidth() };
 
-#pragma warning disable CA1031
-        try
-        {
-            CommandBoundary.Instance.Run("SetMarginCm", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -655,17 +1169,7 @@ internal class RibbonStateService
         _state = _state with { Preset = preset };
         _state = _state with { PlotWidthPt = MeasurePlotWidth(), PlotHeightPt = preset.HeightPt };
 
-#pragma warning disable CA1031
-        try
-        {
-            CommandBoundary.Instance.Run("SetPreset", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -764,7 +1268,15 @@ internal class RibbonStateService
     /// refuses, which the display renders as empty rather than a guess.
     /// </summary>
     /// <returns>The plot width in points, or null.</returns>
-    private double? MeasurePlotWidth()
+    private double? MeasurePlotWidth() => MeasurePlotWidth(_hiddenColumns);
+
+    /// <summary>
+    /// Measures the plot width for a candidate hidden set, so a toggle can state the width
+    /// it is about to produce without waiting for the next state refresh.
+    /// </summary>
+    /// <param name="hidden">The hidden set the measurement must honour.</param>
+    /// <returns>The plot width in points, or null.</returns>
+    private double? MeasurePlotWidth(IReadOnlySet<string> hidden)
     {
         SizePreset? preset = _state.Preset;
         if (preset is null)
@@ -781,22 +1293,24 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            PanelGridOutcome outcome = port.Measure(MeasuredColumns());
+            PanelGridOutcome outcome = port.Measure(MeasuredColumns(hidden));
             if (!outcome.Succeeded || outcome.Grid is null)
             {
                 return null;
             }
 
             PanelCellGrid grid = outcome.Grid;
-            var marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
-            // Same chrome split the Refresh pipeline uses (ADR-0031 D2): the
-            // plot is flush-left, so the left chrome is zero and the R5.2 margin
-            // (twice) plus the frame's outer padding rides on the right.
-            var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
+            double marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
+            // Same chrome split the Refresh pipeline uses: the plot starts the measured
+            // inset inside the anchor column (GanttSheetLayout.LivePlotOriginInsetPt, so
+            // its shapes anchor in a visible column), so the R5.2 margin (twice) plus the
+            // frame's outer padding rides on the right. Reading the SAME three numbers the
+            // factory passes is what keeps the displayed width the width that is rendered.
+            double chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
             return PlotGeometryResolver.MeasurePlotWidth(
                 preset,
-                grid.TotalWidthPt,
-                leftChromePt: 0,
+                grid.PanelRightPt,
+                leftChromePt: GanttSheetLayout.LivePlotOriginInsetPt,
                 rightChromePt: (marginPt * 2) + chrome);
         }
         catch
@@ -807,61 +1321,443 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// The display names of the visible table columns, in panel order — the
-    /// same list the live measurement port measures. Derived from the schema
-    /// rather than hand-written so a hidden column is never measured (R4.8A
-    /// D5: a hidden column reports width 0 and the grid refuses it).
+    /// The display names of the visible table columns, in panel order, for one hidden set.
     /// </summary>
-    private static List<string> MeasuredColumns() =>
-        [.. GanttTableSchema.Default.Columns
-            .Where(column => !column.IsHidden)
-            .Select(column => column.Name)];
+    /// <param name="hidden">The user's hidden set; an empty set measures every visible column.</param>
+    /// <returns>The columns the live measurement port measures.</returns>
+    /// <remarks>
+    /// <see cref="GanttColumnVisibility.VisibleColumns"/> is the single authority, so a
+    /// hidden column is never measured (R4.8A D5: a hidden column reports width 0 and the
+    /// grid refuses it) and an all-hidden set measures nothing (ADR-0065 D4).
+    /// </remarks>
+    private static List<string> MeasuredColumns(IReadOnlySet<string> hidden) =>
+        [.. GanttColumnVisibility.VisibleColumns(hidden)];
+
+    /// <summary>The two plot-date rows, so one invalidation helper serves both ends.</summary>
+    private enum PlotDateRow
+    {
+        /// <summary>The Start row: edit box, calendar button and Auto checkbox.</summary>
+        Start,
+
+        /// <summary>The Finish row: edit box, calendar button and Auto checkbox.</summary>
+        Finish,
+    }
 
     /// <summary>
-    /// Writes the ten plot-layout keys from the current snapshot through the
-    /// injected catalogue writer. Centralises the per-setting persist path so
-    /// the six setters cannot construct divergent payloads. The four
-    /// plot-range keys behave as before (fix plan ruling 1: the stored
-    /// explicit dates persist even while their end is AUTO, so they survive
-    /// the round trip and are restored on return to explicit; the Refresh
-    /// pipeline still treats an AUTO end as data-derived and ignores its date
-    /// text, so persisting it cannot blend the modes). The six R5.2 layout
-    /// keys are written alongside them so a single commit keeps the scale,
-    /// the margin pair, and the preset consistent with the dates.
-    /// Reports ConfigWriteOutcome refusals and write exceptions to the user
-    /// via CommandBoundary.
+    /// Re-invalidates one plot-date row by control id (R5.1a).
     /// </summary>
-    private void PersistPlotSettings()
+    /// <param name="row">The row to repaint.</param>
+    /// <remarks>
+    /// Three targeted invalidations instead of a blanket
+    /// <see cref="Invalidate"/>: that call re-queries every getter on the tab to
+    /// repaint three controls. The row is invalidated on the accepted path, so
+    /// the committed text appears at once, and on every refused path, so a
+    /// rejected entry is replaced by the value that was actually kept.
+    /// </remarks>
+    private void InvalidatePlotDateRow(PlotDateRow row)
     {
-        var startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
-        var finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+        bool start = row == PlotDateRow.Start;
+        InvalidateControl(start ? RibbonControlIds.PlotStartDate : RibbonControlIds.PlotFinishDate);
+        InvalidateControl(start ? RibbonControlIds.PlotStartCalendar : RibbonControlIds.PlotFinishCalendar);
+        InvalidateControl(start ? RibbonControlIds.PlotStartAuto : RibbonControlIds.PlotFinishAuto);
+    }
 
-        var settings = new Dictionary<string, string>
+    /// <summary>
+    /// Persists the four plot-range keys through the injected catalogue writer
+    /// and schedules the coalesced pass on success.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the in-memory state may stand — either the
+    /// write succeeded or there is no writer to refuse it; <see langword="false"/>
+    /// when the caller must restore the row it was about to commit.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// R5.1a V2: only the four plot keys are sent. The writer merges supplied
+    /// keys over the table's current values, so a plot commit can no longer
+    /// overwrite a newer workbook margin, scale or preset with stale session
+    /// state. The payload size costs nothing either way, because the writer
+    /// rewrites the whole settings table from the catalogue key set.
+    /// </para>
+    /// <para>
+    /// R5.1a V3: a refusal is an expected outcome, not an exception. The caller
+    /// restores the row and the user gets one actionable message, so the box
+    /// never shows a date the workbook does not hold.
+    /// </para>
+    /// <para>
+    /// The stored explicit dates persist even while their end is AUTO, so they
+    /// survive the round trip and are restored on return to explicit; the
+    /// Refresh pipeline still treats an AUTO end as data-derived and ignores its
+    /// date text, so persisting it cannot blend the modes.
+    /// </para>
+    /// </remarks>
+    private bool TryPersistPlotRange()
+    {
+        string startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+        string finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+
+        // Validate before persisting so invalid settings never reach the workbook.
+        try
+        {
+            PlotRangeResolver.ValidateSettings(new PlotRangeSettings
+            {
+                StartMode = startMode,
+                FinishMode = finishMode,
+                StartDate = _state.PlotStartDate,
+                FinishDate = _state.PlotFinishDate,
+            });
+        }
+        catch (ArgumentException exception)
+        {
+            // A hand-edited workbook can hold Explicit mode with no date. Report
+            // it as the row's own warning instead of letting the command
+            // boundary translate it into an operation-id error dialog.
+            PresentWarning($"{exception.Message} The previous value has been kept.");
+            return false;
+        }
+
+        return TryWriteSettings(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["PlotStartMode"] = startMode,
             ["PlotFinishMode"] = finishMode,
             ["PlotStartDate"] = _state.PlotStartDate,
             ["PlotFinishDate"] = _state.PlotFinishDate,
+        });
+    }
+
+    /// <summary>
+    /// Persists the five R5.2 layout keys through the injected catalogue writer.
+    /// </summary>
+    /// <returns>Whether the in-memory state may stand.</returns>
+    /// <remarks>
+    /// Kept apart from <see cref="TryPersistPlotRange"/> so a layout edit writes
+    /// only the layout keys and a date edit writes only the dates: each commit
+    /// leaves the other group's workbook values untouched.
+    /// </remarks>
+    private bool TryPersistPlotLayout() =>
+        TryWriteSettings(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
             ["TimeScale"] = _state.TimeScale.ToString(),
             // The month band carries two label forms (MM and MMM), so the
             // format is the user's stored selection rather than a derivation
             // of the scale. The pair is kept compatible by the setter and by
             // the load path (both normalise through
-            // GanttChartSettings.IsCompatible), so
-            // persisting the selection cannot write a pair the catalogue
-            // reader refuses.
+            // GanttChartSettings.IsCompatible), so persisting the selection
+            // cannot write a pair the catalogue reader refuses.
             ["PeriodLabelFormat"] = _state.PeriodLabelFormat.ToString(),
             ["Margin"] = _state.Margin.ToString(),
             ["MarginCm"] = _state.MarginCm.ToString("R", CultureInfo.InvariantCulture),
             ["SizePreset"] = _state.Preset?.Key ?? SizePresets.Default.Key,
-        };
+        });
 
-        ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(settings);
-        if (outcome is not null && !outcome.Succeeded)
+    /// <summary>
+    /// Writes one key set and schedules the coalesced automatic pass on success.
+    /// </summary>
+    /// <param name="values">The keys to write.</param>
+    /// <returns>Whether the in-memory state may stand.</returns>
+    private bool TryWriteSettings(Dictionary<string, string> values)
+    {
+        IConfigCatalogueWriter? writer = _catalogueWriter;
+        if (writer is null)
         {
-            var message = $"Failed to persist plot settings: {outcome.Refusal}";
-            CommandBoundary.Instance.Run("PersistPlotSettings", () => throw new InvalidOperationException(message));
+            // No workbook wiring (a headless test, or no initialised sheet): the
+            // in-memory state is the whole truth and there is nothing to refuse.
+            return true;
         }
+
+        ConfigWriteOutcome outcome;
+        // CA1031: this runs from a ribbon callback, where an escaping exception
+        // surfaces as a host error dialog. A write failure is a refusal: the row
+        // is restored and the user is told, exactly as for a typed refusal.
+#pragma warning disable CA1031
+        try
+        {
+            outcome = writer.WriteSettings(values);
+        }
+        catch (Exception exception)
+        {
+            _commandBoundary.WriteTechnicalRecord(
+                $"gantt.settings persist threw keys={values.Count} type={exception.GetType().FullName}");
+            PresentWarning("The plot settings could not be saved. The previous value has been kept.");
+            return false;
+        }
+#pragma warning restore CA1031
+
+        if (outcome.Succeeded)
+        {
+            ScheduleAutomaticRefresh();
+            return true;
+        }
+
+        _commandBoundary.WriteTechnicalRecord(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.settings persist refused keys={values.Count} reason={outcome.Refusal}"));
+        PresentWarning(
+            $"The plot settings could not be saved ({outcome.Refusal}). The previous value has been kept.");
+        return false;
+    }
+
+    /// <summary>
+    /// Opens the theme settings dialog, applies edits through the catalogue
+    /// writer, and returns whether themed edits were written. Never throws.
+    /// </summary>
+    internal bool ShowThemeSettingsDialog()
+    {
+        if (_catalogueReader is null || _catalogueWriter is null)
+        {
+            return false;
+        }
+
+        // CA1031: the dialog runs on the Excel main STA thread (the Ribbon
+        // onAction thread). Any failure must not propagate into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            // Read current themed values from the workbook
+            ConfigReadOutcome outcome = _catalogueReader.Read();
+            if (!outcome.Succeeded)
+            {
+                return false;
+            }
+
+            // Build current theme request from the workbook's themed styles.
+            // Read the edited colours from outcome.Styles (the validated
+            // GanttStyleRegistry) so the dialog shows the user's current theme,
+            // not the code-owned defaults. Fall back to the preset values when
+            // a preset is not present in the registry.
+            List<ThemeStyleEdit> currentStyles = [];
+            Dictionary<string, double> currentMetrics = [];
+            List<CustomStyleDef> currentCustomDefs = [];
+
+            HashSet<string> builtInKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+            {
+                _ = builtInKeys.Add(preset.StyleKey);
+
+                string fill = preset.FillColour;
+                string stroke = preset.StrokeColour;
+                string text = preset.TextColour;
+                GanttStrokeDash? dash = null;
+
+                if (outcome.Styles.TryGet(preset.StyleKey, out GanttStyleDefinition? definition)
+                    && definition is { HasFormatting: true })
+                {
+                    fill = definition.FillColour ?? preset.FillColour;
+                    stroke = definition.StrokeColour ?? preset.StrokeColour;
+                    text = definition.TextColour ?? preset.TextColour;
+
+                    // The delineator's line type is the one built-in dash the
+                    // user may change, so the reader projects it from the row
+                    // rather than exact-matching it. The dialog must open on
+                    // the line type the chart actually draws.
+                    if (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey))
+                    {
+                        dash = definition.StrokeDash ?? preset.StrokeDash;
+                    }
+                }
+
+                currentStyles.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text, dash));
+            }
+
+            // Custom styles are registry entries that are not built-in presets.
+            foreach (string key in outcome.Styles.StyleKeys)
+            {
+                if (builtInKeys.Contains(key))
+                {
+                    continue;
+                }
+
+                if (outcome.Styles.TryGet(key, out GanttStyleDefinition? definition)
+                    && definition is { HasFormatting: true })
+                {
+                    // The user row's display name is projected by the reader;
+                    // the key is the fallback when the row carries no name.
+                    currentCustomDefs.Add(new CustomStyleDef(
+                        key,
+                        definition.DisplayName is { Length: > 0 } name ? name : key,
+                        definition.FillColour ?? "",
+                        definition.StrokeColour ?? "",
+                        definition.TextColour ?? "",
+                        definition.HatchPattern ?? GanttHatchPattern.None,
+                        definition.StandardOutlinePt,
+                        definition.ActivityHeightPt,
+                        definition.MilestoneSizePt,
+                        definition.DefaultLabelPosition ?? GanttLabelPosition.Auto,
+                        definition.AllowedLabelPositions,
+                        definition.StrokeDash ?? GanttStrokeDash.Solid));
+                }
+            }
+
+            foreach (GanttMetricToken token in GanttCatalogues.Metrics)
+            {
+                if (ThemeEditRequest.EditableMetrics.Contains(token.Name)
+                    && outcome.Metrics.TryGetValue(token.Name, out double parsed)
+                    && double.IsFinite(parsed))
+                {
+                    currentMetrics[token.Name] = parsed;
+                }
+                else if (ThemeEditRequest.EditableMetrics.Contains(token.Name))
+                {
+                    currentMetrics[token.Name] = token.DefaultValue;
+                }
+            }
+
+            // The chart-chrome colours: the workbook's current values, so the
+            // dialog opens showing what the chart actually renders.
+            Dictionary<string, string> currentChromeColours = [];
+            foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+            {
+                string key = GanttChartChrome.SettingKeyFor(role);
+                currentChromeColours[key] = outcome.Settings.TryGetValue(key, out string? stored)
+                    && GanttColourToken.IsValidHex(stored)
+                    ? stored
+                    : GanttChartChrome.DefaultHexFor(role);
+            }
+
+            ThemeEditRequest request = new ThemeEditRequest(
+                currentStyles,
+                currentMetrics,
+                null,
+                currentCustomDefs,
+                currentChromeColours);
+
+            // Show the WinForms dialog. Virtual so tests can substitute a
+            // non-blocking dialog result instead of running a message loop.
+            //
+            // The write is INJECTED into the dialog (R5.6 WI-C) rather than
+            // performed here after it closes. The contrast warning has to be
+            // shown while the dialog is still open -- a warning the user
+            // never sees is not a warning -- and the writer lives in this
+            // service, so the dialog calls back through it. The dialog
+            // applies the write BEFORE it surfaces the warning, so the
+            // warning stays advisory and never blocks the write.
+            bool writeRefused = false;
+            using ThemeSettingsForm dialog = new ThemeSettingsForm(
+                request,
+                validated =>
+                {
+                    ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
+                    if (writeOutcome is { Succeeded: true })
+                    {
+                        ScheduleAutomaticRefresh();
+                        return true;
+                    }
+
+                    if (writeOutcome is not null)
+                    {
+                        writeRefused = true;
+                        _errorPresenter(
+                            $"Failed to write theme settings: {writeOutcome.Refusal}");
+                    }
+
+                    return false;
+                });
+            if (ShowThemeSettingsDialog(dialog) == DialogResult.OK)
+            {
+                ThemeEditRequest? validated = dialog.GetValidatedRequest();
+                if (validated != null)
+                {
+                    // The dialog already performed the write. A dialog built
+                    // without a writer -- which is how the unit tests drive it
+                    // -- leaves the write to this method, so the write happens
+                    // here in that case and NOT twice.
+                    if (dialog.WroteRequest)
+                    {
+                        return !writeRefused;
+                    }
+
+                    ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
+                    if (writeOutcome is not null && writeOutcome.Succeeded)
+                    {
+                        ScheduleAutomaticRefresh();
+                        return true;
+                    }
+                    else if (writeOutcome is not null)
+                    {
+                        _errorPresenter(
+                            $"Failed to write theme settings: {writeOutcome.Refusal}");
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Intentionally empty: a dialog failure must not escape into Excel.
+        }
+#pragma warning restore CA1031
+
+        return false;
+    }
+
+    /// <summary>
+    /// Shows the theme settings dialog modally and returns the user's result.
+    /// Virtual so tests can substitute a non-blocking dialog result instead of
+    /// running a WinForms message loop, which would block forever without a
+    /// user to click OK or Cancel.
+    /// </summary>
+    protected virtual DialogResult ShowThemeSettingsDialog(ThemeSettingsForm dialog) => dialog.ShowDialog();
+
+    /// <summary>
+    /// Opens the chart-title dialog, applies edits through the catalogue
+    /// writer, and returns whether title edits were written. Never throws.
+    /// </summary>
+    internal bool ShowChartTitleDialog()
+    {
+        if (_catalogueReader is null || _catalogueWriter is null)
+        {
+            return false;
+        }
+
+        // CA1031: the dialog runs on the Excel main STA thread (the Ribbon
+        // onAction thread). Any failure must not propagate into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            // Read current values from the workbook so the dialog shows the
+            // user's actual title, not the code-owned default.
+            ConfigReadOutcome outcome = _catalogueReader.Read();
+            if (!outcome.Succeeded)
+            {
+                return false;
+            }
+
+            string currentTitle = outcome.Settings.TryGetValue("ChartTitle", out string? title)
+                ? title
+                : GanttCatalogues.SettingDefault("ChartTitle") ?? GanttWorkbookContract.DefaultChartTitle;
+            bool currentShow = !outcome.Settings.TryGetValue("ShowTitle", out string? showText)
+                || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
+
+            // Show the WinForms dialog
+            using ChartTitleForm dialog = new ChartTitleForm(currentTitle, currentShow);
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                ChartTitleEditRequest? validated = dialog.GetValidatedRequest();
+                if (validated != null)
+                {
+                    // Write exactly the two intended settings rows
+                    ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteSettings(
+                        ChartTitleEditRequest.ToSettings(validated));
+                    if (writeOutcome is not null && writeOutcome.Succeeded)
+                    {
+                        ScheduleAutomaticRefresh();
+                        return true;
+                    }
+                    else if (writeOutcome is not null)
+                    {
+                        _errorPresenter(
+                            $"Failed to write chart title: {writeOutcome.Refusal}");
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Intentionally empty: a dialog failure must not escape into Excel.
+        }
+#pragma warning restore CA1031
+
+        return false;
     }
 
     /// <summary>
@@ -881,6 +1777,24 @@ internal class RibbonStateService
     /// display and the Refresh pipeline cannot disagree on what AUTO means.
     /// Never throws.
     /// </summary>
+    /// <summary>
+    /// Adopts the workbook's persisted automatic-refresh switch into the session (R5.20).
+    /// </summary>
+    /// <param name="settings">The settings map the activation read produced.</param>
+    /// <remarks>
+    /// The parse belongs to <see cref="GanttAutoRefresh.Parse"/> so an absent or unreadable row
+    /// means enabled, exactly as it did before the key existed. This runs only on the two occasions
+    /// the workbook is authoritative — first load and a workbook change — because re-seeding on
+    /// every Refresh would undo a switch the user had just pressed whose persist Excel refused.
+    /// </remarks>
+    internal static void SeedPersistedSwitches(IReadOnlyDictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        AutoRefreshPreferences.Shared.ApplyStored(
+            settings.TryGetValue(GanttAutoRefresh.SettingKey, out string? stored) ? stored : null);
+    }
+
     private void LoadPlotSettingsFromWorkbook()
     {
         if (_catalogueReader is null)
@@ -898,16 +1812,16 @@ internal class RibbonStateService
             if (outcome.Succeeded && outcome.Settings is not null)
             {
                 IReadOnlyDictionary<string, string> settings = outcome.Settings;
-                var startMode = settings.TryGetValue("PlotStartMode", out var startModeVal) ? startModeVal : string.Empty;
-                var finishMode = settings.TryGetValue("PlotFinishMode", out var finishModeVal) ? finishModeVal : string.Empty;
-                var startDate = NormaliseStoredPlotDate(
-                    settings.TryGetValue("PlotStartDate", out var startDateVal) ? startDateVal : string.Empty);
-                var finishDate = NormaliseStoredPlotDate(
-                    settings.TryGetValue("PlotFinishDate", out var finishDateVal) ? finishDateVal : string.Empty);
+                string startMode = settings.TryGetValue("PlotStartMode", out string? startModeVal) ? startModeVal : string.Empty;
+                string finishMode = settings.TryGetValue("PlotFinishMode", out string? finishModeVal) ? finishModeVal : string.Empty;
+                string startDate = NormaliseStoredPlotDate(
+                    settings.TryGetValue("PlotStartDate", out string? startDateVal) ? startDateVal : string.Empty);
+                string finishDate = NormaliseStoredPlotDate(
+                    settings.TryGetValue("PlotFinishDate", out string? finishDateVal) ? finishDateVal : string.Empty);
 
-                var startAuto = PlotRangeModes.TryParse(startMode, out PlotRangeMode parsedStart)
+                bool startAuto = PlotRangeModes.TryParse(startMode, out PlotRangeMode parsedStart)
                     && parsedStart == PlotRangeMode.DataRange;
-                var finishAuto = PlotRangeModes.TryParse(finishMode, out PlotRangeMode parsedFinish)
+                bool finishAuto = PlotRangeModes.TryParse(finishMode, out PlotRangeMode parsedFinish)
                     && parsedFinish == PlotRangeMode.DataRange;
 
                 // R5.2 layout settings. Each is parsed through its closed Core
@@ -916,9 +1830,14 @@ internal class RibbonStateService
                 // a scale renders identically to a freshly initialised one.
                 GanttTimeScale timeScale = ReadTimeScale(settings);
                 GanttPlotMargin margin = ReadMargin(settings);
-                var marginCm = ReadMarginCm(settings);
+                double marginCm = ReadMarginCm(settings);
                 SizePreset? preset = ReadPreset(settings);
                 GanttPeriodLabelFormat periodLabelFormat = ReadPeriodLabelFormat(settings, timeScale);
+
+                // The dropdown's ticks and the width display must read the SAME hidden set.
+                // This was below the assignment, so PlotWidthPt was measured from the previous
+                // activation's set (ADR-0065 D5).
+                LoadColumnVisibilityFromWorksheet();
 
                 _state = _state with
                 {
@@ -936,6 +1855,15 @@ internal class RibbonStateService
                 };
 
                 RefreshEffectivePlotDates(settings);
+
+                // R5.20: the persisted automatic-refresh switch rides the same read on the two
+                // occasions the workbook is authoritative (first load, workbook change) and is
+                // left alone on every other Refresh. No second catalogue read is spent on it.
+                if (_seedPersistedSwitches)
+                {
+                    SeedPersistedSwitches(settings);
+                    _seedPersistedSwitches = false;
+                }
             }
         }
         catch
@@ -969,7 +1897,7 @@ internal class RibbonStateService
     private static GanttPeriodLabelFormat ReadPeriodLabelFormat(
         IReadOnlyDictionary<string, string> settings,
         GanttTimeScale scale) =>
-        settings.TryGetValue("PeriodLabelFormat", out var text)
+        settings.TryGetValue("PeriodLabelFormat", out string? text)
         && GanttChartSettings.TryParsePeriodLabelFormat(text, out GanttPeriodLabelFormat parsed)
         && GanttChartSettings.IsCompatible(scale, parsed)
             ? parsed
@@ -980,7 +1908,7 @@ internal class RibbonStateService
     /// when the key is absent or names an unknown scale (R5.2).
     /// </summary>
     private static GanttTimeScale ReadTimeScale(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("TimeScale", out var text)
+        settings.TryGetValue("TimeScale", out string? text)
             && GanttChartSettings.TryParseTimeScale(text, out GanttTimeScale scale)
             ? scale
             : GanttTimeScale.Month;
@@ -991,7 +1919,7 @@ internal class RibbonStateService
     /// (R5.2).
     /// </summary>
     private static GanttPlotMargin ReadMargin(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("Margin", out var text)
+        settings.TryGetValue("Margin", out string? text)
             && GanttPlotMargins.TryParse(text, out GanttPlotMargin margin)
             ? margin
             : GanttPlotMargins.Default;
@@ -1004,8 +1932,8 @@ internal class RibbonStateService
     /// rather than producing a negative or unbounded margin.
     /// </summary>
     private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("MarginCm", out var raw)
-            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        settings.TryGetValue("MarginCm", out string? raw)
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             && double.IsFinite(parsed)
             ? parsed
             : GanttPlotMargins.DefaultCustomCm;
@@ -1016,7 +1944,18 @@ internal class RibbonStateService
     /// width and height displays show nothing rather than a guess.
     /// </summary>
     private static SizePreset? ReadPreset(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("SizePreset", out var text) ? SizePresets.ByKey(text) : null;
+        settings.TryGetValue("SizePreset", out string? text) ? SizePresets.ByKey(text) : null;
+
+    /// <summary>
+    /// The caller's current day, as an injectable seam.
+    /// </summary>
+    /// <returns>The host's current date.</returns>
+    /// <remarks>
+    /// Core never reads a clock, so the ribbon supplies the day the plot-range resolver
+    /// anchors its empty-table fallback to. Virtual so a test can pin the default range
+    /// instead of depending on the machine's date.
+    /// </remarks>
+    internal virtual DateOnly Today() => DateOnly.FromDateTime(DateTime.Today);
 
     /// <summary>
     /// Derives the effective display dates for both edit boxes (fix plan
@@ -1037,11 +1976,11 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            var explicitStart = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
-            var explicitFinish = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
+            string explicitStart = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
+            string explicitFinish = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
 
-            var effectiveStart = explicitStart;
-            var effectiveFinish = explicitFinish;
+            string effectiveStart = explicitStart;
+            string effectiveFinish = explicitFinish;
 
             if (_state.PlotStartAuto || _state.PlotFinishAuto)
             {
@@ -1049,14 +1988,15 @@ internal class RibbonStateService
                 if (table is { Succeeded: true } && table.Rows is not null)
                 {
                     GanttValidationOutcome validation = GanttRowValidator.Validate(table.Rows);
-                    var padding = ReadRangePaddingDays(settings);
+                    int padding = ReadRangePaddingDays(settings);
                     PlotRangeOutcome range = PlotRangeResolver.TryResolve(
                         validation.Events,
                         _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit),
                         _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit),
                         _state.PlotStartDate,
                         _state.PlotFinishDate,
-                        padding);
+                        padding,
+                        today: Today());
 
                     if (range.Succeeded && range.Start is { } resolvedStart && range.Finish is { } resolvedFinish)
                     {
@@ -1143,8 +2083,8 @@ internal class RibbonStateService
     /// <returns>The non-negative padding in days per side.</returns>
     private static int ReadRangePaddingDays(IReadOnlyDictionary<string, string> settings)
     {
-        return settings.TryGetValue("RangePaddingDays", out var text)
-            && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+        return settings.TryGetValue("RangePaddingDays", out string? text)
+            && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
             && parsed >= 0
             ? parsed
             : 3;
@@ -1158,11 +2098,54 @@ internal class RibbonStateService
     /// </summary>
     internal void Activate()
     {
+        // Adopt the host's application object, but ONLY when no adapter is
+        // present. The application object may be unavailable during
+        // AddInHost.AutoOpen (Excel-DNA has not finished initialising) and
+        // available by the time the ribbon onLoad or the queued fallback fires;
+        // AddInHost therefore injects no adapter in that case, and this re-probe
+        // supplies the late-arriving one.
+        //
+        // An adapter that IS present is authoritative. Re-probing
+        // unconditionally used to replace it, which was wrong twice over: on the
+        // live path it discarded an adapter the host had deliberately injected,
+        // and in a test process running alongside Excel it replaced the test
+        // fake with a real adapter over the *developer's open workbook*, making
+        // the AddIn suite pass or fail depending on whether Excel happened to be
+        // running on the machine.
+        if (_applicationAdapter is null)
+        {
+            object? application = ResolveHostApplication();
+            if (application is not null)
+            {
+                SetApplicationAdapter(new ExcelApplicationAdapter(application));
+            }
+        }
+
         SubscribeToWorkbookStateChanges();
+        SubscribeToSheetChanges();
         SubscribeToSelectionChanges();
         LoadPlotSettingsFromWorkbook();
+
+        // Deliberately NO outline-symbol repair here. Activate runs on every add-in load,
+        // including in the AddIn test host, where ExcelDnaUtil.Application resolves the
+        // developer's LIVE Excel; a repair call from here reached that instance and wrote
+        // a `gantt.protection protect outlining` record into the AutoOpen fixtures,
+        // turning 9 AddInHostTests red. The reopen case is covered where it is safe: the
+        // workbook-state handler repairs before its refresh (3ef5507), and a chart refresh
+        // re-applies the option through the protect cycle (5a44c4d).
         Refresh();
     }
+
+    /// <summary>
+    /// Resolves the live Excel application object for
+    /// <see cref="Activate"/>'s late re-probe. A seam, not a direct call,
+    /// because <c>ExcelDnaUtil.Application</c> resolves the *running* Excel
+    /// instance even from a process that never loaded the add-in: a test that
+    /// asserted on the production probe's result would silently depend on
+    /// whether Excel was open on the machine.
+    /// </summary>
+    /// <returns>The live application object, or null when the host supplied none.</returns>
+    internal virtual object? ResolveHostApplication() => ExcelDna.Integration.ExcelDnaUtil.Application;
 
     /// <summary>
     /// Captures a fresh snapshot from the injected sources and invalidates the
@@ -1174,35 +2157,57 @@ internal class RibbonStateService
     {
         LoadPlotSettingsFromWorkbook();
 
-        // Probe whether the active workbook has an initialised Gantt sheet.
-        // TableMissing means the sheet hasn't been initialised yet; other
-        // refusals mean it exists but is corrupted (still counts as initialised
-        // for gating purposes — the user can still repair). NoActiveWorkbook
-        // means no workbook at all.
-        // Start from the last known state so a transient probe failure
-        // cannot grey the Refresh gate: a fresh `false` would. The
-        // probe is guarded for the same reason as the source probes —
-        // this method never throws, and a COM failure here must not
-        // escape that contract.
-        var sheetInitialised = _state.SheetInitialised;
+        // Probe the two workbook facts the mode needs (R5.16). Succeeded is the
+        // sheet-initialised fact: the previous `refusal != TableMissing` test
+        // counted a workbook-less host as initialised. ConfigurationPresent
+        // separates a first run from a damaged workbook that needs repair.
+        // Both stay nullable so a transient probe failure keeps the last known
+        // values instead of flipping the ribbon to FirstRun.
+        bool? sheetInitialised = null;
+        bool? configurationPresent = null;
+        bool? ganttSheetPresent = null;
+        bool? criticalIntervalParentAvailable = null;
+        bool? activeSheetIsGanttSheet = null;
+        bool? hasGroups = null;
         if (_tableReader is not null)
         {
 #pragma warning disable CA1031
             try
             {
                 GanttTableReadOutcome tableOutcome = _tableReader.Read();
-                sheetInitialised = tableOutcome.Refusal != GanttTableReadRefusalReason.TableMissing;
+                sheetInitialised = tableOutcome.Succeeded;
+                configurationPresent = tableOutcome.ConfigurationPresent;
+                ganttSheetPresent = tableOutcome.GanttSheetPresent;
+                activeSheetIsGanttSheet = tableOutcome.ActiveSheetIsGanttSheet;
+                criticalIntervalParentAvailable =
+                    tableOutcome.Succeeded && HasEligibleParent(tableOutcome.Rows);
+                if (tableOutcome.Succeeded)
+                {
+                    _lastTableRows = tableOutcome.Rows;
+                    hasGroups = tableOutcome.Rows.Any(row => !string.IsNullOrEmpty(row.ParentId));
+                }
             }
             catch
             {
-                // Keep the previous value: a transient COM failure must
+                // Keep the previous values: a transient COM failure must
                 // not grey the controls (same policy as the source probes).
             }
 #pragma warning restore CA1031
         }
 
-        _state = CaptureSnapshot(_state, sheetInitialised);
+        _state = CaptureSnapshot(
+            _state,
+            sheetInitialised,
+            configurationPresent,
+            ganttSheetPresent,
+            criticalIntervalParentAvailable,
+            activeSheetIsGanttSheet,
+            hasGroups);
         Invalidate();
+
+        // Owner ruling D-4: every chart refresh restores the add-in tab, so a
+        // refresh cannot leave the user looking at the Table Design tab.
+        ActivateGanttTab();
     }
 
     /// <summary>
@@ -1228,22 +2233,654 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Gets whether the control with <paramref name="controlId"/> is enabled.
-    /// A pure read of the cached snapshot: no Excel probe, no ribbon call, no
-    /// log write, and no exception for any input. Never throws.
+    /// Gets whether the control with <paramref name="controlId"/> is enabled. Every control is a pure
+    /// read of the cached snapshot: no Excel probe, no ribbon call, no log write, and no exception for
+    /// any input. Never throws.
     /// </summary>
     /// <param name="controlId">The Ribbon control ID, or null when unprobeable.</param>
     /// <returns>The control's enabled state (fail-open for unknown IDs).</returns>
-    internal virtual bool GetEnabled(string? controlId) => _state.IsEnabled(controlId);
+    /// <remarks>
+    /// The two protection toggles are answered here rather than from <see cref="RibbonState"/>'s
+    /// snapshot table because their enablement is a ribbon fact rather than a document fact: both are
+    /// always available on an initialised sheet, and what varies is the state they report. Asking a
+    /// lock button to be "enabled only when there is something to unlock" is what made the previous
+    /// shape pair unable to enable itself.
+    /// </remarks>
+    internal virtual bool GetEnabled(string? controlId) => controlId switch
+    {
+        // Owner ruling 2026-11-09: the two toggles replace the shape pair. A toggle is always
+        // available on an initialised sheet â€” what varies is the state it reports, not whether it
+        // can be pressed. R5.16b adds the active-sheet gate like every other chart command.
+        RibbonControlIds.ToggleChartLock
+            or RibbonControlIds.ToggleCellLock
+            or RibbonControlIds.ToggleAutoRefresh =>
+            _state.HasActiveWorkbook && _state.SheetInitialised && _state.ActiveSheetIsGanttSheet,
+        _ => _state.IsEnabled(controlId),
+    };
+
+    /// <summary>
+    /// Gets whether the Ribbon group with <paramref name="groupId"/> is visible
+    /// (R5.16). A pure read of the cached snapshot: no Excel probe, no ribbon
+    /// call, and no exception for any input. Never throws.
+    /// </summary>
+    /// <param name="groupId">The Ribbon group ID, or null when unprobeable.</param>
+    /// <returns>The group's visibility (fail-closed: an unknown ID is hidden).</returns>
+    internal virtual bool GetVisible(string? groupId) => _state.IsVisible(groupId);
+
+    /// <summary>
+    /// Gets whether the CHART toggle is pressed, which is the state the button shows.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> while the chart's shapes are locked.</returns>
+    /// <remarks>
+    /// Pressed means locked, which is the conventional reading of a toggle and needs no legend. The
+    /// value comes from <see cref="ProtectionPreferences"/>, the same object the protection port reads,
+    /// so the button cannot disagree with what the sheet actually enforces.
+    /// </remarks>
+    internal static bool GetToggleChartLockPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return ProtectionPreferences.Shared.ChartLocked;
+    }
+
+    /// <summary>
+    /// Gets whether the CELL toggle is pressed: <see langword="true"/> while the cells outside the
+    /// visible table are read-only.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> while those cells are locked, which is the default.</returns>
+    internal static bool GetToggleCellLockPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return !ProtectionPreferences.Shared.CellsUnlocked;
+    }
+
+    /// <summary>
+    /// The wording the CHART toggle shows for a lock state (R5.18f, owner ruling 2026-11-13).
+    /// </summary>
+    /// <param name="locked">Whether the chart's shapes are locked.</param>
+    /// <returns>The control's label.</returns>
+    /// <remarks>
+    /// The label states the <em>current state</em> rather than an action, because the control is a
+    /// toggle whose pressed state already says what is true; an action label ("Lock chart" while
+    /// unlocked) would contradict it. It is a separate function so the wording has one authority and
+    /// can be pinned without a host.
+    /// </remarks>
+    internal static string ChartLockLabel(bool locked) => locked ? "Chart locked" : "Chart unlocked";
+
+    /// <summary>
+    /// The wording the CELL toggle shows for a lock state (R5.18f), the parallel of
+    /// <see cref="ChartLockLabel"/>.
+    /// </summary>
+    /// <param name="locked">Whether the cells outside the visible table are locked.</param>
+    /// <returns>The control's label.</returns>
+    internal static string CellLockLabel(bool locked) => locked ? "Cells locked" : "Cells unlocked";
+
+    /// <summary>The three add-entity split buttons, in ribbon order (R5.18g).</summary>
+    /// <remarks>
+    /// A family is a menu, not an entity kind: the Add activity menu mixes activities, a
+    /// delay event and procurement rows because that is how a user thinks about them, while
+    /// <see cref="GanttEntityType"/> describes how they render. The mapping below is the menu
+    /// structure, and a test asserts every menu item the XML declares belongs to a family.
+    /// </remarks>
+    internal enum AddEntityFamily
+    {
+        /// <summary>The Add activity split button.</summary>
+        Activity = 0,
+
+        /// <summary>The Add milestone split button.</summary>
+        Milestone = 1,
+
+        /// <summary>The Add elements split button.</summary>
+        Element = 2,
+    }
+
+    /// <summary>
+    /// The last entity added from each split button's menu, defaulting to the family's own
+    /// default. Session-scoped on purpose: the plan records persisting it as out of scope.
+    /// </summary>
+    private readonly Dictionary<AddEntityFamily, GanttEntityType> _lastAdded = new()
+    {
+        [AddEntityFamily.Activity] = GanttEntityType.AsPlannedActivity,
+        [AddEntityFamily.Milestone] = GanttEntityType.AsPlannedMilestone,
+        [AddEntityFamily.Element] = GanttEntityType.Delineator,
+    };
+
+    /// <summary>The family a type's menu belongs to, or <see langword="null"/> when no menu offers it.</summary>
+    /// <param name="type">The entity type.</param>
+    /// <returns>The family, or null for a type the ribbon cannot add from a split button.</returns>
+    internal static AddEntityFamily? FamilyOf(GanttEntityType type) => type switch
+    {
+        GanttEntityType.AsPlannedActivity
+        or GanttEntityType.AsBuiltActivity
+        or GanttEntityType.BaselineActivity
+        or GanttEntityType.CustomActivity
+        or GanttEntityType.DelayEvent
+        or GanttEntityType.CriticalInterval
+        or GanttEntityType.AsPlannedProcurement
+        or GanttEntityType.AsBuiltProcurement
+        or GanttEntityType.BaselineProcurement => AddEntityFamily.Activity,
+
+        GanttEntityType.AsPlannedMilestone
+        or GanttEntityType.AsBuiltMilestone
+        or GanttEntityType.BaselineMilestone
+        or GanttEntityType.CriticalMilestone
+        or GanttEntityType.CustomMilestone => AddEntityFamily.Milestone,
+
+        GanttEntityType.Delineator
+        or GanttEntityType.Spacer
+        or GanttEntityType.Splitter => AddEntityFamily.Element,
+
+        _ => null,
+    };
+
+    /// <summary>The family's default type, which is what its primary adds before any pick.</summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The default entity type.</returns>
+    internal static GanttEntityType DefaultTypeFor(AddEntityFamily family) => family switch
+    {
+        AddEntityFamily.Activity => GanttEntityType.AsPlannedActivity,
+        AddEntityFamily.Milestone => GanttEntityType.AsPlannedMilestone,
+        AddEntityFamily.Element => GanttEntityType.Delineator,
+        _ => GanttEntityType.AsPlannedActivity,
+    };
+
+    /// <summary>
+    /// The type the family's primary button will add: the last menu pick, or the family
+    /// default when that pick is not currently permitted.
+    /// </summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The entity type the primary action would add right now.</returns>
+    /// <remarks>
+    /// The fallback is what keeps the primary usable. A Critical Interval is offered only when
+    /// a row can own one; if the user picked it while it was available and later removed the
+    /// last eligible parent, the primary must not stay pointed at an action the menu itself
+    /// now disables. The permission question is asked through the same <c>getEnabled</c>
+    /// truth table the menu item uses, so the two cannot disagree.
+    /// </remarks>
+    internal GanttEntityType PrimaryTypeFor(AddEntityFamily family)
+    {
+        GanttEntityType remembered = _lastAdded[family];
+        return GetEnabled(RibbonControlIds.EntityMenuItemPrefix + remembered.ToString())
+            ? remembered
+            : DefaultTypeFor(family);
+    }
+
+    /// <summary>Records a menu pick so that family's primary follows it.</summary>
+    /// <param name="type">The type the menu action just added.</param>
+    /// <remarks>
+    /// Recording happens on the way to the command, not on success: the user's choice is what
+    /// the primary should remember, and a refused add is still a choice they made. The
+    /// family's primary label is invalidated so Excel asks for it again.
+    /// </remarks>
+    internal void RememberAddedType(GanttEntityType type)
+    {
+        if (FamilyOf(type) is not { } family)
+        {
+            return;
+        }
+
+        _lastAdded[family] = type;
+        InvalidateControl(PrimaryControlIdFor(family));
+    }
+
+    /// <summary>The ribbon id of a family's primary button.</summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The control id.</returns>
+    internal static string PrimaryControlIdFor(AddEntityFamily family) => family switch
+    {
+        AddEntityFamily.Activity => RibbonControlIds.AddActivity,
+        AddEntityFamily.Milestone => RibbonControlIds.AddMilestone,
+        AddEntityFamily.Element => RibbonControlIds.AddDelineator,
+        _ => RibbonControlIds.AddActivity,
+    };
+
+    /// <summary>The family a primary button id belongs to, or <see langword="null"/>.</summary>
+    /// <param name="controlId">The control id.</param>
+    /// <returns>The family, or null when the id is not one of the three primaries.</returns>
+    internal static AddEntityFamily? FamilyOfPrimary(string? controlId) => controlId switch
+    {
+        RibbonControlIds.AddActivity => AddEntityFamily.Activity,
+        RibbonControlIds.AddMilestone => AddEntityFamily.Milestone,
+        RibbonControlIds.AddDelineator => AddEntityFamily.Element,
+        _ => null,
+    };
+
+    /// <summary>
+    /// The visible label for an add-entity split button's primary, projected from the
+    /// catalogue so no display name is authored twice.
+    /// </summary>
+    /// <param name="controlId">The primary's control id.</param>
+    /// <param name="state">The state service holding the remembered choice.</param>
+    /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
+    internal static string AddEntityPrimaryLabel(string? controlId, RibbonStateService state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return FamilyOfPrimary(controlId) is { } family
+            ? EntityTypeCatalog.Format(state.PrimaryTypeFor(family))
+            : string.Empty;
+    }
+
+    /// <summary>
+    /// The glyph slug for an add-entity primary, chosen so the picture agrees with the
+    /// label beside it.
+    /// </summary>
+    /// <param name="type">The type the primary currently names.</param>
+    /// <returns>The glyph slug.</returns>
+    /// <remarks>
+    /// R5.18g made the three primaries follow the last menu pick in their LABEL. R5.19
+    /// gave them a glyph, and a glyph that did not follow the same pick reintroduced the
+    /// original defect one channel over: a button reading "Spacer" while drawing a
+    /// delineator. Activities and milestones keep one family glyph for the variants that
+    /// differ only by timing, but a type whose MENU ROW now draws a different picture
+    /// takes that picture here too — otherwise picking "Delay Event" would leave a
+    /// timeline-of-bars glyph beside a delay label, which is the same defect again.
+    /// </remarks>
+    internal static string AddEntityPrimaryGlyph(GanttEntityType type) => type switch
+    {
+        GanttEntityType.Splitter => "splitter",
+        GanttEntityType.Spacer => "spacer",
+        GanttEntityType.Delineator => "delineator",
+
+        // R5.16a surface revision 2026-11-17: the three concept rows the menus draw
+        // differently from their family. The style-defined pair uses the draft ring
+        // rather than a pen: at 16 px the pen's nib read as a padlock on the owner's
+        // live review, and a padlock on this tab means the cells or the chart are
+        // locked, so the wrong reading is a state contradiction rather than a
+        // near-miss.
+        GanttEntityType.AsPlannedProcurement
+            or GanttEntityType.AsBuiltProcurement
+            or GanttEntityType.BaselineProcurement => "procurement",
+        GanttEntityType.DelayEvent => "span-delay",
+        GanttEntityType.CustomActivity
+            or GanttEntityType.CustomMilestone => "circle-dashed",
+
+        // The critical pair keeps its family shape and gains the shared slash, so the
+        // primary names "critical" without lying about whether it is a bar or a flag.
+        GanttEntityType.CriticalInterval => "critical-span",
+        GanttEntityType.CriticalMilestone => "critical-milestone",
+
+        GanttEntityType.AsBuiltMilestone
+            or GanttEntityType.AsPlannedMilestone
+            or GanttEntityType.BaselineMilestone => "add-milestone",
+        GanttEntityType.AsBuiltActivity
+            or GanttEntityType.AsPlannedActivity
+            or GanttEntityType.BaselineActivity => "add-activity",
+
+        // An unnamed value cannot reach here — the remembered type always comes from the
+        // catalogue — but the enum is not a closed set to the compiler, so it needs an arm.
+        _ => "add-activity",
+    };
+
+    /// <summary>
+    /// The picture for an add-entity primary, read from the same remembered choice the
+    /// label reads.
+    /// </summary>
+    /// <param name="controlId">The primary's control id.</param>
+    /// <param name="state">The state service holding the remembered choice.</param>
+    /// <returns>The picture, or null when the id is not one of the three primaries.</returns>
+    internal static object? AddEntityPrimaryImage(string? controlId, RibbonStateService state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return FamilyOfPrimary(controlId) is { } family
+            ? RibbonGlyphAssets.ForState(AddEntityPrimaryGlyph(state.PrimaryTypeFor(family)), 32)
+            : null;
+    }
+
+    /// <summary>
+    /// Gets the CHART toggle's current label, read from the same preference object the protection
+    /// port uses, so the wording cannot disagree with what the sheet enforces.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The label for the current state.</returns>
+    internal static string GetToggleChartLockLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return ChartLockLabel(ProtectionPreferences.Shared.ChartLocked);
+    }
+
+    /// <summary>
+    /// Gets the CELL toggle's current label, the parallel of <see cref="GetToggleChartLockLabel"/>.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The label for the current state.</returns>
+    internal static string GetToggleCellLockLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return CellLockLabel(!ProtectionPreferences.Shared.CellsUnlocked);
+    }
+
+    /// <summary>
+    /// Gets the CHART toggle's picture for the current state (D1, D7): the closed padlock while
+    /// the chart is locked, the open one while it is released.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The <c>IPictureDisp</c> the host displays, or null when the asset is missing.</returns>
+    /// <remarks>
+    /// Read from the same <see cref="ProtectionPreferences"/> the label and the protection port
+    /// read, so the glyph, the wording and what the sheet enforces cannot disagree.
+    /// </remarks>
+    internal static object? GetToggleChartLockImage(IRibbonControl? control)
+    {
+        _ = control;
+        return RibbonGlyphAssets.ForState(
+            ProtectionPreferences.Shared.ChartLocked
+                ? RibbonGlyphCatalog.ChartLockClosed
+                : RibbonGlyphCatalog.ChartLockOpen,
+            16);
+    }
+
+    /// <summary>
+    /// Gets the CELL toggle's picture for the current state; the parallel of
+    /// <see cref="GetToggleChartLockImage"/>.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The <see cref="object"/> the host displays, or null when the asset is missing.</returns>
+    internal static object? GetToggleCellLockImage(IRibbonControl? control)
+    {
+        _ = control;
+        return RibbonGlyphAssets.ForState(
+            ProtectionPreferences.Shared.CellsUnlocked
+                ? RibbonGlyphCatalog.CellLockOpen
+                : RibbonGlyphCatalog.CellLockClosed,
+            16);
+    }
+
+    /// <summary>
+    /// Gets whether the automatic-refresh toggle is pressed, which is the switch's state (R5.20).
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> while the automatic refresh is enabled.</returns>
+    /// <remarks>
+    /// Pressed means enabled, which is the conventional reading of a toggle and matches the lock
+    /// toggles beside it. The value comes from <see cref="AutoRefreshPreferences"/>, the same object
+    /// <see cref="GanttRefreshScheduler"/> reads, so the button cannot disagree with the pipeline.
+    /// </remarks>
+    internal static bool GetToggleAutoRefreshPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return AutoRefreshPreferences.Shared.AutoRefreshEnabled;
+    }
+
+    /// <summary>
+    /// The wording the automatic-refresh toggle shows for a state (R5.20), the parallel of
+    /// <see cref="ChartLockLabel"/>.
+    /// </summary>
+    /// <param name="enabled">Whether the automatic refresh is enabled.</param>
+    /// <returns>The control's label.</returns>
+    /// <remarks>
+    /// The label states the current state rather than an action, because the pressed state already
+    /// says what is true. A separate function keeps the wording in one place and pins it without a
+    /// host.
+    /// </remarks>
+    internal static string AutoRefreshLabel(bool enabled) => enabled ? "Auto refresh on" : "Auto refresh off";
+
+    /// <summary>
+    /// Gets the automatic-refresh toggle's current label (R5.20).
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns>The label for the current state.</returns>
+    internal static string GetToggleAutoRefreshLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return AutoRefreshLabel(AutoRefreshPreferences.Shared.AutoRefreshEnabled);
+    }
 
     /// <summary>
     /// Returns how many items the description-label dropdown offers: the row's
     /// projected positions plus the leading <c>Default</c> item that clears the
-    /// cell (R5.5 ruling 5 — blank resolves to the style default / Auto
-    /// cascade, §22). A pure read of the cached snapshot. Never throws.
+    /// cell (R5.5 ruling 5 â€” blank resolves to the style default / Auto
+    /// cascade, Â§22). A pure read of the cached snapshot. Never throws.
     /// </summary>
     internal int GetDescriptionLabelCount() =>
         _state.DescriptionLabelOptions is { Count: > 0 } options ? options.Count + 1 : 0;
+
+    /// <summary>
+    /// Returns the label for one column menu row, stating that column's CURRENT
+    /// visibility: <c>Type (shown)</c> or <c>Type (hidden)</c>.
+    /// </summary>
+    /// <param name="itemId">The menu row's id, <c>col</c> + the column display name.</param>
+    /// <returns>The row label, or an empty string when the id names no offered column.</returns>
+    /// <remarks>
+    /// The label says which state it is in rather than naming an action, so it cannot
+    /// contradict the tick beside it. It is also the channel a screen reader reads: a
+    /// tick is silent, so the two state the same fact.
+    /// </remarks>
+    internal string GetColumnVisibilityLabel(string? itemId) =>
+        !TryParseColumnItemId(itemId, out string? name)
+            ? string.Empty
+            : _hiddenColumns.Contains(name) ? name + " (hidden)" : name + " (shown)";
+
+    /// <summary>
+    /// Returns the image for one column menu row (R5.18h): the tick when that column is
+    /// shown, the dash when it is hidden.
+    /// </summary>
+    /// <param name="itemId">The menu row's id, <c>col</c> + the column display name.</param>
+    /// <returns>The row's picture, or null when the id names no offered column or the
+    /// glyph is unavailable.</returns>
+    /// <remarks>
+    /// The 16 px pair is served: a menu row is a normal-height row, so a 32 px picture
+    /// would set the row height itself — the taller rows the owner reported.
+    /// </remarks>
+    internal object? GetColumnVisibilityImage(string? itemId) =>
+        TryParseColumnItemId(itemId, out string? name)
+            ? RibbonGlyphAssets.ForState(
+                _hiddenColumns.Contains(name)
+                    ? RibbonGlyphCatalog.ColumnHidden
+                    : RibbonGlyphCatalog.ColumnVisible,
+                16)
+            : null;
+
+    /// <summary>
+    /// Applies the automatic-refresh switch from the ribbon: records it, discards any pass already
+    /// inside its debounce window, and persists it to the workbook (R5.20).
+    /// </summary>
+    /// <param name="enabled">The state the toggle has moved to.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The requested state is assigned, never flipped</b>, so a duplicate or re-entrant callback
+    /// cannot invert the user's intent — the same rule the lock toggles follow.
+    /// </para>
+    /// <para>
+    /// <b>Switching off cancels the pending pass.</b> A pass queued before the click would render
+    /// after it, which is exactly the surprise the switch exists to remove; cancelling also clears
+    /// the sticky command flag, so the first edit after switching back on is not swallowed as a
+    /// command's own write. Switching on schedules nothing: the next chart-affecting edit or an
+    /// explicit Refresh reconciles, so the switch itself costs no pass.
+    /// </para>
+    /// <para>
+    /// <b>Persisted last.</b> The runtime switch is applied before the write, because the click must
+    /// take effect even when the workbook cannot record it; a refused write is reported and the
+    /// choice simply does not survive reopening. The write is the single
+    /// <see cref="GanttAutoRefresh.SettingKey"/> row, so no other setting is touched.
+    /// </para>
+    /// </remarks>
+    internal void SetAutoRefresh(bool enabled)
+    {
+        AutoRefreshPreferences.Shared.AutoRefreshEnabled = enabled;
+
+        if (!enabled)
+        {
+            _refreshScheduler?.CancelPendingRefresh();
+        }
+
+        Dictionary<string, string> values = new(StringComparer.Ordinal)
+        {
+            [GanttAutoRefresh.SettingKey] = GanttAutoRefresh.Format(enabled),
+        };
+        ConfigWriteOutcome? write = _catalogueWriter?.WriteSettings(values);
+        if (write is not null && !write.Succeeded)
+        {
+            PresentWarning($"Failed to persist the automatic refresh setting: {write.Refusal}");
+        }
+
+        InvalidateControl(RibbonControlIds.ToggleAutoRefresh);
+
+        // The settings write moves Excel's selection, which activates the contextual Table Design
+        // tab and leaves the user looking at it (reported from the host 2026-11-16). Every refresh
+        // already restores the add-in tab for exactly this reason (ADR-0058, owner ruling D-4), so
+        // the toggle does the same. It is a no-op unless the surface is Ready on the Gantt sheet.
+        ActivateGanttTab();
+    }
+
+    /// <summary>
+    /// Flips one column's visibility from the split button's menu: parsed through the Core
+    /// contract (an unknown id is ignored), then applied, persisted and compensated through
+    /// <see cref="ApplyHiddenColumns"/>. Never throws.
+    /// </summary>
+    /// <param name="selectionId">The selected item ID, or null in tests.</param>
+    internal void ToggleColumnVisibility(string? selectionId)
+    {
+        if (!TryParseColumnItemId(selectionId, out string? columnName))
+        {
+            return;
+        }
+
+        ColumnVisibilityOutcome outcome = GanttColumnVisibility.Toggle(_hiddenColumns, columnName);
+        if (!outcome.Succeeded)
+        {
+            // A resolved item id always names an offered column, so this branch is a
+            // defensive stop rather than a user-facing refusal. The last-column refusal
+            // was removed by ADR-0065 D1.
+            return;
+        }
+
+        ApplyHiddenColumns(outcome.Hidden!);
+    }
+
+    /// <summary>
+    /// Toggles the whole offered set from the split button's primary (R5.22, ADR-0065 D3):
+    /// none hidden hides all six; any hidden — including a partial state — shows all six.
+    /// Never throws.
+    /// </summary>
+    internal void ToggleAllColumnVisibility()
+    {
+        ColumnVisibilityOutcome outcome = GanttColumnVisibility.ToggleAll(_hiddenColumns);
+        ApplyHiddenColumns(outcome.Hidden!);
+    }
+
+    /// <summary>
+    /// The split button's primary label: the ACTION the next press will take, because a
+    /// split button has no pressed state (ADR-0065 D3).
+    /// </summary>
+    /// <returns><c>Hide all columns</c> when none is hidden, otherwise <c>Show all columns</c>.</returns>
+    internal string GetColumnVisibilityAllLabel() =>
+        _hiddenColumns.Count == 0 ? "Hide all columns" : "Show all columns";
+
+    /// <summary>
+    /// Applies, persists and compensates one column-visibility change. Both the per-column
+    /// row and the all/none primary go through this one path, so the sheet, the setting and
+    /// the ribbon cannot describe different states. Never throws.
+    /// </summary>
+    /// <param name="next">The candidate hidden set from the Core contract.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The worksheet is applied before the setting is written.</b> A persist that
+    /// succeeded while the hide failed would record a choice the sheet does not show.
+    /// </para>
+    /// <para>
+    /// <b>A refused persist is compensated.</b> The next Refresh measures the sheet, so a
+    /// sheet left hidden while the setting still says visible would make the measurement pass
+    /// a hidden column's zero width to the grid and refuse. The previous set is re-applied
+    /// before the warning, so the two authorities stay together.
+    /// </para>
+    /// </remarks>
+    private void ApplyHiddenColumns(IReadOnlySet<string> next)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+
+        IReadOnlySet<string> previous = _hiddenColumns;
+
+        ColumnVisibilityPortOutcome applied = _columnVisibilityPort is { } port
+            ? port.Apply(next)
+            : ColumnVisibilityPortOutcome.Ok(next);
+        if (!applied.Succeeded)
+        {
+            PresentWarning($"The column visibility could not be applied: {applied.Refusal}.");
+            return;
+        }
+
+        Dictionary<string, string> values = new(StringComparer.Ordinal)
+        {
+            [GanttColumnVisibility.SettingKey] = GanttColumnVisibility.Format(next),
+        };
+        ConfigWriteOutcome? write = _catalogueWriter?.WriteSettings(values);
+        if (write is not null && !write.Succeeded)
+        {
+            ColumnVisibilityPortOutcome restored = _columnVisibilityPort is { } restorePort
+                ? restorePort.Apply(previous)
+                : ColumnVisibilityPortOutcome.Ok(previous);
+            PresentWarning(
+                restored.Succeeded
+                    ? $"Failed to persist the column visibility: {write.Refusal}"
+                    : $"Failed to persist the column visibility: {write.Refusal}; "
+                        + $"the previous state could not be restored: {restored.Refusal}.");
+            return;
+        }
+
+        _hiddenColumns = new HashSet<string>(next, StringComparer.Ordinal);
+        _state = _state with { PlotWidthPt = MeasurePlotWidth(_hiddenColumns) };
+
+        // A split button caches its primary and its menu rows separately: invalidate all
+        // three surfaces together or the label/tick can keep saying the previous state.
+        InvalidateControl(RibbonControlIds.ColumnsSplitButton);
+        InvalidateControl(RibbonControlIds.ColumnVisibilityAll);
+        InvalidateControl(RibbonControlIds.ColumnsMenu);
+        foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+        {
+            InvalidateControl(RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.RibbonItemId(name));
+        }
+
+        InvalidateControl(RibbonControlIds.PlotWidth);
+
+        // The settings write moves Excel's selection and activates Table Design. A refresh
+        // restores the Gantt tab, but with the automatic refresh off no refresh follows, so
+        // the toggle restores it itself (the R5.20 rule).
+        ActivateGanttTab();
+
+        ScheduleAutomaticRefresh();
+    }
+
+    /// <summary>
+    /// Parses an item ID back to a column name: the prefix stripped, then validated
+    /// through the Core contract, so an id the dropdown never issued is ignored rather
+    /// than toggling whatever its suffix happens to spell.
+    /// </summary>
+    /// <param name="itemId">The item ID, or null.</param>
+    /// <param name="columnName">The column name when the id parses.</param>
+    /// <returns>Whether the id names an offered column.</returns>
+    private static bool TryParseColumnItemId(
+        string? itemId,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? columnName)
+    {
+        columnName = null;
+        if (itemId is null
+            || !itemId.StartsWith(RibbonControlIds.ColumnItemPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // The id suffix is a slug, not the display name (RibbonX ids reject a space),
+        // so the Core resolver owns the inverse mapping.
+        string candidate = itemId[RibbonControlIds.ColumnItemPrefix.Length..];
+        return GanttColumnVisibility.TryResolveRibbonItemId(candidate, out columnName);
+    }
+
+    /// <summary>
+    /// Seeds the hidden set from the live table, so the dropdown states what the sheet
+    /// shows rather than what a stale setting claims. A refused read leaves the last
+    /// known set alone: a tick is decoration, and losing it is better than reporting a
+    /// hide that never happened.
+    /// </summary>
+    private void LoadColumnVisibilityFromWorksheet()
+    {
+        if (_columnVisibilityPort?.ReadHidden() is not { Succeeded: true, Hidden: { } hidden })
+        {
+            return;
+        }
+
+        _hiddenColumns = new HashSet<string>(hidden, StringComparer.Ordinal);
+    }
 
     /// <summary>
     /// Returns the item ID at <paramref name="index"/>: <c>Default</c> for the
@@ -1266,7 +2903,7 @@ internal class RibbonStateService
 
     /// <summary>
     /// Returns the user-facing label at <paramref name="index"/> (R5.5 ruling
-    /// 3: the enum name is never shown verbatim — <c>Inside</c> reads
+    /// 3: the enum name is never shown verbatim â€” <c>Inside</c> reads
     /// <c>Centre</c>, <c>None</c> reads <c>None (hide)</c>, and the splitter
     /// positions read as their meaning). A pure read of the cached snapshot; an
     /// out-of-range index yields an empty string. Never throws.
@@ -1301,7 +2938,7 @@ internal class RibbonStateService
             return 0;
         }
 
-        for (var index = 0; index < options.Count; index++)
+        for (int index = 0; index < options.Count; index++)
         {
             if (options[index] == selected)
             {
@@ -1339,7 +2976,7 @@ internal class RibbonStateService
     /// <summary>
     /// Applies one description-label selection to the selected row: the item ID is
     /// parsed through the catalogue (<c>Default</c> clears the cell, an unknown
-    /// ID is refused — never defaulted), the command runs, and the ribbon
+    /// ID is refused â€” never defaulted), the command runs, and the ribbon
     /// refreshes so the dropdown reflects the written cell (R1.5 D3). Never
     /// throws.
     /// </summary>
@@ -1356,14 +2993,108 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Constants shared between the state service and the ribbon handlers
+    /// for the custom-style dropdown (R5.6a).
+    /// </summary>
+    private static class Constants
+    {
+        /// <summary>The leading clear item's ID.</summary>
+        internal const string NoneItem = "None";
+
+        /// <summary>The leading clear item's user-facing label.</summary>
+        internal const string NoneLabel = "None";
+    }
+
+    /// <summary>
+    /// Returns how many items the custom-style dropdown offers: a leading
+    /// <c>None</c> clear item plus the user-created (non-built-in) style keys
+    /// of the configuration registry in catalogue order (R5.6a). Always at
+    /// least 1 so Excel never queries an out-of-range index. A pure read of
+    /// the cached snapshot. Never throws.
+    /// </summary>
+    internal int GetCustomStyleCount() =>
+        (_state.CustomStyleOptions is { Count: > 0 } options ? options.Count : 0) + 1;
+
+    /// <summary>
+    /// Returns the item ID at <paramref name="index"/>: <c>None</c> for the
+    /// leading clear item (blank key clears the row's StyleKey cell),
+    /// otherwise the style key itself. A pure read of the cached snapshot.
+    /// Never throws.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    internal string GetCustomStyleItemID(int index) =>
+        index == 0 ? Constants.NoneItem :
+        _state.CustomStyleOptions is { Count: > 0 } options
+        && index >= 1
+        && index < options.Count + 1
+            ? options[index - 1]
+            : string.Empty;
+
+    /// <summary>
+    /// Returns the user-facing label at <paramref name="index"/>: <c>None</c>
+    /// for the clear item, otherwise the style key shown verbatim. A pure
+    /// read of the cached snapshot. Never throws.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    internal string GetCustomStyleItemLabel(int index) =>
+        index == 0 ? Constants.NoneLabel : GetCustomStyleItemID(index);
+
+    /// <summary>
+    /// Returns the selected item index: 0 for <c>None</c> when the cell is
+    /// blank, names a built-in preset, or no single style-key row is
+    /// selected; otherwise the row's stored custom key's place in the
+    /// projected options plus 1. Excel's dropDown requires a valid
+    /// zero-based index, so -1 is never returned (matching the date-label
+    /// and description-label dropdowns). A pure read of the cached
+    /// snapshot. Never throws.
+    /// </summary>
+    internal int GetCustomStyleSelectedIndex()
+    {
+        if (_state.CustomStyleOptions is not { Count: > 0 } options
+            || _state.SelectedCustomStyleKey is not string selected)
+        {
+            return 0;
+        }
+
+        for (int index = 0; index < options.Count; index++)
+        {
+            if (string.Equals(options[index], selected, StringComparison.Ordinal))
+            {
+                return index + 1;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Applies one custom-style selection to the selected row: <c>None</c>
+    /// clears the row's StyleKey cell, otherwise the item ID IS the style
+    /// key. The command runs and the ribbon refreshes so the dropdown
+    /// reflects the written cell (R1.5 D3). Never throws.
+    /// </summary>
+    /// <param name="styleKey">The selected item ID (<c>None</c> clears), or null in tests.</param>
+    internal void SetCustomStyleKey(string? styleKey)
+    {
+        if (string.IsNullOrWhiteSpace(styleKey) || styleKey == Constants.NoneItem)
+        {
+            styleKey = string.Empty;
+        }
+
+        SetStyleKeyCommand.RunForExcel(styleKey.Trim());
+        Refresh();
+    }
+
+    /// <summary>
     /// Returns how many items the date-label dropdown offers: the
     /// selected row's allowed date-label choices, projected from its
-    /// <c>Type</c> (R5.14 D1/D4 — the projected set already includes
+    /// <c>Type</c> (R5.14 D1/D4 â€” the projected set already includes
     /// <c>Auto</c>, so there is no separate leading clear item). A
     /// pure read of the cached snapshot. Never throws.
     /// </summary>
     internal int GetDateLabelCount() =>
-        _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
+        _state.DateLabelPlacementSelectionAvailable
+        && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
             ? placementOptions.Count
             : _state.DateLabelOptions is { Count: > 0 } options ? options.Count : 0;
 
@@ -1383,7 +3114,8 @@ internal class RibbonStateService
         // label's corners. Auto clears the cell, so its item id is
         // the clear marker, not the enum name
         // (TryParseDateLabelPlacementSelection maps Default to null).
-        if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
+        if (_state.DateLabelPlacementSelectionAvailable
+            && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
         {
             return index < 0 || index >= placementOptions.Count
                 ? string.Empty
@@ -1413,7 +3145,8 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="index">The zero-based item index.</param>
     internal string GetDateLabelItemLabel(int index) =>
-        _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
+        _state.DateLabelPlacementSelectionAvailable
+        && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
         && index >= 0
         && index < placementOptions.Count
             ? LabelPositionDisplayText(placementOptions[index])
@@ -1427,7 +3160,7 @@ internal class RibbonStateService
     /// Returns the selected item index: <c>Auto</c> (index 0) when the
     /// row's cell is blank, otherwise the choice's place in the projected
     /// options. A blank cell reads as Auto (R5.14 D3), and an out-of-set
-    /// position — only possible for a stale cell — also reads as Auto. A
+    /// position â€” only possible for a stale cell â€” also reads as Auto. A
     /// pure read of the cached snapshot. Never throws.
     /// </summary>
     internal int GetDateLabelSelectedIndex()
@@ -1435,11 +3168,12 @@ internal class RibbonStateService
         // Owner ruling 2026-10-14: the positionable vocabulary's
         // leading choice is Auto, exactly as the which-date vocabulary's
         // is, so a blank cell reads as index 0 in either.
-        if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
+        if (_state.DateLabelPlacementSelectionAvailable
+            && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
         {
             // Blank (null) resolves to Auto, and Auto is the leading choice.
             GanttLabelPosition selectedPlacement = _state.SelectedDateLabelPlacement ?? GanttLabelPosition.Auto;
-            for (var index = 0; index < placementOptions.Count; index++)
+            for (int index = 0; index < placementOptions.Count; index++)
             {
                 if (placementOptions[index] == selectedPlacement)
                 {
@@ -1457,7 +3191,7 @@ internal class RibbonStateService
 
         // Blank (null) resolves to Auto, and Auto is the leading choice.
         GanttDateLabelPosition selected = _state.SelectedDateLabelPosition ?? GanttDateLabelPosition.Auto;
-        for (var index = 0; index < options.Count; index++)
+        for (int index = 0; index < options.Count; index++)
         {
             if (options[index] == selected)
             {
@@ -1477,7 +3211,11 @@ internal class RibbonStateService
     private static string DateLabelDisplayText(GanttDateLabelPosition position) =>
         position switch
         {
-            GanttDateLabelPosition.Auto => "Auto",
+            // R5.18m (owner ruling 2026-11-13): the leading item clears the cell,
+            // and a blank cell resolves to the type default (None), so the item is
+            // named for what it does rather than for the legacy stored value.
+            GanttDateLabelPosition.Auto => "Default",
+            GanttDateLabelPosition.Both => "Both",
             GanttDateLabelPosition.Start => "Start",
             GanttDateLabelPosition.Finish => "Finish",
             GanttDateLabelPosition.None => "None",
@@ -1489,7 +3227,7 @@ internal class RibbonStateService
     /// dropdown carries one of two vocabularies (owner ruling
     /// 2026-10-14): for a delineator row the item is a position,
     /// parsed through the catalogue (<c>Default</c> clears the cell
-    /// to blank = Auto, an unknown ID is refused — never defaulted)
+    /// to blank = Auto, an unknown ID is refused â€” never defaulted)
     /// and the placement command runs; for every other dated type
     /// the item is a which-date choice and the date-label command
     /// runs. The ribbon then refreshes so the dropdown reflects the
@@ -1498,7 +3236,8 @@ internal class RibbonStateService
     /// <param name="selectionId">The selected item ID, or null in tests.</param>
     internal void SetDateLabelPosition(string? selectionId)
     {
-        if (_state.DateLabelPlacementOptions is { Count: > 0 }
+        if (_state.DateLabelPlacementSelectionAvailable
+            && _state.DateLabelPlacementOptions is { Count: > 0 }
             && EntityTypeCatalog.TryParseDateLabelPlacementSelection(
                 selectionId,
                 out GanttLabelPosition? placement))
@@ -1564,9 +3303,39 @@ internal class RibbonStateService
     /// previous snapshot.
     /// </summary>
     /// <param name="previous">The snapshot currently published.</param>
-    /// <param name="sheetInitialised">Whether the active workbook has an initialised Gantt sheet.</param>
+    /// <param name="sheetInitialised">
+    /// Whether the active workbook has an initialised Gantt sheet, or null when
+    /// the probe was unavailable and the previous value must stand (R5.16).
+    /// </param>
+    /// <param name="configurationPresent">
+    /// Whether the workbook carries the configuration worksheet, or null when
+    /// the probe was unavailable and the previous value must stand (R5.16).
+    /// </param>
+    /// <param name="ganttSheetPresent">
+    /// Whether a standard-labelled Gantt worksheet exists, or null when the
+    /// probe was unavailable and the previous value must stand (R5.17b).
+    /// </param>
+    /// <param name="activeSheetIsGanttSheet">
+    /// Whether the active sheet carries the Gantt table, or null when the probe
+    /// was unavailable and the previous value must stand (R5.16b, ADR-0058).
+    /// </param>
+    /// <param name="hasGroups">
+    /// Whether any table row names a parent, or null when no read succeeded and
+    /// the previous value must stand (R5.16b).
+    /// </param>
+    /// <param name="criticalIntervalParentAvailable">
+    /// Whether the table holds a row that can own a Critical Interval, or null
+    /// when the probe was unavailable and the previous value must stand (R5.16).
+    /// </param>
     /// <returns>The snapshot to publish.</returns>
-    private RibbonState CaptureSnapshot(RibbonState previous, bool sheetInitialised)
+    private RibbonState CaptureSnapshot(
+        RibbonState previous,
+        bool? sheetInitialised,
+        bool? configurationPresent = null,
+        bool? ganttSheetPresent = null,
+        bool? criticalIntervalParentAvailable = null,
+        bool? activeSheetIsGanttSheet = null,
+        bool? hasGroups = null)
     {
         // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
         // source failure keeps the last known snapshot instead of propagating
@@ -1574,22 +3343,46 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            var hasActiveWorkbook = _applicationAdapter?.HasActiveWorkbook() ?? null;
-            var logAvailable = _logAvailabilitySource?.Invoke() ?? null;
+            bool? hasActiveWorkbook = _applicationAdapter?.HasActiveWorkbook() ?? null;
+            bool? logAvailable = _logAvailabilitySource?.Invoke() ?? null;
+
+            // R5.16: resolve the mode from the three facts before the snapshot
+            // is built. Each fact falls back to the published value so a
+            // transient failure cannot flip the visible surface.
+            bool workbookPresent = hasActiveWorkbook ?? previous.HasActiveWorkbook;
+            bool initialised = sheetInitialised ?? previous.SheetInitialised;
+            bool configPresent = configurationPresent ?? previous.ConfigurationPresent;
+            bool ganttPresent = ganttSheetPresent ?? previous.GanttSheetPresent;
+            bool criticalAvailable =
+                criticalIntervalParentAvailable ?? previous.CriticalIntervalParentAvailable;
+
+            // R5.16b: both new facts are sticky like every other captured fact â€”
+            // an unreadable table keeps the published value instead of greying
+            // or un-greying the whole surface mid-session.
+            bool activeSheetIsGantt =
+                activeSheetIsGanttSheet ?? previous.ActiveSheetIsGanttSheet;
+            bool groupsPresent = hasGroups ?? previous.HasGroups;
+            RibbonMode mode = ResolveMode(
+                workbookPresent,
+                initialised,
+                configPresent,
+                ganttPresent);
 
             // R5.5 ruling 6: the description-label dropdown is the first selection-gated
             // control, so its context is captured here rather than left at its
-            // initial value. The capture is sticky like every other fact — a
+            // initial value. The capture is sticky like every other fact â€” a
             // transient failure keeps the previous context rather than greying
             // the dropdown mid-selection.
             DescriptionLabelContext descriptionLabelContext = CaptureDescriptionLabelContext(previous);
             DateLabelContext dateLabelContext = CaptureDateLabelContext(previous);
             DateLabelPlacementContext dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
+            CustomStyleContext customStyleContext = CaptureCustomStyleContext(previous);
+            RowActionContext rowActionContext = CaptureRowActionContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
-                hasActiveWorkbook ?? previous.HasActiveWorkbook,
+                workbookPresent,
                 logAvailable ?? previous.LogAvailable,
-                sheetInitialised,
+                initialised,
                 previous.PlotStartAuto,
                 previous.PlotFinishAuto,
                 previous.PlotStartDate,
@@ -1611,13 +3404,159 @@ internal class RibbonStateService
                 dateLabelContext.Options,
                 dateLabelPlacementContext.Available,
                 dateLabelPlacementContext.Selected,
-                dateLabelPlacementContext.Options));
+                dateLabelPlacementContext.Options,
+                customStyleContext.Available,
+                customStyleContext.SelectedKey,
+                customStyleContext.Options,
+                ConfigurationPresent: configPresent,
+                GanttSheetPresent: ganttPresent,
+                Mode: mode,
+                CriticalIntervalParentAvailable: criticalAvailable,
+                RowActions: rowActionContext.Actions,
+                ActiveCellInBodyRow: rowActionContext.ActiveCellInBodyRow,
+                HasGroups: groupsPresent,
+                ActiveSheetIsGanttSheet: activeSheetIsGantt));
         }
         catch
         {
             return previous;
         }
 #pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Captures the structural row-action facts for the row under the active
+    /// cell (R5.9b). The rules live in <see cref="RowActionAvailability"/>; this
+    /// method supplies the selection facts and the rows the last successful read
+    /// returned. Never throws: an unavailable selection or rule failure keeps the
+    /// previous context, the same stickiness every other capture uses.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    private RowActionContext CaptureRowActionContext(RibbonState previous)
+    {
+        RowActionContext unchanged = new(previous.RowActions, previous.ActiveCellInBodyRow);
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        if (identifier is null)
+        {
+            return unchanged;
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            SelectionFacts facts = identifier.Identify();
+            if (!facts.HasSelection)
+            {
+                return unchanged;
+            }
+
+            int? activeCellBodyIndex = facts.ActiveCellBodyIndex;
+            return new RowActionContext(
+                RowActionAvailability.Evaluate(_lastTableRows, activeCellBodyIndex),
+                activeCellBodyIndex.HasValue);
+        }
+        catch
+        {
+            return unchanged;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The structural row-action context published on the snapshot (R5.9b).
+    /// </summary>
+    /// <param name="Actions">The four availability flags for the active row.</param>
+    /// <param name="ActiveCellInBodyRow">Whether the active cell resolves to a table body row.</param>
+    private readonly record struct RowActionContext(
+        RowActionAvailability Actions,
+        bool ActiveCellInBodyRow);
+
+    /// <summary>
+    /// Resolves the Ribbon mode from the three workbook facts (R5.16). A
+    /// workbook that carries configuration but has lost its table is
+    /// <see cref="RibbonMode.NeedsRepair"/>, not a first run: Initialise refuses
+    /// there and Fix is the only remedy, so treating it as a first run would
+    /// hide the command the refusal points at.
+    /// </summary>
+    /// <param name="hasActiveWorkbook">Whether Excel has an active workbook.</param>
+    /// <param name="sheetInitialised">Whether the Gantt table is readable.</param>
+    /// <param name="configurationPresent">Whether <c>_GanttCreatorConfig</c> exists.</param>
+    /// <param name="ganttSheetPresent">Whether a standard-labelled Gantt worksheet exists.</param>
+    /// <returns>The resolved mode.</returns>
+    private static RibbonMode ResolveMode(
+        bool hasActiveWorkbook,
+        bool sheetInitialised,
+        bool configurationPresent,
+        bool ganttSheetPresent) =>
+        !hasActiveWorkbook
+            ? RibbonMode.FirstRun
+            : sheetInitialised
+                ? configurationPresent
+                    ? RibbonMode.Ready
+                    : RibbonMode.NeedsRepair
+                : configurationPresent || ganttSheetPresent
+                    ? RibbonMode.NeedsRepair
+                    : RibbonMode.FirstRun;
+
+    /// <summary>
+    /// Whether any row in the table can own a Critical Interval (R5.16). The
+    /// answer is data, not selection: the item is disabled only when no row can
+    /// accept one, which is the single refusal the command can still produce.
+    /// </summary>
+    /// <param name="rows">The rows the table read returned.</param>
+    /// <returns><see langword="true"/> when at least one row is an eligible parent.</returns>
+    private static bool HasEligibleParent(IReadOnlyList<GanttRowDto> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return false;
+        }
+
+        Dictionary<string, int> childCounts = new(StringComparer.Ordinal);
+        foreach (GanttRowDto row in rows)
+        {
+            string? parent = row.ParentId?.Trim();
+            if (!string.IsNullOrEmpty(parent))
+            {
+                childCounts[parent] = childCounts.TryGetValue(parent, out int count) ? count + 1 : 1;
+            }
+        }
+
+        foreach (GanttRowDto row in rows)
+        {
+            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type))
+            {
+                continue;
+            }
+
+            GanttRowId? parentId = null;
+            string? parentText = row.ParentId?.Trim();
+            if (!string.IsNullOrEmpty(parentText)
+                && (!GanttRowId.TryParse(parentText, out parentId) || parentId is null))
+            {
+                // A parent id that cannot be parsed makes the row's own depth
+                // unknown, so the candidate is skipped rather than assumed
+                // top-level: the insert would refuse it anyway.
+                continue;
+            }
+
+            int childCount = 0;
+            string? idText = row.Id?.Trim();
+            if (!string.IsNullOrEmpty(idText))
+            {
+                _ = childCounts.TryGetValue(idText, out childCount);
+            }
+
+            if (AddChildPlanner.IsEligibleParent(type, parentId, childCount))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1661,13 +3600,16 @@ internal class RibbonStateService
                 return UnavailableDescriptionLabelContext(previous);
             }
 
-            // Custom Activity resolves its set from the row's style (R2.7b/c);
-            // every other type reads its catalogue definition. A failed
-            // catalogue read yields an empty registry, which the projection
-            // turns into an empty option set — the dropdown then offers only
-            // Default, and the command refuses with StyleUnknown at execution.
+            // Custom Activity / Custom Milestone resolve their set from the
+            // row's style (R2.7b/c; R5.6a: the catalogue's RequiresStyleKey
+            // flag is the single authority); every other type reads its
+            // catalogue definition. A failed catalogue read yields an empty
+            // registry, which the projection turns into an empty option set â€”
+            // the dropdown then offers only Default, and the command refuses
+            // with StyleUnknown at execution.
             GanttStyleRegistry styles = GanttStyleRegistry.Empty;
-            if (type == GanttEntityType.CustomActivity && _catalogueReader is not null)
+            if (EntityTypeCatalog.GetDefinition(type) is { RequiresStyleKey: true }
+                && _catalogueReader is not null)
             {
                 ConfigReadOutcome catalogues = _catalogueReader.Read();
                 if (catalogues.Succeeded)
@@ -1684,7 +3626,7 @@ internal class RibbonStateService
             }
 
             // The cell stores the position by name; blank resolves to the
-            // style default / Auto cascade (§22), so it reads as null.
+            // style default / Auto cascade (Â§22), so it reads as null.
             GanttLabelPosition? selected = EntityTypeCatalog.TryParseLabelSelection(
                 row.LabelPositionText,
                 out GanttLabelPosition? parsed)
@@ -1711,14 +3653,119 @@ internal class RibbonStateService
         new(false, previous.SelectedDescriptionLabelPosition, previous.DescriptionLabelOptions);
 
     /// <summary>
+    /// Captures the custom-style dropdown's context from the selection
+    /// identifier, the table reader, and the catalogue reader (R5.6a ruling 6
+    /// + the non-built-in projection). Never throws: an indeterminable
+    /// selection keeps the previous context (snapshot stickiness), so a
+    /// transient COM failure cannot grey the dropdown mid-selection.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    private CustomStyleContext CaptureCustomStyleContext(RibbonState previous)
+    {
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        IGanttTableReader? reader = _tableReader;
+        if (identifier is null || reader is null || _catalogueReader is null)
+        {
+            return UnavailableCustomStyleContext(previous);
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            // Always capture the current catalogue of user-created styles,
+            // independent of what row is selected. The dropdown's item list
+            // is global to the workbook; only the enabled flag and selected
+            // item depend on the selection. A failed catalogue read keeps
+            // the previous options rather than presenting a stale-empty list.
+            ConfigReadOutcome catalogues = _catalogueReader.Read();
+            IReadOnlyList<string> options = previous.CustomStyleOptions ?? [];
+            if (catalogues.Succeeded && catalogues.Styles is not null)
+            {
+                HashSet<string> builtInKeys = new HashSet<string>(StringComparer.Ordinal);
+                foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+                {
+                    _ = builtInKeys.Add(preset.StyleKey);
+                }
+
+                List<string> captured = [];
+                foreach (string key in catalogues.Styles.StyleKeys)
+                {
+                    if (!builtInKeys.Contains(key))
+                    {
+                        captured.Add(key);
+                    }
+                }
+                options = captured;
+            }
+
+            // Now resolve selection-dependent state: is the selection a single
+            // style-key-type body row, and if so, which custom style does it
+            // name?
+            SelectionFacts facts = identifier.Identify();
+            bool available = false;
+            int bodyIndex = 0;
+            if (facts.IsSingleBodyRow && facts.BodyIndex is int bi)
+            {
+                bodyIndex = bi;
+                available = true;
+            }
+            string? selectedKey = null;
+
+            if (available)
+            {
+                GanttTableReadOutcome read = reader.Read();
+                if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
+                {
+                    available = false;
+                }
+                else
+                {
+                    GanttRowDto row = read.Rows[bodyIndex - 1];
+                    if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type)
+                        || EntityTypeCatalog.GetDefinition(type) is not { RequiresStyleKey: true })
+                    {
+                        available = false;
+                    }
+                    else
+                    {
+                        selectedKey = options.Contains(row.StyleKey ?? string.Empty, StringComparer.Ordinal)
+                            ? row.StyleKey
+                            : null;
+                    }
+                }
+            }
+
+            return new CustomStyleContext(available, selectedKey, options);
+        }
+        catch
+        {
+            return UnavailableCustomStyleContext(previous);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The context published when the custom-style dropdown cannot be
+    /// resolved: not available, carrying the previously published selection
+    /// and options so a transient failure cannot blank a resolved dropdown.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The unavailable context.</returns>
+    private static CustomStyleContext UnavailableCustomStyleContext(RibbonState previous) =>
+        new(false, previous.SelectedCustomStyleKey, previous.CustomStyleOptions);
+
+    /// <summary>
     /// Captures the date-label dropdown's context from the selection
     /// identifier and the table reader (R5.14 ruling 6 + D1/D4
     /// projection). The capability is type-only (D4): a Custom
-    /// Activity style carries no date mode, so — unlike the
-    /// description-label capture — no catalogue or style registry is
+    /// Activity style carries no date mode, so â€” unlike the
+    /// description-label capture â€” no catalogue or style registry is
     /// consulted. Owner ruling 2026-10-14: the delineator's date
     /// label is positionable, so its which-date set is empty and this
-    /// context reads as unavailable for a delineator row — the
+    /// context reads as unavailable for a delineator row â€” the
     /// positionable context carries that row instead. Never throws:
     /// an indeterminable selection keeps the previous context
     /// (snapshot stickiness), so a transient COM failure cannot grey
@@ -1904,10 +3951,22 @@ internal class RibbonStateService
 
     /// <summary>
     /// Handles one selection change: re-captures the snapshot and invalidates
-    /// the description-label and date-label dropdowns. Only those two controls
-    /// are invalidated, so moving the selection does not re-query every getter
-    /// on the ribbon. Never throws.
+    /// the description-label, date-label, and custom-style dropdowns and the two
+    /// shape-lock buttons. Only those five controls are invalidated, so moving
+    /// the selection does not re-query every getter on the ribbon. Never throws.
     /// </summary>
+    /// <remarks>
+    /// <b>The shape buttons are not optional here.</b> Their enablement is not in
+    /// <see cref="RibbonState"/>: "Unlock shape" asks whether the current selection is
+    /// one shape this add-in drew, and "Lock shapes" whether anything is unlocked. Excel
+    /// caches a button's <c>getEnabled</c> result from load or the last invalidation, so
+    /// without these two lines the pair keeps the state it had when the ribbon was
+    /// built â€” disabled, because nothing was selected then â€” no matter what the user
+    /// clicks afterwards. Reported live 2026-11-09: "ribbon buttons for lock and unlock
+    /// shapes are disabled yet everything is locked, why can i not unlock them". The
+    /// only other invalidation for them is inside the two commands, and neither can run
+    /// until the button is enabled, so the pair could never enable itself.
+    /// </remarks>
     private void OnSelectionChanged()
     {
         // CA1031: runs inside an Excel event dispatch; a failure must not
@@ -1918,6 +3977,21 @@ internal class RibbonStateService
             _state = CaptureSnapshot(_state, _state.SheetInitialised);
             InvalidateControl(RibbonControlIds.DescriptionLabel);
             InvalidateControl(RibbonControlIds.DateLabel);
+            InvalidateControl(RibbonControlIds.CustomStyle);
+
+            // R5.9b: the structural gates follow the active row, so moving the
+            // cursor must re-ask them; without these five lines Excel keeps the
+            // state each button had when the ribbon was built.
+            InvalidateControl(RibbonControlIds.PromoteToParent);
+            InvalidateControl(RibbonControlIds.DemoteToChild);
+            InvalidateControl(RibbonControlIds.MoveUp);
+            InvalidateControl(RibbonControlIds.MoveDown);
+            InvalidateControl(RibbonControlIds.Remove);
+
+            // The two toggles report state rather than selection, but a command can change
+            // either from anywhere, and Excel only re-asks getPressed on an invalidation.
+            InvalidateControl(RibbonControlIds.ToggleChartLock);
+            InvalidateControl(RibbonControlIds.ToggleCellLock);
         }
         catch
         {
@@ -1981,11 +4055,153 @@ internal class RibbonStateService
 #pragma warning restore CA1031
     }
 
+    private void SubscribeToSheetChanges()
+    {
+        DisposeRefreshScheduler();
+        DisposeSheetActivationSubscription();
+        IExcelApplicationAdapter? adapter = _applicationAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+            GanttRefreshScheduler scheduler = new(adapter, new ExcelSheetChangeAnalyzer(application));
+            scheduler.Activate();
+            _refreshScheduler = scheduler;
+        }
+        catch
+        {
+            _refreshScheduler = null;
+        }
+
+        // R5.16b (ADR-0058): entering the Gantt sheet re-reads the workbook so
+        // the active-sheet gate is current, then restores the add-in tab. A
+        // failure to subscribe degrades to command-driven refresh only.
+        try
+        {
+            _sheetActivationSubscription = adapter.SubscribeSheetActivated(OnSheetActivated);
+        }
+        catch
+        {
+            _sheetActivationSubscription = null;
+        }
+#pragma warning restore CA1031
+    }
+
+    private void DisposeRefreshScheduler()
+    {
+        GanttRefreshScheduler? scheduler = _refreshScheduler;
+        _refreshScheduler = null;
+        if (scheduler is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            scheduler.Dispose();
+        }
+        catch
+        {
+            // AutoClose must not surface a teardown failure into Excel.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Handles one sheet activation (R5.16b, ADR-0058). A sheet change is not a
+    /// chart-affecting edit, so nothing is rendered here; the workbook is
+    /// re-read so the active-sheet gate reflects the sheet the user just
+    /// entered, and <see cref="Refresh"/> then restores the add-in tab when the
+    /// Gantt sheet is the active one. Never throws.
+    /// </summary>
+    private void OnSheetActivated()
+    {
+        _refreshScheduler?.CancelPendingRefresh();
+        Refresh();
+    }
+
+    /// <summary>
+    /// Detaches the sheet-activation subscription exactly once. Never throws.
+    /// </summary>
+    private void DisposeSheetActivationSubscription()
+    {
+        IDisposable? subscription = _sheetActivationSubscription;
+        _sheetActivationSubscription = null;
+        if (subscription is null)
+        {
+            return;
+        }
+
+        // CA1031: teardown must never throw into Excel; a failed detach
+        // degrades to a retained event connection.
+#pragma warning disable CA1031
+        try
+        {
+            subscription.Dispose();
+        }
+        catch
+        {
+            // Intentionally empty: see the teardown rationale above.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Makes the add-in tab the active tab when the Gantt sheet is the active
+    /// sheet and the surface is <see cref="RibbonMode.Ready"/> (owner ruling
+    /// D-4, ADR-0058). Called at the end of every refresh and on every sheet
+    /// activation â€” never from a selection change, so the user is not pulled
+    /// away from the tab they chose. <c>ActivateTab</c> signals S_FALSE and
+    /// changes nothing while the ribbon is collapsed, so there is no error to
+    /// surface. Never throws.
+    /// </summary>
+    internal void ActivateGanttTab()
+    {
+        RibbonState state = _state;
+        if (state.Mode != RibbonMode.Ready || !state.ActiveSheetIsGanttSheet)
+        {
+            return;
+        }
+
+        InvokeRibbon(ribbon => ribbon.ActivateTab(RibbonControlIds.Tab));
+    }
+
     /// <summary>
     /// Handles one workbook-state change: a single refresh (snapshot capture
     /// plus one ribbon invalidation). Never throws.
     /// </summary>
-    private void OnWorkbookStateChanged() => Refresh();
+    private void OnWorkbookStateChanged()
+    {
+        _refreshScheduler?.CancelPendingRefresh();
+        RefreshSheetCommand.ResetDeltaCache();
+
+        // R5.20: the switch belongs to the workbook, so the next settings read adopts this
+        // workbook's stored value before the refresh below runs.
+        _seedPersistedSwitches = true;
+
+        // ADR-0055: the workbook the user has switched to may be protected from an earlier session,
+        // whose UserInterfaceOnly did not survive the reopen. Forgetting the arming makes the next
+        // refresh release and re-apply the protection on the sheet it actually has.
+        RefreshSheetCommand.ResetProtectionArming();
+
+        // Reported 2026-11-09: "the first load from save the host +/- collapse expand buttons are
+        // locked". EnableOutlining is refused while protected and is not saved with the worksheet,
+        // so the reopened sheet has the symbols off and only a protect on an UNPROTECTED sheet can
+        // restore them. This runs BEFORE Refresh, because a refresh may refuse early (an unreadable
+        // configuration, a blocked row) and leave the user with greyed-out buttons and no way to
+        // fold a section. It is inert on an unprotected sheet.
+        RefreshSheetCommand.RepairOutlineSymbols();
+        _lastSuccessfulSceneWarnings = [];
+        _currentValidationIssues = [];
+        _lastSuccessfulRenderAtUtc = null;
+        Refresh();
+    }
 
     /// <summary>
     /// Detaches the workbook-state subscription exactly once. Never throws.
@@ -2026,7 +4242,7 @@ internal class RibbonStateService
             return;
         }
 
-        // CA1031: a failing ribbon call must never propagate into Excel — the
+        // CA1031: a failing ribbon call must never propagate into Excel â€” the
         // only consequence is a stale control until the next invalidation.
 #pragma warning disable CA1031
         try
@@ -2046,6 +4262,8 @@ internal class RibbonStateService
     /// </summary>
     private void Teardown()
     {
+        DisposeRefreshScheduler();
+        DisposeSheetActivationSubscription();
         DisposeSelectionSubscription();
         DisposeWorkbookStateSubscription();
         _ribbon = null;
@@ -2056,6 +4274,21 @@ internal class RibbonStateService
         _catalogueReader = null;
         _tableReader = null;
         _panelGridMeasurementPort = null;
+        _columnVisibilityPort = null;
+        _hiddenColumns = new HashSet<string>(StringComparer.Ordinal);
+
+        // The presenters are restored to their defaults too. An injected
+        // presenter is a test seam: leaving it in place would let one test's
+        // collector receive another test's message, which is how a warning
+        // test passes for the wrong reason.
+        _errorPresenter = CommandErrorDialog.Show;
+        _warningPresenter = RibbonStatusBar.Warn;
+        _commandBoundary = CommandBoundary.Instance;
+        AutoRefreshPreferences.Shared.AutoRefreshEnabled = true;
+
         _state = RibbonState.Initial;
+        _lastSuccessfulSceneWarnings = [];
+        _currentValidationIssues = [];
+        _lastSuccessfulRenderAtUtc = null;
     }
 }

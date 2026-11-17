@@ -147,6 +147,13 @@ internal sealed class ConfigSheetFake
     /// </summary>
     public List<Excel.Range> ClearedRanges => _clearedRanges;
 
+    /// <summary>
+    /// The names of the columns whose body the writer formatted as Text, in
+    /// call order. The settings table's Value column is the only one: its
+    /// free text (the plot dates) must survive Excel's locale coercion.
+    /// </summary>
+    public List<string> TextFormattedColumns { get; } = [];
+
     /// <summary>How many times a table was created through the add seam.</summary>
     public int AddCallCount => _addCallCount;
 

@@ -55,7 +55,7 @@ public sealed partial class Redactor : IRedactor
             return input;
         }
 
-        var result = input;
+        string result = input;
 
         result = EmailPattern().Replace(result, "[email]");
         result = WindowsPathPattern().Replace(result, "[path]");

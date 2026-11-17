@@ -212,10 +212,10 @@ public static class PanelBuilder
         // Section 3: the panel's right edge touches the plot's left edge. Deriving
         // the panel origin from PlotBounds.Left rather than from the panel's own
         // width makes a gap or an overlap unrepresentable.
-        var panelLeft = plot.Left - grid.TotalWidthPt;
-        var headerTop = request.HeaderBottomPt - grid.HeaderHeightPt;
-        var bodyTop = request.HeaderBottomPt;
-        var panelBottom = bodyTop + grid.TotalRowHeightPt;
+        double panelLeft = plot.Left - grid.TotalWidthPt;
+        double headerTop = request.HeaderBottomPt - grid.HeaderHeightPt;
+        double bodyTop = request.HeaderBottomPt;
+        double panelBottom = bodyTop + grid.TotalRowHeightPt;
 
         List<ScenePrimitive> primitives = [];
         AddHeader(primitives, request, grid, panelLeft, headerTop);
@@ -236,10 +236,10 @@ public static class PanelBuilder
         double panelLeft,
         double headerTop)
     {
-        var x = panelLeft;
+        double x = panelLeft;
         foreach (PanelColumn column in grid.Columns)
         {
-            var bounds = new RectD(x, headerTop, column.WidthPt, grid.HeaderHeightPt);
+            RectD bounds = new RectD(x, headerTop, column.WidthPt, grid.HeaderHeightPt);
             primitives.Add(
                 new SceneRect(
                     ScenePrimitive.CreateId(SceneOwnerId.Chart, $"header-cell:{column.Name}"),
@@ -269,18 +269,18 @@ public static class PanelBuilder
     {
         // Each row's top is the running sum of the measured heights above it, not a
         // row index times one height. That is the whole point of carrying a list.
-        var top = bodyTop;
-        for (var rowIndex = 0; rowIndex < request.Rows.Count; rowIndex++)
+        double top = bodyTop;
+        for (int rowIndex = 0; rowIndex < request.Rows.Count; rowIndex++)
         {
             PanelRow row = request.Rows[rowIndex];
-            var owner = SceneOwnerId.ForRow(row.RowId);
-            var height = grid.RowHeightsPt[rowIndex];
-            var x = panelLeft;
+            SceneOwnerId owner = SceneOwnerId.ForRow(row.RowId);
+            double height = grid.RowHeightsPt[rowIndex];
+            double x = panelLeft;
 
-            for (var columnIndex = 0; columnIndex < grid.Columns.Count; columnIndex++)
+            for (int columnIndex = 0; columnIndex < grid.Columns.Count; columnIndex++)
             {
                 PanelColumn column = grid.Columns[columnIndex];
-                var bounds = new RectD(x, top, column.WidthPt, height);
+                RectD bounds = new RectD(x, top, column.WidthPt, height);
                 primitives.Add(
                     new SceneRect(
                         ScenePrimitive.CreateId(owner, $"panel-cell:{column.Name}"),
@@ -289,7 +289,7 @@ public static class PanelBuilder
                         bounds,
                         request.Theme.BodyFill));
 
-                var text = row.Cells[columnIndex];
+                string? text = row.Cells[columnIndex];
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     primitives.Add(
@@ -325,9 +325,9 @@ public static class PanelBuilder
     {
         // One vertical line per column boundary, including both outer edges, each
         // spanning the whole panel so no cell edge is drawn twice.
-        var right = panelLeft;
-        var x = panelLeft;
-        for (var index = 0; index <= grid.Columns.Count; index++)
+        double right = panelLeft;
+        double x = panelLeft;
+        for (int index = 0; index <= grid.Columns.Count; index++)
         {
             primitives.Add(
                 new SceneLine(
@@ -353,8 +353,8 @@ public static class PanelBuilder
         // Identifiers are shifted up by one so each stays unique.
         AddHorizontalBorder(primitives, request, "panel-border-h:0", panelLeft, right, headerTop);
         AddHorizontalBorder(primitives, request, "panel-border-h:1", panelLeft, right, bodyTop);
-        var y = bodyTop;
-        for (var index = 0; index < grid.RowHeightsPt.Count; index++)
+        double y = bodyTop;
+        for (int index = 0; index < grid.RowHeightsPt.Count; index++)
         {
             // The same running sum the cell bodies use, so a border can never land on
             // a different edge than the cell it frames when the heights differ.

@@ -130,7 +130,12 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
                     break;
 
                 default:
-                    OfficeShapeRequest? request = TranslatePrimitive(primitive);
+                    // The plot bounds are the scene's own, in the same coordinate space
+                    // as the primitive's bounds, so the host-owned classification is
+                    // taken BEFORE the origin delta is applied (ADR-0052 D6). Applying
+                    // the delta first and comparing against untranslated bounds would
+                    // classify every primitive as scene-owned, silently.
+                    OfficeShapeRequest? request = TranslatePrimitive(primitive, scene.PlotBounds);
                     if (request is not null)
                     {
                         requests.Add(request);
@@ -155,20 +160,29 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// or a family a later Phase-4 row owns returns <see langword="false"/>.
     /// </returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="primitive"/> is <see langword="null"/>.</exception>
-    public bool TryTranslate(ScenePrimitive primitive, out OfficeShapeRequest? request)
+    /// <param name="plotBounds">
+    /// The plot bounds the host-owned classification is measured against. Omit only
+    /// when the caller has no scene: every primitive is then classified as
+    /// scene-owned, which is the pre-ADR-0052-amendment placement and therefore never
+    /// misclassifies a shape into the host-owned class it cannot prove.
+    /// </param>
+    public bool TryTranslate(
+        ScenePrimitive primitive,
+        out OfficeShapeRequest? request,
+        RectD? plotBounds = null)
     {
-        request = TranslatePrimitive(primitive);
+        request = TranslatePrimitive(primitive, plotBounds);
         return request is not null;
     }
 
-    private OfficeShapeRequest? TranslatePrimitive(ScenePrimitive primitive)
+    private OfficeShapeRequest? TranslatePrimitive(ScenePrimitive primitive, RectD? plotBounds)
     {
         ArgumentNullException.ThrowIfNull(primitive);
 
         return primitive switch
         {
-            SceneRect rect => BuildRect(rect),
-            SceneLine line => BuildLine(line),
+            SceneRect rect => BuildRect(rect, plotBounds),
+            SceneLine line => BuildLine(line, plotBounds),
 
             // A polygon reaches here only when the caller's guard already
             // confirmed it is a diamond; the bounding box is recomputed rather
@@ -181,6 +195,20 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             _ => null,
         };
     }
+
+    /// <summary>
+    /// Determines whether a rectangular primitive's vertical extent is owned by the
+    /// host (ADR-0052 D6).
+    /// </summary>
+    private static bool HostOwns(SceneRect rect, RectD? plotBounds) =>
+        plotBounds is { } plot && HostOwnedGeometry.IsHostOwned(rect, plot);
+
+    /// <summary>
+    /// Determines whether a line primitive's vertical extent is owned by the host
+    /// (ADR-0052 D6).
+    /// </summary>
+    private static bool HostOwns(SceneLine line, RectD? plotBounds) =>
+        plotBounds is { } plot && HostOwnedGeometry.IsHostOwned(line, plot);
 
     /// <summary>Determines the family a primitive belongs to.</summary>
     /// <param name="primitive">The scene primitive.</param>
@@ -214,8 +242,9 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// renderer copies it and would be wrong to choose one.
     /// </remarks>
     /// <param name="rect">The scene rectangle.</param>
+    /// <param name="plotBounds">The plot bounds, or <see langword="null"/> when the caller has no scene.</param>
     /// <returns>The translated shape request.</returns>
-    private OfficeShapeRequest BuildRect(SceneRect rect) =>
+    private OfficeShapeRequest BuildRect(SceneRect rect, RectD? plotBounds) =>
         new(
             rect.PrimitiveId,
             OfficeShapeKind.Rectangle,
@@ -224,7 +253,9 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             FillColour: rect.Style.FillColour,
             StrokeColour: rect.Style.StrokeColour,
             LineWidthPt: rect.Style.OutlineWidthPt,
-            HatchPattern: rect.Style.HatchPattern);
+            HatchPattern: rect.Style.HatchPattern,
+            StrokeDash: rect.Style.StrokeDash,
+            HostOwnsExtent: HostOwns(rect, plotBounds));
 
     /// <summary>
     /// Builds a plain-line request, preserving the scene's endpoint order and
@@ -249,8 +280,9 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// </para>
     /// </remarks>
     /// <param name="line">The scene line.</param>
+    /// <param name="plotBounds">The plot bounds, or <see langword="null"/> when the caller has no scene.</param>
     /// <returns>The translated shape request.</returns>
-    private OfficeShapeRequest BuildLine(SceneLine line) =>
+    private OfficeShapeRequest BuildLine(SceneLine line, RectD? plotBounds) =>
         new(
             line.PrimitiveId,
             OfficeShapeKind.Line,
@@ -260,7 +292,9 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             line.ZLayer,
             StrokeColour: line.Style.StrokeColour,
             LineWidthPt: line.Style.OutlineWidthPt,
-            HatchPattern: line.Style.HatchPattern);
+            HatchPattern: line.Style.HatchPattern,
+            StrokeDash: line.Style.StrokeDash,
+            HostOwnsExtent: HostOwns(line, plotBounds));
 
     /// <summary>
     /// Determines whether four points form a symmetric axis-aligned diamond and,
@@ -294,26 +328,26 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             return false;
         }
 
-        var left = points.Min(point => point.X);
-        var right = points.Max(point => point.X);
-        var top = points.Min(point => point.Y);
-        var bottom = points.Max(point => point.Y);
-        var centreX = (left + right) / 2d;
-        var centreY = (top + bottom) / 2d;
+        double left = points.Min(point => point.X);
+        double right = points.Max(point => point.X);
+        double top = points.Min(point => point.Y);
+        double bottom = points.Max(point => point.Y);
+        double centreX = (left + right) / 2d;
+        double centreY = (top + bottom) / 2d;
 
         // One vertex per side midpoint, and nothing else. This single rule
         // rejects a rotated square, a rectangle, and any off-centre vertex,
         // because none of those puts all four points on those four spots.
-        var onLeft = 0;
-        var onRight = 0;
-        var onTop = 0;
-        var onBottom = 0;
+        int onLeft = 0;
+        int onRight = 0;
+        int onTop = 0;
+        int onBottom = 0;
         foreach (PointD point in points)
         {
-            var atLeft = Near(point.X, left) && Near(point.Y, centreY);
-            var atRight = Near(point.X, right) && Near(point.Y, centreY);
-            var atTop = Near(point.Y, top) && Near(point.X, centreX);
-            var atBottom = Near(point.Y, bottom) && Near(point.X, centreX);
+            bool atLeft = Near(point.X, left) && Near(point.Y, centreY);
+            bool atRight = Near(point.X, right) && Near(point.Y, centreY);
+            bool atTop = Near(point.Y, top) && Near(point.X, centreX);
+            bool atBottom = Near(point.Y, bottom) && Near(point.X, centreX);
 
             if (atLeft)
             {
@@ -392,7 +426,8 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             FillColour: polygon.Style.FillColour,
             StrokeColour: polygon.Style.StrokeColour,
             LineWidthPt: polygon.Style.OutlineWidthPt,
-            HatchPattern: polygon.Style.HatchPattern);
+            HatchPattern: polygon.Style.HatchPattern,
+            StrokeDash: polygon.Style.StrokeDash);
 
     /// <summary>Builds a text request, consuming the scene's resolved text verbatim.</summary>
     /// <remarks>
@@ -446,5 +481,6 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             Bold: text.Style.Bold,
             Text: text.Text,
             Alignment: text.Alignment,
-            TextColour: text.Style.TextColour);
+            TextColour: text.Style.TextColour,
+            StrokeDash: text.Style.StrokeDash);
 }

@@ -162,7 +162,7 @@ public class ExcelConfigCatalogueWriter(
 
         // Mutation phase: per-table delete-and-recreate under one
         // DisplayAlerts save/restore (table deletion prompts).
-        var original = _application!.DisplayAlerts;
+        bool original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -198,6 +198,139 @@ public class ExcelConfigCatalogueWriter(
         return ConfigWriteOutcome.Ok();
     }
 
+    /// <inheritdoc />
+    public ConfigWriteOutcome WriteTheme(ThemeEditRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!ThemeEditRequest.TryValidate(request, out _, out _))
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ThemeValidationFailed);
+        }
+
+        Application? application = _application;
+        if (application is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
+        }
+
+        // Read-only phase first: capture the two themed tables' prior state,
+        // plus the Config table's prior state so the hash update can be
+        // rolled back on host failure. The call mutates nothing until the
+        // mutation phase below.
+        ListObject? stylesTable = FindTable(config, GanttCatalogues.StylesTableName);
+        ListObject? metricsTable = FindTable(config, GanttCatalogues.MetricsTableName);
+        if (stylesTable is null || metricsTable is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        List<TableSnapshot> snapshots = CaptureThemedPriorState(config);
+
+        // Capture Config table's prior state for rollback of the hash update.
+        ListObject? configTable = FindTable(config, GanttCatalogues.ConfigTableName);
+        snapshots.Add(
+            configTable is null
+                ? new TableSnapshot(
+                    GanttCatalogues.ConfigAnchor,
+                    GanttCatalogues.ConfigTableName,
+                    false,
+                    [],
+                    [])
+                : new TableSnapshot(
+                    GanttCatalogues.ConfigAnchor,
+                    GanttCatalogues.ConfigTableName,
+                    true,
+                    [.. ReadHeaders(configTable)],
+                    ReadBodyRows(configTable)));
+
+        CataloguePreservation? preservation = ReadPreservation(config);
+        if (preservation is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
+        bool original = _application!.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.StylesAnchor,
+                GanttCatalogues.StylesTableName,
+                GanttCatalogues.StylesHeaders,
+                BuildThemedStyleRows(request, preservation),
+                written);
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.MetricsAnchor,
+                GanttCatalogues.MetricsTableName,
+                GanttCatalogues.MetricsHeaders,
+                BuildThemedMetricRows(request),
+                written);
+
+            // The chart-chrome colours are settings, so they are written to
+            // the settings table alongside the themed styles and metrics.
+            // The write is a whole-table rewrite, so the unedited settings
+            // are preserved from the sheet rather than regenerated: the
+            // chart title and the scale the user set must survive a colour
+            // change.
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                GanttCatalogues.SettingsHeaders,
+                BuildThemedSettingRows(request, preservation),
+                written);
+
+            // Recompute and persist the catalogue hash so the next Read()
+            // validates against the updated Styles and Metrics content.
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.ConfigAnchor,
+                GanttCatalogues.ConfigTableName,
+                GanttCatalogues.ConfigHeaders,
+                BuildConfigRows(preservation.WorkbookId),
+                written);
+        }
+#pragma warning disable CA1031 // Deliberately broad: see the Write catch body.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            WriteHostRejectedEvidence(exception, written);
+            RollBack(config, snapshots, written);
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+
+        return ConfigWriteOutcome.Ok();
+    }
+
     /// <summary>
     /// Writes one redacted evidence record for a host-rejected write: the
     /// exception type, HRESULT, the contract tables whose extents were
@@ -215,7 +348,7 @@ public class ExcelConfigCatalogueWriter(
         Exception exception,
         Dictionary<string, Excel.Range> written)
     {
-        var progress = string.Join(",", _contractTableNames.Where(written.ContainsKey));
+        string progress = string.Join(",", _contractTableNames.Where(written.ContainsKey));
         _log?.Write(
             "CatalogueWriteRejected exception={0} hresult=0x{1:X8} written={2} detail={3}",
             exception.GetType().FullName,
@@ -292,7 +425,7 @@ public class ExcelConfigCatalogueWriter(
         List<TableSnapshot> snapshots = [snapshot];
         Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
 
-        var original = _application!.DisplayAlerts;
+        bool original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -379,8 +512,8 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>One snapshot per contract table, in write order.</returns>
     private List<TableSnapshot> CapturePriorState(Worksheet config)
     {
-        var snapshots = new List<TableSnapshot>(_contractTableNames.Length);
-        foreach (var tableName in _contractTableNames)
+        List<TableSnapshot> snapshots = new List<TableSnapshot>(_contractTableNames.Length);
+        foreach (string tableName in _contractTableNames)
         {
             ListObject? table = FindTable(config, tableName);
             snapshots.Add(
@@ -395,6 +528,373 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return snapshots;
+    }
+
+    /// <summary>
+    /// Captures the two themed tables' prior state, read-only, before the
+    /// first mutation. Shares <see cref="RollBack"/> with the five-table path.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <returns>One snapshot per themed table, in write order.</returns>
+    private List<TableSnapshot> CaptureThemedPriorState(Worksheet config)
+    {
+        string[] themed =
+        [
+            GanttCatalogues.StylesTableName,
+            GanttCatalogues.MetricsTableName,
+            GanttCatalogues.SettingsTableName,
+        ];
+        List<TableSnapshot> snapshots = new List<TableSnapshot>(themed.Length);
+        foreach (string tableName in themed)
+        {
+            ListObject? table = FindTable(config, tableName);
+            snapshots.Add(
+                table is null
+                    ? new TableSnapshot(AnchorFor(tableName), tableName, false, [], [])
+                    : new TableSnapshot(
+                        AnchorFor(tableName),
+                        tableName,
+                        true,
+                        [.. ReadHeaders(table)],
+                        ReadBodyRows(table)));
+        }
+
+        return snapshots;
+    }
+
+    /// <summary>
+    /// Builds themed style rows: catalogue order, edited colours applied to
+    /// matching built-ins, preserved user rows appended verbatim.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <param name="preservation">The captured user content to preserve.</param>
+    /// <returns>The style payload rows.</returns>
+    private static List<object?[]> BuildThemedStyleRows(
+        ThemeEditRequest request,
+        CataloguePreservation preservation)
+    {
+        Dictionary<string, ThemeStyleEdit> edits = new(StringComparer.Ordinal);
+        foreach (ThemeStyleEdit edit in request.StyleEdits)
+        {
+            edits[edit.StyleKey] = edit;
+        }
+
+        // Parse existing user custom style rows into mutable dictionaries.
+        Dictionary<string, List<object?>> customStyles = new Dictionary<string, List<object?>>(StringComparer.Ordinal);
+        foreach (object?[] row in preservation.UserStyleRows)
+        {
+            string key = ToText(row[0]);
+            customStyles[key] = [.. row.Cast<object?>()];
+        }
+
+        // Apply custom style edits: create, rename, delete.
+        foreach (CustomStyleEdit custom in request.CustomStyleEdits ?? [])
+        {
+            switch (custom.Operation)
+            {
+                case CustomStyleOperation.Create:
+                    if (customStyles.ContainsKey(custom.StyleKey))
+                    {
+                        continue;
+                    }
+                    customStyles[custom.StyleKey] = BuildCustomStyleRow(custom);
+                    break;
+
+                case CustomStyleOperation.Rename:
+                    if (!customStyles.TryGetValue(custom.StyleKey, out List<object?>? existing))
+                    {
+                        continue;
+                    }
+                    _ = customStyles.Remove(custom.StyleKey);
+                    List<object?> renamed = BuildCustomStyleRow(custom, existing);
+                    customStyles[custom.NewStyleKey ?? custom.StyleKey] = renamed;
+                    break;
+
+                case CustomStyleOperation.Update:
+                    if (!customStyles.TryGetValue(custom.StyleKey, out List<object?>? existingUpdate))
+                    {
+                        continue;
+                    }
+                    List<object?> updated = BuildCustomStyleRow(custom, existingUpdate);
+                    customStyles[custom.StyleKey] = updated;
+                    break;
+
+                case CustomStyleOperation.Delete:
+                    _ = customStyles.Remove(custom.StyleKey);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        List<object?[]> rows = [];
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            if (edits.TryGetValue(preset.StyleKey, out ThemeStyleEdit? edit))
+            {
+                rows.Add(
+                [
+                    preset.StyleKey,
+                    preset.DisplayName,
+                    edit.FillColour,
+                    edit.StrokeColour,
+                    preset.HatchPattern.ToString(),
+                    preset.HatchPitchPt,
+                    preset.HatchLinePt,
+                    edit.TextColour,
+                    preset.StandardOutlinePt,
+                    preset.ActivityHeightPt,
+                    preset.MilestoneSizePt,
+                    preset.DefaultLabelPosition.ToString(),
+                    string.Join(
+                        " ",
+                        preset.AllowedLabelPositions
+                            .Select(position => position.ToString())
+                            .OrderBy(name => name, StringComparer.Ordinal)),
+                    preset.ColourCapability.ToString(),
+                    (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey)
+                        ? edit.StrokeDash ?? preset.StrokeDash
+                        : preset.StrokeDash).ToString(),
+                ]);
+            }
+            else
+            {
+                rows.Add(
+                [
+                    preset.StyleKey,
+                    preset.DisplayName,
+                    preset.FillColour,
+                    preset.StrokeColour,
+                    preset.HatchPattern.ToString(),
+                    preset.HatchPitchPt,
+                    preset.HatchLinePt,
+                    preset.TextColour,
+                    preset.StandardOutlinePt,
+                    preset.ActivityHeightPt,
+                    preset.MilestoneSizePt,
+                    preset.DefaultLabelPosition.ToString(),
+                    string.Join(
+                        " ",
+                        preset.AllowedLabelPositions
+                            .Select(position => position.ToString())
+                            .OrderBy(name => name, StringComparer.Ordinal)),
+                    preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString(),
+                ]);
+            }
+        }
+
+        // Append custom styles in their dictionary order (insertion order).
+        // Normalize every row to the contract column count so a user row read
+        // back from the worksheet (which may carry fewer columns than the
+        // current header set) cannot overrun the write matrix.
+        foreach (List<object?> customRow in customStyles.Values)
+        {
+            rows.Add(NormalizeRow(customRow, GanttCatalogues.StylesHeaders.Length));
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Copies <paramref name="source"/> into an array of exactly
+    /// <paramref name="columnCount"/> columns, padding short rows with
+    /// <see cref="string.Empty"/> and truncating long rows. Used to normalize
+    /// user content read back from the worksheet before it is written into the
+    /// rectangular <see cref="WriteOrReplaceTable"/> matrix.
+    /// </summary>
+    private static object?[] NormalizeRow(IReadOnlyList<object?> source, int columnCount)
+    {
+        object?[] result = new object?[columnCount];
+        for (int column = 0; column < columnCount; column++)
+        {
+            result[column] = column < source.Count ? source[column] ?? string.Empty : string.Empty;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Builds a style row array for a custom style create, rename, or update.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A null optional member on the edit means <b>not carried</b>, so the
+    /// stored value is preserved. An earlier revision rebuilt the row from
+    /// hard-coded catalogue defaults and back-filled the gaps with
+    /// <c>??=</c>: the fresh defaults were never null, so the back-fill never
+    /// fired and an update that changed one colour silently reset the style's
+    /// pattern, outline width, sizes, and label vocabulary to the catalogue
+    /// defaults. This version starts from the stored row and overlays only the
+    /// members the edit actually carries.
+    /// </para>
+    /// <para>
+    /// A create has no stored row, so the catalogue defaults supply the
+    /// starting point for the members the edit does not carry.
+    /// </para>
+    /// </remarks>
+    /// <param name="custom">The validated custom style edit.</param>
+    /// <param name="existingRow">The stored row for an update or rename, or null for a create.</param>
+    /// <returns>The style payload row.</returns>
+    private static List<object?> BuildCustomStyleRow(
+        CustomStyleEdit custom,
+        List<object?>? existingRow = null)
+    {
+        List<object?> row = existingRow is null
+            ? []
+            : [.. existingRow];
+
+        // A stored row read back from an older sheet may be short; pad it so
+        // the column assignments below cannot overrun it.
+        while (row.Count < GanttCatalogues.StylesHeaders.Length)
+        {
+            row.Add(string.Empty);
+        }
+
+        row[0] = custom.NewStyleKey ?? custom.StyleKey;
+        row[1] = custom.DisplayName ?? ToText(row[1]);
+        row[2] = custom.FillColour;
+        row[3] = custom.StrokeColour;
+        row[5] = ToDoubleOrDefault(row[5], "HatchPitchPt");
+        row[6] = ToDoubleOrDefault(row[6], "HatchLinePt");
+        row[7] = custom.TextColour;
+        row[8] = custom.StandardOutlinePt ?? ToDoubleOrDefault(row[8], "StandardOutlinePt");
+        row[9] = custom.ActivityHeightPt ?? ToDoubleOrDefault(row[9], "ActivityHeightPt");
+        row[10] = custom.MilestoneSizePt ?? ToDoubleOrDefault(row[10], "MilestoneSizePt");
+
+        // The pattern, the default label position, and the permitted label
+        // set are preserved from the stored row unless the edit carries them.
+        row[4] = custom.HatchPattern?.ToString()
+            ?? ToTextOrDefault(row[4], GanttHatchPattern.None.ToString());
+
+        row[11] = custom.DefaultLabelPosition?.ToString()
+            ?? ToTextOrDefault(row[11], GanttLabelPosition.Auto.ToString());
+
+        row[12] = custom.AllowedLabelPositions is { } allowed
+            ? string.Join(
+                " ",
+                allowed.Select(position => position.ToString())
+                    .OrderBy(name => name, StringComparer.Ordinal))
+            : ToTextOrDefault(row[12], GanttLabelPosition.Auto.ToString());
+
+        // The capability is PRESERVED, not recomputed. It governs which
+        // per-row colour overrides the row validator permits, so an update
+        // must not change it as a side effect of a colour edit. A create has
+        // no stored capability, so it takes the code-owned default: a custom
+        // style defines the whole colour scheme, so the row's own colour
+        // columns are not overridable. The hatch pattern lives in its own
+        // column and needs no capability bit.
+        EntityColourCapability storedCapability =
+            Enum.TryParse(
+                ToText(row[13]),
+                ignoreCase: false,
+                out EntityColourCapability parsedCapability)
+                ? parsedCapability
+                : EntityColourCapability.StyleDefined;
+        row[13] = storedCapability.ToString();
+
+        // The dash follows the same "not carried means preserve" rule as the
+        // pattern: an edit that changes one colour must not reset the style's
+        // stroke type to the built-in default.
+        row[14] = custom.StrokeDash?.ToString()
+            ?? ToTextOrDefault(row[14], GanttStrokeDash.Solid.ToString());
+
+        return row;
+    }
+
+    /// <summary>
+    /// Returns a cell's numeric value, or the catalogue default for the named
+    /// metric when the cell is absent or unparseable.
+    /// </summary>
+    /// <param name="cell">The stored cell value.</param>
+    /// <param name="tokenName">The catalogue metric token name.</param>
+    /// <returns>The stored value, or the token's default.</returns>
+    private static double ToDoubleOrDefault(object? cell, string tokenName) =>
+        ToNumberOrDefault(cell, GanttCatalogues.MetricDefault(tokenName));
+
+    /// <summary>
+    /// Returns a numeric cell's value, or the supplied fallback when the cell
+    /// is absent or unparseable.
+    /// </summary>
+    /// <param name="cell">The stored cell value.</param>
+    /// <param name="fallback">The value used when the cell carries no number.</param>
+    /// <returns>The cell's value, or the fallback.</returns>
+    private static double ToNumberOrDefault(object? cell, double fallback) =>
+        cell switch
+        {
+            double number => number,
+            not null when double.TryParse(
+                cell.ToString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double parsed) => parsed,
+            _ => fallback,
+        };
+
+    /// <summary>
+    /// Returns a cell's text, or the supplied fallback when the cell is empty.
+    /// </summary>
+    /// <param name="cell">The stored cell value.</param>
+    /// <param name="fallback">The value used when the cell carries no text.</param>
+    /// <returns>The cell's text, or the fallback.</returns>
+    private static string ToTextOrDefault(object? cell, string fallback)
+    {
+        string text = ToText(cell);
+        return text.Length > 0 ? text : fallback;
+    }
+
+    /// <summary>
+    /// Builds the themed setting rows: every catalogue setting, with the edited
+    /// chart-chrome colour where the request carries one and the preserved
+    /// workbook value otherwise.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <param name="preservation">The captured user content to preserve.</param>
+    /// <returns>The settings payload rows.</returns>
+    /// <remarks>
+    /// The chart title, the time scale, the margins, and every other setting
+    /// the user configured are preserved from the sheet, not regenerated from
+    /// the catalogue: a colour change must not silently reset the rest of the
+    /// workbook's configuration.
+    /// </remarks>
+    private static List<object?[]> BuildThemedSettingRows(
+        ThemeEditRequest request,
+        CataloguePreservation preservation)
+    {
+        List<object?[]> rows = [];
+        foreach (GanttSettingDefinition setting in GanttCatalogues.Settings)
+        {
+            string? edited = null;
+            _ = request.ChromeColourEdits?.TryGetValue(setting.Key, out edited);
+
+            string value = edited
+                ?? (preservation.Settings.TryGetValue(setting.Key, out string? preserved)
+                    ? preserved
+                    : setting.DefaultValue);
+
+            rows.Add([setting.Key, value]);
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Builds themed metric rows: catalogue order, edited defaults applied.
+    /// Names, minima and maxima are never edited; only the default moves.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <returns>The metric payload rows.</returns>
+    private static List<object?[]> BuildThemedMetricRows(ThemeEditRequest request)
+    {
+        List<object?[]> rows = [];
+        foreach (GanttMetricToken token in GanttCatalogues.Metrics)
+        {
+            double value = request.MetricEdits.TryGetValue(token.Name, out double edited)
+                ? edited
+                : token.DefaultValue;
+            rows.Add([token.Name, value, token.Minimum, token.Maximum]);
+        }
+
+        return rows;
     }
 
     /// <summary>
@@ -416,7 +916,7 @@ public class ExcelConfigCatalogueWriter(
         List<TableSnapshot> snapshots,
         Dictionary<string, Excel.Range> written)
     {
-        for (var index = snapshots.Count - 1; index >= 0; index--)
+        for (int index = snapshots.Count - 1; index >= 0; index--)
         {
             TableSnapshot snapshot = snapshots[index];
             if (snapshot.Existed)
@@ -464,9 +964,9 @@ public class ExcelConfigCatalogueWriter(
     private List<string> ReadHeaders(ListObject table)
     {
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        var headers = new List<string>(columnCount);
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        List<string> headers = new List<string>(columnCount);
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             headers.Add(column.Name);
@@ -483,15 +983,12 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The configuration worksheet, or <see langword="null"/>.</returns>
     private Worksheet? FindConfigSheet(Sheets sheets)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet
-                && string.Equals(
-                    worksheet.Name,
-                    GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.Ordinal))
+                && GanttWorkbookContract.IsConfigSheetName(worksheet.Name))
             {
                 return worksheet;
             }
@@ -516,7 +1013,7 @@ public class ExcelConfigCatalogueWriter(
         }
 
         List<object?[]> userStyles = ReadUserStyleRows(config);
-        var workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
+        string? workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
         return new CataloguePreservation(settings, userStyles, workbookId);
     }
 
@@ -539,9 +1036,9 @@ public class ExcelConfigCatalogueWriter(
             return true;
         }
 
-        foreach (var row in ReadBodyRows(table))
+        foreach (object?[] row in ReadBodyRows(table))
         {
-            var key = ToText(row.ElementAtOrDefault(0));
+            string key = ToText(row.ElementAtOrDefault(0));
             if (key.Length == 0 || !values.TryAdd(key, ToText(row.ElementAtOrDefault(1))))
             {
                 values.Clear();
@@ -567,12 +1064,12 @@ public class ExcelConfigCatalogueWriter(
             return userRows;
         }
 
-        var builtInKeys = GanttCatalogues.StylePresets
+        HashSet<string> builtInKeys = GanttCatalogues.StylePresets
             .Select(preset => preset.StyleKey)
             .ToHashSet(StringComparer.Ordinal);
-        foreach (var row in ReadBodyRows(table))
+        foreach (object?[] row in ReadBodyRows(table))
         {
-            var styleKey = ToText(row.ElementAtOrDefault(0));
+            string styleKey = ToText(row.ElementAtOrDefault(0));
             if (styleKey.Length > 0 && !builtInKeys.Contains(styleKey))
             {
                 userRows.Add(row);
@@ -596,8 +1093,8 @@ public class ExcelConfigCatalogueWriter(
             return rows;
         }
 
-        var raw = GetBodyValues(body);
-        foreach (var row in ExcelValue2Matrix.ReadRows(raw))
+        object? raw = GetBodyValues(body);
+        foreach (object?[] row in ExcelValue2Matrix.ReadRows(raw))
         {
             rows.Add(row);
         }
@@ -635,9 +1132,9 @@ public class ExcelConfigCatalogueWriter(
         existing?.Delete();
 
 
-        (var anchorRow, var anchorColumn) = ParseAnchor(anchor);
-        var rowCount = dataRows.Count + 1;
-        var columnCount = headers.Length;
+        (int anchorRow, int anchorColumn) = ParseAnchor(anchor);
+        int rowCount = dataRows.Count + 1;
+        int columnCount = headers.Length;
         Excel.Range anchorCell = GetCellRange(config, anchorRow, anchorColumn);
         Excel.Range extent = GetResizedRange(anchorCell, rowCount, columnCount);
 
@@ -645,16 +1142,16 @@ public class ExcelConfigCatalogueWriter(
         // array (a COM SAFEARRAY of VARIANT); the multidimensional form is
         // the requirement, not a style choice.
 #pragma warning disable CA1814
-        var matrix = new object[rowCount, columnCount];
+        object[,] matrix = new object[rowCount, columnCount];
 #pragma warning restore CA1814
-        for (var column = 0; column < columnCount; column++)
+        for (int column = 0; column < columnCount; column++)
         {
             matrix[0, column] = headers[column];
         }
 
-        for (var row = 0; row < dataRows.Count; row++)
+        for (int row = 0; row < dataRows.Count; row++)
         {
-            for (var column = 0; column < columnCount; column++)
+            for (int column = 0; column < columnCount; column++)
             {
                 matrix[row + 1, column] = dataRows[row][column] ?? string.Empty;
             }
@@ -687,16 +1184,20 @@ public class ExcelConfigCatalogueWriter(
             try
             {
                 ListColumns? listColumns = table.ListColumns;
-                if (listColumns is not null && listColumns.Count >= 3)
+
+                // The settings table has TWO columns (SettingKey, SettingValue),
+                // so the Value column is the second one. The guard used to
+                // require three columns, so the formatting never ran and Excel
+                // coerced every free-text value by locale - the plot dates
+                // became serials, and the chart-appearance editors, which are
+                // the only path that rewrites the settings table, were the
+                // ones that surfaced it as errors in the sheet.
+                if (listColumns is not null && listColumns.Count >= 2)
                 {
-                    ListColumn? valueColumn = listColumns[2];
+                    ListColumn? valueColumn = GetColumnAt(listColumns, 2);
                     if (valueColumn is not null)
                     {
-                        Excel.Range bodyRange = valueColumn.DataBodyRange;
-                        if (bodyRange is { } br)
-                        {
-                            br.NumberFormat = "@";
-                        }
+                        ApplyTextFormat(valueColumn);
                     }
                 }
             }
@@ -712,6 +1213,21 @@ public class ExcelConfigCatalogueWriter(
     }
 
     /// <summary>
+    /// Formats a list column's body as Text so free-text values survive
+    /// Excel's locale coercion. Test seam over the COM
+    /// <c>Range.NumberFormat</c> assignment.
+    /// </summary>
+    /// <param name="column">The column to format.</param>
+    internal virtual void ApplyTextFormat(ListColumn column)
+    {
+        Excel.Range? bodyRange = column.DataBodyRange;
+        if (bodyRange is { } br)
+        {
+            br.NumberFormat = "@";
+        }
+    }
+
+    /// <summary>
     /// Finds a table by exact name on the configuration worksheet.
     /// </summary>
     /// <param name="config">The configuration worksheet.</param>
@@ -720,11 +1236,11 @@ public class ExcelConfigCatalogueWriter(
     private ListObject? FindTable(Worksheet config, string tableName)
     {
         ListObjects listObjects = GetListObjects(config);
-        var count = listObjects.Count;
-        for (var index = 1; index <= count; index++)
+        int count = listObjects.Count;
+        for (int index = 1; index <= count; index++)
         {
             ListObject table = GetTableAt(listObjects, index);
-            if (string.Equals(table.Name, tableName, StringComparison.Ordinal))
+            if (string.Equals(table.Name, tableName, StringComparison.OrdinalIgnoreCase))
             {
                 return table;
             }
@@ -785,9 +1301,13 @@ public class ExcelConfigCatalogueWriter(
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
                     preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString(),
                 }),
         ];
-        rows.AddRange(userRows);
+        foreach (object?[] userRow in userRows)
+        {
+            rows.Add(NormalizeRow(userRow, GanttCatalogues.StylesHeaders.Length));
+        }
         return rows;
     }
 
@@ -825,7 +1345,7 @@ public class ExcelConfigCatalogueWriter(
         List<object?[]> rows = [];
         foreach (GanttSettingDefinition setting in GanttCatalogues.Settings)
         {
-            var value = existing.TryGetValue(setting.Key, out var preserved) ? preserved : setting.DefaultValue;
+            string value = existing.TryGetValue(setting.Key, out string? preserved) ? preserved : setting.DefaultValue;
             if (setting.Key == "ChartTitle" && string.IsNullOrWhiteSpace(value))
             {
                 value = setting.DefaultValue;
@@ -846,7 +1366,7 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The data rows.</returns>
     private static List<object?[]> BuildConfigRows(string? existingWorkbookId)
     {
-        var workbookId = existingWorkbookId;
+        string? workbookId = existingWorkbookId;
         if (string.IsNullOrWhiteSpace(workbookId))
         {
             workbookId = Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture);
@@ -885,19 +1405,19 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The (row, column) pair.</returns>
     private static (int Row, int Column) ParseAnchor(string anchor)
     {
-        var letterCount = 0;
+        int letterCount = 0;
         while (letterCount < anchor.Length && char.IsAsciiLetterUpper(anchor[letterCount]))
         {
             letterCount++;
         }
 
-        var column = 0;
-        for (var index = 0; index < letterCount; index++)
+        int column = 0;
+        for (int index = 0; index < letterCount; index++)
         {
             column = (column * 26) + anchor[index] - 'A' + 1;
         }
 
-        var row = int.Parse(
+        int row = int.Parse(
             anchor[letterCount..],
             NumberStyles.None,
             CultureInfo.InvariantCulture);

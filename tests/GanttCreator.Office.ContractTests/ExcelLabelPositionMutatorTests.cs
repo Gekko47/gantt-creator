@@ -59,7 +59,7 @@ public class ExcelLabelPositionMutatorTests
         public List<(int Row, int Column, object? Value)> WrittenCells { get; } = [];
 
         public ConfigReadOutcome Catalogue { get; set; } =
-            ConfigReadOutcome.Ok("wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty);
+            ConfigReadOutcome.Ok("wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty, new Dictionary<string, double>());
 
         public Graph()
         {
@@ -464,7 +464,7 @@ public class ExcelLabelPositionMutatorTests
             LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "MyStyle"));
         Graph graph = SeededGraph(matrix, activeRow: 2);
         graph.Catalogue = ConfigReadOutcome.Ok(
-            "wb", new Dictionary<string, string>(), registry);
+            "wb", new Dictionary<string, string>(), registry, new Dictionary<string, double>());
 
         LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
             .SetLabelPosition(GanttLabelPosition.Left);
@@ -475,19 +475,73 @@ public class ExcelLabelPositionMutatorTests
     }
 
     [Fact]
-    public void SetLabelPosition_refuses_an_unknown_style_key_for_custom_activity()
+    public void SetLabelPosition_writes_an_allowed_position_for_custom_milestone_from_its_style()
     {
+        // R5.6a regression: Custom Milestone resolves its allowed set from
+        // the row style exactly as a Custom Activity does (the catalogue's
+        // RequiresStyleKey authority), so an allowed position writes and the
+        // old StyleUnknown refusal path is gone.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyStyle",
+                new HashSet<GanttLabelPosition>(
+                    [GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.None]),
+                EntityColourCapability.StyleDefined),
+        ]);
         var matrix = Matrix(
-            LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "Missing"));
+            LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomMilestone), "MyStyle"));
         Graph graph = SeededGraph(matrix, activeRow: 2);
         graph.Catalogue = ConfigReadOutcome.Ok(
-            "wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty);
+            "wb", new Dictionary<string, string>(), registry, new Dictionary<string, double>());
 
         LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
             .SetLabelPosition(GanttLabelPosition.Left);
 
+        Assert.True(outcome.Succeeded);
+        (int Row, int Column, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(nameof(GanttLabelPosition.Left), write.Value);
+    }
+
+    [Fact]
+    public void SetLabelPosition_writes_a_fallback_position_for_custom_activity_with_an_unknown_style_key()
+    {
+        // R5.6d: a row whose style the registry does not know still renders -
+        // the scene falls back to the type's code-owned default style - so the
+        // position is validated against that default's vocabulary and written.
+        // Refusing it left the description-label dropdown disabled on a row
+        // that was perfectly renderable.
+        var matrix = Matrix(
+            LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "Missing"));
+        Graph graph = SeededGraph(matrix, activeRow: 2);
+        graph.Catalogue = ConfigReadOutcome.Ok(
+            "wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty, new Dictionary<string, double>());
+
+        LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
+            .SetLabelPosition(GanttLabelPosition.Left);
+
+        Assert.True(outcome.Succeeded);
+        (int Row, int Column, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(nameof(GanttLabelPosition.Left), write.Value);
+    }
+
+    [Fact]
+    public void SetLabelPosition_refuses_a_position_the_fallback_style_does_not_permit()
+    {
+        // R5.6d: the fallback vocabulary is the type default's, so a position
+        // it does not permit is still refused - the fallback changes WHICH
+        // positions apply, not WHETHER they apply.
+        var matrix = Matrix(
+            LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomMilestone), "Missing"));
+        Graph graph = SeededGraph(matrix, activeRow: 2);
+        graph.Catalogue = ConfigReadOutcome.Ok(
+            "wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty, new Dictionary<string, double>());
+
+        LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
+            .SetLabelPosition(GanttLabelPosition.Inside);
+
         Assert.False(outcome.Succeeded);
-        Assert.Equal(LabelPositionMutationRefusalReason.StyleUnknown, outcome.Refusal);
+        Assert.Equal(LabelPositionMutationRefusalReason.PositionNotAllowedForType, outcome.Refusal);
         Assert.Empty(graph.WrittenCells);
     }
 

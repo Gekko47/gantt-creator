@@ -17,6 +17,10 @@ namespace GanttCreator.Office;
 /// The protection guard, consulted first per ADR-0008 D4 because this adapter
 /// mutates.
 /// </param>
+/// <param name="trace">
+/// Optional diagnostic sink for every outline span written, or <see langword="null"/>
+/// for no trace. The production sink degrades internally and must not throw.
+/// </param>
 /// <remarks>
 /// <para>
 /// <b>Body rows map to worksheet rows.</b> The plan works in
@@ -27,11 +31,13 @@ namespace GanttCreator.Office;
 /// </para>
 /// <para>
 /// <b>Collapse state is preserved.</b> The reset pass only clears rows that are
-/// currently grouped and no longer planned, and the group pass only writes the
-/// planned grouping. Rows already at <c>TopLevelOutlineLevel</c> are left alone:
-/// writing their level re-evaluates the outline and re-expands every collapsed
-/// group. A collapsed parent therefore stays collapsed across a <c>Refresh</c>
-/// instead of being re-expanded under the user.
+/// currently grouped and no longer planned, and the group pass only writes a span
+/// that is not already at the child level. Rows already at
+/// <c>TopLevelOutlineLevel</c>, and spans that already carry
+/// <c>ChildOutlineLevel</c>, are left alone: writing their level re-evaluates the
+/// outline, may re-expand every collapsed group, and moves every
+/// <c>xlMoveAndSize</c> shape over the span. A collapsed parent therefore stays
+/// collapsed across a <c>Refresh</c> instead of being re-expanded under the user.
 /// </para>
 /// <para>
 /// The <c>internal virtual</c> seams isolate the COM parameterised properties for
@@ -41,10 +47,25 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelOutlineGroupWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IOutlineGroupPort
+    IWorksheetProtectionGuard? protectionGuard = null,
+    Action<string>? trace = null) : IOutlineGroupPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <summary>
+    /// Optional diagnostic sink for every outline span this adapter writes, or
+    /// <see langword="null"/> for no trace.
+    /// </summary>
+    /// <remarks>
+    /// Writing a body row's outline level re-evaluates the group, and Excel may
+    /// un-hide its rows while doing so; a collapse/expand hides or shows those rows
+    /// outright. Either way every <c>xlMoveAndSize</c> chart shape over the span is
+    /// moved or resized by the host. The lines name the spans this adapter touched,
+    /// so a live log can tie a stale shape to the exact outline write. The production
+    /// sink is the rolling log and must not throw.
+    /// </remarks>
+    private readonly Action<string>? _trace = trace;
 
     /// <summary>The outline level of a row that is not inside any group.</summary>
     internal const int TopLevelOutlineLevel = 1;
@@ -52,8 +73,148 @@ public class ExcelOutlineGroupWriter(
     /// <summary>The outline level of a child row, one group beneath its parent.</summary>
     internal const int ChildOutlineLevel = 2;
 
+    /// <summary>
+    /// The one visible column that carries the hierarchy indent (R5.18i). The name is the
+    /// schema's display name, never a column position: the schema's left-hand columns move
+    /// with the workbook layout, and an index would indent whatever happened to sit there.
+    /// </summary>
+    internal const string IndentColumnName = "Description";
+
     /// <inheritdoc />
-    public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+    public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return OutlineCollapseOutcome.Refused(OutlineCollapseRefusalReason.NoActiveWorkbook);
+        }
+
+        if (!TryFindTable(workbook.Sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
+            || worksheet is null
+            || table is null)
+        {
+            return OutlineCollapseOutcome.Refused(OutlineCollapseRefusalReason.TableMissing);
+        }
+
+        // First check in a mutating adapter (ADR-0008 D4), before any COM write.
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return OutlineCollapseOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? OutlineCollapseRefusalReason.NoActiveWorkbook
+                    : OutlineCollapseRefusalReason.TargetProtected);
+        }
+
+        Excel.Range? body = GetTableBody(table);
+        if (body is null)
+        {
+            return OutlineCollapseOutcome.Ok(0);
+        }
+
+        if (ReadFirstWorksheetRow(body) is not { } firstWorksheetRow)
+        {
+            return OutlineCollapseOutcome.Ok(0);
+        }
+
+        // Read the outline the sheet currently carries. This is a PRESENTATION
+        // command, so the groups it acts on are the groups the user can see
+        // through Excel's own +/- controls -- not a second derivation of the
+        // hierarchy, which stays the model (ADR-0026 D5). A collapsed child
+        // still reports its level, so the read works for a collapsed group
+        // too.
+        int bodyRowCount = GetBodyRowCount(body);
+        List<OutlineRowLevel> levels = new List<OutlineRowLevel>(bodyRowCount);
+        for (int rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
+        {
+            Excel.Range? range = GetRowsRange(
+                worksheet,
+                firstWorksheetRow + rowNumber - 1,
+                firstWorksheetRow + rowNumber - 1);
+            if (range is null)
+            {
+                continue;
+            }
+
+            levels.Add(new OutlineRowLevel(
+                rowNumber,
+                ReadOutlineLevel(range) ?? TopLevelOutlineLevel));
+        }
+
+        OutlineCollapsePlan plan = OutlineCollapsePlanner.Plan(levels, direction);
+
+        // Nothing to write is a successful no-op, not a refusal: a sheet with
+        // no group has no relationship to collapse, and the user asked for a
+        // state that already holds.
+        if (plan.IsEmpty)
+        {
+            return OutlineCollapseOutcome.Ok(0);
+        }
+
+        // The plan names BODY rows; the sheet's rows are offset by the
+        // table's header row, which only this layer knows.
+        bool hidden = direction == OutlineCollapseDirection.Collapse;
+        int written = 0;
+        foreach (int bodyRow in plan.ChildRowNumbers)
+        {
+            Excel.Range? range = GetRowsRange(
+                worksheet,
+                firstWorksheetRow + bodyRow - 1,
+                firstWorksheetRow + bodyRow - 1);
+            if (range is null)
+            {
+                continue;
+            }
+
+            if (SetRowHidden(range, hidden))
+            {
+                written++;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.outline collapse body-row={bodyRow} hidden={hidden}"));
+            }
+        }
+
+        return OutlineCollapseOutcome.Ok(written);
+    }
+
+    /// <summary>
+    /// Writes a row's hidden flag. Test seam over the COM <c>EntireRow.Hidden</c>
+    /// setter.
+    /// </summary>
+    /// <param name="range">The row to write.</param>
+    /// <param name="hidden">Whether the row is hidden.</param>
+    /// <returns>Whether the host accepted the write.</returns>
+    /// <remarks>
+    /// <para>
+    /// The write goes through <c>EntireRow.Hidden</c>, not
+    /// <c>Range.Hidden</c>. A live probe measured the difference: on an
+    /// unprotected sheet, <c>Range("A3:C3").Hidden = $true</c> is REFUSED with
+    /// COMException <c>0x800A03EC</c> ("Unable to set the Hidden property of the
+    /// Range class"), while the identically-shaped
+    /// <c>Range("A3:C3").EntireRow.Hidden = $true</c> is ACCEPTED. The refusal
+    /// is specific to the accessor, not to the span.
+    /// </para>
+    /// <para>
+    /// <b>Why this is the native control's own state.</b> A live probe measured
+    /// that Excel's own collapse leaves the group's child rows
+    /// <c>Hidden = $true</c> and its parent <c>Hidden = $false</c>, and that
+    /// Excel's own expand clears the child rows' flag and leaves the parent's
+    /// alone. Writing exactly those rows therefore reproduces the native
+    /// control's result rather than a look-alike of it.
+    /// </para>
+    /// </remarks>
+    internal virtual bool SetRowHidden(Excel.Range range, bool hidden)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+
+        range.EntireRow.Hidden = hidden;
+        return true;
+    }
+
+    /// <inheritdoc />
+    public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false)
     {
         ArgumentNullException.ThrowIfNull(events);
 
@@ -100,9 +261,9 @@ public class ExcelOutlineGroupWriter(
         // row of an active group) re-evaluates the outline and re-expands every
         // collapsed group, which is exactly what a Refresh must not do to a
         // user's collapsed presentation state.
-        var bodyRowCount = GetBodyRowCount(body);
-        var currentLevels = new Dictionary<int, int>(bodyRowCount);
-        for (var rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
+        int bodyRowCount = GetBodyRowCount(body);
+        Dictionary<int, int> currentLevels = new Dictionary<int, int>(bodyRowCount);
+        for (int rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
         {
             Excel.Range? range = GetRowsRange(worksheet, firstWorksheetRow + rowNumber - 1, firstWorksheetRow + rowNumber - 1);
             currentLevels[rowNumber] = range is not null
@@ -125,26 +286,148 @@ public class ExcelOutlineGroupWriter(
         // `RowsToUngroup` too. Their stale level-2 outline therefore survived the
         // Refresh, so the sheet kept a collapse control for a hierarchy that no
         // longer existed, and re-collapsing it hid a top-level row.
-        var ungrouped = 0;
-        foreach ((var first, var last) in ContiguousRanges(RowsToReset(plan, bodyRowCount, currentLevels)))
+        int ungrouped = 0;
+        foreach ((int first, int last) in ContiguousRanges(RowsToReset(plan, bodyRowCount, currentLevels)))
         {
             if (UngroupRange(worksheet, firstWorksheetRow, first, last))
             {
                 ungrouped++;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.outline ungroup body-rows={first}-{last}"));
             }
         }
 
-        var applied = 0;
+        int applied = 0;
         foreach (OutlineGroup group in plan.Groups)
         {
-            if (group.ChildRowNumbers.Count > 0
-                && Group(worksheet, firstWorksheetRow, group.ChildRowNumbers[0], group.ChildRowNumbers[^1]))
+            if (group.ChildRowNumbers.Count == 0)
+            {
+                continue;
+            }
+
+            // A span whose every row already carries the child level is not
+            // rewritten. Writing the level again is the same re-evaluation the reset
+            // pass above deliberately avoids on top-level rows: the host may treat
+            // it as a grouping change, and the grouped rows are exactly the ones a
+            // collapsed group hides. Measured 2026-11-03: a no-op Refresh re-groups the
+            // same two rows every time, and that write is a shape-moving side effect
+            // the delta cache cannot see. Rebuilding the hierarchy is still the rule --
+            // a span that is new, resized, or moved is written because at least one of
+            // its rows is not at the child level yet.
+            //
+            // <b>`forceRegroup` exists because the level is not proof of membership.</b>
+            // Measured live 2026-11-09 through the Add activity path: Excel copies the
+            // outline LEVEL of the row above into a row inserted inside a grouped span, so
+            // the new child already reported level 2 while sitting outside the group's
+            // bracket. The plan was right (2 groups, the new row inside one) and this test
+            // skipped both writes, so the row was left ungrouped on screen with no error
+            // anywhere. The insert path therefore forces the write; a Refresh keeps the
+            // skip, which is what stops a no-op pass from re-expanding collapsed groups.
+            bool alreadyGrouped = !forceRegroup;
+            if (!forceRegroup)
+            {
+                alreadyGrouped = true;
+                foreach (int childRowNumber in group.ChildRowNumbers)
+                {
+                    if (currentLevels.GetValueOrDefault(childRowNumber) != ChildOutlineLevel)
+                    {
+                        alreadyGrouped = false;
+                        break;
+                    }
+                }
+            }
+
+            if (alreadyGrouped)
+            {
+                continue;
+            }
+
+            if (Group(worksheet, firstWorksheetRow, group.ChildRowNumbers[0], group.ChildRowNumbers[^1]))
             {
                 applied++;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.outline group body-rows={group.ChildRowNumbers[0]}-{group.ChildRowNumbers[^1]}"));
             }
         }
 
+        ApplyIndentation(table, plan, bodyRowCount);
+
         return OutlineGroupOutcome.Ok(applied, ungrouped);
+    }
+
+    /// <summary>
+    /// Indents each grouped row's <c>Description</c> cell and resets every other row to
+    /// zero, in the pass that owns the outline (R5.18i).
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <param name="plan">The outline plan this pass applied.</param>
+    /// <param name="bodyRowCount">How many body rows the table has.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the indent is formatting, not data.</b> Nothing in the table's values moves, so
+    /// the reader, the chart and copy/paste are unaffected; only the cell's
+    /// <c>IndentLevel</c> changes, which is exactly the control Excel's own "Increase
+    /// Indent" writes.
+    /// </para>
+    /// <para>
+    /// <b>Why each row is read before it is written.</b> A Refresh runs on every
+    /// chart-affecting edit, and writing an unchanged indent would dirty the workbook for a
+    /// pass that changed nothing — the same reason the outline passes skip an
+    /// already-grouped span. The read is one property on one cell per body row.
+    /// </para>
+    /// <para>
+    /// <b>Why a missing column is not a refusal.</b> A table without the visible
+    /// <c>Description</c> column is a structure the Repair command owns. The outline above
+    /// this call has already applied, and indentation is presentation, so the pass reports
+    /// what it did and leaves the structure to the command that repairs it.
+    /// </para>
+    /// </remarks>
+    private void ApplyIndentation(Excel.ListObject table, OutlineGroupPlan plan, int bodyRowCount)
+    {
+        if (bodyRowCount == 0)
+        {
+            return;
+        }
+
+        Excel.Range? column = GetColumnBody(table, IndentColumnName);
+        if (column is null)
+        {
+            return;
+        }
+
+        IReadOnlyDictionary<int, int> indents = HierarchyIndentation.Plan(plan);
+        int indented = 0;
+        int levelled = 0;
+        for (int bodyRowNumber = 1; bodyRowNumber <= bodyRowCount; bodyRowNumber++)
+        {
+            Excel.Range cell = GetCellAt(column, bodyRowNumber);
+            int wanted = HierarchyIndentation.IndentFor(indents, bodyRowNumber);
+            int current = UnboxOutlineLevel(ReadIndentLevelValue(cell)) ?? 0;
+            if (current == wanted || !WriteIndentLevel(cell, wanted))
+            {
+                continue;
+            }
+
+            if (wanted > 0)
+            {
+                indented++;
+            }
+            else
+            {
+                levelled++;
+            }
+        }
+
+        if (indented == 0 && levelled == 0)
+        {
+            return;
+        }
+
+        _trace?.Invoke(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.indent indented={indented} reset={levelled}"));
     }
 
     /// <summary>
@@ -184,11 +467,11 @@ public class ExcelOutlineGroupWriter(
     internal static IReadOnlyList<(int First, int Last)> ContiguousRanges(IReadOnlyList<int> rows)
     {
         List<(int First, int Last)> ranges = [];
-        var index = 0;
+        int index = 0;
         while (index < rows.Count)
         {
-            var first = rows[index];
-            var last = first;
+            int first = rows[index];
+            int last = first;
             index++;
             while (index < rows.Count && rows[index] == last + 1)
             {
@@ -289,7 +572,7 @@ public class ExcelOutlineGroupWriter(
     {
         worksheet = null;
         table = null;
-        foreach (var entry in sheets)
+        foreach (object? entry in sheets)
         {
             if (entry is not Excel.Worksheet candidate)
             {
@@ -298,10 +581,7 @@ public class ExcelOutlineGroupWriter(
 
             foreach (Excel.ListObject candidateTable in candidate.ListObjects)
             {
-                if (string.Equals(
-                    candidateTable.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(candidateTable.Name))
                 {
                     worksheet = candidate;
                     table = candidateTable;
@@ -464,6 +744,73 @@ public class ExcelOutlineGroupWriter(
         ArgumentNullException.ThrowIfNull(range);
 
         range.OutlineLevel = level;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a list column's data body by its display name, so the indent is addressed
+    /// by name rather than by position. Test seam over the <c>ListColumns</c> collection,
+    /// the <c>ListColumn.Name</c> and <c>ListColumn.DataBodyRange</c> reads.
+    /// </summary>
+    /// <param name="table">The table to search.</param>
+    /// <param name="columnName">The exact, case-sensitive column display name.</param>
+    /// <returns>The column's body range, or <see langword="null"/> when it is absent or empty.</returns>
+    internal virtual Excel.Range? GetColumnBody(Excel.ListObject table, string columnName)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        Excel.ListColumns columns = table.ListColumns;
+        int count = columns.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.ListColumn column = columns[index];
+            if (column is not null
+                && string.Equals(column.Name, columnName, StringComparison.Ordinal))
+            {
+                return column.DataBodyRange;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns the cell at a one-based row offset inside a single-column range. Test seam
+    /// over the parameterised <c>Range.Cells</c> property.
+    /// </summary>
+    /// <param name="column">The single-column body range.</param>
+    /// <param name="index">The one-based body row.</param>
+    /// <returns>The cell range.</returns>
+    internal virtual Excel.Range GetCellAt(Excel.Range column, int index)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.Cells[index];
+    }
+
+    /// <summary>
+    /// Reads a cell's <c>IndentLevel</c>. The property is Variant-typed in the interop
+    /// assembly, so the value is unboxed by <see cref="UnboxOutlineLevel"/>; contract tests
+    /// override this seam to supply known levels.
+    /// </summary>
+    /// <param name="cell">The cell to read.</param>
+    /// <returns>The indent the host reports, boxed.</returns>
+    internal virtual object? ReadIndentLevelValue(Excel.Range cell)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+
+        return cell.IndentLevel;
+    }
+
+    /// <summary>Writes a cell's <c>IndentLevel</c>. Test seam over the Variant-typed setter.</summary>
+    /// <param name="cell">The cell to write.</param>
+    /// <param name="level">The indent level to write.</param>
+    /// <returns>Whether the host accepted the write.</returns>
+    internal virtual bool WriteIndentLevel(Excel.Range cell, int level)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+
+        cell.IndentLevel = level;
         return true;
     }
 }

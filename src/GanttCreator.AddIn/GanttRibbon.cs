@@ -41,7 +41,12 @@ public class GanttRibbon : ExcelRibbon
     {
         ArgumentNullException.ThrowIfNull(stateService);
         stateService.SetRibbon(ribbon);
-        stateService.Refresh();
+        // Activate arms the state service subscriptions (SheetChange, workbook
+        // state, selection) and performs the first refresh. ExcelDnaUtil.Application
+        // is guaranteed available here (ribbon onLoad fires after AutoOpen), so the
+        // auto-refresh scheduler can subscribe to sheet changes and the table
+        // reader can read the live workbook.
+        stateService.Activate();
     }
     /// <summary>
     /// Returns the RibbonX document for the Excel workbook RibbonID, else null.
@@ -142,7 +147,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunOpenLog()
     {
-        var path = DiagnosticsService.Instance.LogFilePath;
+        string? path = DiagnosticsService.Instance.LogFilePath;
         if (!string.IsNullOrWhiteSpace(path))
         {
             DiagnosticsService.OpenLogFile(path);
@@ -271,6 +276,63 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunRefreshSheet() => RefreshSheetCommand.RunForExcel();
 
+    /// <summary>
+    /// The CHART lock toggle (owner ruling 2026-11-09): presses to flip whether the chart's elements
+    /// can be dragged. One control replaces the old Unlock shape / Lock shapes pair, and its pressed
+    /// state is the lock state, so it can always be found and always shows what is true.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="pressed">
+    /// The lock state the toggle has moved to. RibbonX supplies it for a <c>toggleButton</c>; the
+    /// handler must declare it or Excel reports "Callback signature mismatch" and refuses to run it.
+    /// </param>
+    public void OnToggleChartLockClick(IRibbonControl control, bool pressed) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnToggleChartLockClick)),
+            // A toggleButton's onAction receives the state the button has moved to, so the command is
+            // given the requested lock rather than flipping a flag Excel has already changed.
+            () => ToggleChartLockCommand.RunForExcel(pressed),
+            nameof(OnToggleChartLockClick));
+
+    /// <summary>
+    /// The CELL lock toggle (owner ruling 2026-11-09): presses to flip whether the cells OUTSIDE the
+    /// visible table are editable. The visible table itself is always editable.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="pressed">The lock state the toggle has moved to.</param>
+    public void OnToggleCellLockClick(IRibbonControl control, bool pressed) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnToggleCellLockClick)),
+            () => ToggleCellLockCommand.RunForExcel(pressed),
+            nameof(OnToggleCellLockClick));
+
+    /// <summary>
+    /// The automatic-refresh toggle (R5.20), which sits inside the Refresh split button's menu: the
+    /// switch belongs to the action it governs.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="pressed">
+    /// The state the toggle has moved to. RibbonX supplies it for a <c>toggleButton</c>; the handler
+    /// must declare it or Excel reports "Callback signature mismatch" and refuses to run it.
+    /// </param>
+    /// <remarks>
+    /// The state service owns the write, the pending-pass cancellation and the invalidation, exactly
+    /// as it does for the column-visibility rows, so this handler stays a boundary call with the
+    /// requested state — never a flip of a flag Excel has already changed.
+    /// </remarks>
+    public void OnToggleAutoRefreshClick(IRibbonControl control, bool pressed) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnToggleAutoRefreshClick)),
+            () => RibbonStateService.Instance.SetAutoRefresh(pressed),
+            nameof(OnToggleAutoRefreshClick));
+
+    /// <summary>Opens the read-only warnings list for the last successful render.</summary>
+    public void OnWarningsClick(IRibbonControl control) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnWarningsClick)),
+            RibbonStateService.Instance.ShowWarningsPanel,
+            nameof(OnWarningsClick));
+
     /// <summary>Called when the user clicks the Repair configuration button.</summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnRepairConfigClick(IRibbonControl control)
@@ -299,20 +361,181 @@ public class GanttRibbon : ExcelRibbon
     /// <summary>Runs the production repair command.</summary>
     private static void RunRepairConfig() => RepairConfigCommand.RunForExcel();
 
-    /// <summary>Called when the user clicks the Add activity button.</summary>
+    /// <summary>
+    /// Called when the user clicks the Add activity split button's primary. The type is the
+    /// family's remembered menu pick, so the button always adds what its own label names
+    /// (R5.18g).
+    /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddActivityClick(IRibbonControl control)
-        => OnAddActivityClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedActivity), NotifyRibbonStateChanged);
+        => OnAddActivityClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(PrimaryAddType(RibbonStateService.AddEntityFamily.Activity)),
+            NotifyRibbonStateChanged);
 
-    /// <summary>Called when the user clicks the Add milestone button.</summary>
+    /// <summary>
+    /// Called when the user clicks the Add milestone split button's primary; the parallel of
+    /// <see cref="OnAddActivityClick(IRibbonControl)"/> for the milestone family (R5.18g).
+    /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddMilestoneClick(IRibbonControl control)
-        => OnAddMilestoneClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedMilestone), NotifyRibbonStateChanged);
+        => OnAddMilestoneClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(PrimaryAddType(RibbonStateService.AddEntityFamily.Milestone)),
+            NotifyRibbonStateChanged);
 
-    /// <summary>Called when the user clicks the Add delineator button.</summary>
+    /// <summary>
+    /// Called when the user clicks the Add elements split button's primary; the parallel of
+    /// <see cref="OnAddActivityClick(IRibbonControl)"/> for the elements family (R5.18g).
+    /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddDelineatorClick(IRibbonControl control)
-        => OnAddDelineatorClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.Delineator), NotifyRibbonStateChanged);
+        => OnAddDelineatorClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(PrimaryAddType(RibbonStateService.AddEntityFamily.Element)),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// The entity a family's primary button adds right now (R5.18g).
+    /// </summary>
+    /// <param name="family">The split-button family.</param>
+    /// <returns>The remembered pick, or the family default when it is not permitted.</returns>
+    /// <remarks>
+    /// The label and the action read the same projection, which is what keeps a split button
+    /// honest: a button reading "As-Built Activity" must not add an as-planned row because the
+    /// callback was hard-coded before the menus became stateful.
+    /// </remarks>
+    internal static GanttEntityType PrimaryAddType(RibbonStateService.AddEntityFamily family) =>
+        RibbonStateService.Instance.PrimaryTypeFor(family);
+
+    /// <summary>
+    /// Called when the user picks an entity from one of the Data-group menus
+    /// (R5.16). The menu item id names the <see cref="GanttEntityType"/>, so one
+    /// callback serves all three menus and no type list is authored twice.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <remarks>
+    /// The pick is remembered before the command runs (R5.18g), so the family's primary
+    /// button follows it and Excel is asked for that button's label again. A refused add is
+    /// still a choice the user made.
+    /// </remarks>
+    public void OnAddEntityClick(IRibbonControl control)
+    {
+        if (!TryParseEntityMenuId(TryReadControlId(control), out GanttEntityType type))
+        {
+            RibbonStateService.WriteStatusBar(
+                "That add action is not recognised. Use the ribbon list to choose an entity.");
+            return;
+        }
+
+        RibbonStateService.Instance.RememberAddedType(type);
+
+        OnAddRowClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(type),
+            nameof(OnAddEntityClick),
+            NotifyRibbonStateChanged);
+    }
+
+    /// <summary>
+    /// The visible label for an entity menu item, projected from the catalogue
+    /// so no display name is authored in the Ribbon XML (R5.16).
+    /// </summary>
+    /// <param name="control">The menu item Excel is asking about.</param>
+    /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
+    public string GetEntityMenuLabel(IRibbonControl control) =>
+        GetEntityMenuLabel(TryReadControlId(control));
+
+    /// <summary>
+    /// The visible label for an add-entity split button's primary, projected from the same
+    /// catalogue the menu uses (R5.18g), so the button always names the entity it adds.
+    /// </summary>
+    /// <param name="control">The primary button Excel is asking about.</param>
+    /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
+    public string GetAddEntityPrimaryLabel(IRibbonControl control) =>
+        RibbonStateService.AddEntityPrimaryLabel(TryReadControlId(control), RibbonStateService.Instance);
+
+    /// <summary>
+    /// Reports the picture for an add-entity split button's primary, following the same
+    /// remembered menu choice its label follows.
+    /// </summary>
+    /// <param name="control">The primary button's control.</param>
+    /// <returns>The picture, or null when the control is not one of the three primaries.</returns>
+    /// <remarks>
+    /// The label already followed the last pick (R5.18g); without this the glyph would not,
+    /// and the button would read "Spacer" while drawing a delineator.
+    /// </remarks>
+    public object? GetAddEntityPrimaryImage(IRibbonControl control) =>
+        RibbonStateService.AddEntityPrimaryImage(TryReadControlId(control), RibbonStateService.Instance);
+
+    /// <summary>
+    /// Excel's <c>getEnabled</c> callback for the Critical Interval menu item
+    /// (R5.16). The truth table answers by id; this named callback exists so the
+    /// XML declares the gate explicitly rather than sharing the general enabled
+    /// getter implicitly. It is disabled — never hidden — when no row can own the interval.
+    /// </summary>
+    /// <param name="control">The menu item Excel is asking about.</param>
+    /// <returns><see langword="true"/> when the table holds an eligible parent.</returns>
+    public bool GetCriticalIntervalEnabled(IRibbonControl control) =>
+        GetEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Projects a menu item id to its catalogue display name. Never throws.
+    /// </summary>
+    /// <param name="itemId">The menu item id, or null.</param>
+    /// <returns>The display name, or an empty string when the id names no catalogue type.</returns>
+    internal static string GetEntityMenuLabel(string? itemId) =>
+        TryParseEntityMenuId(itemId, out GanttEntityType type)
+            ? EntityTypeCatalog.Format(type)
+            : string.Empty;
+
+    /// <summary>
+    /// Parses an entity menu item id (<c>ent</c> + the
+    /// <see cref="GanttEntityType"/> name) back to its type. The name must match
+    /// the enum exactly, so a numeric or combined value cannot smuggle in a type
+    /// the catalogue does not define.
+    /// </summary>
+    /// <param name="itemId">The menu item id, or null.</param>
+    /// <param name="type">The parsed type when the method returns <see langword="true"/>.</param>
+    /// <returns><see langword="true"/> when the id names a catalogue type.</returns>
+    internal static bool TryParseEntityMenuId(string? itemId, out GanttEntityType type)
+    {
+        type = default;
+        if (string.IsNullOrWhiteSpace(itemId)
+            || !itemId.StartsWith(RibbonControlIds.EntityMenuItemPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string name = itemId[RibbonControlIds.EntityMenuItemPrefix.Length..];
+        return Enum.TryParse(name, ignoreCase: false, out type)
+            && string.Equals(Enum.GetName(type), name, StringComparison.Ordinal)
+            && EntityTypeCatalog.GetDefinition(type) is not null;
+    }
+
+    /// <summary>
+    /// Reads a control's id, treating a COM probe failure as an absent id. The
+    /// callbacks that parse an id must never throw into Excel's dispatch.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null.</param>
+    /// <returns>The id, or null when it cannot be read.</returns>
+    private static string? TryReadControlId(IRibbonControl? control)
+    {
+#pragma warning disable CA1031
+        try
+        {
+            return control?.Id;
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
 
     /// <summary>Runs the Add activity callback across an injected boundary.</summary>
     /// <param name="control">The ribbon control.</param>
@@ -349,7 +572,6 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnPromoteToParentClick(IRibbonControl control) =>
         OnPromoteToParentClick(control, CommandBoundary.Instance, PromoteToParentCommand.RunForExcel, NotifyRibbonStateChanged);
-
     /// <summary>
     /// Runs <see cref="OnPromoteToParentClick(IRibbonControl)"/> against an
     /// injected boundary. Internal so contract tests can verify the routing
@@ -451,6 +673,56 @@ public class GanttRibbon : ExcelRibbon
     internal static void OnRemoveClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
         => OnAddRowClick(control, boundary, command, nameof(OnRemoveClick), onCompleted);
 
+    /// <summary>
+    /// Called when the user clicks Expand all groups: every parent/child group
+    /// in the table is expanded at once (R5.4). The command is silent on
+    /// success and on a sheet with no group; only a refusal is presented.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnExpandAllGroupsClick(IRibbonControl control) =>
+        OnExpandAllGroupsClick(
+            control,
+            CommandBoundary.Instance,
+            () => CollapseGroupsCommand.RunForExcel(OutlineCollapseDirection.Expand),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnExpandAllGroupsClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The expand-all command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnExpandAllGroupsClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnExpandAllGroupsClick), onCompleted);
+
+    /// <summary>
+    /// Called when the user clicks Collapse all groups: every parent/child
+    /// group in the table is collapsed at once (R5.4). The mirror of
+    /// <see cref="OnExpandAllGroupsClick(IRibbonControl)"/>.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnCollapseAllGroupsClick(IRibbonControl control) =>
+        OnCollapseAllGroupsClick(
+            control,
+            CommandBoundary.Instance,
+            () => CollapseGroupsCommand.RunForExcel(OutlineCollapseDirection.Collapse),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnCollapseAllGroupsClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The collapse-all command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnCollapseAllGroupsClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnCollapseAllGroupsClick), onCompleted);
+
     private static void OnAddRowClick(
         IRibbonControl? control,
         CommandBoundary boundary,
@@ -475,6 +747,128 @@ public class GanttRibbon : ExcelRibbon
     public bool GetEnabled(IRibbonControl control) => GetEnabled(control, RibbonStateService.Instance);
 
     /// <summary>
+    /// Reports whether the CHART lock toggle is pressed, which is the chart's lock state.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> while the chart's shapes are locked.</returns>
+    /// <remarks>
+    /// The answer comes from the same <c>ProtectionPreferences</c> the
+    /// protection port reads, so the button cannot disagree with what the sheet enforces. Exposed as a
+    /// public method here because RibbonX resolves <c>getPressed</c> to a public callback on this class.
+    /// </remarks>
+    public bool GetToggleChartLockPressed(IRibbonControl control) =>
+        RibbonStateService.GetToggleChartLockPressed(control);
+
+    /// <summary>
+    /// Reports whether the CELL lock toggle is pressed: <see langword="true"/> while the cells outside
+    /// the visible table are read-only.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> while those cells are locked.</returns>
+    public bool GetToggleCellLockPressed(IRibbonControl control) =>
+        RibbonStateService.GetToggleCellLockPressed(control);
+
+    /// <summary>
+    /// Reports whether the automatic-refresh toggle is pressed (R5.20): <see langword="true"/>
+    /// while an edit or command may schedule the coalesced pass.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> while the persisted switch is on.</returns>
+    public bool GetToggleAutoRefreshPressed(IRibbonControl control) =>
+        RibbonStateService.GetToggleAutoRefreshPressed(control);
+
+    /// <summary>
+    /// Reports the CHART lock toggle's label for its current state (R5.18f, owner ruling
+    /// 2026-11-13): "Chart locked" while pressed, "Chart unlocked" while not.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label for the current state.</returns>
+    /// <remarks>
+    /// Public because RibbonX resolves <c>getLabel</c> to a public callback on this class. The icon is
+    /// deliberately unchanged: no open-padlock <c>imageMso</c> exists in the gallery and the idMso
+    /// table, so the state is carried by the wording until embedded images are approved.
+    /// </remarks>
+    public string GetToggleChartLockLabel(IRibbonControl control) =>
+        RibbonStateService.GetToggleChartLockLabel(control);
+
+    /// <summary>
+    /// Reports the CELL lock toggle's label for its current state (R5.18f), the parallel of
+    /// <see cref="GetToggleChartLockLabel"/>.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label for the current state.</returns>
+    public string GetToggleCellLockLabel(IRibbonControl control) =>
+        RibbonStateService.GetToggleCellLockLabel(control);
+
+    /// <summary>
+    /// Reports the automatic-refresh toggle's label for its current state (R5.20), the parallel of
+    /// <see cref="GetToggleChartLockLabel"/>: "Auto refresh on" while pressed, "Auto refresh off"
+    /// while not.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label for the current state.</returns>
+    public string GetToggleAutoRefreshLabel(IRibbonControl control) =>
+        RibbonStateService.GetToggleAutoRefreshLabel(control);
+
+    /// <summary>
+    /// Reports the CHART lock toggle's picture for its current state (D1, D7).
+    /// </summary>
+    /// <param name="control">The Ribbon control.</param>
+    /// <returns>The <c>IPictureDisp</c> the host displays, or null when the asset is missing.</returns>
+    /// <remarks>
+    /// This is the half of R5.18f that measurement had blocked. No open-padlock
+    /// <c>imageMso</c> exists, but D7 makes every ribbon glyph a committed Lucide asset served
+    /// through <c>getImage</c>, so the picture can follow the state exactly as the label does.
+    /// </remarks>
+    public object? GetToggleChartLockImage(IRibbonControl control) =>
+        RibbonStateService.GetToggleChartLockImage(control);
+
+    /// <summary>
+    /// Reports the CELL lock toggle's picture for its current state, the parallel of
+    /// <see cref="GetToggleChartLockImage"/>.
+    /// </summary>
+    /// <param name="control">The Ribbon control.</param>
+    /// <returns>The picture the host displays, or null when the asset is missing.</returns>
+    public object? GetToggleCellLockImage(IRibbonControl control) =>
+        RibbonStateService.GetToggleCellLockImage(control);
+
+    /// <summary>
+    /// Serves the themed picture for one control: the single <c>getImage</c> callback the
+    /// whole tab shares.
+    /// </summary>
+    /// <param name="control">The ribbon control whose id names the glyph.</param>
+    /// <returns>The picture, or null when the control carries no glyph or the asset is missing.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>One callback, not one per control.</b> RibbonX resolves <c>getImage</c> by name,
+    /// so a control's own id selects its entry in <see cref="RibbonGlyphCatalog"/>; adding
+    /// a glyph is a table entry and an asset, never a new method.
+    /// </para>
+    /// <para>
+    /// <b>Null in, null out.</b> An unmapped id, or a glyph whose asset is missing,
+    /// returns null — the state an image-less control is already in. Nothing on this path
+    /// throws, because an exception raised inside a ribbon callback takes the ribbon down.
+    /// </para>
+    /// </remarks>
+    public object? GetGlyph(IRibbonControl control) =>
+        RibbonGlyphAssets.ForControl(control?.Id);
+
+    /// <summary>
+    /// Runs <see cref="GetGlyph(IRibbonControl)"/> against an injected resolver.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null.</param>
+    /// <param name="resolve">The resolver to call with the control id.</param>
+    /// <returns>Whatever the resolver returns.</returns>
+    /// <remarks>
+    /// Internal so contract tests can prove the id routing without a live host.
+    /// </remarks>
+    internal static object? GetGlyph(IRibbonControl? control, Func<string?, object?> resolve)
+    {
+        ArgumentNullException.ThrowIfNull(resolve);
+        return resolve(control?.Id);
+    }
+
+    /// <summary>
     /// Runs <see cref="GetEnabled(IRibbonControl)"/> against an injected state
     /// service. Internal so contract tests can verify the routing without the
     /// session singleton. Never throws.
@@ -496,6 +890,41 @@ public class GanttRibbon : ExcelRibbon
         catch
         {
             return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's <c>getVisible</c> callback: whether the group is shown in the
+    /// current mode (R5.16). Visibility is FAIL-CLOSED, unlike enablement: a
+    /// probe failure hides the group rather than showing one that may not
+    /// belong in the current mode.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The group's visibility.</returns>
+    public bool GetVisible(IRibbonControl control) => GetVisible(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetVisible(IRibbonControl)"/> against an injected state
+    /// service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns><see langword="true"/> when the group should be shown.</returns>
+    internal static bool GetVisible(IRibbonControl? control, RibbonStateService stateService)
+    {
+        ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: the only failure source is the COM control-ID probe; a probe
+        // failure must fail CLOSED so an unknown group is never shown.
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetVisible(control?.Id);
+        }
+        catch
+        {
+            return false;
         }
 #pragma warning restore CA1031
     }
@@ -919,7 +1348,7 @@ public class GanttRibbon : ExcelRibbon
             return false;
         }
 
-        var separator = id.IndexOf('-', StringComparison.Ordinal);
+        int separator = id.IndexOf('-', StringComparison.Ordinal);
         if (!GanttChartSettings.TryParseTimeScale(
             separator < 0 ? id : id[..separator],
             out scale))
@@ -1050,6 +1479,178 @@ public class GanttRibbon : ExcelRibbon
         catch
         {
             return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the label for one column menu row (R5.18h): <c>Type (shown)</c> or
+    /// <c>Type (hidden)</c>. The row is a toggle, so the label states the CURRENT
+    /// visibility rather than naming an action, which is also the only channel a screen
+    /// reader has — a tick is silent. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control whose id names the column.</param>
+    public string GetColumnVisibilityLabel(IRibbonControl control) =>
+        GetColumnVisibilityLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetColumnVisibilityLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The row label, or an empty string when the id names no offered column.</returns>
+    internal static string GetColumnVisibilityLabel(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetColumnVisibilityLabel(control?.Id);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the split button's primary label (R5.22, ADR-0065 D3): the ACTION the next
+    /// press will take, because a split button has no pressed state. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control Excel is asking about.</param>
+    public string GetColumnVisibilityAllLabel(IRibbonControl control) =>
+        GetColumnVisibilityAllLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetColumnVisibilityAllLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the session
+    /// singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns><c>Hide all columns</c> or <c>Show all columns</c>.</returns>
+    internal static string GetColumnVisibilityAllLabel(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetColumnVisibilityAllLabel();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the image for one column menu row (R5.18h): the tick when that column is
+    /// shown, the dash when it is hidden. Excel expects an <c>IPictureDisp</c>. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control whose id names the column.</param>
+    public object? GetColumnVisibilityImage(IRibbonControl control) =>
+        GetColumnVisibilityImage(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetColumnVisibilityImage(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service that answers from its snapshot.</param>
+    /// <returns>The row's picture, or null when it cannot be produced.</returns>
+    internal static object? GetColumnVisibilityImage(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetColumnVisibilityImage(control?.Id);
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Toggles the column whose menu row was chosen (R5.18h). The row is a toggle, not a
+    /// selection, so the same row both hides and shows; the control's id names the
+    /// column, which is why a button's one-argument <c>onAction</c> is enough. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is reporting.</param>
+    public void OnColumnVisibilityToggle(IRibbonControl control) =>
+        OnColumnVisibilityToggle(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnColumnVisibilityToggle(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service that applies the toggle.</param>
+    internal static void OnColumnVisibilityToggle(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.ToggleColumnVisibility(control?.Id);
+        }
+        catch
+        {
+            // A failed toggle must not propagate into Excel; the state service has
+            // already reported its own refusals through the status bar.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Toggles the whole offered set from the split button's primary (R5.22, ADR-0065 D3):
+    /// none hidden hides all six; any hidden shows all six. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control Excel is reporting.</param>
+    public void OnColumnVisibilityToggleAll(IRibbonControl control) =>
+        OnColumnVisibilityToggleAll(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnColumnVisibilityToggleAll(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the session
+    /// singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control, or null when unavailable.</param>
+    /// <param name="stateService">The state service that applies the toggle.</param>
+    internal static void OnColumnVisibilityToggleAll(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.ToggleAllColumnVisibility();
+        }
+        catch
+        {
+            // A failed toggle must not propagate into Excel; the state service has
+            // already reported its own refusals through the status bar.
         }
 #pragma warning restore CA1031
     }
@@ -1397,6 +1998,196 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns how many items the custom-style dropdown offers (R5.6a): the
+    /// user-created style keys from the state service snapshot. Excel's
+    /// dynamic dropDown contract asks for this through getItemCount. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetCustomStyleCount(IRibbonControl control) =>
+        GetCustomStyleCount(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleCount(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item count; zero when no single style-key row is selected.</returns>
+    internal static int GetCustomStyleCount(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleCount();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the item ID at the given index for the custom-style dropdown
+    /// (the style key itself). Excel's dynamic dropDown contract asks for
+    /// this through getItemID. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetCustomStyleItemID(IRibbonControl control, int index) =>
+        GetCustomStyleItemID(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleItemID(IRibbonControl, int)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
+    internal static string GetCustomStyleItemID(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleItemID(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the user-facing item label at the given index for the
+    /// custom-style dropdown (the style key, shown verbatim). Excel's
+    /// dynamic dropDown contract asks for this through getItemLabel. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetCustomStyleItemLabel(IRibbonControl control, int index) =>
+        GetCustomStyleItemLabel(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleItemLabel(IRibbonControl, int)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    internal static string GetCustomStyleItemLabel(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleItemLabel(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the selected index of the custom-style dropdown. Excel's
+    /// dynamic dropDown contract asks for this through
+    /// getSelectedItemIndex; the answer comes from the state service
+    /// snapshot, so the dropdown reflects the selected row's stored cell.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetCustomStyleSelectedIndex(IRibbonControl control) =>
+        GetCustomStyleSelectedIndex(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleSelectedIndex(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based selected index; 0 when no custom style is assigned
+    /// or the service cannot answer.</returns>
+    internal static int GetCustomStyleSelectedIndex(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleSelectedIndex();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user picks a custom style (R5.6a). The item ID is the
+    /// style key; an unknown key is refused by the command at execution
+    /// rather than defaulted. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="selectedId">The selected item id (the style key), or null in tests.</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnCustomStyleChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnCustomStyleChange(control, selectedId, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnCustomStyleChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id (the style key), or null in tests.</param>
+    /// <param name="stateService">The state service applying the setting.</param>
+    internal static void OnCustomStyleChange(
+        IRibbonControl? control,
+        string? id,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.SetCustomStyleKey(id);
+        }
+        catch
+        {
+            // Intentionally empty: the command owns its own refusals and
+            // presents them; a failure here degrades to no change.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Returns the current custom margin in centimetres. The ribbon edit
     /// box asks for this through getText; the answer comes from the
     /// state service snapshot. Never throws.
@@ -1484,27 +2275,62 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cm))
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double cm))
         {
             stateService.SetMarginCm(cm);
         }
     }
 
     /// <summary>
-    /// The enabled getter for the read-only plot-dimension displays (work
-    /// item R5.2 D4). Always false: the width/height boxes are outputs, never
-    /// inputs, so Excel renders them permanently greyed. A dedicated getter —
-    /// not GetEnabled — because the truth table fail-opens unknown IDs, and a
-    /// read-only display must never be editable for any workbook state.
-    /// Never throws.
+    /// The plot width readout (R5.16a). The control is a
+    /// <c>labelControl</c>, so this is a <c>getLabel</c> callback rather than a
+    /// permanently disabled edit box. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <returns>Always false.</returns>
-    public bool GetPlotDimensionsEnabled(IRibbonControl control)
-    {
-        _ = control;
-        return false;
-    }
+    /// <returns><c>W 1024.00 pt</c>, or <c>W</c> while the width is unknown.</returns>
+    public string GetPlotWidthLabel(IRibbonControl control) =>
+        GetPlotWidthLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotWidthLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without
+    /// the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The formatted width readout.</returns>
+    internal static string GetPlotWidthLabel(IRibbonControl? control, RibbonStateService stateService) =>
+        FormatDimension("W", GetPlotWidth(control, stateService));
+
+    /// <summary>
+    /// The plot height readout (R5.16a), the parallel of
+    /// <see cref="GetPlotWidthLabel(IRibbonControl)"/>. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><c>H 768.00 pt</c>, or <c>H</c> while the height is unknown.</returns>
+    public string GetPlotHeightLabel(IRibbonControl control) =>
+        GetPlotHeightLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotHeightLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without
+    /// the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The formatted height readout.</returns>
+    internal static string GetPlotHeightLabel(IRibbonControl? control, RibbonStateService stateService) =>
+        FormatDimension("H", GetPlotHeight(control, stateService));
+
+    /// <summary>
+    /// Formats one plot dimension readout. An unknown dimension renders the bare
+    /// prefix rather than a misleading zero.
+    /// </summary>
+    /// <param name="prefix">The dimension letter.</param>
+    /// <param name="value">The formatted points value, or empty when unknown.</param>
+    /// <returns>The readout text.</returns>
+    private static string FormatDimension(string prefix, string value) =>
+        string.IsNullOrWhiteSpace(value) ? prefix : prefix + " " + value + " pt";
 
     /// <summary>
     /// Returns the current plot width in points. The ribbon edit box
@@ -1572,37 +2398,46 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Called when the user clicks a plot-size preset button. All four
-    /// buttons share this handler; Excel's button onAction contract
-    /// passes the control, and the control id selects the preset. The
-    /// preset is set, then persisted. Never throws.
+    /// Called when the user picks an output size from the Size dropdown
+    /// (R5.16a). The item id is the durable <see cref="SizePreset"/> key, so
+    /// the four former preset buttons all route through this one handler. The
+    /// preset is set, then persisted, exactly as the buttons did.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnPresetClick(IRibbonControl control)
-        => OnPresetClick(control, RibbonStateService.Instance);
+    /// <param name="selectedId">The id of the chosen item: the preset key.</param>
+    /// <param name="selectedIndex">The chosen item's zero-based index.</param>
+    /// <remarks>
+    /// The three-argument shape is Excel's <c>dropDown.onAction</c> contract, and
+    /// it must be exact: a two-argument overload was rejected live on 2026-11-13
+    /// with "Callback signature mismatch: OnSizeChange". The preset comes from
+    /// <paramref name="selectedId"/>, never from <paramref name="control"/>.Id,
+    /// which is the dropdown's own id.
+    /// </remarks>
+    public void OnSizeChange(IRibbonControl control, string selectedId, int selectedIndex)
+    {
+        _ = selectedIndex;
+        OnSizeChange(control, selectedId, RibbonStateService.Instance);
+    }
 
     /// <summary>
-    /// Runs <see cref="OnPresetClick(IRibbonControl)"/> against an
-    /// injected state service. Internal so contract tests can verify the
-    /// routing without the session singleton. Never throws.
+    /// Runs the Size handler against an injected state service. Internal so
+    /// contract tests can verify the routing without the session singleton.
+    /// Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="selectedId">The id of the chosen item: the preset key.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPresetClick(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnSizeChange(
+        IRibbonControl? control,
+        string? selectedId,
+        RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        // An unknown control id is refused — never defaulted to a preset —
-        // so a mistyped or renamed button cannot silently render the chart on
-        // the wrong paper.
-        SizePreset? preset = control?.Id switch
-        {
-            RibbonControlIds.PresetA4Portrait => SizePresets.A4Portrait,
-            RibbonControlIds.PresetA4Landscape => SizePresets.A4Landscape,
-            RibbonControlIds.PresetPresentation16x9 => SizePresets.Presentation16x9,
-            RibbonControlIds.PresetPresentation4x3 => SizePresets.Presentation4x3,
-            _ => null,
-        };
+        // An unknown item id is refused — never defaulted to a preset — so a
+        // mistyped or renamed item cannot silently render the chart on the
+        // wrong paper.
+        SizePreset? preset = SizePresets.ByKey(selectedId);
         if (preset is not null)
         {
             stateService.SetPreset(preset);
@@ -1610,46 +2445,192 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns whether a plot-size preset button is pressed. Excel's
-    /// button getPressed contract asks for this when a button carries
-    /// getPressed; the answer compares the control id against the
-    /// current preset so the active preset is visually marked. Never
-    /// throws.
+    /// Called when the user clicks the Theme settings button. Opens the
+    /// theme settings dialog and applies edits if confirmed. Never throws.
     /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    public bool GetPreset(IRibbonControl control) => GetPreset(control, RibbonStateService.Instance);
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnThemeSettingsClick(IRibbonControl control)
+        => OnThemeSettingsClick(control, RibbonStateService.Instance, NotifyRibbonStateChanged);
 
     /// <summary>
-    /// Runs <see cref="GetPreset(IRibbonControl)"/> against an
+    /// Runs <see cref="OnThemeSettingsClick(IRibbonControl)"/> against an
     /// injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>True when the control's id names the current preset.</returns>
-    internal static bool GetPreset(IRibbonControl? control, RibbonStateService stateService)
+    /// <param name="stateService">The state service running the command.</param>
+    /// <param name="onCompleted">
+    /// The post-command state hook. The Theme settings dialog can create a
+    /// custom style, and the ribbon's custom-style dropdown projects its
+    /// items from the workbook's style registry, so the ribbon state must be
+    /// re-captured and invalidated after the write. Without this hook the
+    /// dropdown kept the list it had before the dialog opened, and a style
+    /// the user had just created never appeared in it.
+    /// </param>
+    /// <param name="refresh">
+    /// The chart refresh that follows the write. A seam so a contract test
+    /// can drive the command without a live Excel host.
+    /// </param>
+    internal static void OnThemeSettingsClick(
+        IRibbonControl? control,
+        RibbonStateService stateService,
+        Action? onCompleted = null,
+        Action? refresh = null)
     {
+        _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        SizePreset? expected = control?.Id switch
+        if (stateService.ShowThemeSettingsDialog())
         {
-            RibbonControlIds.PresetA4Portrait => SizePresets.A4Portrait,
-            RibbonControlIds.PresetA4Landscape => SizePresets.A4Landscape,
-            RibbonControlIds.PresetPresentation16x9 => SizePresets.Presentation16x9,
-            RibbonControlIds.PresetPresentation4x3 => SizePresets.Presentation4x3,
-            _ => null,
-        };
+            (refresh ?? RunRefreshSheet)();
+            onCompleted?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Chart title button. Opens the
+    /// chart-title dialog and applies edits if confirmed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnChartTitleClick(IRibbonControl control)
+        => OnChartTitleClick(control, RibbonStateService.Instance, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnChartTitleClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    /// <param name="onCompleted">
+    /// The post-command state hook. The chart title is a setting the ribbon
+    /// reads, so the state must be re-captured after the write — the same
+    /// contract every other ribbon command follows.
+    /// </param>
+    /// <param name="refresh">
+    /// The chart refresh that follows the write. A seam so a contract test
+    /// can drive the command without a live Excel host.
+    /// </param>
+    internal static void OnChartTitleClick(
+        IRibbonControl? control,
+        RibbonStateService stateService,
+        Action? onCompleted = null,
+        Action? refresh = null)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (stateService.ShowChartTitleDialog())
+        {
+            (refresh ?? RunRefreshSheet)();
+            onCompleted?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Called when the user clicks the start-date calendar button (R5.1a). Opens
+    /// the picker and commits a picked date through the same setter the edit box
+    /// uses. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotStartCalendarClick(IRibbonControl control)
+        => OnPlotStartCalendarClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotStartCalendarClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    internal static void OnPlotStartCalendarClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.PickPlotStartDate();
+    }
+
+    /// <summary>
+    /// Called when the user clicks the finish-date calendar button (R5.1a). The
+    /// symmetric counterpart of <see cref="OnPlotStartCalendarClick(IRibbonControl)"/>.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotFinishCalendarClick(IRibbonControl control)
+        => OnPlotFinishCalendarClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotFinishCalendarClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    internal static void OnPlotFinishCalendarClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.PickPlotFinishDate();
+    }
+
+    /// <summary>
+    /// The selected index of the Size dropdown (R5.16a). The item list mirrors
+    /// <see cref="SizePresets.All"/>, so the index is a projection of the stored
+    /// preset rather than a second list. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The zero-based index of the current preset; the first item when none is stored.</returns>
+    /// <remarks>
+    /// Never returns a negative index. Excel's <c>getSelectedItemIndex</c> has no
+    /// "nothing selected" state and rejects a negative value in the live host
+    /// with "The callback function GetSize ... returned an invalid value", which
+    /// is what a blank sheet produced on 2026-11-13. A workbook that names no
+    /// preset reports the first item, the same paper the add-in defaults to, and
+    /// the index is clamped to the catalogue so a preset added to Core without a
+    /// matching ribbon item cannot report an out-of-range index.
+    /// </remarks>
+    public int GetSize(IRibbonControl control) => GetSize(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetSize(IRibbonControl)"/> against an injected state
+    /// service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>A valid zero-based index into the dropdown's items; never negative.</returns>
+    internal static int GetSize(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        int lastIndex = SizePresets.All.Count - 1;
+        if (lastIndex < 0)
+        {
+            // No catalogue at all: the dropdown has no items, so there is
+            // nothing to select and nothing Excel can validate.
+            return 0;
+        }
+
 #pragma warning disable CA1031
         try
         {
-            // Records do not overload ==, so compare the durable key
-            // rather than relying on the reference identity of the
-            // catalogue singletons.
-            return expected is not null
-                && string.Equals(stateService.GetPreset()?.Key, expected.Key, StringComparison.Ordinal);
+            SizePreset? current = stateService.GetPreset();
+            if (current is null)
+            {
+                return 0;
+            }
+
+            for (int index = 0; index < SizePresets.All.Count; index++)
+            {
+                if (string.Equals(SizePresets.All[index].Key, current.Key, StringComparison.Ordinal))
+                {
+                    return Math.Min(index, lastIndex);
+                }
+            }
+
+            return 0;
         }
         catch
         {
-            return false;
+            return 0;
         }
 #pragma warning restore CA1031
     }
@@ -1674,7 +2655,7 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>The command name used in log records and the force-failure hook.</returns>
     internal static string ResolveCommandName(IRibbonControl? control, string fallbackCommandName)
     {
-        var id = control?.Id;
+        string? id = control?.Id;
         return string.IsNullOrWhiteSpace(id) ? fallbackCommandName : id;
     }
 }

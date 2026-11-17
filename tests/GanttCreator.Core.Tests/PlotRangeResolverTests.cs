@@ -65,6 +65,128 @@ public sealed class PlotRangeResolverTests
     }
 
     [Fact]
+    public void A_late_milestone_start_extends_the_automatic_range_past_every_finish()
+    {
+        // A span finishing on 20 January and a milestone starting on 10 March. The range's end
+        // is the milestone's start, so the "latest start" must be the MAXIMUM of the starts:
+        // taking the minimum would hide the milestone behind the earlier finish and plot a
+        // chart that does not contain an activity the user can see.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [
+                Event(1),
+                Event(2, GanttEntityType.AsPlannedMilestone, new DateOnly(2024, 3, 10), finish: null),
+            ],
+            "DataRange",
+            "DataRange",
+            null,
+            null,
+            paddingDays: 0);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2024, 1, 10), outcome.Start);
+        Assert.Equal(new DateOnly(2024, 3, 10), outcome.Finish);
+    }
+
+    [Fact]
+    public void An_explicit_start_with_an_automatic_finish_keeps_the_date_the_user_typed()
+    {
+        // Mixed modes are the whole reason each end resolves from its OWN mode, and they were
+        // the uncovered path: a mutant that assigned the derived data start unconditionally
+        // (`start ??= dataStart` mutated to `start = dataStart`) overwrote the user's date with
+        // the table's earliest Start, and no test noticed.
+        // The typed start (5 January) is deliberately NOT the table's earliest Start
+        // (10 January), so an assignment that overwrote it is visible.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [Event(1)],
+            nameof(PlotRangeMode.Explicit),
+            nameof(PlotRangeMode.DataRange),
+            "05/01/2024",
+            null,
+            paddingDays: 0);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2024, 1, 5), outcome.Start);
+        Assert.Equal(new DateOnly(2024, 1, 20), outcome.Finish);
+    }
+
+    [Fact]
+    public void An_automatic_start_with_an_explicit_finish_still_derives_the_start()
+    {
+        // The mirror case, and the one that proves the derive block is entered when EITHER end
+        // is automatic: a mutant that required BOTH ends to be automatic left the start null
+        // here and threw instead of resolving.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [Event(1)],
+            nameof(PlotRangeMode.DataRange),
+            nameof(PlotRangeMode.Explicit),
+            null,
+            "31/03/2024",
+            paddingDays: 0);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2024, 1, 10), outcome.Start);
+        Assert.Equal(new DateOnly(2024, 3, 31), outcome.Finish);
+    }
+
+    [Fact]
+    public void An_empty_table_plots_the_current_calendar_year_when_today_is_known()
+    {
+        // Owner ruling: a freshly initialised workbook must plot something rather than
+        // refuse. An empty table has no extent, so a known day supplies that day's
+        // calendar year - 1 January to 31 December, not a padded or snapped range.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [],
+            "DataRange",
+            "DataRange",
+            null,
+            null,
+            paddingDays: 3,
+            today: new DateOnly(2026, 6, 15));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2026, 1, 1), outcome.Start);
+        Assert.Equal(new DateOnly(2026, 12, 31), outcome.Finish);
+    }
+
+    [Fact]
+    public void An_empty_table_still_refuses_without_a_known_today()
+    {
+        // The guard's positive case: with no day to anchor a calendar year to, the
+        // resolver must refuse rather than invent a year. This is the behaviour every
+        // caller had before the fallback existed, and it is what keeps the resolver
+        // deterministic for a caller that cannot name the day.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [],
+            "DataRange",
+            "DataRange",
+            null,
+            null,
+            paddingDays: 3);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PlotRangeRefusal.NoPlotRange, outcome.Refusal);
+    }
+
+    [Fact]
+    public void An_explicit_end_still_wins_over_the_calendar_year_fallback()
+    {
+        // Modes never blend, and the fallback supplies only the end that had nothing: an
+        // explicit start is not widened to the year's first day.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [],
+            "Explicit",
+            "DataRange",
+            "10-Jan-26",
+            null,
+            paddingDays: 3,
+            today: new DateOnly(2026, 6, 15));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2026, 1, 10), outcome.Start);
+        Assert.Equal(new DateOnly(2026, 12, 31), outcome.Finish);
+    }
+
+    [Fact]
     public void Automatic_mode_with_no_start_date_refuses_rather_than_inventing_a_range()
     {
         var dateless = Event(1, GanttEntityType.Splitter, start: null, finish: null) with
@@ -308,6 +430,14 @@ public sealed class PlotRangeResolverTests
     }
 
     [Fact]
+    public void ValidateSettings_refuses_a_null_settings_object()
+    {
+        // Trust boundary: a null settings object is a typed refusal at the door, never a
+        // NullReferenceException from the first property read.
+        _ = Assert.Throws<ArgumentNullException>(() => PlotRangeResolver.ValidateSettings(null!));
+    }
+
+    [Fact]
     public void ValidateSettings_accepts_the_ddMMyyyy_stored_form()
     {
         // The ribbon persists normalised dd/MM/yyyy text; the validator must
@@ -315,10 +445,100 @@ public sealed class PlotRangeResolverTests
         PlotRangeResolver.ValidateSettings(
             new PlotRangeSettings
             {
-                Mode = nameof(PlotRangeMode.Explicit),
+                StartMode = nameof(PlotRangeMode.Explicit),
+                FinishMode = nameof(PlotRangeMode.Explicit),
                 StartDate = "15/03/2026",
                 FinishDate = "30/06/2026",
             });
+    }
+
+    [Fact]
+    public void ValidateSettings_accepts_data_range_with_no_dates()
+    {
+        // DataRange ends derive their dates from events, so no date text is needed.
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                StartMode = nameof(PlotRangeMode.DataRange),
+                FinishMode = nameof(PlotRangeMode.DataRange),
+            });
+    }
+
+    [Fact]
+    public void ValidateSettings_accepts_mixed_modes()
+    {
+        // Start can be DataRange while finish is Explicit, and vice versa.
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                StartMode = nameof(PlotRangeMode.DataRange),
+                FinishMode = nameof(PlotRangeMode.Explicit),
+                FinishDate = "30/06/2026",
+            });
+
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                StartMode = nameof(PlotRangeMode.Explicit),
+                FinishMode = nameof(PlotRangeMode.DataRange),
+                StartDate = "15/03/2026",
+            });
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_an_unknown_start_mode()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = "NotAMode",
+                    FinishMode = nameof(PlotRangeMode.DataRange),
+                }));
+
+        Assert.Contains("Invalid plot-range start mode", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_an_unknown_finish_mode()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.DataRange),
+                    FinishMode = "NotAMode",
+                }));
+
+        Assert.Contains("Invalid plot-range finish mode", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_explicit_start_without_date()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.Explicit),
+                    FinishMode = nameof(PlotRangeMode.DataRange),
+                }));
+
+        Assert.Contains("Explicit mode requires a start date", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_explicit_finish_without_date()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.DataRange),
+                    FinishMode = nameof(PlotRangeMode.Explicit),
+                }));
+
+        Assert.Contains("Explicit mode requires a finish date", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -329,11 +549,29 @@ public sealed class PlotRangeResolverTests
             () => PlotRangeResolver.ValidateSettings(
                 new PlotRangeSettings
                 {
-                    Mode = nameof(PlotRangeMode.Explicit),
+                    StartMode = nameof(PlotRangeMode.Explicit),
+                    FinishMode = nameof(PlotRangeMode.Explicit),
                     StartDate = "not-a-date",
                     FinishDate = "30/06/2026",
                 }));
 
         Assert.Contains("Unparsable start date", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_start_after_finish_when_both_explicit()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.Explicit),
+                    FinishMode = nameof(PlotRangeMode.Explicit),
+                    StartDate = "30/06/2026",
+                    FinishDate = "15/03/2026",
+                }));
+
+        Assert.Contains("Start date", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("is after finish date", exception.Message, StringComparison.Ordinal);
     }
 }

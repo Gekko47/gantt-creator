@@ -54,6 +54,19 @@ public interface IWorkbookStateSubscriptionStatus
 public interface IExcelApplicationAdapter
 {
     /// <summary>
+    /// Subscribes to worksheet cell changes and supplies an address qualified by
+    /// workbook and worksheet name. Implementations without worksheet events return
+    /// an inert subscription.
+    /// </summary>
+    /// <param name="handler">Receives a qualified address on Excel's main thread.</param>
+    /// <returns>A subscription that detaches when disposed.</returns>
+    IDisposable SubscribeSheetChanged(Action<string?> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return InertSheetChangeSubscription.Instance;
+    }
+
+    /// <summary>
     /// Gets whether Excel currently has an active workbook, or <see langword="null"/>
     /// when the fact cannot be determined.
     /// </summary>
@@ -67,6 +80,26 @@ public interface IExcelApplicationAdapter
     /// Ribbon controls. Never throws.
     /// </returns>
     bool? HasActiveWorkbook();
+
+    /// <summary>
+    /// Writes a message to Excel's status bar, non-modally.
+    /// </summary>
+    /// <param name="message">The message to show.</param>
+    /// <remarks>
+    /// The status bar is where Excel itself reports a rejected edit, and --
+    /// unlike a message box -- it needs no dismissal. That makes it the right
+    /// home for an advisory warning raised from a Ribbon callback: a modal
+    /// dialog there would hold the Excel UI thread until the user dismissed
+    /// it, and would block a headless test run forever.
+    /// <para>
+    /// Never throws: a failure to write loses the message and nothing more.
+    /// </para>
+    /// </remarks>
+    void ShowStatusBar(string message);
+
+    /// <summary>Clears any add-in status-bar text so Excel resumes its automatic status.</summary>
+    /// <remarks>Never throws: a failure to clear loses nothing.</remarks>
+    void ClearStatusBar();
 
     /// <summary>
     /// Subscribes <paramref name="handler"/> to application-level workbook state
@@ -85,4 +118,45 @@ public interface IExcelApplicationAdapter
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="handler"/> is <see langword="null"/>.</exception>
     IDisposable SubscribeWorkbookStateChanged(Action handler);
+
+    /// <summary>
+    /// Subscribes <paramref name="handler"/> to the application-level
+    /// sheet-activation event, so entering the Gantt sheet can refresh the chart
+    /// and restore the add-in tab (R5.16b, ADR-0058).
+    /// </summary>
+    /// <param name="handler">
+    /// Invoked on Excel's main thread after a sheet becomes active, with no
+    /// arguments: the subscriber re-reads the workbook, because only the read
+    /// knows which worksheet is the Gantt sheet. The handler must not throw; the
+    /// adapter guards the invocation so a throw cannot escape into Excel's
+    /// dispatch.
+    /// </param>
+    /// <returns>
+    /// A subscription that detaches exactly once when disposed; disposing it
+    /// again is a no-op. Implementations without application events return an
+    /// inert subscription, so callers never special-case them.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="handler"/> is <see langword="null"/>.</exception>
+    IDisposable SubscribeSheetActivated(Action handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return InertSheetChangeSubscription.Instance;
+    }
+}
+
+/// <summary>An inert sheet subscription for adapters without Excel events.</summary>
+internal sealed class InertSheetChangeSubscription : IDisposable
+{
+    private InertSheetChangeSubscription()
+    {
+    }
+
+    /// <summary>The shared stateless instance.</summary>
+    internal static InertSheetChangeSubscription Instance { get; } = new();
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        // No event handler was attached.
+    }
 }

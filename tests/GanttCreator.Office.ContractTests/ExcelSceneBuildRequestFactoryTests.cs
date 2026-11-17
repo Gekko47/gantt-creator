@@ -53,9 +53,23 @@ public class ExcelSceneBuildRequestFactoryTests
     /// <param name="widthPt">The panel's total measured width.</param>
     /// <param name="originTopPt">The first body row's absolute top edge (ADR-0030 D3).</param>
     /// <param name="rowHeightsPt">The measured body row heights.</param>
-    private static PanelCellGrid Grid(double widthPt = 120, double originTopPt = 58, double[]? rowHeightsPt = null) =>
+    /// <param name="originLeftPt">The table's absolute left edge (ADR-0030 D3).</param>
+    /// <param name="leadingGutterPt">The measured leading gutter (R5.18k).</param>
+    private static PanelCellGrid Grid(
+        double widthPt = 120,
+        double originTopPt = 58,
+        double[]? rowHeightsPt = null,
+        double originLeftPt = 0,
+        double leadingGutterPt = 0) =>
         PanelCellGrid
-            .TryCreate([new PanelColumn("Id", widthPt)], rowHeightsPt ?? [_managedRowHeight], _managedRowHeight, ["Id"], originTopPt)
+            .TryCreate(
+                [new PanelColumn("Id", widthPt)],
+                rowHeightsPt ?? [_managedRowHeight],
+                _managedRowHeight,
+                ["Id"],
+                originTopPt,
+                originLeftPt,
+                leadingGutterPt: leadingGutterPt)
             .Grid!;
 
     /// <summary>
@@ -89,7 +103,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -136,7 +150,8 @@ public class ExcelSceneBuildRequestFactoryTests
             events,
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid(originTopPt: 58, rowHeightsPt: [18, 30, 18])
+            Grid(originTopPt: 58, rowHeightsPt: [18, 30, 18]),
+            new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -249,15 +264,18 @@ public class ExcelSceneBuildRequestFactoryTests
     /// asserts the placement rather than merely the list.
     /// </para>
     /// <para>
-    /// <b>This assertion was inverted, deliberately.</b> It previously required
-    /// <c>panel + ChartOuterPaddingPt</c>, which is the behaviour the owner asked to
-    /// change: the plot sat one margin-width away from the table it belongs to. The
-    /// margin is now exactly zero, and the test is the one place that will fail if a
-    /// later change reintroduces a gap.
+    /// <b>This assertion has moved three times, each deliberately.</b> It first required
+    /// <c>panel + ChartOuterPaddingPt</c>, the margin-width gap the owner asked to remove.
+    /// It then required the panel's summed width, which was right only while the panel
+    /// started at the sheet's left edge — on a table that starts in column B it put the
+    /// plot one origin inside the table's last column (live report 2026-11-14). A 1pt
+    /// anchor inset followed and was rejected on sight as visibly off the column edge, so
+    /// the plot now begins exactly at the measured panel's RIGHT EDGE. A later change that
+    /// reintroduces a gap or loses the origin fails here.
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_plot_left_edge_starts_flush_where_the_measured_panel_ends()
+    public void The_plot_left_edge_starts_at_the_measured_panels_right_edge()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
@@ -265,7 +283,8 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid(widthPt: 120)
+            Grid(widthPt: 120),
+            new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -276,11 +295,137 @@ public class ExcelSceneBuildRequestFactoryTests
         // with the `!.Value`/`!` form the rest of this file already uses. The factory
         // only emits a request whose grid and plot both resolved, so a null here is a
         // defect the equality assertion reports as a mismatch rather than a null crash.
-        Assert.Equal(request.Grid!.TotalWidthPt, request.PlotBounds!.Value.X, precision: 6);
+        //
+        // The plot starts the measured inset INSIDE the anchor column, not on the
+        // panel's right edge: while the engine columns are hidden that edge is also the
+        // first hidden column's left edge, and Excel anchors the chart's shapes there
+        // instead of in the anchor column (measured on the host, see
+        // GanttSheetLayout.LivePlotOriginInsetPt).
+        Assert.Equal(
+            request.Grid!.PanelRightPt + GanttSheetLayout.LivePlotOriginInsetPt,
+            request.PlotBounds!.Value.X,
+            precision: 6);
 
         // The right margin is NOT removed: the plot's right edge is the sheet's own
         // edge, and the chrome there is what keeps the last period label off it.
         Assert.Equal(GanttCatalogues.MetricDefault("ChartOuterPaddingPt"), request.ChartPadding.RightPt, precision: 6);
+    }
+
+    /// <summary>
+    /// ADR-0048: the live chart's border encloses the visible data table, so its
+    /// vertical rule sits at the table's first column - the MEASURED origin - and
+    /// not at the plot's left edge.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The live title is an owned textbox placed in the table's own columns, so
+    /// the table and the title sit to the LEFT of the plot. A border drawn on the
+    /// plot's rectangle encloses neither of them, and the chart reads as two
+    /// unrelated objects.
+    /// </para>
+    /// <para>
+    /// The assertion is on the rule's own X, and the counterweight is the plot's
+    /// left edge, which is a different number: the table is 120pt wide, so a
+    /// border that started at the plot would be 120pt to the right of the one
+    /// that is correct.
+    /// </para>
+    /// </remarks>
+    /// <summary>
+    /// The plot starts at the measured panel's RIGHT EDGE, which includes the table's
+    /// origin.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the reported defect.</b> The plot used to be placed at the summed column
+    /// widths, which is the width of the table rather than where it ends: a table starting
+    /// in column B put the chart one measured origin inside the table's last column. The
+    /// origin and the gutter are deliberately different numbers here (40 and 10), so the
+    /// three candidate expressions — width alone (200), panel-left plus width (230) and
+    /// origin plus width (240) — are all distinguishable, and only 240 lines the plot up
+    /// with the column edge.
+    /// </remarks>
+    [Fact]
+    public void The_plot_starts_at_the_measured_panels_right_edge()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        PanelCellGrid grid = Grid(widthPt: 200, originLeftPt: 40, leadingGutterPt: 10);
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>()
+        );
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(240, grid.PanelRightPt, precision: 6);
+        Assert.Equal(30, grid.PanelLeftPt, precision: 6);
+
+        // The anchor column's left edge plus the live inset, so the plot's origin is
+        // anchored in the anchor column rather than in the hidden engine columns.
+        Assert.Equal(
+            240 + GanttSheetLayout.LivePlotOriginInsetPt,
+            outcome.Request!.PlotBounds!.Value.X,
+            precision: 6);
+    }
+
+    [Fact]
+    public void The_plot_origin_inset_clears_the_hosts_shape_anchor_threshold()
+    {
+        // MEASURED, not chosen. scripts/probe-plot-origin.ps1 built a workbook with this
+        // layout on Excel 16.0 and read every shape's TopLeftCell: with the engine columns
+        // hidden, a shape at 0, 0.25 or 0.5pt right of the anchor column's left edge is
+        // anchored in the FIRST hidden column (G3) and stays there when those columns are
+        // un-hidden, while 1pt and above is anchored in the anchor column (S3) and follows
+        // it. Excel resolves a shape's cell with its own rounding, so the threshold is not
+        // a number this code chooses - it must stay above the measured one.
+        Assert.True(
+            GanttSheetLayout.LivePlotOriginInsetPt > 1.0,
+            "the live plot origin inset (" + GanttSheetLayout.LivePlotOriginInsetPt
+                + "pt) must exceed the 1pt host threshold, or the plot anchors behind a hidden column");
+
+        // It is chrome taken out of the plot's width budget, so it must stay inside the
+        // chart's own outer padding: a larger value would be a layout change, not an inset.
+        Assert.True(
+            GanttSheetLayout.LivePlotOriginInsetPt <= GanttCatalogues.MetricDefault("ChartOuterPaddingPt"),
+            "the live plot origin inset must not exceed the chart's outer padding");
+    }
+
+    [Fact]
+    public void The_live_charts_border_starts_at_the_charts_left_margin()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        // A measured gutter, so the frame's edge and the table's origin are two different
+        // numbers: without one, "the margin" and "the table" pass for each other.
+        double gutterPt = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        PanelCellGrid grid = Grid(widthPt: 120, originLeftPt: 40, leadingGutterPt: gutterPt);
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>()
+        );
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildOutcome scene = SceneBuilder.TryBuild(outcome.Request!);
+        Assert.True(scene.Succeeded, "scene refused: " + scene.Refusal);
+
+        SceneLine left = scene.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+
+        // The centre sits half the frame's own stroke INSIDE the gutter's outer edge, because
+        // a live stroke is drawn inside the rectangle it closes (ADR-0061 D4). The frame
+        // closes on the chart's left margin, not on the table's origin (owner ruling
+        // 2026-11-16), so the outline - not the stroke centre - is the margin boundary.
+        double halfStroke = GanttCatalogues.MetricDefault("MajorBoundaryPt") / 2d;
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.From!.X, precision: 6);
+        Assert.NotEqual(grid.OriginLeftPt + halfStroke, left.From!.X, precision: 6);
+        Assert.NotEqual(outcome.Request!.PlotBounds!.Value.X, left.From!.X, precision: 6);
+        Assert.Equal(gutterPt, grid.OriginLeftPt - (left.From!.X - halfStroke), precision: 6);
     }
 
     /// <summary>
@@ -298,14 +443,16 @@ public class ExcelSceneBuildRequestFactoryTests
     /// </summary>
     /// <param name="grid">The measured grid the scene is composed against.</param>
     /// <returns>The factory outcome.</returns>
-    private static SceneBuildRequestOutcome Create(PanelCellGrid grid)
+    private static SceneBuildRequestOutcome Create(
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics)
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
         return factory.Create(
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            grid
+            grid, themedMetrics
         );
     }
 
@@ -320,13 +467,13 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(start, finish ?? start)],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
     [Fact]
     public void The_plot_top_is_the_first_body_rows_measured_top()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid(originTopPt: 137.5, rowHeightsPt: [15.0, 15.0, 15.0]));
+        SceneBuildRequestOutcome outcome = Create(Grid(originTopPt: 137.5, rowHeightsPt: [15.0, 15.0, 15.0]), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
 
@@ -346,7 +493,7 @@ public class ExcelSceneBuildRequestFactoryTests
     [Fact]
     public void The_plot_height_is_the_measured_body_total_not_the_page_height()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid(rowHeightsPt: [15.0, 15.0, 15.0]));
+        SceneBuildRequestOutcome outcome = Create(Grid(rowHeightsPt: [15.0, 15.0, 15.0]), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
 
@@ -368,7 +515,7 @@ public class ExcelSceneBuildRequestFactoryTests
     [Fact]
     public void The_plot_bottom_coincides_with_the_last_rows_bottom()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid(originTopPt: 64, rowHeightsPt: [18.0, 18.0, 24.0, 18.0]));
+        SceneBuildRequestOutcome outcome = Create(Grid(originTopPt: 64, rowHeightsPt: [18.0, 18.0, 24.0, 18.0]), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
 
@@ -393,7 +540,7 @@ public class ExcelSceneBuildRequestFactoryTests
     {
         double[] fortyRows = [.. Enumerable.Repeat(18.0, 40)];
 
-        SceneBuildRequestOutcome outcome = Create(Grid(rowHeightsPt: fortyRows));
+        SceneBuildRequestOutcome outcome = Create(Grid(rowHeightsPt: fortyRows), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
 
@@ -494,7 +641,7 @@ public class ExcelSceneBuildRequestFactoryTests
     {
         // The default preset is A4 landscape (841.89pt wide); at 830 the panel plus
         // both chromes leaves under 1pt of plot, below MinimumPlotWidthPt (24).
-        SceneBuildRequestOutcome outcome = Create(Grid(widthPt: 830));
+        SceneBuildRequestOutcome outcome = Create(Grid(widthPt: 830), new Dictionary<string, double>());
 
         Assert.False(outcome.Succeeded);
     }
@@ -508,7 +655,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -538,7 +685,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -558,7 +705,8 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid(widthPt: 200)
+            Grid(widthPt: 100),
+            new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -572,16 +720,17 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid(widthPt: 100)
+            Grid(widthPt: 200),
+            new Dictionary<string, double>()
         );
 
         Assert.True(widePanel.Succeeded);
         Assert.True(
-            outcome.Request!.PlotBounds!.Value.Width < widePanel.Request!.PlotBounds!.Value.Width,
+            widePanel.Request!.PlotBounds!.Value.Width < outcome.Request!.PlotBounds!.Value.Width,
             "the 200pt panel's plot ("
-                + outcome.Request.PlotBounds.Value.Width
-                + "pt) must be narrower than the 100pt panel's plot ("
                 + widePanel.Request.PlotBounds.Value.Width
+                + "pt) must be narrower than the 100pt panel's plot ("
+                + outcome.Request.PlotBounds.Value.Width
                 + "pt)"
         );
     }
@@ -596,7 +745,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["SizePreset"] = "A3Gigantic" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.False(outcome.Succeeded);
@@ -634,7 +783,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["SizePreset"] = key },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, key + " refused: " + outcome.Message);
@@ -685,7 +834,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             fromCatalogue,
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, key + " refused: " + outcome.Message);
@@ -716,7 +865,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             fromCatalogue,
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -733,7 +882,8 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid(widthPt: 5000)
+            Grid(widthPt: 500),
+            new Dictionary<string, double>()
         );
 
         Assert.False(outcome.Succeeded);
@@ -761,7 +911,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
             new Dictionary<string, string> { ["RangePaddingDays"] = "2" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -788,7 +938,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 3, 15), new DateOnly(2024, 3, 15))],
             new Dictionary<string, string> { ["RangePaddingDays"] = "31" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -797,18 +947,33 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
-    /// Rows with no start date refuse rather than producing a chart over a range
-    /// invented from the epoch.
+    /// A table with no dated row plots the current calendar year rather than refusing,
+    /// which is the owner's default plot range (R5.18j).
     /// </summary>
+    /// <remarks>
+    /// This replaces a test that asserted the refusal. The refusal left a freshly
+    /// initialised workbook with no chart drawn at all — the reported "the chart looks
+    /// broken until the first refresh" — so an empty table now falls back to 1 January to
+    /// 31 December of the caller's day, and never to the epoch. The day is pinned through
+    /// the factory's seam so the assertion cannot depend on the machine's date.
+    /// </remarks>
     [Fact]
-    public void No_event_with_a_date_refuses_rather_than_inventing_a_range()
+    public void A_table_with_no_dated_row_plots_the_current_calendar_year()
     {
-        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        ExcelSceneBuildRequestFactory factory = new PinnedTodayFactory(new DateOnly(2026, 6, 15), Metrics());
 
-        SceneBuildRequestOutcome outcome = factory.Create([], new Dictionary<string, string>(), StyleRegistry(), Grid());
+        SceneBuildRequestOutcome outcome = factory.Create([], new Dictionary<string, string>(), StyleRegistry(), Grid(), new Dictionary<string, double>());
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(SceneBuildRequestRefusal.NoPlotRange, outcome.Refusal);
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(new DateOnly(2026, 1, 1), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2026, 12, 31), outcome.Request.PlotFinish);
+    }
+
+    /// <summary>The factory with its day pinned, so an empty-table range is deterministic.</summary>
+    private sealed class PinnedTodayFactory(DateOnly today, ITextMetrics? metrics = null)
+        : ExcelSceneBuildRequestFactory(metrics)
+    {
+        internal override DateOnly Today() => today;
     }
 
     /// <summary>A single-day span is widened rather than refused as unreadable.</summary>
@@ -821,7 +986,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 1))],
             new Dictionary<string, string> { ["RangePaddingDays"] = "0" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -849,7 +1014,7 @@ public class ExcelSceneBuildRequestFactoryTests
                 ["PlotFinishDate"] = "10/04/2024",
             },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -876,7 +1041,7 @@ public class ExcelSceneBuildRequestFactoryTests
                 ["PlotStartDate"] = "15/01/2024",
             },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -898,7 +1063,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
             new Dictionary<string, string> { ["PlotStartMode"] = "Automatic" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.False(outcome.Succeeded);
@@ -920,7 +1085,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
             new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.False(outcome.Succeeded);
@@ -947,7 +1112,7 @@ public class ExcelSceneBuildRequestFactoryTests
                 ["PlotFinishDate"] = "01/04/2024",
             },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.False(outcome.Succeeded);
@@ -976,7 +1141,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["GridLinePt"] = "not-a-number" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -1003,6 +1168,116 @@ public class ExcelSceneBuildRequestFactoryTests
     /// </para>
     /// </remarks>
     [Fact]
+    public void The_chart_chrome_colours_come_from_the_workbook_settings()
+    {
+        // R5.6a: the chart's frame, bands, grid, and headers are the user's to
+        // change, so the scene request must carry the stored colour rather
+        // than a literal.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+                ["AlternateBandColour"] = "#E0E0E0",
+                ["MinorGridColour"] = "#D0D0D0",
+                ["MajorGridColour"] = "#C0C0C0",
+                ["YearHeaderColour"] = "#B0B0B0",
+                ["PeriodHeaderColour"] = "#A0A0A0",
+            },
+            StyleRegistry(),
+            Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal("#F0F0F0", theme.Background.FillColour?.ToString());
+        Assert.Equal("#E0E0E0", theme.AlternateBand.FillColour?.ToString());
+        Assert.Equal("#D0D0D0", theme.MinorGrid.StrokeColour?.ToString());
+        Assert.Equal("#C0C0C0", theme.MajorGrid.StrokeColour?.ToString());
+        Assert.Equal("#B0B0B0", theme.YearHeader.FillColour?.ToString());
+        Assert.Equal("#A0A0A0", theme.PeriodHeader.FillColour?.ToString());
+    }
+
+    [Fact]
+    public void The_chart_chrome_colours_fall_back_to_the_approved_token_values()
+    {
+        // A workbook whose settings carry no chrome colour renders the
+        // approved token values, not a literal: the token table is the single
+        // authority for what the chart looks like by default.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal(
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background),
+            theme.Background.FillColour?.ToString());
+        Assert.Equal(
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid),
+            theme.MinorGrid.StrokeColour?.ToString());
+    }
+
+    [Fact]
+    public void Every_chart_border_is_one_uniform_soft_grey()
+    {
+        // Owner ruling 2026-10-20: the chart's borders are one uniform soft
+        // grey. The minor grid, the year boundary and the plot frame all draw
+        // from the two grid roles, so the two must default to the SAME colour
+        // — the year boundary keeps its own MajorBoundaryPt width, which is how
+        // it reads as a boundary without needing a second colour.
+        Assert.Equal(
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid),
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid));
+
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal(theme.MinorGrid.StrokeColour, theme.MajorGrid.StrokeColour);
+    }
+
+    [Fact]
+    public void The_grid_line_widths_come_from_the_themed_metrics()
+    {
+        // The "Grid line width" and "Major boundary width" controls named
+        // metrics that nothing consumed: the widths were literals in the
+        // frame theme. They now reach the render.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>
+            {
+                ["GridLinePt"] = 1.25,
+                ["MajorBoundaryPt"] = 2.5,
+            });
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal(1.25, theme.MinorGrid.OutlineWidthPt);
+        Assert.Equal(2.5, theme.MajorGrid.OutlineWidthPt);
+    }
+
+    [Fact]
     public void Every_emitted_metric_equals_the_catalogue_default()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
@@ -1011,7 +1286,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -1057,6 +1332,40 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
+    /// Themed metrics from the workbook override code-owned catalogue defaults.
+    /// </summary>
+    [Fact]
+    public void Themed_metrics_override_code_defaults()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        var themedMetrics = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["GridLinePt"] = 3.0,
+            ["MajorBoundaryPt"] = 2.0,
+            ["SplitterHeightPt"] = 9.0,
+        };
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(),
+            themedMetrics);
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        SceneBuildRequest request = outcome.Request!;
+
+        Assert.Equal(3.0, request.GridLinePt);
+        Assert.Equal(2.0, request.MajorBoundaryPt);
+        Assert.Equal(9.0, request.LaneMetrics!.SplitterHeightPt);
+
+        // Non-themed metrics still fall back to catalogue defaults.
+        Assert.Equal(GanttCatalogues.MetricDefault("DelineatorLinePt"), request.DelineatorLinePt);
+        Assert.Equal(GanttCatalogues.MetricDefault("LabelGapPt"), request.LabelGapPt);
+    }
+
+    /// <summary>
     /// A metric name is never read from the settings map, so editing a settings cell
     /// cannot move a metric the catalogue owns.
     /// </summary>
@@ -1077,7 +1386,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["TitleBandHeightPt"] = "999", ["ChartPadding"] = "999" },
             StyleRegistry(),
-            Grid()
+            Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
@@ -1218,7 +1527,7 @@ public class ExcelSceneBuildRequestFactoryTests
     [Fact]
     public void The_live_request_carries_the_date_label_style()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid());
+        SceneBuildRequestOutcome outcome = Create(Grid(), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         Assert.NotNull(outcome.Request!.LabelStyle);
@@ -1250,7 +1559,7 @@ public class ExcelSceneBuildRequestFactoryTests
     [Fact]
     public void The_live_label_style_carries_the_measured_font_family_and_size()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid());
+        SceneBuildRequestOutcome outcome = Create(Grid(), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         SceneStyle? labelStyle = outcome.Request!.LabelStyle;
@@ -1277,7 +1586,7 @@ public class ExcelSceneBuildRequestFactoryTests
     {
         var metrics = new AptosTextMetrics();
 
-        SceneBuildRequestOutcome outcome = Create(Grid());
+        SceneBuildRequestOutcome outcome = Create(Grid(), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
 
@@ -1321,11 +1630,20 @@ public class ExcelSceneBuildRequestFactoryTests
     /// split - so this asserts the OBSERVABLE outcome rather than the input. It is
     /// what would have caught the original defect, and it fails if a future change
     /// nulls the style again somewhere downstream of the factory.
+    ///
+    /// The row names <c>Both</c> explicitly: since R5.18m (owner ruling 2026-11-13) a
+    /// blank cell resolves to the type default (<c>None</c>), so a fixture that wants
+    /// §23 date labels on the scene must ask for them.
     /// </remarks>
     [Fact]
     public void A_built_live_scene_emits_date_labels_for_an_activity()
     {
-        SceneBuildRequestOutcome outcome = Create(Grid());
+        SceneBuildRequestOutcome outcome = new ExcelSceneBuildRequestFactory(Metrics()).Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)) with { DateLabelPosition = GanttDateLabelPosition.Both }],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         SceneBuildOutcome built = SceneBuilder.TryBuild(outcome.Request!);
@@ -1352,7 +1670,7 @@ public class ExcelSceneBuildRequestFactoryTests
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
-        Assert.Throws<ArgumentNullException>(() => factory.Create(null!, new Dictionary<string, string>(), StyleRegistry(), Grid()));
+        Assert.Throws<ArgumentNullException>(() => factory.Create(null!, new Dictionary<string, string>(), StyleRegistry(), Grid(), new Dictionary<string, double>()));
     }
 
     /// <summary>
@@ -1373,12 +1691,12 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["Margin"] = "Narrow", ["MarginCm"] = "0.635" },
             StyleRegistry(),
-            Grid());
+            Grid(), new Dictionary<string, double>());
         SceneBuildRequestOutcome normal = factory.Create(
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["Margin"] = "Normal", ["MarginCm"] = "1.78" },
             StyleRegistry(),
-            Grid());
+            Grid(), new Dictionary<string, double>());
 
         Assert.True(narrow.Succeeded, "refused: " + narrow.Message);
         Assert.True(normal.Succeeded, "refused: " + normal.Message);
@@ -1404,7 +1722,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["Margin"] = "Wide", ["MarginCm"] = "2.54" },
             StyleRegistry(),
-            grid);
+            grid, new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         Assert.Equal(grid.Columns[0].WidthPt, outcome.Request!.Grid!.Columns[0].WidthPt, precision: 6);
@@ -1424,12 +1742,12 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid());
+            Grid(), new Dictionary<string, double>());
         SceneBuildRequestOutcome explicitNormal = factory.Create(
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string> { ["Margin"] = "Normal", ["MarginCm"] = "1.78" },
             StyleRegistry(),
-            Grid());
+            Grid(), new Dictionary<string, double>());
 
         Assert.True(absent.Succeeded, "refused: " + absent.Message);
         Assert.True(explicitNormal.Succeeded, "refused: " + explicitNormal.Message);

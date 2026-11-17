@@ -45,6 +45,20 @@ public enum ConfigIntegrityFindingKind
 
     /// <summary>The damage class is not recognised by the running add-in.</summary>
     Unknown = 13,
+
+    /// <summary>The Gantt data table sits on a worksheet without the standard label.</summary>
+    DataTableOnUnexpectedSheet = 14,
+
+    /// <summary>The Gantt data table carries columns the schema does not define.</summary>
+    ExtraTableColumns = 15,
+
+    /// <summary>The Gantt data table starts somewhere other than the contract origin.</summary>
+    TableOffContractOrigin = 16,
+
+    /// <summary>
+    /// A shape named like one the add-in creates cannot be proved owned by its tag.
+    /// </summary>
+    OwnedShapeWithoutValidTag = 17,
 }
 
 /// <summary>The safe-repair classification for one integrity finding.</summary>
@@ -184,10 +198,19 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
                 ConfigRepairClassification.ConfirmRequired,
             ConfigIntegrityFindingKind.CatalogueTableCorrupt when finding.TableName == GanttCatalogues.StylesTableName =>
                 ConfigRepairClassification.ConfirmRequired,
+            // IDE0072 requires every remaining enum member to be named here, so
+            // this arm restates the default rather than being the only place the
+            // rule is written. Mutation testing flags the alternatives that turn
+            // these `or`s into `and`s as survivors because both spellings reach the
+            // same `_` arm: they are equivalent mutants, not missing tests.
             ConfigIntegrityFindingKind.SchemaVersionNewer
             or ConfigIntegrityFindingKind.ConfigSheetMissing
             or ConfigIntegrityFindingKind.SecondHelperSheet
             or ConfigIntegrityFindingKind.ScheduleDataOnConfig
+            or ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet
+            or ConfigIntegrityFindingKind.ExtraTableColumns
+            or ConfigIntegrityFindingKind.TableOffContractOrigin
+            or ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag
             or ConfigIntegrityFindingKind.Unknown => ConfigRepairClassification.Refuse,
             ConfigIntegrityFindingKind.UserStyleQuarantined => ConfigRepairClassification.ConfirmRequired,
             _ => ConfigRepairClassification.Refuse,

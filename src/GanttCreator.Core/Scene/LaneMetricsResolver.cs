@@ -83,6 +83,14 @@ public static class LaneMetricsResolver
     /// <param name="stackGapPt">Space between distinct effective slots.</param>
     /// <param name="splitterHeightPt">The fixed splitter lane height.</param>
     /// <param name="spacerHeightPt">The fixed spacer lane height.</param>
+    /// <param name="emptyBodyRowHeightPt">
+    /// The managed row height to use when the measured table has NO body rows: the
+    /// themed <c>GanttRowHeightPt</c>. ADR-0050 makes an empty live table a supported
+    /// state that still renders its frame, and there is no measured row to derive a
+    /// lane from — refusing there meant a freshly initialised workbook never drew a
+    /// chart. <see langword="null"/> keeps the previous refusal for any caller that has
+    /// no such token.
+    /// </param>
     /// <returns>The resolved metrics, or a typed refusal.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="grid"/> is null.</exception>
     public static LaneMetricsResolution Resolve(
@@ -91,7 +99,8 @@ public static class LaneMetricsResolver
         double lanePaddingBottomPt,
         double stackGapPt,
         double splitterHeightPt,
-        double spacerHeightPt)
+        double spacerHeightPt,
+        double? emptyBodyRowHeightPt = null)
     {
         if (grid is null)
         {
@@ -101,10 +110,25 @@ public static class LaneMetricsResolver
         IReadOnlyList<double> heights = grid.RowHeightsPt;
         if (heights.Count == 0)
         {
-            return new LaneMetricsResolution(null, LaneMetricsRefusal.NoRows);
+            // No measured body: the table is empty, and the lane height is the token the
+            // row-height normaliser writes to every body row. Refused only when no token
+            // was supplied, which is every caller before this change.
+            return emptyBodyRowHeightPt is { } emptyHeight
+                && double.IsFinite(emptyHeight)
+                && emptyHeight > 0
+                ? new LaneMetricsResolution(
+                    new LaneLayoutMetrics(
+                        emptyHeight,
+                        lanePaddingTopPt,
+                        lanePaddingBottomPt,
+                        stackGapPt,
+                        splitterHeightPt,
+                        spacerHeightPt),
+                    null)
+                : new LaneMetricsResolution(null, LaneMetricsRefusal.NoRows);
         }
 
-        foreach (var height in heights)
+        foreach (double height in heights)
         {
             if (!double.IsFinite(height) || height < 0)
             {
@@ -123,7 +147,7 @@ public static class LaneMetricsResolver
             return new LaneMetricsResolution(null, LaneMetricsRefusal.NoVisibleRows);
         }
 
-        var laneHeightPt = MostCommon(visibleHeights);
+        double laneHeightPt = MostCommon(visibleHeights);
 
         return new LaneMetricsResolution(
             new LaneLayoutMetrics(
@@ -143,15 +167,15 @@ public static class LaneMetricsResolver
     private static double MostCommon(List<double> heights)
     {
         Dictionary<double, int> counts = [];
-        foreach (var height in heights)
+        foreach (double height in heights)
         {
-            _ = counts.TryGetValue(height, out var seen);
+            _ = counts.TryGetValue(height, out int seen);
             counts[height] = seen + 1;
         }
 
-        var best = heights[0];
-        var bestCount = 0;
-        foreach (var height in heights)
+        double best = heights[0];
+        int bestCount = 0;
+        foreach (double height in heights)
         {
             if (counts[height] > bestCount)
             {

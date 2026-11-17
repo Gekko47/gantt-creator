@@ -164,6 +164,8 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
             { "BaselineMilestone", "BaselineFill", "BaselineOutline", "#00B050|#006100" },
             { "CriticalMilestone", "CriticalStroke", "CriticalOutline", "#FF0000|#C00000" },
             { "DefaultDelineator", "(none)", "DelineatorStroke", "|#404040" },
+            { "CustomActivity", "(none)", "(none)", "|" },
+            { "CustomMilestone", "(none)", "(none)", "|" },
             { "Splitter", "SplitterFill", "(none)", "#FFE699|" },
             { "Spacer", "(none)", "(none)", "|" },
         };

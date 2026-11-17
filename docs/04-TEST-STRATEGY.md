@@ -45,6 +45,10 @@ Testing must prove the domain and rendering logic without Office, then prove the
 
 ## Coverage policy
 
+**The Office and AddIn targets are ceilings for host-free tests, not floors to push past.** A large share of the uncovered lines in the Office adapters are the *bodies of their own `internal virtual` seams* - `TryFindTable`, `TryBuildColumnMap`, `TryReadBody`, `GetSheetAt`/`GetTableAt`/`GetColumnAt`, `GetListRows`/`GetListRowCount`, `ReadHiddenFlag`/`SetRowHidden`, and the private indexer wrappers. The contract-test subclass overrides exactly those members, which is how every decision above them becomes reachable without Excel; their real COM traversal is what `verify-office.ps1` exercises on a live host. Raising a below-target figure by contract tests would mean deleting the overrides and asserting Moq against an indexer Moq cannot express, so a below-target class in this layer is not automatically a test gap - classify the uncovered lines as decisions or as seam bodies before writing a test.
+
+**Why the seam bodies are accepted rather than faked (evidence, not preference).** Three defects have shipped from this layer, and every one was found by the live gate and none by a contract test: `ExcelParentChildMutator.GetCellAt` used the two-argument `Range` indexer that Excel refuses with `COMException 0x800A03EC`, so Promote and Demote always failed; the R2.7 crash was a one-based `Value2` matrix read; the label clipping was a measured-versus-rendered font mismatch. The failure mode is loud (a `COMException` at first use), not silent data damage, which is what makes a gate an adequate control. Two rubber-stamp doubles are already on record as the alternative that does not work - `FakeRowHeightNormaliser` discarded the heights it was given, so a hardcoded 15/6/6 passed every refresh test, and `FakePanelGridMeasurement` ignored the requested column set, so a live-refused column list passed. Contract-test ceilings measured 2026-11-03, to be read as baselines rather than gaps: `ExcelStyleKeyWriter` 60.0%, `ExcelPanelGridMeasurement` 75.6%, `ExcelWorkbookInitialiser` 86.2%, `ExcelParentChildMutator` 89.2%, `ExcelConfigCatalogueWriter` 93.0%, `GanttRefreshOrchestrator` 97.1%. (`ExcelAddChildMutator` was on this list at 50.8%; R5.16 removed it.)
+
 Initial thresholds are deliberately strict in deterministic code and realistic at external boundaries:
 
 | Project | Line | Branch | Additional gate |
@@ -55,6 +59,8 @@ Initial thresholds are deliberately strict in deterministic code and realistic a
 | `GanttCreator.AddIn` | 75% | 65% | Ribbon XML/callback and command-boundary tests |
 
 Exclude only generated interop/build files and trivial assembly metadata. Never exclude a file because it is difficult to test. A threshold change requires an ADR or explicit pull-request approval with evidence.
+
+Coverage is measured from one merged report, never from a single per-project file. The test command writes one Cobertura file per test project, and each file holds only the classes that project executed, so a package appears in several files with partial rates: the Core test project's file alone reports `GanttCreator.Core` at 0.28% line, while the union of every file is ~97%. [the merge script](../scripts/coverage-report.ps1) produces that union with ReportGenerator, whose version is pinned in [the tool pin file](../scripts/tool-versions.psd1) (W11), and excludes generated compiler sources under `obj/` because output such as RegexGenerator code is machine-written and no test can reach it. The collection directory is emptied before each run: a report left by an earlier run adds covered lines the current tree no longer has, which would describe two builds at once. "Best file wins" is not an acceptable substitute - it under-reports, because a class covered only by another project's run is invisible to every file that did not execute it.
 
 Coverage is a floor, not proof. Review changed lines, branches, fault paths, and assertions. Run mutation testing on Core weekly or before release; do not burden every small local commit with a full mutation run.
 
@@ -170,6 +176,29 @@ what the gate does. The contract is enforced by
   numbered lines in the `.DESCRIPTION` block.
 - The names are non-empty and unique.
 - Both verify-quick.ps1 and verify.ps1 carry this property.
+
+### Script-test runner (W15)
+
+`scripts/test-scripts.ps1` runs every `scripts/*Tests.ps1` file in parallel
+runspaces and judges the aggregate with `Get-ScriptTestGateVerdict`
+(`scripts/verify-helpers.ps1`). Measured 2026-11-12 on 8 logical processors,
+16 files / 288 tests: ~142 s sequential, 129.8 s at 8 workers, 92.8 s at 4, and
+64.4 s inside `verify-quick` at the shipped default.
+
+- The default throttle is 4, or the processor count when lower. Oversubscribing
+  is slower, because the files are process-spawn bound rather than CPU bound.
+- Each file's output is buffered inside its runspace and printed in discovery
+  order after the run, so the report is deterministic even though completion
+  order is not.
+- `-Serial` runs one file at a time with Pester's Detailed output, for
+  diagnosing an order-dependent or contended failure. It reaches the same
+  verdict through the same judge.
+- The judge is tested in-process (`scripts/test-scripts.Tests.ps1`) because a
+  verdict test that spawns Pester per case costs more than the gate it proves.
+  Two end-to-end tests keep the runner wired to that judge.
+- A per-test fixture that spawns a child process is affordable only when the
+  file's own tests are fast; prefer proving a verdict through a helper over
+  running the whole gate again.
 
 ### NoWarn scope
 
@@ -300,6 +329,11 @@ For every injected failure assert cleanup, preserved user content, restored appl
 - A single bounded rerun may be used only to classify an Office-hosted failure, and both attempts remain in the evidence.
 - Quarantine requires an issue, owner, expiry date, and replacement release gate. Quarantined tests do not count as passing.
 - Fix synchronization by observing state, not increasing sleep durations.
+- Never let a host-free test read ambient machine state. `ExcelDnaUtil.Application` resolves the
+  **running** Excel instance, not only a real add-in host, so a test that reaches it passes or fails
+  according to whether Excel happens to be open on the developer's machine. Inject the fact
+  explicitly or put it behind an `internal virtual` seam, and never let a production member
+  re-probe a static over a dependency that was already injected.
 
 ## Pull-request test evidence
 

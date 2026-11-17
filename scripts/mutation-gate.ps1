@@ -51,7 +51,21 @@ param(
     [int]$Threshold,
     [string]$Since = 'origin/main',
     [string]$Solution,
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+    # The test projects Stryker runs against each mutant. Core-only was the
+    # original setting, and it silently scored a Core mutant SURVIVED whenever
+    # only an Office or AddIn test killed it. Those two suites are host-free
+    # (Moq PIA, fakes), so they are added by default. Two exclusions are
+    # deliberate: GanttCreator.Office.IntegrationTests needs a live Excel host
+    # (ADR-0001), and GanttCreator.Architecture.Tests has no ProjectReference
+    # to Core by design, so Stryker cannot resolve --project through it.
+    [string[]]$TestProjects,
+    # A guard, not a tuning knob. When a long-lived branch has diverged from
+    # the diff base, `--since` selects the WHOLE project: a 43-minute,
+    # whole-Core mutation run with no streamed output, which reads as a hung
+    # gate and gets interrupted. Failing fast with the count and the remedy is
+    # the honest behaviour. Raise this only with a stated reason.
+    [int]$MaxChangedFiles = 30
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,6 +125,14 @@ function Invoke-MutationJudge {
         [int]$Threshold,
         [Parameter(Mandatory=$true)]
         [int]$StrykerExitCode,
+        # The changed Core files this run is judged on, relative to the
+        # repository root. When the parameter is SUPPLIED it defines the judged
+        # set, including the empty set (a change that touches no Core source).
+        # When it is absent the whole report is judged, which is what a baseline
+        # run does. Supplied-but-empty and absent are different answers, and only
+        # $PSBoundParameters can tell them apart (W15 follow-up).
+        [string[]]$InScopeFiles,
+        [string]$RepoRoot = $repoRoot,
         [switch]$Baseline
     )
 
@@ -134,17 +156,52 @@ function Invoke-MutationJudge {
     $compileErrors = 0
     $noCoverage = 0
 
+    # The report is project-wide even on a changed-code run: `--since` marks the
+    # mutants of unchanged files Ignored, but every mutant Stryker created is in
+    # the file, including CompileError entries from Safe Mode in code this run
+    # never selected. Judging the whole report therefore mixed the changed file's
+    # result with unrelated noise - measured on 2026-11-11, the report held 1,219
+    # CompileError mutants from untouched files while the changed file's own entry
+    # was empty, and the gate reported "no scored mutants" as a PASS. So the
+    # changed files are tallied separately and judged on their own.
+    $scopeSet = @{}
+    foreach ($relative in @($InScopeFiles)) {
+        if (-not [string]::IsNullOrWhiteSpace($relative)) {
+            $scopeSet[[System.IO.Path]::GetFullPath((Join-Path $RepoRoot $relative))] = $true
+        }
+    }
+    # Supplied, not merely non-empty: verify.ps1 forwards an explicitly empty
+    # array when the branch changed no Core file, and that must not be treated as
+    # "no scope supplied" (a baseline-style whole-report judge). Measured
+    # 2026-11-12: an empty set fell through to the whole-project report and
+    # failed on 1,219 pre-existing Safe Mode compile errors from untouched files.
+    $judgeScope = $PSBoundParameters.ContainsKey('InScopeFiles')
+    $scopeFilesSeen = 0
+    $scopeTotal = 0
+    $scopeKilled = 0
+    $scopeSurvived = 0
+    $scopeTimeout = 0
+    $scopeCompileErrors = 0
+    $scopeNoCoverage = 0
+
     foreach ($fileEntry in $report.Files.PSObject.Properties) {
         $fileData = $fileEntry.Value
+        $inScope = $false
+        if ($judgeScope) {
+            $fullPath = try { [System.IO.Path]::GetFullPath($fileEntry.Name) } catch { $fileEntry.Name }
+            $inScope = $scopeSet.ContainsKey($fullPath)
+            if ($inScope) { $scopeFilesSeen++ }
+        }
         if ($null -ne $fileData.Mutants) {
             foreach ($mutant in $fileData.Mutants) {
                 $total++
+                if ($inScope) { $scopeTotal++ }
                 switch ($mutant.Status) {
-                    'Killed' { $killed++ }
-                    'Survived' { $survived++ }
-                    'Timeout' { $timeout++ }
-                    'CompileError' { $compileErrors++ }
-                    'NoCoverage' { $noCoverage++ }
+                    'Killed' { $killed++; if ($inScope) { $scopeKilled++ } }
+                    'Survived' { $survived++; if ($inScope) { $scopeSurvived++ } }
+                    'Timeout' { $timeout++; if ($inScope) { $scopeTimeout++ } }
+                    'CompileError' { $compileErrors++; if ($inScope) { $scopeCompileErrors++ } }
+                    'NoCoverage' { $noCoverage++; if ($inScope) { $scopeNoCoverage++ } }
                     default { } # Ignored, RuntimeError, etc. don't count toward score
                 }
             }
@@ -173,32 +230,61 @@ function Invoke-MutationJudge {
         }
     }
 
+    # The judged set is the changed files when the caller supplied them, and the
+    # whole report otherwise (a baseline run). This is the fix for the silent
+    # pass measured on 2026-11-11: the whole-report read let 1,219 CompileError
+    # mutants from untouched files stand in for the changed file, which itself
+    # had no mutants at all, and the gate reported "no scored mutants" as PASS.
+    if ($judgeScope) {
+        $judgeTotal = $scopeTotal
+        $judgeKilled = $scopeKilled
+        $judgeSurvived = $scopeSurvived
+        $judgeTimeout = $scopeTimeout
+        $judgeNoCoverage = $scopeNoCoverage
+        $judgeCompileErrors = $scopeCompileErrors
+    } else {
+        $judgeTotal = $total
+        $judgeKilled = $killed
+        $judgeSurvived = $survived
+        $judgeTimeout = $timeout
+        $judgeNoCoverage = $noCoverage
+        $judgeCompileErrors = $compileErrors
+    }
+
     # Stryker's mutation score is killed / (killed + survived + timeout + noCoverage) * 100
     # NoCoverage mutants lower the reported score (they are in the denominator).
-    $denominator = $killed + $survived + $timeout + $noCoverage
+    $denominator = $judgeKilled + $judgeSurvived + $judgeTimeout + $judgeNoCoverage
     $score = if ($denominator -gt 0) {
-        $killed / $denominator
+        $judgeKilled / $denominator
     } else {
         0
     }
     $scorePct = [math]::Round($score * 100, 2)
 
     $result = [pscustomobject]@{
-        Mode            = if ($Baseline) { 'baseline' } else { 'changed-code' }
-        ScorePercent    = $scorePct
-        Threshold       = $Threshold
-        Total           = $total
-        Killed          = $killed
-        Survived        = $survived
-        Timeout         = $timeout
-        CompileErrors   = $compileErrors
-        NoCoverage      = $noCoverage
-        ReportPath      = $ReportPath
-        StrykerExitCode = $StrykerExitCode
+        Mode                 = if ($Baseline) { 'baseline' } else { 'changed-code' }
+        ScorePercent         = $scorePct
+        Threshold            = $Threshold
+        Total                = $total
+        Killed               = $killed
+        Survived             = $survived
+        Timeout              = $timeout
+        CompileErrors        = $compileErrors
+        NoCoverage           = $noCoverage
+        InScopeTotal         = $judgeTotal
+        InScopeKilled        = $judgeKilled
+        InScopeCompileErrors = $judgeCompileErrors
+        ReportPath           = $ReportPath
+        StrykerExitCode      = $StrykerExitCode
     }
 
     Write-Host ''
-    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$total killed, $survived survived, $timeout timeout, $noCoverage no-coverage) against a $Threshold% threshold."
+    if ($judgeScope) {
+        Write-Host ("mutation-gate: {0} changed-file score {1}% ({2}/{3} scored killed, {4} survived, {5} timeout, {6} no-coverage, {7} compile-error) against a {8}% threshold." -f $result.Mode, $scorePct, $judgeKilled, $denominator, $judgeSurvived, $judgeTimeout, $judgeNoCoverage, $judgeCompileErrors, $Threshold)
+        Write-Host ("mutation-gate: whole report held {0} mutants ({1} compile-error); only the changed files are judged." -f $total, $compileErrors)
+    } else {
+        Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$denominator scored killed, $survived survived, $timeout timeout, $noCoverage no-coverage, $compileErrors compile-error) against a $Threshold% threshold."
+    }
 
     if ($Baseline) {
         Write-Host "mutation-gate: BASELINE archived (not judged). Report: $ReportPath"
@@ -214,13 +300,40 @@ function Invoke-MutationJudge {
         return $result
     }
 
-    # Detect when changed-code mode has no scored mutants (zero total or only Ignored/NoCoverage)
-    # In this case, pass the gate but log the reason.
-    $scoredMutants = $killed + $survived + $timeout
-    if ($scoredMutants -eq 0) {
-        Write-Host "mutation-gate: CHANGED-CODE MODE - no scored mutants found ($killed killed, $survived survived, $timeout timeout, $noCoverage no-coverage). Passing gate (no changed code to mutate)."
+    # An explicitly empty changed-Core set is a real answer: the change touched no
+    # Core source, so no mutant belongs to it. It is a PASS, and it is stated as
+    # that fact rather than as a score. This branch must precede the
+    # "names none of the changed files" check, because an empty set names none by
+    # construction and is not a blind run.
+    if ($judgeScope -and $scopeSet.Count -eq 0) {
+        Write-Host 'mutation-gate: the changed Core set is empty, so there is nothing to mutate. Passing on that fact, not on a score.'
         Write-Host 'mutation-gate: PASS'
         return $result
+    }
+
+    # A changed file the report never names means the run did not evaluate the
+    # code it was asked to judge. That is a failure, never a pass.
+    if ($judgeScope -and $scopeFilesSeen -eq 0) {
+        throw (
+            "Stryker's report names none of the changed Core files ({0}). The run did not evaluate the code it was asked to judge." -f (@($InScopeFiles) -join ', ')
+        )
+    }
+
+    # Zero mutants in the changed files is a real answer: the change contains no
+    # mutable code (a pure delegation to string.Equals produces none). It is a
+    # PASS, but it is stated as that fact rather than as "no changed code".
+    if ($judgeScope -and $judgeTotal -eq 0) {
+        Write-Host 'mutation-gate: the changed Core files contain no mutable code, so there is nothing to score. Passing on that fact, not on a score.'
+        Write-Host 'mutation-gate: PASS'
+        return $result
+    }
+
+    # Mutants existed in the changed files but none could be scored. This is the
+    # silent pass this gate used to have, so it is now a FAILURE.
+    if ($denominator -eq 0) {
+        throw (
+            "None of the {0} mutants in the changed Core files could be scored ({1} compile-error, {2} ignored). Stryker's Safe Mode removes mutations it cannot compile, and that is not evidence the code is tested. Remove the un-compilable mutation sites or exclude them explicitly." -f $judgeTotal, $judgeCompileErrors, ($judgeTotal - $judgeCompileErrors - $judgeNoCoverage)
+        )
     }
 
     if ($scorePct -lt $Threshold) {
@@ -230,6 +343,144 @@ function Invoke-MutationJudge {
 
     Write-Host 'mutation-gate: PASS'
     return $result
+}
+
+function Get-ChangedCoreFiles {
+    <#
+    .SYNOPSIS
+        The Core files the diff base would select for mutation.
+    #>
+    param([string]$Since)
+
+    $core = Join-Path $repoRoot 'src\GanttCreator.Core'
+    $diff = & git diff --name-only "$Since...HEAD" -- $core 2>$null
+    return @($diff | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Resolve-DiffBase {
+    <#
+    .SYNOPSIS
+        Resolves -Since to a commit SHA, or refuses the run.
+    .DESCRIPTION
+        Stryker's `--since` takes a branch, tag or commit that it resolves
+        itself; it does not understand a git revspec. Measured on the installed
+        5.0.0, 2026-11-02: `--since:HEAD~40` produced
+
+            No branch or tag or commit found with given target HEAD~40
+
+        and then mutated the WHOLE project (6,687 mutants created) while the
+        gate still read the resulting report as a changed-code score. That is
+        the worst possible failure mode for this gate -- it reports a
+        whole-project number under a changed-code label -- so the base is
+        resolved here first and the run is refused when it does not resolve.
+        Resolving to a SHA also makes every accepted spelling (`origin/main`,
+        a tag, `HEAD~40`, a short SHA) behave identically downstream.
+    #>
+    param([string]$Since, [string]$RepoRoot)
+
+    $resolved = & git -C $RepoRoot rev-parse --verify --quiet "$Since^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) {
+        throw (
+            "Cannot resolve -Since '{0}' to a commit. Stryker's --since accepts only a branch, tag or commit, and on an unresolvable target it mutates the whole project while the gate reports the result as a changed-code score. Use a branch name, a tag or a commit SHA." -f $Since
+        )
+    }
+
+    return $resolved.Trim()
+}
+
+function Resolve-TestProjects {
+    <#
+    .SYNOPSIS
+        The test projects Stryker runs against each Core mutant.
+    .DESCRIPTION
+        Core.Tests alone is the default, so a Core mutant killed only by an
+        Office or AddIn test is scored SURVIVED and the score under-reports the
+        suite. Widening stays an explicit opt-in, but the cost figure that
+        justified it has been re-measured and corrected.
+
+        The original 2026-11-01 measurement (one file's 403 mutants unfinished
+        after 49 minutes, ~19x the per-mutant cost, extrapolating to ~13 hours
+        for a whole-Core baseline) was taken while discovery still followed the
+        working directory: a run started from a directory holding the solution
+        made Stryker enumerate every project's tests. With that defect fixed and
+        `--since` scoping the run, the widened set measured on 2026-11-02 over
+        the same 237 changed mutants as the narrow run took 7m03s against
+        3m20s -- about 2.1x, not 19x. It also killed four more mutants
+        (219/237 = 92.41% against 215/237 = 90.72%) and dropped the timeout
+        count, because Office and AddIn tests do kill Core mutants.
+
+        Making it the default is therefore an owner decision about CI runtime,
+        not a measurement question: the accuracy gain is real and now cheap.
+
+        Two projects are never useful here. GanttCreator.Office.IntegrationTests
+        needs a live Excel host (ADR-0001). GanttCreator.Architecture.Tests has
+        no ProjectReference to Core by design, so Stryker cannot resolve
+        --project through it.
+    #>
+    param([string]$RepoRoot, [string[]]$Explicit)
+
+    if ($null -ne $Explicit -and $Explicit.Count -gt 0) {
+        return @($Explicit)
+    }
+
+    return @((Join-Path $RepoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'))
+}
+
+function Assert-ChangedCodeScope {
+    <#
+    .SYNOPSIS
+        Refuses a changed set so large that `--since` has stopped meaning
+        "changed code".
+    #>
+    param([string[]]$ChangedFiles, [int]$MaxChangedFiles)
+
+    if ($ChangedFiles.Count -gt $MaxChangedFiles) {
+        throw (
+            "The changed Core set is {0} files (limit {1}), so '--since {2}' would mutate the whole project. That is not changed-code scope and runs for tens of minutes. Use a nearer diff base (-Since <merge-base>) or run -Baseline deliberately." -f $ChangedFiles.Count, $MaxChangedFiles, $Since
+        )
+    }
+}
+
+function Assert-ProjectDirectoryContext {
+    <#
+    .SYNOPSIS
+        Refuses to run Stryker in a directory that holds a solution file.
+    .DESCRIPTION
+        Measured on the installed dotnet-stryker 5.0.0, 2026-11-01. Two runs,
+        same `--project`, same single `--test-project`, different working
+        directory:
+
+          * repository root -> IsSolutionContext: True, SolutionPath set,
+            "Number of tests found: 3470";
+          * src/GanttCreator.Core -> IsSolutionContext: False, SolutionPath
+            null, "Number of tests found: 1823".
+
+        1,823 is the Core suite exactly (`dotnet test` on Core.Tests alone).
+        3,470 is the whole solution's tests, which drags the live-Excel
+        integration suite into the initial run; a single failure there makes
+        Stryker distrust the coverage map and ignore every mutant's tests, so
+        the report comes back with zero mutants. That is what voided the
+        SceneSnapshot probe, and it is a property of the working directory,
+        not of `--test-project`: the flag selects which projects run per
+        mutant, it does not scope discovery.
+
+        The gate already ran from the Core project directory, so the gate was
+        sound; the guard exists so a future edit cannot silently move the
+        invocation back to the root and turn a 1,823-test run into a
+        3,470-test one that reports nothing.
+    #>
+    param([string]$ProjectDirectory)
+
+    $solutions = @(
+        Get-ChildItem -LiteralPath $ProjectDirectory -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.sln', '.slnx') }
+    )
+    if ($solutions.Count -gt 0) {
+        $names = ($solutions | ForEach-Object { $_.Name }) -join ', '
+        throw (
+            "Stryker would run in '{0}', which contains the solution file(s) {1}. Stryker then discovers tests solution-wide instead of from --test-project: 3,470 tests were found from the repository root against 1,823 from the Core project directory, and one failure in the live-Excel suite voids the coverage map so every mutant is ignored. Run Stryker from the mutated project's directory." -f $ProjectDirectory, $names
+        )
+    }
 }
 
 # If dot-sourced (e.g., for testing), export the functions and return
@@ -262,8 +513,8 @@ if ($PSBoundParameters.ContainsKey('Threshold')) {
 }
 
 $coreProject = Join-Path $repoRoot 'src\GanttCreator.Core\GanttCreator.Core.csproj'
-$coreTests = Join-Path $repoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'
-foreach ($required in @($Solution, $coreProject, $coreTests)) {
+$TestProjects = Resolve-TestProjects -RepoRoot $repoRoot -Explicit $TestProjects
+foreach ($required in @($Solution, $coreProject) + $TestProjects) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw "Required path not found: $required"
     }
@@ -275,8 +526,8 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 # ---------------------------------------------------------------- install
 # The tool is installed by the GATE, not by a csproj PackageReference, so it
 # is test-only and can never reach a production project.
-if (-not (Test-ToolInstalled $settings.ToolId $settings.Version)) {
-    $installedVersion = Test-ToolInstalled $settings.ToolId $settings.Version
+$installedVersion = Test-ToolInstalled $settings.ToolId $settings.Version
+if ($installedVersion -ne $settings.Version) {
     if ($null -eq $installedVersion) {
         Write-Host "mutation-gate: installing $($settings.ToolId) $($settings.Version) as a global tool..."
         & dotnet tool install --global $settings.ToolId --version $settings.Version
@@ -298,7 +549,6 @@ $coreProjectDir = Split-Path -Parent $coreProject
 
 $arguments = @(
     '--project', $coreProject
-    '--test-project', $coreTests
     '--configuration', $Configuration
     # ONE reporter, and only one: `Json`. The gate judges the JSON report
     # file, not the console stream, so a second reporter adds nothing the
@@ -315,16 +565,70 @@ $arguments = @(
     # score is the measurement rather than a pass/fail.
     '--verbosity', 'info'
 )
+foreach ($testProject in $TestProjects) {
+    $arguments += @('--test-project', $testProject)
+}
+Write-Host ("mutation-gate: test projects ({0}):" -f $TestProjects.Count)
+$TestProjects | ForEach-Object { Write-Host "  $_" }
 if (-not $Baseline) {
+    # Resolve FIRST: Stryker rejects a revspec and then mutates the whole
+    # project, which would make a whole-project score look like a changed-code
+    # score. Resolving here also gives the scope guard a base git agrees with.
+    $requestedSince = $Since
+    $Since = Resolve-DiffBase -Since $Since -RepoRoot $repoRoot
+    Write-Host "mutation-gate: diff base '$requestedSince' resolved to $Since"
+    # Scope guard: a divergent branch turns `--since` into a whole-project run.
+    # Surface the selected set, and refuse an implausible one before the tool
+    # spends tens of minutes on it.
+    $changed = Get-ChangedCoreFiles -Since $Since
+    Assert-ChangedCodeScope -ChangedFiles $changed -MaxChangedFiles $MaxChangedFiles
+    Write-Host ("mutation-gate: changed Core files ({0}):" -f $changed.Count)
+    $changed | ForEach-Object { Write-Host "  $_" }
+
+    # Nothing changed in Core: do not spend minutes asking Stryker to mutate
+    # nothing. Measured on a docs/scripts-only change, 2026-11-12: the run took
+    # 113 s, created 6,811 mutants, and scored none of them. This is the common
+    # case for a tooling, test, or documentation change, so it is answered
+    # directly and stated as the reason.
+    if ($changed.Count -eq 0) {
+        Write-Host 'mutation-gate: the changed Core set is empty, so there is nothing to mutate. Skipping Stryker and passing on that fact, not on a score.'
+        Write-Host 'mutation-gate: PASS'
+        return [pscustomobject]@{
+            Mode                 = 'changed-code'
+            ScorePercent         = 0
+            Threshold            = $Threshold
+            Total                = 0
+            Killed               = 0
+            Survived             = 0
+            Timeout              = 0
+            CompileErrors        = 0
+            NoCoverage           = 0
+            InScopeTotal         = 0
+            InScopeKilled        = 0
+            InScopeCompileErrors = 0
+            ReportPath           = ''
+            StrykerExitCode      = 0
+        }
+    }
+
     $arguments += @("--since:$Since", '--threshold-low', "$Threshold")
 } else {
     Write-Host 'mutation-gate: BASELINE run over the whole of Core (no --since, no threshold).'
 }
 
 Write-Host "mutation-gate: dotnet-stryker $($arguments -join ' ')"
+# Discovery follows the working directory, not --test-project (see
+# Assert-ProjectDirectoryContext): from a directory holding the solution,
+# Stryker enumerates the whole solution's tests and one live-Excel failure
+# voids the run.
+Assert-ProjectDirectoryContext -ProjectDirectory $coreProjectDir
 Push-Location $coreProjectDir
 try {
-    $output = & dotnet-stryker @arguments 2>&1
+    # STREAM, do not buffer: a whole-Core run takes tens of minutes, and a
+    # captured-until-exit pipeline shows nothing for that whole time, which
+    # reads as a hung gate. Tee-Object-style streaming keeps the human informed
+    # while still collecting the text the report step echoes.
+    $output = & dotnet-stryker @arguments 2>&1 | ForEach-Object { Write-Host $_; $_ }
 }
 finally {
     Pop-Location
@@ -336,6 +640,20 @@ $exit = $LASTEXITCODE
 $output | ForEach-Object { Write-Host $_ }
 
 # ---------------------------------------------------------------- judge
-$reportPath = Join-Path $outputDir 'mutation-report.json'
-$result = Invoke-MutationJudge -ReportPath $reportPath -Threshold $Threshold -StrykerExitCode $exit -Baseline:$Baseline
+# Stryker 5.0.0 writes its JSON report into a `reports` subdirectory under
+# --output, so the judge must read <output>/reports/mutation-report.json,
+# not <output>/mutation-report.json.
+$reportPath = Join-Path $outputDir 'reports' 'mutation-report.json'
+$judgeArguments = @{
+    ReportPath      = $reportPath
+    Threshold       = $Threshold
+    StrykerExitCode = $exit
+    RepoRoot        = $repoRoot
+}
+if (-not $Baseline) {
+    # The changed files are what this run is judged on. Passing them makes the
+    # judge read their own entry, not the whole report's totals.
+    $judgeArguments.InScopeFiles = @($changed)
+}
+$result = Invoke-MutationJudge @judgeArguments -Baseline:$Baseline
 return $result

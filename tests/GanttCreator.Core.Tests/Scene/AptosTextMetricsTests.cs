@@ -70,6 +70,31 @@ public sealed class AptosTextMetricsTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// Every face measures the ASCII run, the extra-code-point table, and a glyph the
+    /// table does not carry.
+    /// </summary>
+    /// <remarks>
+    /// Narrow+Bold was the one face no test constructed, which left half of each
+    /// four-arm lookup unexecuted; and an unmapped glyph must still measure a full em
+    /// rather than zero, because a zero advance would size a box that clips it.
+    /// </remarks>
+    [Fact]
+    public void Every_face_measures_ascii_extra_and_unmapped_glyphs()
+    {
+        foreach (bool bold in new[] { false, true })
+        {
+            foreach (bool narrow in new[] { false, true })
+            {
+                var metrics = new AptosTextMetrics(8d, bold, narrow);
+
+                Assert.True(Width(metrics, "A") > 0, $"ASCII run failed for bold={bold} narrow={narrow}.");
+                Assert.True(Width(metrics, "\u20AC") > 0, $"Extra table failed for bold={bold} narrow={narrow}.");
+                Assert.True(Width(metrics, "\U0001F600") > 0, $"Unmapped glyph failed for bold={bold} narrow={narrow}.");
+            }
+        }
+    }
+
+    /// <summary>
     /// Narrow measures narrower than the default family, which is why the face has to
     /// be selected rather than assumed.
     /// </summary>

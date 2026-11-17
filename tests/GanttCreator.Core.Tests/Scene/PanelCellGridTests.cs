@@ -201,6 +201,17 @@ public sealed class PanelCellGridTests
     }
 
     [Fact]
+    public void An_intentionally_empty_live_grid_is_accepted_only_when_opted_in()
+    {
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate(
+            [Col("Id"), Col("Type"), Col("Description"), Col("Start")],
+            [], 12.0, Required, allowEmptyRows: true);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(outcome.Grid!.RowHeightsPt);
+    }
+
+    [Fact]
     public void A_non_positive_or_non_finite_header_height_is_refused()
     {
         // §4's header follows the live header-cell bounds, so the header height is a
@@ -241,13 +252,23 @@ public sealed class PanelCellGridTests
     }
 
     [Fact]
-    public void An_empty_column_list_is_refused()
+    public void An_empty_column_list_is_accepted_with_a_zero_width()
     {
-        // Positive test: a panel with no columns would emit a header with no
-        // cells and a body with no content, which §3 does not permit.
-        Assert.Equal(
-            PanelCellGridRefusal.NoColumns,
-            PanelCellGrid.TryCreate([], [12.0], 12.0, Required).Refusal);
+        // ADR-0065 D4: a fully hidden table measures zero columns. The grid is valid and
+        // carries the plot anchor's measured left edge as its right edge on the live sheet.
+        PanelCellGridCreationOutcome outcome =
+            PanelCellGrid.TryCreate(
+                [],
+                [12.0],
+                12.0,
+                [],
+                originLeftPt: 40d,
+                plotOriginRightPt: 40d);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(outcome.Grid!.Columns);
+        Assert.Equal(0d, outcome.Grid.TotalWidthPt);
+        Assert.Equal(40d, outcome.Grid.PanelRightPt);
     }
 
     [Fact]
@@ -366,5 +387,99 @@ public sealed class PanelCellGridTests
 
             Assert.Equal(column.Name, grid.Columns[0].Name);
         }
+    }
+
+    [Fact]
+    public void A_grid_without_a_gutter_puts_the_panel_left_edge_at_the_origin()
+    {
+        // The default is zero and must stay behaviour-neutral: every composition that
+        // predates the gutter has to draw exactly where it drew before.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [Col("Id")], [12.0], 12.0, [], originLeftPt: 100).Grid!;
+
+        Assert.Equal(0, grid.LeadingGutterPt);
+        Assert.Equal(100, grid.PanelLeftPt);
+    }
+
+    [Fact]
+    public void A_measured_gutter_moves_the_panel_left_edge_without_moving_the_origin()
+    {
+        // R5.18k: the frame is drawn around the panel, so the gutter is what gives it a
+        // left margin. The ORIGIN must not move — it is where the live title textbox
+        // sits, and a title shifted onto the gutter is exactly the defect this guards.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [Col("Id")], [12.0], 12.0, [], originLeftPt: 100, leadingGutterPt: 5.75).Grid!;
+
+        Assert.Equal(5.75, grid.LeadingGutterPt);
+        Assert.Equal(94.25, grid.PanelLeftPt);
+        Assert.Equal(100, grid.OriginLeftPt);
+    }
+
+    [Fact]
+    public void The_panel_right_edge_is_measured_from_the_origin_not_from_the_panel_left_edge()
+    {
+        // R5.18k's asymmetry, and the reason the live plot drifted into the table: the
+        // gutter widens the panel LEFTWARDS only, so the right edge is origin + widths
+        // (120), never PanelLeftPt + widths (114.25). The live plot starts one point past
+        // this edge, so reading the wrong one puts the chart inside the table's last
+        // column.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [Col("Id", 100), Col("Type", 20)], [12.0], 12.0, [], originLeftPt: 100, leadingGutterPt: 5.75).Grid!;
+
+        Assert.Equal(220, grid.PanelRightPt);
+        Assert.Equal(120, grid.TotalWidthPt);
+        Assert.NotEqual(grid.PanelLeftPt + grid.TotalWidthPt, grid.PanelRightPt);
+    }
+
+    [Fact]
+    public void A_negative_gutter_is_refused_rather_than_clamped()
+    {
+        // Clamping would hide a measurement bug behind a plausible number; the frame
+        // would then enclose nothing on that side and nothing downstream would say so.
+        Assert.Equal(
+            PanelCellGridRefusal.InvalidLeadingGutter,
+            PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, [], leadingGutterPt: -1).Refusal);
+    }
+
+    [Fact]
+    public void A_non_finite_gutter_is_refused()
+    {
+        Assert.Equal(
+            PanelCellGridRefusal.InvalidLeadingGutter,
+            PanelCellGrid.TryCreate(
+                [Col("Id")], [12.0], 12.0, [], leadingGutterPt: double.PositiveInfinity).Refusal);
+    }
+    [Fact]
+    public void A_supplied_right_edge_wins_over_the_summed_column_widths()
+    {
+        // The live panel ends at the PLOT ANCHOR column's left edge, not at the sum of the
+        // visible columns, because twelve hidden engine columns sit between the last visible
+        // column and the plot (owner report 2026-11-15: the chart began in column G while the
+        // anchor is in column S). The summed width is 40 here and the supplied edge 640.
+        PanelCellGrid supplied = PanelCellGrid.TryCreate(
+            [Col("Type")],
+            [12.0],
+            16d,
+            ["Type"],
+            originLeftPt: 40,
+            plotOriginRightPt: 640).Grid!;
+
+        Assert.Equal(640, supplied.PanelRightPt);
+        Assert.Equal(40, supplied.TotalWidthPt);
+    }
+
+    [Fact]
+    public void A_non_positive_supplied_right_edge_is_refused()
+    {
+        // A supplied edge is a POSITION, so zero - the sheet's own edge, the defect this
+        // measurement removes - is refused like any other unusable origin.
+        Assert.Equal(
+            PanelCellGridRefusal.InvalidOrigin,
+            PanelCellGrid.TryCreate(
+                [Col("Type")],
+                [12.0],
+                16d,
+                ["Type"],
+                plotOriginRightPt: 0).Refusal);
     }
 }

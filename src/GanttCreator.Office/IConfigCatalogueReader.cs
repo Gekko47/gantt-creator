@@ -63,6 +63,7 @@ public enum ConfigReadRefusalReason
 /// a refusal.
 /// </param>
 /// <param name="Styles">The validated named-style capabilities; empty on a refusal.</param>
+/// <param name="Metrics">The effective metric DefaultValue map; empty on a refusal.</param>
 /// <param name="Refusal">
 /// The refusal reason when <paramref name="Succeeded"/> is
 /// <see langword="false"/>; otherwise <see langword="null"/>.
@@ -72,11 +73,14 @@ public sealed record ConfigReadOutcome(
     string? WorkbookId,
     IReadOnlyDictionary<string, string> Settings,
     GanttStyleRegistry Styles,
+    IReadOnlyDictionary<string, double> Metrics,
     ConfigReadRefusalReason? Refusal)
 {
     private static readonly IReadOnlyDictionary<string, string> _emptySettings =
         new Dictionary<string, string>();
     private static readonly GanttStyleRegistry _emptyStyles = GanttStyleRegistry.Empty;
+    private static readonly IReadOnlyDictionary<string, double> _emptyMetrics =
+        new Dictionary<string, double>();
 
     /// <summary>
     /// Creates a success outcome.
@@ -84,12 +88,14 @@ public sealed record ConfigReadOutcome(
     /// <param name="workbookId">The workbook's stable ID.</param>
     /// <param name="settings">The effective settings key/value map.</param>
     /// <param name="styles">The validated named-style capabilities.</param>
+    /// <param name="metrics">The effective metric DefaultValue map.</param>
     /// <returns>The success outcome.</returns>
     public static ConfigReadOutcome Ok(
         string workbookId,
         IReadOnlyDictionary<string, string> settings,
-        GanttStyleRegistry styles) =>
-        new(true, workbookId, settings, styles, null);
+        GanttStyleRegistry styles,
+        IReadOnlyDictionary<string, double> metrics) =>
+        new(true, workbookId, settings, styles, metrics, null);
 
     /// <summary>
     /// Creates a refusal outcome. Nothing was mutated.
@@ -97,7 +103,7 @@ public sealed record ConfigReadOutcome(
     /// <param name="refusal">Why nothing was returned.</param>
     /// <returns>The refusal outcome.</returns>
     public static ConfigReadOutcome Refused(ConfigReadRefusalReason refusal) =>
-        new(false, null, _emptySettings, _emptyStyles, refusal);
+        new(false, null, _emptySettings, _emptyStyles, _emptyMetrics, refusal);
 }
 
 /// <summary>

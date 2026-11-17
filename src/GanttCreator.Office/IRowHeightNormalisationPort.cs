@@ -49,8 +49,14 @@ public interface IRowHeightNormalisationPort
     /// shapes' bottom anchor a whole margin-height down, which is a visible strip of
     /// sheet rather than the sub-row anchor the geometry depends on.
     /// </param>
+    /// <param name="typeTexts">
+    /// The <c>Type</c> cell text of each body row, in body order, as the table reader
+    /// already read them in its single bulk <c>Value2</c> call; or <see langword="null"/>
+    /// to have the adapter read the column itself.
+    /// </param>
     /// <returns>How many rows were written, or the refusal reason.</returns>
     /// <remarks>
+    /// <para>
     /// The layout rows are separate parameters rather than members of the body
     /// plan because they live <em>outside</em> <c>DataBodyRange</c>: the plan's
     /// <c>RowNumber</c> is a body index, and mixing a worksheet row into that list
@@ -58,6 +64,15 @@ public interface IRowHeightNormalisationPort
     /// read from. They are written by the same adapter under the same protection
     /// check, and obey the same "already at the token, so no write" rule, so a
     /// normalised sheet still reports zero writes.
+    /// </para>
+    /// <para>
+    /// <b>Why the Type text is passed in.</b> The adapter used to read every body row's
+    /// <c>Type</c> cell through COM to decide the row's height policy, one parameterised
+    /// read per row, even though the table reader had already read the whole body —
+    /// including <c>Type</c> — in one bulk call moments earlier. Passing the texts
+    /// removes those reads without changing the decision: it is the same data from the
+    /// same refresh.
+    /// </para>
     /// </remarks>
     RowHeightNormalisationOutcome Normalise(
         double managedHeightPt,
@@ -66,5 +81,6 @@ public interface IRowHeightNormalisationPort
         double headerHeightPt,
         double reservedRowHeightPt,
         double paddingRowHeightPt,
-        double anchorRowHeightPt);
+        double anchorRowHeightPt,
+        IReadOnlyList<string?>? typeTexts = null);
 }

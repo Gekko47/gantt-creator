@@ -689,6 +689,11 @@ public class ExcelParentChildMutatorTests
 		Assert.Null(parentChildMutationOutcome.Refusal);
 		Assert.Null(parentChildMutationOutcome.PlanRefusal);
 		Assert.Equal(2, parentChildMutationOutcome.SelectedRowNumber);
+
+		// R5.4 D9 extended: promote RELOCATES the row, so the outcome reports where its
+		// content landed. The command selects that row's cell, which is how the user's
+		// cursor stays on the row they promoted instead of on the address it left.
+		Assert.Equal(3, parentChildMutationOutcome.MovedToRowNumber);
 		Assert.Equal(2 * GanttTableSchema.Default.Columns.Count + 1, parentChildMutationOutcome.CellsWritten);
 		Assert.Single(graph.WrittenCells);
 		Assert.Equal(2, graph.WrittenRows.Count);
@@ -768,6 +773,10 @@ public class ExcelParentChildMutatorTests
 		ParentChildMutationOutcome parentChildMutationOutcome = graph.Build(NotProtected()).Demote();
 		Assert.True(parentChildMutationOutcome.Succeeded);
 		Assert.Equal(2, parentChildMutationOutcome.SelectedRowNumber);
+
+		// Demote relocates the row beneath the new parent's run, so the landed index is
+		// reported for the selection to follow.
+		Assert.Equal(2, parentChildMutationOutcome.MovedToRowNumber);
 		Assert.Equal(GanttTableSchema.Default.Columns.Count + 1, parentChildMutationOutcome.CellsWritten);
 		Assert.Single(graph.WrittenRows);
 		Assert.Single(graph.WrittenCells);

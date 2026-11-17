@@ -8,7 +8,11 @@
     Three checks, all derived from the text of docs/STATUS.md itself:
 
       1. Commit hashes  -- every backticked token of 7-40 lowercase hex
-         characters must resolve to a commit (git rev-parse --verify).
+         characters must resolve to a commit. Every token is resolved through
+         ONE `git cat-file --batch-check` call; a token that names an
+         annotated tag object is peeled with
+         `git rev-parse --verify <hash>^{commit}`, which is the exact
+         semantic the previous per-token call provided (W15).
       2. Repo paths     -- every backticked token that looks like a
          repo-relative file path (contains a separator, ends in an
          extension-like suffix, no globs or URLs) must exist on disk
@@ -80,13 +84,86 @@ $tokens = [regex]::Matches($status, '`([^`\r\n]+)`') | ForEach-Object { $_.Group
 
 $violations = New-Object System.Collections.Generic.List[string]
 
+# --- git snapshot (W15) ---
+# Checks 1-3 used to spawn one `git` process per candidate token: 239
+# `rev-parse` calls plus 199 `ls-files` calls. Measured on the reference
+# machine 2026-11-12: 17.18 s and 13.29 s. The same facts taken in two
+# processes cost 0.07 s and 0.08 s, and nothing below depends on per-token git
+# behaviour, so the index is read once and every judgement is made in memory.
+#
+# The index, not HEAD: this gate also runs as a pre-commit hook, so the tree it
+# must validate is the commit about to be made. `git -C $repoRoot` makes git
+# resolve the pathspecs from the repository root, so every entry is the
+# canonical root-relative spelling the rest of this script compares against.
+$indexSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+$indexEntries = @()
+$indexRaw = @(git -C $repoRoot ls-files -z 2>$null)
+$indexExitCode = $LASTEXITCODE
+if ($indexExitCode -eq 0)
+{
+    $indexEntries = @($indexRaw -split "`0" | Where-Object { $_ -ne '' })
+    foreach ($entry in $indexEntries) { $null = $indexSet.Add($entry) }
+}
+
+function Test-CommitTokenResolves {
+    <#
+    .SYNOPSIS
+        Resolves every backticked hex token to a commit in one git process.
+
+    .DESCRIPTION
+        `git cat-file --batch-check` echoes one line per input, in input order:
+        "<objectname> <objecttype>" for a resolved object, or a line naming the
+        input as missing/ambiguous. It exits 0 in those cases, so the verdict is
+        decided by the object TYPE and by the line count:
+
+          commit  -> resolves
+          tag     -> peeled with `git rev-parse --verify <hash>^{commit}`, the
+                     semantic the previous per-token call provided; an annotated
+                     tag that points at a commit still resolves
+          anything else (blob, tree, missing, ambiguous) -> does not resolve,
+                     matching `rev-parse --verify <hash>^{commit}`
+
+        A non-zero exit, or a line count that does not equal the input count,
+        means git could not answer at all; every token is then treated as
+        unresolved. That is the fail-closed direction: a gate that cannot prove
+        a hash resolves must report it, never pass it.
+    #>
+    param([string[]]$Tokens)
+
+    $resolved = @{}
+    if ($null -eq $Tokens -or $Tokens.Count -eq 0) { return $resolved }
+
+    $lines = @(($Tokens -join "`n") | git -C $repoRoot cat-file --batch-check='%(objectname) %(objecttype)' 2>$null)
+    $batchExitCode = $LASTEXITCODE
+    if ($batchExitCode -ne 0 -or $lines.Count -ne $Tokens.Count)
+    {
+        foreach ($token in $Tokens) { $resolved[$token] = $false }
+        return $resolved
+    }
+
+    for ($i = 0; $i -lt $Tokens.Count; $i++)
+    {
+        $parts = @(($lines[$i]) -split '\s+')
+        $objectType = if ($parts.Count -ge 2) { $parts[1] } else { '' }
+
+        $ok = $objectType -eq 'commit'
+        if (-not $ok -and $objectType -eq 'tag')
+        {
+            $null = git -C $repoRoot rev-parse --verify ("$($Tokens[$i])^{commit}") 2>$null
+            $ok = $LASTEXITCODE -eq 0
+        }
+        $resolved[$Tokens[$i]] = $ok
+    }
+    return $resolved
+}
+
 # --- 1. Commit hashes ---
 $hashPattern = '^[0-9a-f]{7,40}$'
-$hashTokens = $tokens | Where-Object { $_ -match $hashPattern }
+$hashTokens = @($tokens | Where-Object { $_ -match $hashPattern })
+$hashResolved = Test-CommitTokenResolves -Tokens $hashTokens
 foreach ($h in $hashTokens)
 {
-    $null = git -C $repoRoot rev-parse --verify ("$h^{commit}") 2>$null
-    if ($LASTEXITCODE -ne 0)
+    if (-not $hashResolved[$h])
     {
         $violations.Add("STATUS references commit '$h' which does not resolve in git.")
     }
@@ -207,25 +284,22 @@ foreach ($t in $tokens)
     # reported as untracked. A trailing separator is trimmed because the
     # tracked-directory test appends its own.
     $gitToken = $rel.TrimEnd('/')
-    $tracked = @(git -C $repoRoot ls-files -- $gitToken 2>$null)
 
-    # Captured immediately after the call, before any other command runs. Reading
-    # $LASTEXITCODE further down would be reading whatever ran last, not git's
-    # status, and the commands between (Join-Path, Where-Object, .StartsWith) are
-    # exactly the kind that can move it.
-    $lsFilesExitCode = $LASTEXITCODE
-
-    # A token is known to git when it is exactly a tracked file, or when it is a
+    # The same judgement `git ls-files -- $gitToken` plus a contains test used to
+    # make, now taken from the single index snapshot at the top of this script
+    # (W15): one process for every path token instead of one per token. A token
+    # is known to git when it is exactly a tracked file, or when it is a
     # directory that contains tracked files. The directory case is required
-    # because git tracks files, not directories: `ls-tree -r` reports the entries
-    # beneath a directory token rather than the token itself, and STATUS cites
-    # project directories such as `src/GanttCreator.Office` as readily as files.
-    $isTrackedFile = @($tracked).Count -gt 0 -and $tracked -contains $gitToken
-    $isTrackedDirectory = @(
-        $tracked | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
+    # because git tracks files, not directories: `ls-files -- <dir>` reports the
+    # entries beneath the directory rather than the directory itself, and STATUS
+    # cites project directories such as `src/GanttCreator.Office` as readily as
+    # files, so the prefix test reproduces that pathspec behaviour exactly.
+    $isTrackedFile = $indexSet.Contains($gitToken)
+    $isTrackedDirectory = -not $isTrackedFile -and @(
+        $indexEntries | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
     ).Count -gt 0
 
-    if ($lsFilesExitCode -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
+    if ($indexExitCode -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
     {
         $violations.Add("STATUS references path '$t' which is not tracked by git; it exists on disk but is untracked or ignored, so a clean checkout (CI) will not have it.")
     }
@@ -264,8 +338,11 @@ function Test-GuideIsTracked {
         [System.IO.Path]::GetFullPath($repoRoot),
         [System.IO.Path]::GetFullPath($Guide.FullName)).Replace('\', '/')
 
-    $tracked = @(git -C $repoRoot ls-files --error-unmatch -- $relative 2>$null)
-    return $LASTEXITCODE -eq 0 -and $tracked.Count -gt 0
+    # `git ls-files --error-unmatch -- <path>` succeeded only when the index knew
+    # the path exactly; membership in the snapshot above is that same test, taken
+    # without a process per guide (W15). $indexExitCode carries the one place git
+    # could have failed, so an unreadable index still fails closed.
+    return $indexExitCode -eq 0 -and $indexSet.Contains($relative)
 }
 
 # Roadmap IDs appear in bold and plain prose as well as backticks, so scan

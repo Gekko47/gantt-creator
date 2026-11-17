@@ -62,4 +62,13 @@
       <DependentUpon>RibbonResources.resx</DependentUpon>
     </Compile>
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      R5.18h: the column dropdown's tick and dash. Rasterised from Lucide's geometry by
+      scripts/gen-column-visibility-icons.ps1 and committed as PNGs, so the runtime never
+      renders a path and carries no SVG or drawing dependency of its own. Embedded rather
+      than copied beside the XLL because Excel-DNA packs the add-in into one file.
+    -->
+    <EmbeddedResource Include="Resources\*.png" />
+  </ItemGroup>
 </Project>

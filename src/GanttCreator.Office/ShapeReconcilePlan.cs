@@ -41,6 +41,31 @@ public enum ShapeReconcileAction
     Delete = 2,
 }
 
+/// <summary>How much of an updated shape's request has to be re-applied.</summary>
+/// <remarks>
+/// <para>
+/// An update that re-applies geometry, text and style costs ~15–18 ms on the live host; a
+/// geometry-only move is a handful of property writes at ~0.5 ms. The reconciliation knows
+/// which parts changed (the payload cache stores a hash per part), so a shape that only moved
+/// is moved rather than re-styled and re-lettered.
+/// </para>
+/// <para>
+/// <b>What this does not promise.</b> A geometry-only update does not repair a fill or font a
+/// user changed by hand. That is the deliberate trade ADR-0053 records: an automatic refresh
+/// keeps the user's own formatting for a shape it merely moved, and the explicit Refresh
+/// (which carries no previous snapshot, so every shape is
+/// <see cref="All"/>) restores the scene's formatting.
+/// </para>
+/// </remarks>
+public enum ShapeUpdateScope
+{
+    /// <summary>Re-apply geometry, placement, content, and style — the full update.</summary>
+    All = 0,
+
+    /// <summary>Re-apply geometry and placement only, because nothing else changed.</summary>
+    Geometry = 1,
+}
+
 /// <summary>One planned reconciliation operation.</summary>
 /// <param name="Action">What to do with the shape.</param>
 /// <param name="PrimitiveId">
@@ -53,7 +78,12 @@ public enum ShapeReconcileAction
 /// The shape request, or <see langword="null"/> for a
 /// <see cref="ShapeReconcileAction.Delete"/>.
 /// </param>
-public sealed record ShapeReconcileOperation(ShapeReconcileAction Action, string PrimitiveId, OfficeShapeRequest? Request);
+public sealed record ShapeReconcileOperation(ShapeReconcileAction Action, string PrimitiveId, OfficeShapeRequest? Request)
+{
+    /// <summary>How much of the request an update re-applies; always
+    /// <see cref="ShapeUpdateScope.All"/> for a create or a delete.</summary>
+    public ShapeUpdateScope Scope { get; init; } = ShapeUpdateScope.All;
+}
 
 /// <summary>The complete set of operations one reconciliation decided on.</summary>
 /// <param name="Operations">
@@ -103,7 +133,11 @@ public sealed record ShapeReconcileRequest(
     IReadOnlyList<OfficeShapeRequest> Desired,
     IReadOnlyList<string>? Owned = null,
     bool HasBlockingErrors = false
-);
+)
+{
+    /// <summary>Optional prior successful payload signatures for no-op update elimination.</summary>
+    public ShapeDeltaSnapshot? PreviousSnapshot { get; init; }
+}
 
 /// <summary>Why a reconciliation stopped without completing.</summary>
 public enum ShapeReconcileRefusal
@@ -163,4 +197,22 @@ public sealed record ShapeReconcileOutcome(
     /// <see langword="false"/>: a blocked refresh must not touch a single shape.
     /// </remarks>
     public bool MutatedAnyShape => CompletedCount > 0;
+
+    /// <summary>
+    /// Gets whether the z-order pass ran, so a caller can separate the per-shape writes
+    /// from the single ordering pass when profiling.
+    /// </summary>
+    /// <remarks>
+    /// The pass is skipped when the desired order equals the last applied order, which is
+    /// a whole-collection operation (one lookup and one host command per shape) and can
+    /// dominate a refresh. Reporting it here keeps that cost visible in the log without
+    /// adding a second timing seam.
+    /// </remarks>
+    public bool ZOrderApplied { get; init; }
+
+    /// <summary>
+    /// Gets how long the z-order pass took, in milliseconds, so the profile can separate
+    /// the ordering cost from the per-shape writes.
+    /// </summary>
+    public double ZOrderMilliseconds { get; init; }
 }

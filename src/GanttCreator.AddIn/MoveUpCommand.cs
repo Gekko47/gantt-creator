@@ -14,14 +14,21 @@ namespace GanttCreator.AddIn;
 internal static class MoveUpCommand
 {
     /// <summary>Runs the production move-up command in the current Excel session.</summary>
-    internal static void RunForExcel() =>
+    internal static void RunForExcel()
+    {
+        // ADR-0055: this command changes row structure or shapes, which a protected sheet
+        // refuses (measured), so it runs inside the release window. A render it triggers nests
+        // inside the same window and only the outermost scope re-protects.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelParentChildMutator(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
                 outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
-            RefreshSheetCommand.RunForExcel);
+            RibbonStateService.Instance.ScheduleAutomaticRefresh);
+    }
 
     /// <summary>Runs an injected move-up command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>
@@ -45,7 +52,7 @@ internal static class MoveUpCommand
 
         ParentChildMutationOutcome outcome = mutator.MoveUp();
 
-        // R2.2/R2.6 and R5.4 D4: success is silent — including the boundary
+        // R2.2/R2.6 and R5.4 D4: success is silent ÔÇö including the boundary
         // no-op, which writes zero cells and reports nothing because the
         // user asked for a move that cannot happen.
         if (outcome.Succeeded)
@@ -55,9 +62,14 @@ internal static class MoveUpCommand
             // nothing and leaves the selection where it is. A selection
             // failure degrades to "cursor stays put", exactly as the
             // add-row command's selection move does.
+            //
+            // The CELL is selected, not the row's full width: the move rotates
+            // content, so the address the user was on now holds the neighbour's
+            // activity, and selecting the whole row would keep the row but throw
+            // away the column the user was working in.
             if (outcome.MovedToRowNumber is { } movedTo)
             {
-                SelectMovedRow(selector, movedTo);
+                SelectMovedCell(selector, movedTo);
             }
 
             // R5.4 D11-amended: a content rotation leaves the chart
@@ -99,19 +111,19 @@ internal static class MoveUpCommand
     }
 
     /// <summary>
-    /// Moves the selection onto the moved row, degrading to no selection
-    /// change when the host refuses. A selection failure must never turn a
+    /// Moves the selection onto the moved row's cell in the user's column, degrading to
+    /// no selection change when the host refuses. A selection failure must never turn a
     /// completed move into a user-visible error or escape into Excel.
     /// </summary>
     /// <param name="selector">The selection port.</param>
     /// <param name="bodyIndex">The moved row's new one-based body index.</param>
-    private static void SelectMovedRow(IInsertedRowSelector selector, int bodyIndex)
+    private static void SelectMovedCell(IInsertedRowSelector selector, int bodyIndex)
     {
         // CA1031: a host selection failure is outside command behaviour.
 #pragma warning disable CA1031
         try
         {
-            selector.SelectBodyRow(bodyIndex);
+            selector.SelectBodyCell(bodyIndex);
         }
         catch
         {

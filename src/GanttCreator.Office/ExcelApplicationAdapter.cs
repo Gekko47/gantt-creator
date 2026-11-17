@@ -9,12 +9,6 @@ namespace GanttCreator.Office;
 /// Live <see cref="IExcelApplicationAdapter"/> over the Excel application object
 /// supplied by the host at add-in load.
 /// </summary>
-/// <param name="application">
-/// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
-/// <see langword="null"/> when the host supplied none (unit tests, non-Excel
-/// host). A foreign object fails the interface casts and degrades to "not
-/// determinable" with no event connection.
-/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the Excel <c>Application</c> object and the <c>Workbook</c>
@@ -29,14 +23,34 @@ namespace GanttCreator.Office;
 /// propagating exception surfaces as a host error dialog.
 /// </para>
 /// </remarks>
-public sealed class ExcelApplicationAdapter(object? application) : IExcelApplicationAdapter
+public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly Excel.Application? _application;
+    private readonly Excel.AppEvents_Event? _events;
 
-    // Events are bound through the AppEvents_Event interface: `NewWorkbook`
-    // would otherwise be ambiguous with _Application.NewWorkbook (the method
-    // that creates a workbook).
-    private readonly Excel.AppEvents_Event? _events = application as Excel.AppEvents_Event;
+    /// <summary>
+    /// Creates an application adapter over the Excel application object.
+    /// </summary>
+    /// <param name="application">
+    /// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
+    /// <see langword="null"/> when the host supplied none (unit tests, non-Excel
+    /// host). A foreign object fails the interface casts and degrades to "not
+    /// determinable" with no event connection.
+    /// </param>
+    public ExcelApplicationAdapter(object? application)
+    {
+        _application = application as Excel.Application;
+
+        // Events are bound through the AppEvents_Event interface: `NewWorkbook`
+        // would otherwise be ambiguous with _Application.NewWorkbook (the method
+        // that creates a workbook).
+        // Cast through _application rather than from `application` directly:
+        // `Excel.Application` inherits from `Excel.AppEvents_Event`, so if the
+        // application object was successfully cast, the event interface will also
+        // be available. Casting directly from object? to AppEvents_Event can fail
+        // on the Excel-DNA RCW even when the Application cast succeeds.
+        _events = _application;
+    }
 
     /// <inheritdoc />
     public bool? HasActiveWorkbook()
@@ -65,6 +79,54 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
     }
 
     /// <inheritdoc />
+    public void ShowStatusBar(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return;
+        }
+
+        // CA1031: this write runs on the Ribbon state path, where a
+        // propagating COM failure surfaces as a host error. A failed write
+        // loses the message and nothing more.
+#pragma warning disable CA1031
+        try
+        {
+            application.StatusBar = message;
+        }
+        catch
+        {
+            // Intentionally empty: the message is lost; the state is not.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <inheritdoc />
+    public void ClearStatusBar()
+    {
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            // Setting StatusBar to false restores Excel's automatic status text.
+            application.StatusBar = false;
+        }
+        catch
+        {
+            // Intentionally empty: clearing the status bar is best-effort.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <inheritdoc />
     public IDisposable SubscribeWorkbookStateChanged(Action handler)
     {
         ArgumentNullException.ThrowIfNull(handler);
@@ -75,9 +137,186 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
             return InertSubscription.Instance;
         }
 
-        var subscription = new WorkbookStateSubscription(events, handler);
+        WorkbookStateSubscription subscription = new WorkbookStateSubscription(events, handler);
         subscription.Attach();
         return subscription;
+    }
+
+    /// <inheritdoc />
+    public IDisposable SubscribeSheetChanged(Action<string?> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        Excel.AppEvents_Event? events = _events;
+        return events is null
+            ? InertSheetChangeSubscription.Instance
+            : new SheetChangeSubscription(events, handler);
+    }
+
+    /// <inheritdoc />
+    public IDisposable SubscribeSheetActivated(Action handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        Excel.AppEvents_Event? events = _events;
+        return events is null
+            ? InertSheetChangeSubscription.Instance
+            : new SheetActivateSubscription(events, handler);
+    }
+
+    /// <summary>
+    /// Owns one application-level <c>SheetActivate</c> connection. The activated
+    /// sheet argument is deliberately ignored: the subscriber re-reads the
+    /// workbook, which is the only authority on what the active sheet contains
+    /// (R5.16b, ADR-0058).
+    /// </summary>
+    private sealed class SheetActivateSubscription : IDisposable
+    {
+        private readonly Excel.AppEvents_Event _events;
+        private Action? _handler;
+        private Excel.AppEvents_SheetActivateEventHandler? _onSheetActivate;
+        private bool _disposed;
+
+        internal SheetActivateSubscription(Excel.AppEvents_Event events, Action handler)
+        {
+            _events = events;
+            _handler = handler;
+            _onSheetActivate = OnSheetActivate;
+
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetActivate += _onSheetActivate;
+            }
+            catch
+            {
+                _disposed = true;
+                _handler = null;
+                _onSheetActivate = null;
+            }
+#pragma warning restore CA1031
+        }
+
+        private void OnSheetActivate(object sheetObject)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+#pragma warning disable CA1031
+            try
+            {
+                _handler?.Invoke();
+            }
+            catch
+            {
+                // A failed activation notification is skipped; it must not
+                // escape the Excel event dispatcher.
+            }
+#pragma warning restore CA1031
+        }
+
+        public void Dispose()
+        {
+            if (_onSheetActivate is null)
+            {
+                return;
+            }
+
+            _disposed = true;
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetActivate -= _onSheetActivate;
+                _onSheetActivate = null;
+                _handler = null;
+            }
+            catch
+            {
+                // Teardown must never throw into Excel.
+            }
+#pragma warning restore CA1031
+        }
+    }
+
+    /// <summary>
+    /// Owns one application-level SheetChange connection and reports the event
+    /// target using a workbook/sheet-qualified A1 address. The target and sheet
+    /// COM objects are Excel-owned roots and are never force-released.
+    /// </summary>
+    private sealed class SheetChangeSubscription : IDisposable
+    {
+        private readonly Excel.AppEvents_Event _events;
+        private Action<string?>? _handler;
+        private Excel.AppEvents_SheetChangeEventHandler? _onSheetChange;
+        private bool _disposed;
+
+        internal SheetChangeSubscription(Excel.AppEvents_Event events, Action<string?> handler)
+        {
+            _events = events;
+            _handler = handler;
+            _onSheetChange = OnSheetChange;
+
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetChange += _onSheetChange;
+            }
+            catch
+            {
+                _disposed = true;
+                _handler = null;
+                _onSheetChange = null;
+            }
+#pragma warning restore CA1031
+        }
+
+        private void OnSheetChange(object sheetObject, Excel.Range target)
+        {
+            if (_disposed || sheetObject is not Excel.Worksheet worksheet)
+            {
+                return;
+            }
+
+#pragma warning disable CA1031
+            try
+            {
+                Excel.Workbook workbook = (Excel.Workbook)worksheet.Parent;
+                string qualifiedSheet = workbook.Name + "|" + worksheet.Name;
+                string address = target.Address;
+                _handler?.Invoke(qualifiedSheet + "!" + address);
+            }
+            catch
+            {
+                // A failed address probe is ignored; it must not escape the
+                // Excel event dispatcher or schedule a refresh for unknown data.
+            }
+#pragma warning restore CA1031
+        }
+
+        public void Dispose()
+        {
+            if (_onSheetChange is null)
+            {
+                return;
+            }
+
+            _disposed = true;
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetChange -= _onSheetChange;
+                _onSheetChange = null;
+                _handler = null;
+            }
+            catch
+            {
+                // Teardown must never throw into Excel. Retain the delegate so
+                // another Dispose call can retry detaching the live connection.
+            }
+#pragma warning restore CA1031
+        }
     }
 
     /// <summary>

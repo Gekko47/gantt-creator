@@ -84,7 +84,7 @@ internal static class CommandErrorDialog
         {
             TaskDialogPage page = CreateConfirmationPage(message, session);
             TaskDialogButton result = TaskDialog.ShowDialog(page);
-            var confirmed = result == TaskDialogButton.Yes;
+            bool confirmed = result == TaskDialogButton.Yes;
             // The checkbox state lives on the page; record it on the
             // session only for a confirmed change, so a declined
             // dialog cannot opt the user out.
@@ -131,7 +131,7 @@ internal static class CommandErrorDialog
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var page = new TaskDialogPage
+        TaskDialogPage page = new TaskDialogPage
         {
             Caption = _title,
             Heading = DestructiveCommandPolicy.ConfirmationMainInstruction,
@@ -161,7 +161,7 @@ internal static class CommandErrorDialog
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var page = new TaskDialogPage
+        TaskDialogPage page = new TaskDialogPage
         {
             Caption = _title,
             Heading = _mainInstruction,

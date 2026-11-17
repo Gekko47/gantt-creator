@@ -94,7 +94,7 @@ public static class SpanBarBuilder
         }
 
         GanttEvent @event = request.Event;
-        var ownerId = SceneOwnerId.ForRow(@event.Id);
+        SceneOwnerId ownerId = SceneOwnerId.ForRow(@event.Id);
         List<SceneWarning> warnings = [];
 
         // A milestone or a dateless type reaching this builder is a scene
@@ -110,7 +110,7 @@ public static class SpanBarBuilder
 
         // Entity guide §12: the inclusive span rule. `Finish` is never
         // incremented, and a one-day activity keeps exactly one day of width.
-        if (!timeScale.TryDurationDays(start, finish, out var durationDays))
+        if (!timeScale.TryDurationDays(start, finish, out int durationDays))
         {
             // The dates are ordered but at least one falls outside the scale, so
             // the span is clipped rather than refused. The `Try*` form is used
@@ -135,8 +135,8 @@ public static class SpanBarBuilder
 
         // TimeScale maps a date to the start of that day, so a left edge is the
         // start X and the width is the inclusive duration in day widths.
-        var left = timeScale.DateToX(start);
-        var right = left + (durationDays * timeScale.DayWidth);
+        double left = timeScale.DateToX(start);
+        double right = left + (durationDays * timeScale.DayWidth);
         RectD unclipped = BuildBounds(left, right, request.SlotCentreY, request.ResolvedHeightPt);
 
         // The scale's own plot edges already bound any in-range span, so a bar
@@ -153,10 +153,10 @@ public static class SpanBarBuilder
         // never inspected. An out-of-range edge collapses onto the plot boundary
         // and gains no day width, so a wholly-outside span keeps zero width
         // rather than a phantom single day.
-        var left = ClampToScale(start, timeScale);
-        var right = ClampFinishToScale(finish, timeScale);
-        var clippedLeft = Math.Max(left, timeScale.PlotLeftPt);
-        var clippedRight = Math.Min(right, timeScale.PlotRightPt);
+        double left = ClampToScale(start, timeScale);
+        double right = ClampFinishToScale(finish, timeScale);
+        double clippedLeft = Math.Max(left, timeScale.PlotLeftPt);
+        double clippedRight = Math.Min(right, timeScale.PlotRightPt);
         return clippedRight > clippedLeft + GeometryMath.Epsilon ? (clippedLeft, clippedRight) : null;
     }
 

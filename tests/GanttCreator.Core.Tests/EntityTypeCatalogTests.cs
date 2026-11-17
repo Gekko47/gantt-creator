@@ -21,6 +21,7 @@ public class EntityTypeCatalogTests
         "As-Planned Milestone",
         "Baseline Milestone",
         "Critical Milestone",
+        "Custom Milestone",
         "Delineator",
     ];
 
@@ -34,9 +35,9 @@ public class EntityTypeCatalogTests
         [GanttLabelPosition.Auto, GanttLabelPosition.TopLeft, GanttLabelPosition.TopRight, GanttLabelPosition.BottomLeft, GanttLabelPosition.BottomRight, GanttLabelPosition.None];
 
     [Fact]
-    public void Default_catalogue_contains_exactly_the_16_guide_entries()
+    public void Default_catalogue_contains_exactly_the_17_guide_entries()
     {
-        Assert.Equal(16, EntityTypeCatalog.Entries.Count);
+        Assert.Equal(17, EntityTypeCatalog.Entries.Count);
         Assert.Equal(EntityTypeCatalog.TypeCount, EntityTypeCatalog.Entries.Count);
     }
 
@@ -57,7 +58,7 @@ public class EntityTypeCatalogTests
     [Fact]
     public void Default_catalogue_matches_the_entity_guide_display_names_in_order()
     {
-        Assert.Equal(16, s_guideDisplayNames.Length);
+        Assert.Equal(17, s_guideDisplayNames.Length);
         for (var i = 0; i < s_guideDisplayNames.Length; i++)
         {
             Assert.Equal(s_guideDisplayNames[i], EntityTypeCatalog.Entries[i].DisplayName);
@@ -80,7 +81,7 @@ public class EntityTypeCatalogTests
     {
         var expected = new (GanttEntityType Type, string DisplayName, EntityKind Kind, EntityDateMode DateMode, string DefaultStyleKey, EntityColourCapability ColourCapability, bool RequiresStyleKey, GanttLabelPosition[] Labels)[]
         {
-            (GanttEntityType.Splitter, "Splitter", EntityKind.SectionHeader, EntityDateMode.None, "Splitter", EntityColourCapability.Fill, false, [GanttLabelPosition.DataPanelLeft, GanttLabelPosition.PlotCentre, GanttLabelPosition.Both, GanttLabelPosition.None]),
+            (GanttEntityType.Splitter, "Splitter", EntityKind.SectionHeader, EntityDateMode.None, "Splitter", EntityColourCapability.Fill, false, [GanttLabelPosition.PlotCentre, GanttLabelPosition.Both, GanttLabelPosition.None]),
             (GanttEntityType.Spacer, "Spacer", EntityKind.Spacer, EntityDateMode.None, "Spacer", EntityColourCapability.None, false, [GanttLabelPosition.None]),
             (GanttEntityType.AsBuiltActivity, "As-Built Activity", EntityKind.Span, EntityDateMode.StartFinish, "AsBuiltActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsPlannedActivity, "As-Planned Activity", EntityKind.Span, EntityDateMode.StartFinish, "AsPlannedActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
@@ -90,15 +91,16 @@ public class EntityTypeCatalogTests
             (GanttEntityType.AsBuiltProcurement, "As-Built Procurement", EntityKind.Span, EntityDateMode.StartFinish, "AsBuiltProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsPlannedProcurement, "As-Planned Procurement", EntityKind.Span, EntityDateMode.StartFinish, "AsPlannedProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.BaselineProcurement, "Baseline Procurement", EntityKind.Span, EntityDateMode.StartFinish, "BaselineProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
-            (GanttEntityType.CustomActivity, "Custom Activity", EntityKind.Span, EntityDateMode.StartFinish, string.Empty, EntityColourCapability.StyleDefined, true, Array.Empty<GanttLabelPosition>()),
+            (GanttEntityType.CustomActivity, "Custom Activity", EntityKind.Span, EntityDateMode.StartFinish, "CustomActivity", EntityColourCapability.StyleDefined, true, s_spanLabels),
             (GanttEntityType.AsBuiltMilestone, "As-Built Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "AsBuiltMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.AsPlannedMilestone, "As-Planned Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "AsPlannedMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.BaselineMilestone, "Baseline Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "BaselineMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.CriticalMilestone, "Critical Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CriticalMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
-            (GanttEntityType.Delineator, "Delineator", EntityKind.Delineator, EntityDateMode.StartOnly, "DefaultDelineator", EntityColourCapability.Stroke, false, s_delineatorLabels),
+            (GanttEntityType.CustomMilestone, "Custom Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CustomMilestone", EntityColourCapability.StyleDefined, true, s_milestoneLabels),
+            (GanttEntityType.Delineator, "Delineator", EntityKind.Delineator, EntityDateMode.StartOnly, "DefaultDelineator", EntityColourCapability.Stroke, true, s_delineatorLabels),
         };
 
-        Assert.Equal(16, expected.Length);
+        Assert.Equal(17, expected.Length);
 
         // Indexed comparison also pins the catalogue to the exact guide order.
         for (var i = 0; i < expected.Length; i++)
@@ -175,20 +177,37 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
-    public void Only_CustomActivity_requires_a_style_key()
+    public void Only_style_key_types_require_a_style_key()
     {
         Assert.All(EntityTypeCatalog.Entries, entry =>
-            Assert.Equal(entry.Type == GanttEntityType.CustomActivity, entry.RequiresStyleKey));
+            Assert.Equal(
+                entry.Type == GanttEntityType.CustomActivity
+                    || entry.Type == GanttEntityType.CustomMilestone
+                    || entry.Type == GanttEntityType.Delineator,
+                entry.RequiresStyleKey));
     }
 
     [Fact]
-    public void CustomActivity_has_no_catalogue_default_style_and_no_label_set()
+    public void Custom_types_have_a_catalogue_default_style_and_their_family_label_set()
     {
-        var custom = Assert.Single(EntityTypeCatalog.Entries, e => e.Type == GanttEntityType.CustomActivity);
+        // R5.6a: a style-key type's catalogue label set is the family set, not
+        // a {None} placeholder. The row's own named style is the authority for
+        // the label positions it allows, but the catalogue set is what the
+        // type's code-owned default preset carries, so a healed row (one whose
+        // user-created style was deleted) can still render a label.
+        foreach (var type in new[] { GanttEntityType.CustomActivity, GanttEntityType.CustomMilestone })
+        {
+            var custom = Assert.Single(EntityTypeCatalog.Entries, e => e.Type == type);
 
-        Assert.Equal(string.Empty, custom.DefaultStyleKey);
-        Assert.True(custom.RequiresStyleKey);
-        Assert.Empty(custom.AllowedLabelPositions);
+            string expectedKey = type == GanttEntityType.CustomActivity ? "CustomActivity" : "CustomMilestone";
+            Assert.Equal(expectedKey, custom.DefaultStyleKey);
+            Assert.True(custom.RequiresStyleKey);
+            Assert.Equal(
+                type == GanttEntityType.CustomActivity
+                    ? new[] { GanttLabelPosition.None, GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Inside }
+                    : new[] { GanttLabelPosition.None, GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right },
+                custom.AllowedLabelPositions.OrderBy(p => p));
+        }
     }
 
     [Fact]
@@ -202,6 +221,7 @@ public class EntityTypeCatalogTests
                     or GanttEntityType.AsPlannedMilestone
                     or GanttEntityType.BaselineMilestone
                     or GanttEntityType.CriticalMilestone
+                    or GanttEntityType.CustomMilestone
                     or GanttEntityType.Delineator => EntityDateMode.StartOnly,
                 GanttEntityType.Splitter or GanttEntityType.Spacer => EntityDateMode.None,
                 _ => EntityDateMode.StartFinish,
@@ -303,7 +323,6 @@ public class EntityTypeCatalogTests
         Assert.Equal(
             new[]
             {
-                GanttLabelPosition.DataPanelLeft,
                 GanttLabelPosition.PlotCentre,
                 GanttLabelPosition.Both,
                 GanttLabelPosition.None,
@@ -320,6 +339,39 @@ public class EntityTypeCatalogTests
             EntityTypeCatalog.GetAllowedLabelPositions(type);
 
         Assert.Equal(new[] { GanttLabelPosition.None }, positions);
+    }
+
+    [Fact]
+    public void Format_names_the_catalogue_when_the_type_is_absent()
+    {
+        // The message is the only thing that tells a caller WHICH authority refused the
+        // value; a mutated empty message would leave the throw indistinguishable from a
+        // framework argument error.
+        ArgumentOutOfRangeException thrown = Assert.Throws<ArgumentOutOfRangeException>(
+            () => EntityTypeCatalog.Format((GanttEntityType)999));
+
+        Assert.Contains("catalogue", thrown.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_custom_delineator_style_cannot_widen_the_corner_set_with_a_span_position()
+    {
+        // The delineator's corner set is a FLOOR, so the style's set is intersected with
+        // it rather than unioned: a style that permits Left must not gain a span position
+        // the corner builder cannot draw.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "WideDelineator",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.Left, GanttLabelPosition.TopLeft]),
+                EntityColourCapability.Stroke),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions = EntityTypeCatalog.GetAllowedLabelPositions(
+            GanttEntityType.Delineator, "WideDelineator", registry);
+
+        Assert.DoesNotContain(GanttLabelPosition.Left, positions);
+        Assert.Contains(GanttLabelPosition.TopLeft, positions);
     }
 
     [Fact]
@@ -351,13 +403,113 @@ public class EntityTypeCatalogTests
     [Theory]
     [InlineData(null)]
     [InlineData("Missing")]
-    public void GetAllowedLabelPositions_custom_activity_without_style_is_empty(string? styleKey)
+    public void GetAllowedLabelPositions_custom_activity_without_style_falls_back_to_the_type_default(
+        string? styleKey)
     {
+        // R5.6d: a row whose style the registry does not know still renders -
+        // the scene falls back to the type's code-owned default style - so the
+        // ribbon must offer the positions that default permits. Returning an
+        // empty set left the description-label dropdown disabled on a
+        // perfectly renderable row.
         IReadOnlyList<GanttLabelPosition> positions =
             EntityTypeCatalog.GetAllowedLabelPositions(
                 GanttEntityType.CustomActivity, styleKey, GanttStyleRegistry.Empty);
 
-        Assert.Empty(positions);
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.Inside,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_custom_milestone_resolves_from_its_style()
+    {
+        // R5.6a regression: Custom Milestone is a style-key type, so its
+        // positions come from the row style exactly as a Custom Activity's
+        // do — the catalogue's placeholder set is never the authority.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyMilestoneStyle",
+                new HashSet<GanttLabelPosition>(
+                    [GanttLabelPosition.Left, GanttLabelPosition.TopRight]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomMilestone, "MyMilestoneStyle", registry);
+
+        Assert.Equal(
+            new[] { GanttLabelPosition.Left, GanttLabelPosition.TopRight },
+            positions);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Missing")]
+    public void GetAllowedLabelPositions_custom_milestone_without_style_falls_back_to_the_type_default(
+        string? styleKey)
+    {
+        // R5.6d: the milestone fallback is the milestone vocabulary, so a
+        // Custom Milestone row that has not chosen a style still offers the
+        // milestone positions (and no Inside, which a milestone has not).
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomMilestone, styleKey, GanttStyleRegistry.Empty);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_a_known_style_wins_over_the_type_default()
+    {
+        // R5.6d: the fallback covers a style the registry does not KNOW. A
+        // style it does know is the authority, exactly as before.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "NarrowStyle",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.TopRight]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomActivity, "NarrowStyle", registry);
+
+        Assert.Equal(new[] { GanttLabelPosition.TopRight }, positions);
+    }
+
+    [Fact]
+    public void IsLabelPositionAllowed_custom_milestone_delegates_to_its_style()
+    {
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyMilestoneStyle",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.TopRight]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        Assert.True(EntityTypeCatalog.IsLabelPositionAllowed(
+            GanttEntityType.CustomMilestone, GanttLabelPosition.TopRight, "MyMilestoneStyle", registry));
+        Assert.False(EntityTypeCatalog.IsLabelPositionAllowed(
+            GanttEntityType.CustomMilestone, GanttLabelPosition.Left, "MyMilestoneStyle", registry));
     }
 
     [Fact]
@@ -418,6 +570,8 @@ public class EntityTypeCatalogTests
     [Fact]
     public void GetAllowedDateLabelPositions_projects_span_set_in_date_order()
     {
+        // R5.18m (owner ruling 2026-11-13): Both is the explicit both-dates
+        // choice and sits directly after the Default (Auto) clear item.
         IReadOnlyList<GanttDateLabelPosition> choices =
             EntityTypeCatalog.GetAllowedDateLabelPositions(GanttEntityType.AsPlannedActivity);
 
@@ -425,6 +579,7 @@ public class EntityTypeCatalogTests
             new[]
             {
                 GanttDateLabelPosition.Auto,
+                GanttDateLabelPosition.Both,
                 GanttDateLabelPosition.Start,
                 GanttDateLabelPosition.Finish,
                 GanttDateLabelPosition.None,
@@ -434,7 +589,7 @@ public class EntityTypeCatalogTests
 
     [Theory]
     [InlineData(GanttEntityType.AsBuiltMilestone)]
-    public void GetAllowedDateLabelPositions_projects_start_only_types_without_finish(
+    public void GetAllowedDateLabelPositions_projects_start_only_types_without_finish_or_both(
         GanttEntityType type)
     {
         IReadOnlyList<GanttDateLabelPosition> choices =
@@ -593,6 +748,7 @@ public class EntityTypeCatalogTests
     [InlineData("Auto", GanttDateLabelPosition.Auto)]
     [InlineData("Start", GanttDateLabelPosition.Start)]
     [InlineData("Finish", GanttDateLabelPosition.Finish)]
+    [InlineData("Both", GanttDateLabelPosition.Both)]
     [InlineData("None", GanttDateLabelPosition.None)]
     public void TryParseDateLabelSelection_parses_defined_choices(
         string selectionId, GanttDateLabelPosition expected)
@@ -605,9 +761,11 @@ public class EntityTypeCatalogTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("Widget")]
-    // "Both" is a valid LabelPosition but NOT a valid DateLabelPosition,
-    // so this pins that the two enumerations are distinct authorities.
-    [InlineData("Both")]
+    // "PlotCentre" is a splitter LabelPosition that is NOT a DateLabelPosition
+    // value, so this pins that the two enumerations are distinct authorities.
+    // ("Both" is no longer a discriminator: it is a member of both since
+    // R5.18m added the explicit both-dates choice.)
+    [InlineData("PlotCentre")]
     public void TryParseDateLabelSelection_refuses_unknown_text(string? selectionId)
     {
         Assert.False(EntityTypeCatalog.TryParseDateLabelSelection(selectionId, out GanttDateLabelPosition? position));

@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace GanttCreator.Core;
 
 /// <summary>
@@ -85,6 +87,70 @@ public static class GanttSheetLayout
     public const int FirstBodyRowIndex = HeaderRowIndex + 1;
 
     /// <summary>
+    /// The one-based worksheet column the add-in's leading spacer gutter occupies. It is
+    /// <b>not</b> a column of <c>tblGanttData</c>.
+    /// </summary>
+    /// <remarks>
+    /// The gutter exists so the chart's frame can enclose a left margin of the same width
+    /// as the top and bottom padding rows: the frame starts at the table's first column, so
+    /// without a gutter the table's first column would sit flush against the frame. It is
+    /// add-in owned, must never be reported as an "extra user column" by the integrity
+    /// checker, and is measured rather than assumed when the scene is built (R5.18k).
+    /// </remarks>
+    public const int LeadingGutterColumnIndex = 1;
+
+    /// <summary>
+    /// How far right of the plot anchor column's left edge the LIVE plot starts, in points.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a measured host threshold, not a taste value.</b> The twelve engine columns
+    /// between the visible table and the plot anchor column are hidden, and a hidden column
+    /// occupies ZERO width, so the anchor column's left edge and the table's visible right
+    /// edge are the same coordinate. Excel resolves a shape's <c>TopLeftCell</c> to the first
+    /// column whose left edge is at or before the shape's <c>Left</c>, and with a run of
+    /// zero-width columns that is the FIRST of them - the engine columns, not the anchor.
+    /// The shape is then anchored in a hidden column, stays behind it when the columns are
+    /// un-hidden, and its 0.25pt stroke lands inside the table's own 1pt outside border.
+    /// </para>
+    /// <para>
+    /// <b>Measured on Excel 16.0 (2026-11-15, scripts/probe-plot-origin.ps1 against a fixture
+    /// with the real column layout).</b> With the engine columns hidden, an offset of 0, 0.25
+    /// or 0.5pt resolves to the first engine column (G3) and does not move when the columns
+    /// are un-hidden; 1pt and above resolves to the anchor column (S3) and moves with it. One
+    /// point is the exact threshold, so the value here is 2 - above the threshold by the same
+    /// margin the chart's own 4pt outer padding can absorb, so a display-scaling change cannot
+    /// silently put the plot back behind a hidden column.
+    /// </para>
+    /// <para>
+    /// It is applied as the plot's LEFT CHROME, because that is what it is: two points of the
+    /// preset's width budget that the plot gives up so its origin can be anchored and drawn.
+    /// </para>
+    /// </remarks>
+    public const double LivePlotOriginInsetPt = 2.0;
+
+    /// <summary>
+    /// The one-based worksheet column the table's first column occupies.
+    /// </summary>
+    /// <remarks>
+    /// Column B, since R5.18k moved the table one column right to leave
+    /// <see cref="LeadingGutterColumnIndex"/> free. A table moved sideways moves the plot
+    /// anchor with it while the title and the period band stay put, which is why the
+    /// integrity checker reports the move instead of guessing a new origin.
+    /// </remarks>
+    public const int TableOriginColumnIndex = 2;
+
+    /// <summary>
+    /// Whether a live table's top-left corner is the contract origin: the header on
+    /// <see cref="HeaderRowIndex"/> and the first table column in column A.
+    /// </summary>
+    /// <param name="headerRow">The worksheet row of the table's first row.</param>
+    /// <param name="firstColumn">The worksheet column of the table's first column.</param>
+    /// <returns><see langword="true"/> when the table starts where the layout expects.</returns>
+    public static bool IsAtContractOrigin(int headerRow, int firstColumn) =>
+        headerRow == HeaderRowIndex && firstColumn == TableOriginColumnIndex;
+
+    /// <summary>
     /// Gets the one-based worksheet row of the reserved title row.
     /// </summary>
     public static int TitleRowIndex => ReservedRowIndex;
@@ -104,9 +170,9 @@ public static class GanttSheetLayout
     /// read by.
     /// </para>
     /// <para>
-    /// Columns A-C are <see cref="GanttColumnAccess.EngineHidden"/> bookkeeping. They
-    /// are hidden but still occupy worksheet positions, so a title in column A would
-    /// sit above columns the user cannot see.
+    /// The index is the schema position OFFSET by the table's origin, so a table that
+    /// starts in column B titles column C rather than column B. Writing the bare schema
+    /// position here is what a schema-order change would otherwise get wrong silently.
     /// </para>
     /// </remarks>
     public static int TitleColumnIndex
@@ -114,11 +180,11 @@ public static class GanttSheetLayout
         get
         {
             IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
-            for (var i = 0; i < columns.Count; i++)
+            for (int i = 0; i < columns.Count; i++)
             {
                 if (string.Equals(columns[i].Name, "Description", StringComparison.Ordinal))
                 {
-                    return i + 1;
+                    return TableOriginColumnIndex + i;
                 }
             }
 
@@ -191,9 +257,18 @@ public static class GanttSheetLayout
     /// controls, so a published constant would be right for exactly one table length.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// <b>An empty table still has ONE body row's worth of sheet</b> (owner ruling
+    /// 2026-11-14): Excel presents a table with no <c>ListRows</c> with its insert row
+    /// occupying the position the first activity would take, and that row carries the
+    /// standard row height. Callers therefore pass at least 1 for the reserved rows' span —
+    /// the insert row IS the row above the anchor. Passing 0 is a caller defect, not the
+    /// empty case, which is why the throw stays.
+    /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="bodyRowCount"/> is not positive. A table with no
-    /// body has no last activity row, so there is no row for this to name.
+    /// body has no last activity row, so there is no row for this to name; an empty
+    /// table's span is the ONE insert row, and its caller passes 1.
     /// </exception>
     public static int AnchorRowIndex(int bodyRowCount)
     {
@@ -225,11 +300,12 @@ public static class GanttSheetLayout
     /// is the change that makes the old insert path correct for the bottom.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// An empty table's caller passes 1 for the same reason <see cref="AnchorRowIndex"/>
+    /// records: the insert row is the one body row the sheet shows.
+    /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="bodyRowCount"/> is not positive. A table with no
-    /// body has no last activity row, so there is no row for this to name, and
-    /// returning a plausible index would place the chart's bottom margin inside the
-    /// table.
+    /// Thrown when <paramref name="bodyRowCount"/> is not positive.
     /// </exception>
     public static int BottomPaddingRowIndex(int bodyRowCount) =>
         AnchorRowIndex(bodyRowCount) + 1;
@@ -299,7 +375,7 @@ public static class GanttSheetLayout
         // the body and the padding. Leaving it would resolve a padding row that is
         // really the anchor row -- a row the add-in would then write the margin height
         // into, which is precisely the defect ADR-0035 D2 exists to prevent.
-        var expected = lastBodyRow + 2;
+        int expected = lastBodyRow + 2;
         if (observedPaddingRow is not { } observed || observed != expected)
         {
             return BottomPaddingResolution.Refused(BottomPaddingRefusalReason.PaddingRowNotContiguous);
@@ -363,7 +439,7 @@ public static class GanttSheetLayout
         // The ONLY row this may name is the one immediately below the body: every
         // insert the add-in performs targets it, so a shape whose bottom anchor does
         // not resolve into it does not stretch.
-        var expected = lastBodyRow + 1;
+        int expected = lastBodyRow + 1;
         if (observedAnchorRow is not { } observed || observed != expected)
         {
             return AnchorRowResolution.Refused(AnchorRowRefusalReason.AnchorRowNotContiguous);
@@ -380,7 +456,13 @@ public static class GanttSheetLayout
     /// Gets the one-based worksheet column of the plot anchor: the column one to the
     /// right of the table's last column.
     /// </summary>
-    public static int PlotAnchorColumnIndex => GanttTableSchema.Default.Columns.Count + 1;
+    /// <remarks>
+    /// The count is offset by the origin. With the table starting in column B and 17
+    /// columns, the last column is R and the anchor is S; a bare <c>Count + 1</c> would
+    /// name R and place the anchor ON the last table column.
+    /// </remarks>
+    public static int PlotAnchorColumnIndex =>
+        TableOriginColumnIndex + GanttTableSchema.Default.Columns.Count;
 
     /// <summary>
     /// Builds the plot anchor's <c>refersTo</c> string: the cell one column right of
@@ -400,7 +482,7 @@ public static class GanttSheetLayout
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sheetName);
 
-        var escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
+        string escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
         return string.Create(
             System.Globalization.CultureInfo.InvariantCulture,
             $"='{escaped}'!${ToA1Column(PlotAnchorColumnIndex)}${HeaderRowIndex}");
@@ -447,11 +529,11 @@ public static class GanttSheetLayout
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(columnIndex, 1);
 
-        var builder = new System.Text.StringBuilder();
-        var remaining = columnIndex;
+        StringBuilder builder = new StringBuilder();
+        int remaining = columnIndex;
         while (remaining > 0)
         {
-            var digit = (remaining - 1) % 26;
+            int digit = (remaining - 1) % 26;
             _ = builder.Insert(0, (char)('A' + digit));
             remaining = (remaining - 1) / 26;
         }

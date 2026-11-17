@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 
@@ -24,11 +26,272 @@ namespace GanttCreator.AddIn;
 /// </remarks>
 internal static class RefreshSheetCommand
 {
+    private static readonly ShapeDeltaCache _shapeDeltaCache = new();
+
+    /// <summary>
+    /// The session's arming memory (ADR-0055). It must outlive one orchestrator, because the live
+    /// composition builds a new one for every refresh.
+    /// </summary>
+    private static readonly ProtectionArmingState _protectionArming = ProtectionArmingState.Shared;
+
+    /// <summary>
+    /// The session's protection-ownership flag, shared with every adapter's guard so the add-in's
+    /// own protection does not block its own writes.
+    /// </summary>
+    private static readonly ProtectionOwnershipSource _protectionOwnership = ProtectionOwnershipSource.Shared;
+
+    /// <summary>
+    /// The process's one release window, so nesting is by depth across commands: Add activity opens
+    /// it, the refresh it triggers opens it again, and only the outermost scope re-protects.
+    /// </summary>
+    private static WorksheetProtectionWindow? _protectionWindow;
+
+    /// <summary>Resolves the release window for this Excel session (ADR-0055).</summary>
+    /// <param name="application">The Excel application object.</param>
+    /// <returns>The shared window.</returns>
+    /// <remarks>
+    /// One instance per process because the depth is the mechanism: a per-call window would let the
+    /// refresh re-protect the sheet while the command that triggered it still has to write. The
+    /// application object is a stable Excel-owned root for the session, so the port built from the
+    /// first one stays valid.
+    /// </remarks>
+    private static WorksheetProtectionWindow ProtectionWindowFor(object? application) =>
+        _protectionWindow ??= new WorksheetProtectionWindow(
+            // The same sink the window uses, so a live log carries the outline-symbol state a
+            // protect found and left next to the window's own open/close line. Both refresh paths
+            // share this one window, so the surrounding lines are what separate them.
+            new ExcelWorksheetProtectionPort(application, CommandBoundary.Instance.WriteTechnicalRecord),
+            _protectionArming,
+            CommandBoundary.Instance.WriteTechnicalRecord);
+
+    /// <summary>
+    /// Opens the ADR-0055 release window for a command that changes the sheet's structure or shapes.
+    /// </summary>
+    /// <returns>The scope that re-applies protection when the command finishes.</returns>
+    /// <remarks>
+    /// The row commands share the refresh's window instance, so a command that inserts a row and then
+    /// triggers a render releases once and protects once, at the outermost boundary. Cell-only
+    /// commands do not need this: the live measurement shows a protected sheet still accepts cell
+    /// writes.
+    /// </remarks>
+    internal static IDisposable OpenProtectionWindow() =>
+        ProtectionWindowFor(ExcelDna.Integration.ExcelDnaUtil.Application).Open();
+
+    internal static void ResetDeltaCache() => _shapeDeltaCache.Invalidate();
+
+    /// <summary>
+    /// Forgets that protection is armed, so the next refresh re-arms it.
+    /// </summary>
+    /// <remarks>
+    /// Called when the active workbook changes. The workbook the user switched to may be protected
+    /// from an earlier session, whose <c>UserInterfaceOnly</c> did not survive the reopen, so it
+    /// refuses this add-in's writes until protection is re-applied. It is also called before the
+    /// next refresh after the user opts out, so the release path runs.
+    /// </remarks>
+    internal static void ResetProtectionArming() => _protectionArming.Invalidate();
+
+    /// <summary>
+    /// Re-applies the outline-symbol option on a sheet that is already protected, so the native
+    /// <c>+</c>/<c>-</c> controls work as soon as a saved workbook is reopened.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EnableOutlining</c> is refused while a sheet is protected and is not saved with the
+    /// worksheet, so a reopened workbook comes up protected with the symbols disabled, and no
+    /// protect the add-in performs could restore them until a protect happened to run on an
+    /// unprotected sheet. The protect path now cycles protection when the sheet is already
+    /// protected, and this is the call that triggers it at the one moment it matters: workbook
+    /// activate, before any refresh, because a refresh may refuse early and leave the user looking
+    /// at greyed-out buttons with no way to fold a section.
+    /// </para>
+    /// <para>
+    /// <b>It touches nothing when nothing needs repairing.</b> An unprotected sheet returns
+    /// immediately: there is no option to restore, and the next protect sets it. A sheet protected
+    /// with a password this add-in does not have is refused by the release inside the cycle, which
+    /// is caught there, so the sheet is left exactly as the user had it. Nothing here can throw.
+    /// </para>
+    /// </remarks>
+    internal static void RepairOutlineSymbols()
+    {
+        try
+        {
+            object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+            if (application is null)
+            {
+                return;
+            }
+
+            // The same sink the window uses, so a repair is visible in the log next to the
+            // protection lines it produces.
+            ExcelWorksheetProtectionPort port = new(application, CommandBoundary.Instance.WriteTechnicalRecord);
+            WorksheetProtectionState? state = port.Read();
+            if (state is null || !state.ContentsProtected)
+            {
+                return;
+            }
+
+            // Protect cycles the protection (release -> set the option -> re-protect), which is the
+            // only way to set a property the host refuses in the current state.
+            _ = port.Protect();
+        }
+#pragma warning disable CA1031
+        catch
+        {
+            // Workbook activate runs on the Excel UI thread and must never surface a failure;
+            // the log already carries whatever the port decided.
+        }
+#pragma warning restore CA1031
+    }
+
     /// <summary>Runs the production refresh in the current Excel session.</summary>
-    internal static void RunForExcel() =>
-        Run(
-            CreateLiveOrchestrator(ExcelDna.Integration.ExcelDnaUtil.Application),
-            CommandErrorDialog.Show);
+    internal static void RunForExcel()
+    {
+        // Click-to-plot, taken at the command's own first line. The pipeline reports
+        // `gantt.refresh timings total=`, which is only part of what the user waits for:
+        // the protection window, the ribbon state writes, the tab restore and the
+        // presenter all sit inside the command but outside the pipeline, and one live
+        // session recorded `post ms=1944.8` against a pipeline `total=1794.1`. Without
+        // this figure "it feels like four seconds" cannot be checked against a number.
+        long commandStarted = Stopwatch.GetTimestamp();
+
+        object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+
+        // ADR-0055 clause 7: an explicit Refresh is the user asking for the chart to be rebuilt from
+        // the scene, so it re-asserts every shape's geometry and re-applies the user's toggles. It
+        // does NOT reset them — an unlocked chart stays unlocked, because the toggle is the user's
+        // durable choice rather than a transient manual-edit window.
+
+        // ADR-0055: the write phase runs with the add-in's protection released, because a protected
+        // sheet refuses shape creation and movement (measured; see ProtectionArmingIntegrationTests).
+        // The window is scoped to the pipeline ONLY: closing it restores the user's selection with
+        // Range.Select(), and that restore has to happen before the tab restore below.
+        GanttRefreshOutcome outcome;
+        long refreshCompleted;
+        using (IDisposable window = ProtectionWindowFor(application).Open())
+        {
+            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: false);
+            outcome = orchestrator.Refresh();
+            refreshCompleted = Stopwatch.GetTimestamp();
+        }
+
+        RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
+
+        // Store scene warnings in the Ribbon state service so the warnings
+        // panel can surface them. Row-level validation issues are reported
+        // through row/cell fill colours; scene-level warnings surface here.
+        if (outcome.Succeeded)
+        {
+            RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+            RibbonStateService.ClearStatusBar();
+        }
+        else
+        {
+            Present(CommandErrorDialog.Show, outcome.Message ?? "The chart could not be refreshed.");
+        }
+
+        // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on the Table
+        // Design tab — and it must run AFTER the protection window closed, because that
+        // window's selection restore is itself a Range.Select(), and a Select inside
+        // tblGanttData is what activates the Table Design tab. Restoring the tab first let
+        // the window's own restore undo it (reported 2026-11-14: pressing a Columns row
+        // pulled the user off the add-in tab). It runs on a refused refresh too: the user
+        // is still on this sheet. The call is guarded by Ready + the Gantt sheet being
+        // active, so it is a no-op everywhere else.
+        RibbonStateService.Instance.ActivateGanttTab();
+
+        TracePostPass(refreshCompleted);
+        TraceCommand(commandStarted, automatic: false);
+    }
+
+    /// <summary>
+    /// Runs a silent production refresh: status bar only, no modal dialogs.
+    /// Used by the on-change refresh scheduler so an automatic refresh never
+    /// interrupts the user with a dialog. Follows the same sequencing as the
+    /// manual refresh: orchestrator pipeline, warning capture, then targeted
+    /// ribbon control invalidation so selection-gated controls
+    /// (MoveUp/MoveDown/PromoteToParent/DemoteToChild) re-evaluate
+    /// against the live selection after the auto-refresh rewrites the sheet.
+    /// Does <b>not</b> call <see cref="RibbonStateService.Refresh"/> or
+    /// RibbonStateService.Invalidate — those re-read every table row and
+    /// re-query every ribbon getter, which is unnecessary when the selection
+    /// has not changed.
+    /// </summary>
+    internal static void RunSilentForExcel()
+    {
+        long commandStarted = Stopwatch.GetTimestamp();
+
+        object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+
+        // ADR-0055: same window as the manual path, so a scheduled refresh can create and move
+        // shapes on a sheet the add-in owns. Scoped to the pipeline only, for the reason given on
+        // the tab restore below.
+        GanttRefreshOutcome outcome;
+        long refreshCompleted;
+        using (IDisposable window = ProtectionWindowFor(application).Open())
+        {
+            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: true);
+            outcome = orchestrator.Refresh();
+            refreshCompleted = Stopwatch.GetTimestamp();
+        }
+
+        RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
+
+        // Store scene warnings in the Ribbon state service — same as RunForExcel.
+        if (outcome.Succeeded)
+        {
+            RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+
+            // R5.1a: an AUTO end's displayed date comes from the range the chart
+            // just used. Reading it off the outcome costs two comparisons and only
+            // invalidates the boxes whose text actually moved; the expensive
+            // alternative, a full RibbonStateService.Refresh() after every
+            // automatic pass, was rejected.
+            RibbonStateService.Instance.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
+            RibbonStateService.ClearStatusBar();
+            // Invalidate only the selection-dependent controls so their enabled
+            // state re-evaluates against the post-refresh sheet state. Mirrors
+            // NotifyRibbonStateChanged() on the manual refresh path, but scoped
+            // to the controls that read SelectionBoundaryContext instead of
+            // re-reading every table row and re-querying every ribbon getter.
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DescriptionLabel);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DateLabel);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.CustomStyle);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveUp);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
+        }
+        else
+        {
+            Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
+        }
+
+        // Owner ruling D-4 (ADR-0058): same tab restore as the manual path, and for the
+        // same ordering reason — the protection window has closed, so its selection
+        // restore (a Range.Select() inside the table) has already happened and cannot
+        // re-activate the Table Design tab afterwards.
+        RibbonStateService.Instance.ActivateGanttTab();
+
+        TracePostPass(refreshCompleted);
+        TraceCommand(commandStarted, automatic: true);
+    }
+
+    /// <summary>
+    /// Records the command's whole elapsed time, which is the figure the user
+    /// experiences as "click, then the chart appears".
+    /// </summary>
+    /// <param name="since">The timestamp taken at the command's first line.</param>
+    /// <param name="automatic">Whether this was a scheduled refresh rather than a click.</param>
+    /// <remarks>
+    /// Distinct from <c>gantt.refresh timings total=</c> (the pipeline alone) and from
+    /// <c>gantt.refresh post ms=</c> (the work after it). Those two can be added to
+    /// nothing useful when the protection window or the ribbon work dominates, which is
+    /// exactly the case this record exists to expose.
+    /// </remarks>
+    private static void TraceCommand(long since, bool automatic) =>
+        CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh command ms={Stopwatch.GetElapsedTime(since).TotalMilliseconds:0.#} source={(automatic ? "automatic" : "manual")}"));
 
     /// <summary>Runs an injected refresh, for tests and for the R4.9 wiring.</summary>
     /// <param name="orchestrator">The refresh service to invoke.</param>
@@ -49,6 +312,23 @@ internal static class RefreshSheetCommand
 
         Present(presenter, outcome.Message ?? "The chart could not be refreshed.");
     }
+
+    /// <summary>
+    /// Records how long the work AFTER the refresh pipeline took, in milliseconds.
+    /// </summary>
+    /// <param name="since">The <see cref="Stopwatch"/> timestamp taken when the pipeline returned.</param>
+    /// <remarks>
+    /// The click-to-plot time the user feels also includes the ribbon invalidation, the
+    /// warning and status presentation, and the state restore that follow the pipeline.
+    /// Those sit outside the pipeline's own <c>gantt.refresh result</c> line, so without
+    /// this figure they are invisible and every later optimisation is attributed to the
+    /// pipeline whether or not it belongs there. The sink degrades internally and never
+    /// throws, so this cannot abort a refresh that has already succeeded.
+    /// </remarks>
+    private static void TracePostPass(long since) =>
+        CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh post ms={Stopwatch.GetElapsedTime(since).TotalMilliseconds:0.#}"));
 
     /// <summary>
     /// Shows the message, degrading to no dialog if the host refuses one.
@@ -72,32 +352,35 @@ internal static class RefreshSheetCommand
 #pragma warning restore CA1031
     }
 
-    /// <summary>
-    /// Composes the live orchestrator from the Excel application object.
-    /// </summary>
-    /// <param name="application">The Excel application object.</param>
-    /// <returns>The composed orchestrator.</returns>
-    /// <remarks>
-    /// Every dependency is constructed here and nowhere else, so the composition root
-    /// is one readable list rather than something assembled across the command, the
-    /// Ribbon, and a static initialiser. Each adapter is the one already landed for
-    /// its own row; this method invents no behaviour.
-    /// </remarks>
     // CA2000: the scope is handed to the orchestrator, which OWNS it and disposes it
     // in a `using` on every path (R4.8A D8). The analyzer cannot see ownership
     // transfer through a constructor, so the disposal it asks for here would be a
     // second, redundant one - and a scope disposed before the refresh ran would
     // restore nothing, which is the opposite of what is wanted.
 #pragma warning disable CA2000
-    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application) =>
-        new(
+    /// <param name="application">The Excel application object.</param>
+    /// <param name="useDeltaCache">Whether this scheduled refresh may skip unchanged payload writes.</param>
+    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, bool useDeltaCache)
+    {
+        // One sink for the refresh's delta/geometry decisions and the row-structure
+        // writes in the same run. It goes to the rolling log, which degrades internally
+        // and never throws, so a logging failure cannot abort a refresh.
+        Action<string> trace = CommandBoundary.Instance.WriteTechnicalRecord;
+
+        // Constructed once and shared: the arming policy locks the owned shapes through the same
+        // writer the reconciliation uses (ADR-0055), so both must see the same guard and the same
+        // trace sink.
+        ExcelShapeWriter shapeWriter =
+            new(application, new ExcelWorksheetProtectionGuard(application), trace);
+
+        return new GanttRefreshOrchestrator(
             new ExcelGanttTableReader(application),
             new ExcelConfigCatalogueReader(application),
             new ExcelWorksheetProtectionGuard(application),
             new ExcelPanelGridMeasurement(application),
             new ExcelDurationWriter(application),
-            new ExcelRowHeightNormaliser(application),
-            new ExcelOutlineGroupWriter(application),
+            new ExcelRowHeightNormaliser(application, trace: trace),
+            new ExcelOutlineGroupWriter(application, trace: trace),
 
             // The text-metrics seam is a real host dependency: Core never measures,
             // so something must. This is now the FONT-BACKED implementation:
@@ -111,7 +394,7 @@ internal static class RefreshSheetCommand
             // font binaries by scripts/gen-font-advances.py and committed as data,
             // so the measurement stays deterministic and Office-free.
             new ExcelSceneBuildRequestFactory(new AptosTextMetrics()),
-            new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
+            shapeWriter,
 
             // R4.8A D2's two remaining preflight steps, supplied here so the
             // orchestrator runs them. Both are optional in the constructor, which is
@@ -129,11 +412,37 @@ internal static class RefreshSheetCommand
             // silent; a null sink was the previous behaviour.
             new ExcelApplicationStateScope(application, CommandBoundary.Instance.WriteTechnicalRecord),
 
-            // The notes reporter. Without it here, Refresh never touched the cell notes:
-            // Validate wrote them and Refresh left them alone, so a user who fixed a
-            // validation error and pressed Refresh saw the stale note still sitting on
-            // the row. The reporter clears the notes this add-in owns on every call, so
-            // passing it here is what makes a corrected row lose its note.
-            new ExcelGanttValidationReporter(application));
+            // The StyleKey column is engine-owned: every Refresh brings column K
+            // into line with each row's current Type, so the writer is part of the
+            // live composition, not an optional extra.
+            new ExcelStyleKeyWriter(application),
+
+            // The row/cell fill highlighter replaces the cell-notes reporter
+            // (ExcelGanttValidationReporter). Fills are cosmetic Interior.ColorIndex
+            // writes — no SpecialCells scan, no per-cell Comment read, and no stale
+            // note left behind when a row is corrected.
+            new ExcelRowWarningHighlighter(application),
+
+            // R5.1: heal type-dependent engine-hidden columns on Type change so
+            // switching entity type does not leave stale values the validator
+            // rejects. Runs after identity repair and before validation.
+            new ExcelTypeChangeNormaliser(application),
+            shapeDeltaCache: _shapeDeltaCache,
+            useDeltaCache: useDeltaCache,
+            trace: trace,
+
+            // ADR-0055: the refresh arms the add-in's own protection (release -> lock -> record) and
+            // claims ownership only of protection this session applied. Both the ownership flag and
+            // the arming memory are session state, because a new orchestrator is built for every
+            // pass; the caller's release window re-applies the protection when the writes finish.
+            protectionOwnership: _protectionOwnership,
+            protectionArming: new WorksheetProtectionArming(
+                // The arming path protects too, so it carries the same diagnostic sink: an arm
+                // that greys the symbols out must be visible in the log, not only a window close.
+                new ExcelWorksheetProtectionPort(application, trace),
+                shapeWriter,
+                _protectionArming,
+                trace));
+    }
 #pragma warning restore CA2000
 }

@@ -199,6 +199,65 @@ public sealed class GanttSheetLayoutTests
     }
 
     /// <summary>
+    /// The boundary rows are SUCCESS cases, not only refusals: a body starting at
+    /// worksheet row 1 is legal, and so is a body one row tall.
+    /// </summary>
+    /// <remarks>
+    /// <b>These cases exist because mutation testing showed the guards were tested only
+    /// at the refusing side.</b> Turning either <c>< 1</c> into <c><= 1</c>, or the
+    /// inverted-span check into <c><=</c>, still refused every case the suite had, so
+    /// the suite could not tell a correct boundary from an off-by-one. Both reserved rows
+    /// are covered because they carry independent guards.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, 1, 3)]
+    [InlineData(1, 5, 7)]
+    [InlineData(6, 6, 8)]
+    public void A_body_at_row_one_or_one_row_tall_resolves_the_padding_row(int first, int last, int observed)
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            first,
+            last,
+            observed,
+            paddingRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(observed, resolved.Row);
+    }
+
+    [Theory]
+    [InlineData(1, 1, 2)]
+    [InlineData(1, 5, 6)]
+    [InlineData(6, 6, 7)]
+    public void A_body_at_row_one_or_one_row_tall_resolves_the_anchor_row(int first, int last, int observed)
+    {
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            first,
+            last,
+            observed,
+            anchorRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(observed, resolved.Row);
+    }
+
+    [Theory]
+    [InlineData(0, 10)]
+    [InlineData(4, 0)]
+    public void One_non_positive_body_row_refuses_even_when_the_other_is_positive(int first, int last)
+    {
+        // One bad end is enough to refuse, and the reason must be the bound itself
+        // rather than the span check catching the pair afterwards. A mutant joining the
+        // two bounds with `&&` is what makes this discriminative.
+        Assert.Equal(
+            BottomPaddingRefusalReason.NonPositiveRowIndex,
+            GanttSheetLayout.ResolveBottomPaddingRow(first, last, first, true).Refusal);
+        Assert.Equal(
+            AnchorRowRefusalReason.NonPositiveRowIndex,
+            GanttSheetLayout.ResolveAnchorRow(first, last, first, true).Refusal);
+    }
+
+    /// <summary>
     /// An occupied or unverified ANCHOR row is refused, because it is the user's row
     /// rather than the plot's bottom anchor (ADR-0038 D6).
     /// </summary>
@@ -361,22 +420,36 @@ public sealed class GanttSheetLayoutTests
         Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleStartColumnIndex);
         Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleEndColumnIndex);
 
-        // The derived reference is the single cell above Description.
+        // The derived reference is the single cell above Description. The table starts
+        // in column B and Description is the third schema column since R5.21 added
+        // Activity ID after Type, so the title is D2.
         Assert.Equal(
-            "E2",
+            "D2",
             GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleRowIndex));
 
-        // It starts AFTER the engine columns: a title in column A would sit over
-        // hidden bookkeeping the user cannot see.
-        Assert.True(GanttSheetLayout.TitleColumnIndex > 1);
+        // It starts AFTER the leading gutter: a title in column A would sit over the
+        // add-in's own spacer rather than over the column the table is read by.
+        Assert.True(GanttSheetLayout.TitleColumnIndex > GanttSheetLayout.LeadingGutterColumnIndex);
 
-        // And it really is the Description column's own index, not a coincidence.
+        // And it really is the Description column's own schema position OFFSET by the
+        // table origin, not a coincidence.
         Assert.Equal(
-            GanttTableSchema.Default.Columns
-                .Select((column, index) => (column, index))
-                .Single(entry => string.Equals(entry.column.Name, "Description", StringComparison.Ordinal))
-                .index + 1,
+            GanttSheetLayout.TableOriginColumnIndex
+                + GanttTableSchema.Default.Columns
+                    .Select((column, index) => (column, index))
+                    .Single(entry => string.Equals(entry.column.Name, "Description", StringComparison.Ordinal))
+                    .index,
             GanttSheetLayout.TitleColumnIndex);
+    }
+
+    [Fact]
+    public void An_A1_cell_rejects_a_non_positive_row()
+    {
+        // The guard stops a caller building a "$A0"-shaped reference that Excel
+        // refuses at write time. It had no test of its own until the mutation gate
+        // named the removed call as a survivor.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleColumnIndex, 0));
     }
 
     /// <summary>
@@ -405,9 +478,13 @@ public sealed class GanttSheetLayoutTests
             GanttSheetLayout.AnchorRowIndex(7) + 1,
             GanttSheetLayout.BottomPaddingRowIndex(7));
 
-        // A table with no body has no last activity row, so there is no row to name.
-        // Returning a plausible index would place the chart's bottom margin inside
-        // the table, so this is refused rather than guessed -- by BOTH derivations.
+        // Zero is still a caller defect: these methods need a real span to derive from.
+        // An EMPTY table's caller passes 1, because Excel shows a table with no ListRows
+        // with its insert row occupying one body row's position (owner ruling 2026-11-14).
+        // With that 1 the anchor is row 5 and the padding row 6, one below the insert row
+        // that sits directly under the header.
+        Assert.Equal(5, GanttSheetLayout.AnchorRowIndex(1));
+        Assert.Equal(6, GanttSheetLayout.BottomPaddingRowIndex(1));
         Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.AnchorRowIndex(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.BottomPaddingRowIndex(0));
     }
@@ -446,15 +523,45 @@ public sealed class GanttSheetLayoutTests
             GanttSheetLayout.FirstBodyRowIndex);
     }
 
+    [Theory]
+    [InlineData(3, 2, true)]
+    [InlineData(4, 2, false)]
+    [InlineData(3, 1, false)]
+    [InlineData(31, 2, false)]
+    public void The_contract_origin_is_the_header_row_in_column_b(int row, int column, bool expected) =>
+        Assert.Equal(expected, GanttSheetLayout.IsAtContractOrigin(row, column));
+
+    /// <summary>
+    /// The table starts in column B and column A is the add-in's own spacer gutter
+    /// (R5.18k).
+    /// </summary>
+    /// <remarks>
+    /// Both values are asserted as literals for the same reason the header row is: the
+    /// checker compares a live table against this, so deriving it here would compare the
+    /// layout authority with itself. The pair is what matters — the gutter is one column
+    /// wide and the origin is one column right of it — so a future move has to change both.
+    /// </remarks>
+    [Fact]
+    public void The_table_origin_leaves_column_a_for_the_leading_gutter()
+    {
+        Assert.Equal(1, GanttSheetLayout.LeadingGutterColumnIndex);
+        Assert.Equal(2, GanttSheetLayout.TableOriginColumnIndex);
+        Assert.Equal(
+            GanttSheetLayout.LeadingGutterColumnIndex + 1,
+            GanttSheetLayout.TableOriginColumnIndex);
+        Assert.True(GanttSheetLayout.IsAtContractOrigin(GanttSheetLayout.HeaderRowIndex, 2));
+    }
+
     /// <summary>
     /// The anchor is the column one past the table's last column — the same rule the
-    /// pre-ADR-0030 code used, unchanged.
+    /// pre-ADR-0030 code used, now offset by the origin so it does not land ON the last
+    /// table column.
     /// </summary>
     [Fact]
     public void The_anchor_column_is_one_past_the_last_schema_column()
     {
         Assert.Equal(
-            GanttTableSchema.Default.Columns.Count + 1,
+            GanttSheetLayout.TableOriginColumnIndex + GanttTableSchema.Default.Columns.Count,
             GanttSheetLayout.PlotAnchorColumnIndex);
     }
 

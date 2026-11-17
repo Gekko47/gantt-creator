@@ -61,6 +61,11 @@ public sealed class ProtectionGuardFirstTests
     private static readonly MutatingAdapter[] MutatingAdapters =
     [
         new("src/GanttCreator.Office/ExcelWorkbookInitialiser.cs", "Initialise"),
+        // R5.17: the recovery adapter writes header cells, creates or deletes the
+        // contract table, repairs table columns, and creates the configuration or
+        // Gantt worksheet. Recover() consults the shared guard before delegating to
+        // any of those mutations; Inspect() remains read-only.
+        new("src/GanttCreator.Office/ExcelWorkbookRecovery.cs", "Recover"),
         new("src/GanttCreator.Office/ExcelConfigCatalogueWriter.cs", "Write"),
         new("src/GanttCreator.Office/ExcelGanttValidationReporter.cs", "Report"),
         new("src/GanttCreator.Office/ExcelGanttRowInserter.cs", "Insert"),
@@ -83,6 +88,17 @@ public sealed class ProtectionGuardFirstTests
         // content -- so it is a data mutation under ADR-0008 D4 and consults the
         // guard before its single ranged write.
         new("src/GanttCreator.Office/ExcelDurationWriter.cs", "Write"),
+        // R4.7F/R4.8A: the StyleKey writer mutates the user's VISIBLE worksheet --
+        // the engine-owned StyleKey column is user-facing table data, not generated
+        // content -- so it is a data mutation under ADR-0008 D4 and consults the
+        // guard before its single ranged write. Listed at "Write".
+        new("src/GanttCreator.Office/ExcelStyleKeyWriter.cs", "Write"),
+        // R5.11 type-change healing: the normaliser rewrites engine-hidden cells on
+        // the user's VISIBLE worksheet when a row's Type changes (StyleKey, label
+        // positions, colours, ParentId, lane/stack, sibling order), so it is a data
+        // mutation under ADR-0008 D4. Listed at "Normalise", its single entry point,
+        // which queries the target guard before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelTypeChangeNormaliser.cs", "Normalise"),
         // R4.8A D2: the column-classification restorer hides and locks columns on the
         // user's VISIBLE worksheet, so it mutates user-facing presentation state and
         // consults the guard before its first write. Listed at "EnsureClassification",
@@ -117,6 +133,64 @@ public sealed class ProtectionGuardFirstTests
         // entry point, and an unregistered entry point could silently
         // drop the guard.
         new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPlacement"),
+        // R5.6a: the style-key mutator writes the user's VISIBLE table -- exactly
+        // one StyleKey cell on one body row (bespoke per entity, never
+        // group-applied) -- so it is a data mutation under ADR-0008 D4. Listed
+        // at "SetStyleKey", the entry point that consults the shared guard
+        // before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelStyleKeyMutator.cs", "SetStyleKey"),
+        // R5.8: validation fills change visible worksheet formatting. Each public
+        // mutation path checks protection before resolving the workbook/table.
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "HighlightRow"),
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "HighlightCell"),
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ClearHighlight"),
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ReconcileHighlights"),
+        new("src/GanttCreator.Office/ExcelWarningHighlighter.cs", "HighlightWarnings"),
+        // R5.18h: the column-visibility port hides and unhides the five authoring
+        // columns the ribbon's dropdown offers, which is user-visible worksheet
+        // state, so it is a data mutation under ADR-0008 D4. Listed at "Apply",
+        // the only mutating member; it queries the target guard after resolving
+        // the workbook and table and before the first flag write, because the
+        // refusal must precede any mutation rather than interrupt it.
+        new("src/GanttCreator.Office/ExcelColumnVisibilityPort.cs", "Apply"),
+    ];
+
+    /// <summary>
+    /// Mutating Office files that must <em>not</em> consult the guard before their first
+    /// mutation, with the reason each one is exempt.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a declared exception list, not an oversight list. ADR-0008 D4 requires every
+    /// mutating adapter to consult protection before it writes, and the check for that runs in
+    /// <see cref="ProtectionOrderViolations"/> over <see cref="MutatingAdapters"/>. A file named
+    /// here still has to be discovered as a mutator (its mutation shape is in
+    /// <see cref="DataMutationPatterns"/>) — it simply cannot satisfy the ordering rule.
+    /// </para>
+    /// <para>
+    /// ADR-0055's protection adapter is the only member. Its job is to apply and remove the
+    /// worksheet protection the guard reads: re-applying <c>UserInterfaceOnly</c> after a reopen
+    /// is possible only on an already-protected sheet, and the guard refuses a protected sheet by
+    /// design, so asking the guard first would make the recovery path unreachable. The policy that
+    /// keeps this safe lives one layer up — the orchestrator decides when to arm, and it only ever
+    /// arms the sheet the add-in itself owns.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] ProtectionControlAdapters =
+    [
+        "src/GanttCreator.Office/ExcelWorksheetProtectionPort.cs",
+        // ADR-0055: the arming policy. Same declared exception and the same reason: the guard
+        // refuses a protected worksheet, and releasing then re-applying protection is the recovery
+        // path for exactly that state (a sheet protected in an earlier session, without the
+        // UserInterfaceOnly that does not survive a reopen). A guard-first rule would make the
+        // recovery unreachable. It touches COM only through IWorksheetProtectionPort and
+        // IShapeWritePort, so the policy itself is contract-tested without a host.
+        "src/GanttCreator.Office/WorksheetProtectionArming.cs",
+        // ADR-0055: the release window. The same exception again, and unavoidably so: it releases
+        // the sheet precisely because the sheet is protected, then re-applies protection afterwards.
+        // Its whole job is the state the guard refuses, and it holds no COM of its own - it talks to
+        // IWorksheetProtectionPort only.
+        "src/GanttCreator.Office/WorksheetProtectionWindow.cs",
     ];
 
     /// <summary>
@@ -139,7 +213,12 @@ public sealed class ProtectionGuardFirstTests
         // The port for the column-classification restorer. It declares no mutation of
         // its own; the mutating implementation is registered in MutatingAdapters above.
         "src/GanttCreator.Office/IColumnPresentationPort.cs",
+        // R5.18h: the column-visibility port's interface and outcome types. A
+        // declaration plus two records -- no interop proxy, no statement, nothing to
+        // guard. Its implementation is registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IColumnVisibilityPort.cs",
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
+        "src/GanttCreator.Office/ExcelSheetChangeAnalyzer.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
@@ -150,6 +229,16 @@ public sealed class ProtectionGuardFirstTests
         // consume; it writes nothing and touches no COM object, so it is
         // read-only and consults no guard.
         "src/GanttCreator.Office/ExcelGanttRowProjection.cs",
+        // The session's two protection toggles (owner ruling 2026-11-09): two booleans the
+        // ribbon writes, and that ExcelWorksheetProtectionPort and the refresh scheduler read.
+        // No COM object, no workbook state, and no guard to consult — it changes nothing until
+        // a protect runs.
+        "src/GanttCreator.Office/ProtectionPreferences.cs",
+        // R5.20: the automatic-refresh switch, the same shape as the protection pair — one
+        // boolean the ribbon writes and the refresh scheduler reads. It holds no COM proxy and
+        // performs no workbook write itself: persisting the row is delegated to the registered
+        // IConfigCatalogueWriter, which consults the guard, so there is nothing here to guard.
+        "src/GanttCreator.Office/AutoRefreshPreferences.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",
@@ -157,6 +246,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
         "src/GanttCreator.Office/ShapeWriteOutcome.cs",
         "src/GanttCreator.Office/ShapeOwnershipTag.cs",
+        "src/GanttCreator.Office/ShapeDeltaCache.cs",
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",
         "src/GanttCreator.Office/ExcelInsertedRowSelector.cs",
         "src/GanttCreator.Office/IInsertedRowSelector.cs",
@@ -166,14 +256,19 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",
         "src/GanttCreator.Office/IConfigCatalogueReader.cs",
         "src/GanttCreator.Office/IConfigCatalogueWriter.cs",
+        "src/GanttCreator.Office/IWorkbookRecovery.cs",
         "src/GanttCreator.Office/IConfigIntegrityChecker.cs",
+        "src/GanttCreator.Office/ExcelConfigSheetInspector.cs",
         "src/GanttCreator.Office/IConfigRepairer.cs",
         "src/GanttCreator.Office/IConfigSheetVisibilityRepairer.cs",
         "src/GanttCreator.Office/IPlotAnchorRepairer.cs",
         "src/GanttCreator.Office/IGanttRowIdentityRepairer.cs",
         "src/GanttCreator.Office/IExcelApplicationAdapter.cs",
+        "src/GanttCreator.Office/ISheetChangeAnalyzer.cs",
         "src/GanttCreator.Office/IGanttTableReader.cs",
         "src/GanttCreator.Office/IGanttValidationReporter.cs",
+        "src/GanttCreator.Office/IRowWarningHighlighter.cs",
+        "src/GanttCreator.Office/IWarningHighlighter.cs",
         "src/GanttCreator.Office/InternalsVisibleTo.cs",
         "src/GanttCreator.Office/ITypeOptionsMaterialiser.cs",
         "src/GanttCreator.Office/IWorkbookInitialiser.cs",
@@ -192,6 +287,10 @@ public sealed class ProtectionGuardFirstTests
         // mutates no workbook content, so a guard consultation would be unreachable
         // code rather than a missing guard.
         "src/GanttCreator.Office/ILabelPositionMutator.cs",
+        // R5.6a: the style-key port. The port declares the single
+        // write and its typed outcome -- the mutating implementation is
+        // registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IStyleKeyMutator.cs",
         // R5.14: the date-label port. The port declares the single
         // write and its typed outcome -- the mutating implementation is
         // registered in MutatingAdapters above.
@@ -257,6 +356,24 @@ public sealed class ProtectionGuardFirstTests
         // cannot leave a setting altered, which is the opposite of a data mutation
         // and therefore not a guard candidate.
         "src/GanttCreator.Office/IApplicationStateScope.cs",
+        // R4.7F/R4.8A: a pure interface declaration with no statement and nothing
+        // to guard; its implementation consults the shared guard and is registered
+        // above as a mutating adapter.
+        "src/GanttCreator.Office/IStyleKeyWritePort.cs",
+        // ADR-0055: the worksheet-protection port's interface. A declaration plus two
+        // outcome types - no interop proxy, no statement, nothing to guard. Its
+        // implementation is the one declared protection-control adapter, which cannot
+        // consult the guard for the reason recorded on ProtectionControlAdapters.
+        "src/GanttCreator.Office/IWorksheetProtectionPort.cs",
+        // ADR-0055: the protection-ownership fact the guard reads. An interface plus a
+        // single volatile boolean - no interop proxy, no host call, and nothing to
+        // guard. It exists precisely so the ownership decision costs the refresh no
+        // round trip, which is why it must stay a plain in-memory flag.
+        "src/GanttCreator.Office/ProtectionOwnershipSource.cs",
+        // ADR-0055: the arming memory beside it. Same reasoning - one volatile boolean
+        // and no interop type - and it must stay that way: arming is a session fact, and
+        // a host call here would be the per-refresh round trip the design forbids.
+        "src/GanttCreator.Office/ProtectionArmingState.cs",
     ];
 
     /// <summary>
@@ -290,6 +407,11 @@ public sealed class ProtectionGuardFirstTests
         "Names.Add(",
         "names.Add(",
         "_catalogueWriter.Write(",
+        // ADR-0055: applying and removing worksheet protection changes workbook state just as
+        // surely as a cell write, so the discovery rule must see it. Adding the shape here is
+        // what forces the two protection files to be classified deliberately.
+        ".Protect(",
+        ".Unprotect(",
         "AddComment(",
         "Comment.Text(",
         "comment.Text(",
@@ -351,6 +473,8 @@ public sealed class ProtectionGuardFirstTests
         // wanted)`), and a comparison contains the same text as a write.
         ".Locked",
         ".Hidden",
+        ".Color",
+        ".ColorIndex",
     ];
 
     /// <summary>
@@ -378,7 +502,9 @@ public sealed class ProtectionGuardFirstTests
 
         var violations = ClassificationViolations(
             sources,
-            MutatingAdapters.Select(adapter => adapter.RelativePath).ToArray(),
+            MutatingAdapters.Select(adapter => adapter.RelativePath)
+                .Concat(ProtectionControlAdapters)
+                .ToArray(),
             NoDataMutationOfficeFiles);
 
         Assert.True(
@@ -393,7 +519,9 @@ public sealed class ProtectionGuardFirstTests
 
         var violations = DiscoveryViolations(
             sources,
-            MutatingAdapters.Select(adapter => adapter.RelativePath).ToArray());
+            MutatingAdapters.Select(adapter => adapter.RelativePath)
+                .Concat(ProtectionControlAdapters)
+                .ToArray());
 
         Assert.True(
             violations.Count == 0,

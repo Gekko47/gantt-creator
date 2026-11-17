@@ -56,6 +56,47 @@ public class WorkbookInitialiserTests
         public Mock<Excel.Worksheet> Worksheet { get; } = new();
         public Mock<Excel.Range> HeaderRange { get; } = new();
 
+        /// <summary>
+        /// The table's own header row, which is a different range from
+        /// <see cref="HeaderRange"/> (the worksheet row the header values are written to).
+        /// The initialiser locks it once for every column, after the per-column pass.
+        /// </summary>
+        public Mock<Excel.Range> TableHeaderRow { get; } = new();
+
+        /// <summary>The table's whole range, which the border pass colours and weights.</summary>
+        public Mock<Excel.Range> TableRange { get; } = new();
+
+        /// <summary>The table range's border collection.</summary>
+        public Mock<Excel.Borders> TableBorders { get; } = new();
+
+        /// <summary>The header row's font, which the header type is written onto.</summary>
+        public Mock<Excel.Font> HeaderFont { get; } = new();
+
+        /// <summary>The header row's fill.</summary>
+        public Mock<Excel.Interior> HeaderInterior { get; } = new();
+
+        /// <summary>The header font family as written.</summary>
+        public object? HeaderFontName { get; private set; }
+
+        /// <summary>The header font size as written.</summary>
+        public object? HeaderFontSize { get; private set; }
+
+        /// <summary>
+        /// The header font's bold flag as written. Left <see langword="null"/> when the
+        /// adapter never wrote one, so a test can tell "regular" from "not set" — which is
+        /// the difference between overriding Excel's table-style bold and inheriting it.
+        /// </summary>
+        public object? HeaderFontBold { get; private set; }
+
+        /// <summary>The header font colour as written.</summary>
+        public object? HeaderFontColour { get; private set; }
+
+        /// <summary>The header row's fill colour as written.</summary>
+        public object? HeaderFillColour { get; private set; }
+
+        /// <summary>The colour written to every cell border.</summary>
+        public object? TableBorderColour { get; private set; }
+
         /// <summary>The reserved title cell, captured separately (ADR-0030 D4).</summary>
         public Mock<Excel.Range> TitleCell { get; } = new();
         public Mock<Excel.Range> UsedRange { get; } = new();
@@ -73,8 +114,55 @@ public class WorkbookInitialiserTests
         /// <summary>The <c>Locked</c> value written to each column, in column order.</summary>
         public List<bool> LockedWrites { get; } = [];
 
+        /// <summary>The <c>Locked</c> value written to the table's header row.</summary>
+        public List<bool> HeaderRowLockWrites { get; } = [];
+
         /// <summary>The <c>Hidden</c> value written to each column, in column order.</summary>
         public List<bool> HiddenWrites { get; } = [];
+
+        /// <summary>
+        /// The <c>NumberFormat</c> written to each column, with its schema index, so a
+        /// test can prove the date format landed on Start and Finish and nowhere else.
+        /// </summary>
+        public List<(int Index, string Pattern)> NumberFormatWrites { get; } = [];
+
+        /// <summary>
+        /// Whole worksheet columns by one-based index, for the pass that hides the engine
+        /// columns BEFORE the header row is written. Each mock records its own writes, so a
+        /// test can assert which columns were hidden and when relative to the header.
+        /// </summary>
+        public Dictionary<int, Mock<Excel.Range>> WorksheetColumns { get; } = [];
+
+        /// <summary>
+        /// The order of the two writes the flash report is about: <c>hidden</c> for each
+        /// engine-column hide and <c>header</c> for the header row's value write.
+        /// </summary>
+        public List<string> WriteOrder { get; } = [];
+
+        /// <summary>
+        /// Returns, and lazily creates, the mock for one whole worksheet column.
+        /// </summary>
+        /// <param name="columnIndex">The one-based worksheet column.</param>
+        /// <returns>The column's mock range.</returns>
+        public Mock<Excel.Range> WorksheetColumn(int columnIndex)
+        {
+            if (WorksheetColumns.TryGetValue(columnIndex, out Mock<Excel.Range>? existing))
+            {
+                return existing;
+            }
+
+            var mock = new Mock<Excel.Range>();
+            object hidden = false;
+            _ = mock.SetupGet(range => range.Hidden).Returns(() => hidden);
+            _ = mock.SetupSet(range => range.Hidden = It.IsAny<object>())
+                .Callback<object>(value =>
+                {
+                    hidden = RequireBool(value);
+                    WriteOrder.Add("hidden");
+                });
+            WorksheetColumns[columnIndex] = mock;
+            return mock;
+        }
 
         /// <summary>
         /// Pre-sets each column's current <c>Hidden</c> state, so a test can start from
@@ -96,8 +184,39 @@ public class WorkbookInitialiserTests
             }
         }
 
+        /// <summary>
+        /// Pre-sets a column's current <c>NumberFormat</c>, so a test can start from a
+        /// column that already carries the code the writer wants.
+        /// </summary>
+        /// <param name="formats">The schema index and the format code that column already carries.</param>
+        public void SetExistingNumberFormat(IEnumerable<(int Index, string Pattern)> formats)
+        {
+            foreach ((int index, string pattern) in formats)
+            {
+                _existingNumberFormat[index] = pattern;
+            }
+
+            // The per-column mocks captured their starting value when the graph was
+            // constructed, so a later call has to push the new value into each one.
+            for (var index = 0; index < _presettableNumberFormat.Count; index++)
+            {
+                _presettableNumberFormat[index][0] =
+                    _existingNumberFormat.TryGetValue(index, out string? set) ? set : null;
+            }
+        }
+
         /// <summary>The one-element boxed state each column's <c>Hidden</c> mock reads.</summary>
         private readonly List<object[]> _presettableHidden = [];
+
+        /// <summary>The one-element boxed format each column's <c>NumberFormat</c> mock reads.</summary>
+        private readonly List<object?[]> _presettableNumberFormat = [];
+
+        /// <summary>
+        /// The format code each column starts with, keyed by schema index. A column
+        /// absent from this map starts with no single code, which is what a General
+        /// worksheet column reports.
+        /// </summary>
+        private readonly Dictionary<int, string> _existingNumberFormat = [];
 
         /// <summary>
         /// Unboxes an <c>object</c>-typed PIA property write. <c>IRange.Locked</c>
@@ -113,6 +232,19 @@ public class WorkbookInitialiserTests
             ? value
             : throw new Xunit.Sdk.XunitException(
                 $"Expected a boolean cell-format write but received '{raw?.GetType().Name ?? "null"}'.");
+
+        /// <summary>
+        /// Unboxes an <c>object</c>-typed <c>NumberFormat</c> write. The property is
+        /// declared <see cref="object"/> in this interop assembly, so the code arrives
+        /// boxed; anything other than a string would mean the adapter wrote something
+        /// other than a format code, which is worth failing on rather than coercing.
+        /// </summary>
+        /// <param name="raw">The boxed host value.</param>
+        /// <returns>The format code it carries.</returns>
+        private static string RequireFormat(object raw) => raw is string value
+            ? value
+            : throw new Xunit.Sdk.XunitException(
+                $"Expected a date-format write but received '{raw?.GetType().Name ?? "null"}'.");
         public Mock<Excel.Names> Names { get; } = new();
         public Mock<Excel.Shapes> Shapes { get; } = new();
         public Mock<Excel.Comments> Comments { get; } = new();
@@ -129,6 +261,16 @@ public class WorkbookInitialiserTests
         public List<bool> AutoFilterSettings { get; } = new();
         public List<bool> RowStripeSettings { get; } = new();
         public List<bool> ColumnStripeSettings { get; } = new();
+
+        /// <summary>The table-style names assigned, in write order.</summary>
+        public List<string> TableStyleWrites { get; } = [];
+
+        /// <summary>The style the table already carries; absent means Excel's default.</summary>
+        private string? _tableStyle;
+
+        /// <summary>Pretends the table already carries a built-in style.</summary>
+        /// <param name="styleName">The style's name.</param>
+        public void SetExistingTableStyle(string styleName) => _tableStyle = styleName;
 
         private string _name;
         private string? _existingTableName;
@@ -175,7 +317,11 @@ public class WorkbookInitialiserTests
             _ = Hyperlinks.SetupGet(h => h.Count).Returns(() => HyperlinkCount);
 
             _ = HeaderRange.SetupSet(r => r.Value2 = It.IsAny<object>())
-                .Callback<object>(value => WrittenValues.Add(value));
+                .Callback<object>(value =>
+                {
+                    WrittenValues.Add(value);
+                    WriteOrder.Add("header");
+                });
 
             // The title is a CELL, not a shape (ADR-0030 D6), so it is asserted on its
             // own range rather than through the header's capture list. Sharing the
@@ -215,6 +361,48 @@ public class WorkbookInitialiserTests
             // why these are wired explicitly — otherwise the presentation step
             // would silently no-op and its tests would pass vacuously.
             _ = Table.SetupGet(t => t.ListColumns).Returns(ListColumns.Object);
+
+            // The header row the lock pass writes to (R5.18k follow-up). Its getter reports
+            // what the recorded write left behind, so an adapter that skipped the write on
+            // an already-locked header would be visible here rather than silently passing.
+            _ = Table.SetupGet(t => t.HeaderRowRange).Returns(TableHeaderRow.Object);
+            _ = TableHeaderRow.SetupGet(r => r.Locked)
+                .Returns(() => (object)(HeaderRowLockWrites.Count > 0));
+            _ = TableHeaderRow.SetupSet(r => r.Locked = It.IsAny<object>())
+                .Callback<object>(value => HeaderRowLockWrites.Add(RequireBool(value)));
+
+            // The header and border passes under test are the REAL methods: `TestableInitialiser`
+            // calls them through `base`, so the graph records what lands on the host properties
+            // rather than only counting that a seam ran. That is what lets a fact tell a
+            // regular 9pt header from a bold one, and a weighted outside edge from an untouched
+            // interior.
+            _ = TableHeaderRow.SetupGet(r => r.Font).Returns(HeaderFont.Object);
+            _ = TableHeaderRow.SetupGet(r => r.Interior).Returns(HeaderInterior.Object);
+            _ = HeaderFont.SetupSet(f => f.Name = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontName = value);
+            _ = HeaderFont.SetupSet(f => f.Size = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontSize = value);
+            _ = HeaderFont.SetupSet(f => f.Bold = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontBold = value);
+            _ = HeaderFont.SetupSet(f => f.Color = It.IsAny<object>())
+                .Callback<object>(value => HeaderFontColour = value);
+            _ = HeaderInterior.SetupSet(i => i.Color = It.IsAny<object>())
+                .Callback<object>(value => HeaderFillColour = value);
+            _ = Table.SetupGet(t => t.Range).Returns(TableRange.Object);
+            _ = TableRange.SetupGet(r => r.Borders).Returns(TableBorders.Object);
+            _ = TableBorders.SetupSet(b => b.Color = It.IsAny<object>())
+                .Callback<object>(value => TableBorderColour = value);
+
+            // The table's own Excel style: `ListObject.TableStyle` is object-typed and
+            // reports the name it was assigned by. The getter reflects the recorded write,
+            // so an initialiser that skips a converged style is visible here.
+            _ = Table.SetupGet(t => t.TableStyle).Returns(() => _tableStyle!);
+            _ = Table.SetupSet(t => t.TableStyle = It.IsAny<object>())
+                .Callback<object>(value =>
+                {
+                    _tableStyle = value as string;
+                    TableStyleWrites.Add(_tableStyle ?? string.Empty);
+                });
 
             // `ListColumns.Count` is read by every column walk, including the
             // rollback's visibility restore. Unconfigured, Moq returns 0 and the
@@ -257,6 +445,23 @@ public class WorkbookInitialiserTests
                         hidden[0] = value;
                         _finalHidden[columnIndex] = RequireBool(value);
                         HiddenWrites.Add(RequireBool(value));
+                    });
+
+                // `NumberFormat` is `object`-typed in the PIA, so leaving the getter
+                // unconfigured would report null -- which the adapter reads as "no
+                // single code" and writes. Wiring the getter to the recorded state is
+                // what lets the skip-when-already-correct test mean something.
+                var numberFormat = new object?[1];
+                numberFormat[0] = _existingNumberFormat.TryGetValue(columnIndex, out string? format)
+                    ? format
+                    : null;
+                _presettableNumberFormat.Add(numberFormat);
+                _ = entireColumn.SetupGet(r => r.NumberFormat).Returns(() => numberFormat[0]!);
+                _ = entireColumn.SetupSet(r => r.NumberFormat = It.IsAny<object>())
+                    .Callback<object>(value =>
+                    {
+                        numberFormat[0] = value;
+                        NumberFormatWrites.Add((columnIndex, RequireFormat(value)));
                     });
                 Columns.Add(column);
             }
@@ -437,6 +642,27 @@ public class WorkbookInitialiserTests
         public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
     }
 
+    /// <summary>
+    /// A materialiser that refuses, so the initialiser's TypeOptions rollback runs.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why this fake had to exist.</b> Every existing test injected
+    /// <see cref="StubTypeOptionsMaterialiser"/>, which always succeeds — so the
+    /// refusal arm that rolls back the plot anchor, the configuration sheet, the data
+    /// table AND the header row had never executed in a test. It is the last mutation
+    /// the create path performs, so it is the one where a missing rollback would leave
+    /// the user with a table and a very-hidden sheet behind a refusal that says
+    /// nothing was written.
+    /// </remarks>
+    private sealed class RefusingTypeOptionsMaterialiser(TypeOptionsRefusalReason reason)
+        : ITypeOptionsMaterialiser
+    {
+        public TypeOptionsMaterialiseOutcome Materialise() =>
+            TypeOptionsMaterialiseOutcome.Refused(reason);
+
+        public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
+    }
+
     private sealed class TestableInitialiser : ExcelWorkbookInitialiser
     {
         public TestableInitialiser(
@@ -444,17 +670,20 @@ public class WorkbookInitialiserTests
             Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
             Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
             Func<Excel.Worksheet, Excel.Range> headerRangeAt,
-            Func<Excel.Worksheet, Excel.Range> titleCellAt,
             Func<Excel.Range, string> usedRangeAddressAt,
             Func<Excel.Worksheet, int> pivotTableCountAt,
             IConfigCatalogueWriter catalogueWriter,
-            IWorksheetProtectionGuard? protectionGuard = null)
-            : base(application, catalogueWriter, protectionGuard, new StubTypeOptionsMaterialiser())
+            IWorksheetProtectionGuard? protectionGuard = null,
+            ITypeOptionsMaterialiser? typeOptions = null)
+            : base(
+                application,
+                catalogueWriter,
+                protectionGuard,
+                typeOptions ?? new StubTypeOptionsMaterialiser())
         {
             SheetAt = sheetAt;
             TableAt = tableAt;
             HeaderRangeAt = headerRangeAt;
-            TitleCellAt = titleCellAt;
             UsedRangeAddressAt = usedRangeAddressAt;
             PivotTableCountAt = pivotTableCountAt;
         }
@@ -474,6 +703,59 @@ public class WorkbookInitialiserTests
             ColumnAt = columnAt;
         }
 
+        /// <summary>The body font written to each column, in column order.</summary>
+        public List<(string Family, double Size)> BodyFontWrites { get; } = [];
+
+        /// <summary>The horizontal alignment written to each column, in column order.</summary>
+        public List<GanttCellAlignment> HorizontalAlignmentWrites { get; } = [];
+
+        /// <summary>How many columns were middle-aligned; every column must be.</summary>
+        public int VerticalCentreWrites { get; private set; }
+
+        internal override void ApplyBodyFont(Excel.Range entireColumn) =>
+            BodyFontWrites.Add((GanttTableAppearance.FontFamily, GanttTableAppearance.BodyFontSizePt));
+
+        internal override void ApplyVerticalCentre(Excel.Range entireColumn) => VerticalCentreWrites++;
+
+        internal override void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
+            HorizontalAlignmentWrites.Add(alignment);
+
+        /// <summary>
+        /// The stand-in ranges cannot report a width (the PIA member is not proxied), so the
+        /// visible-width pass is skipped here. <see cref="VisibleColumnWidthTests"/> owns
+        /// that behaviour and drives it through the same seams.
+        /// </summary>
+        internal override double? ReadColumnWidthCharacters(Excel.Range column) => null;
+
+        /// <inheritdoc cref="ReadColumnWidthCharacters"/>
+        internal override double? ReadColumnWidthPoints(Excel.Range column) => null;
+
+        /// <summary>How many times the header band was themed; it is table-wide, so once.</summary>
+        public int HeaderFormatWrites { get; private set; }
+
+        /// <summary>How many times the border colour was written; it is table-wide, so once.</summary>
+        public int BorderColourWrites { get; private set; }
+
+        internal override void ApplyHeaderFormat(Excel.ListObject table)
+        {
+            HeaderFormatWrites++;
+            base.ApplyHeaderFormat(table);
+        }
+
+        internal override void ApplyBorderColour(Excel.ListObject table)
+        {
+            BorderColourWrites++;
+            base.ApplyBorderColour(table);
+        }
+
+        /// <summary>The outside borders the real border pass asked to weight, in write order.</summary>
+        public List<(Excel.XlBordersIndex Edge, Excel.XlBorderWeight Weight)> OutsideBorders { get; } = [];
+
+        internal override void SetBorderWeight(
+            Excel.Borders borders,
+            Excel.XlBordersIndex edge,
+            Excel.XlBorderWeight weight) => OutsideBorders.Add((edge, weight));
+
         private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
         private Func<Excel.Range, string> UsedRangeAddressAt { get; }
@@ -487,10 +769,6 @@ public class WorkbookInitialiserTests
         private Func<Excel.ListObject, Excel.ListColumns> ListColumnsAt { get; set; } =
             _ => throw new InvalidOperationException("ListColumns seam was not wired.");
 
-        /// <summary>Seam over the reserved title cell (ADR-0030 D4).</summary>
-        private Func<Excel.Worksheet, Excel.Range> TitleCellAt { get; set; } =
-            _ => throw new InvalidOperationException("GetTitleCell seam was not wired.");
-
         private Func<Excel.ListColumns, int, Excel.ListColumn> ColumnAt { get; set; } =
             (_, _) => throw new InvalidOperationException("GetColumnAt seam was not wired.");
 
@@ -502,9 +780,6 @@ public class WorkbookInitialiserTests
 
         internal override Excel.Range GetHeaderRange(Excel.Worksheet target, int columnCount)
             => HeaderRangeAt(target);
-
-        internal override Excel.Range GetTitleRange(Excel.Worksheet target)
-            => TitleCellAt(target);
 
         internal override string GetUsedRangeAddress(Excel.Range usedRange)
             => UsedRangeAddressAt(usedRange);
@@ -518,7 +793,57 @@ public class WorkbookInitialiserTests
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index)
             => ColumnAt(columns, index);
 
-        internal override Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+        /// <summary>
+        /// Resolves a whole worksheet column by its one-based index, for the pass that hides
+        /// the engine columns before the table exists.
+        /// </summary>
+        public Func<Excel.Worksheet, int, Excel.Range?> WorksheetColumnAt { get; set; } =
+            (_, _) => null;
+
+        internal override Excel.Range? GetWorksheetColumn(Excel.Worksheet target, int columnIndex)
+            => WorksheetColumnAt(target, columnIndex);
+
+        /// <summary>
+        /// The window the gridline switch writes to, or <see langword="null"/> when the test
+        /// models a host that reports no window.
+        /// </summary>
+        public Mock<Excel.Window>? Window { get; set; }
+
+        internal override Excel.Window? GetActiveWindow(Excel.Application application) =>
+            Window?.Object;
+
+        /// <summary>
+        /// Answers the two shapes of this seam the product asks for: one column's entire
+        /// column inside the presentation loop, and the WHOLE TABLE's entire columns once
+        /// before it (the theme's body font and vertical centring are identical for every
+        /// column, so they are written once — measured 252.3 ms for 17 columns when they
+        /// were written per column).
+        /// </summary>
+        /// <param name="range">The range the product asked about.</param>
+        /// <returns>The range's entire column, or a stand-in for the table-wide range the
+        /// graph does not model.</returns>
+        internal override Excel.Range GetEntireColumn(Excel.Range range) =>
+            range is null ? EntireColumnStandIn : range.EntireColumn;
+
+        private Excel.Range? _entireColumnStandIn;
+
+        private Excel.Range EntireColumnStandIn =>
+            _entireColumnStandIn ??= new Mock<Excel.Range>().Object;
+
+        /// <summary>
+        /// The sheet-scoped name the rollback resolves, or <see langword="null"/> for a
+        /// sheet that carries no plot-anchor name.
+        /// </summary>
+        public Excel.Name? RollbackName { get; set; }
+
+        /// <summary>The defined-name text the rollback asked for, or null if never asked.</summary>
+        public string? RollbackNameText { get; private set; }
+
+        internal override Excel.Name? FindName(Excel.Names names, string nameText)
+        {
+            RollbackNameText = nameText;
+            return RollbackName;
+        }
     }
 
     /// <summary>The workbook-level graph: application, workbook, sheets, worksheet function.</summary>
@@ -602,8 +927,9 @@ public class WorkbookInitialiserTests
         /// delegates. Returns the initialiser under test.
         /// </summary>
         /// <param name="activeSheet">The active worksheet graph, or <see langword="null"/> for a non-worksheet active object.</param>
+        /// <param name="window">The window the gridline switch writes to, or <see langword="null"/> for a host that reports none.</param>
         /// <returns>The initialiser over the mocked application.</returns>
-        public TestableInitialiser Build(WorksheetGraph? activeSheet)
+        public TestableInitialiser Build(WorksheetGraph? activeSheet, Mock<Excel.Window>? window = null)
         {
             _ = Workbook.SetupGet(w => w.ActiveSheet)
                 .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
@@ -626,9 +952,6 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
-                titleCellAt: target =>
-                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
-                        .TitleCell.Object,
                 usedRangeAddressAt: usedRange =>
                     graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
                         .UsedRangeAddress,
@@ -636,7 +959,7 @@ public class WorkbookInitialiserTests
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .PivotTableCount,
                 catalogueWriter: catalogueWriter.Object);
-            WireColumnPresentationFor(graphs, initialiser);
+            WireColumnPresentationFor(graphs, initialiser, window);
             return initialiser;
         }
 
@@ -646,14 +969,25 @@ public class WorkbookInitialiserTests
         /// </summary>
         /// <param name="graphs">The sheet graphs, which own the list columns.</param>
         /// <param name="initialiser">The initialiser to wire.</param>
+        /// <param name="window">The window the gridline switch writes to, or <see langword="null"/> for a host that reports none.</param>
         private static void WireColumnPresentationFor(
             IReadOnlyCollection<WorksheetGraph> graphs,
-            TestableInitialiser initialiser) =>
+            TestableInitialiser initialiser,
+            Mock<Excel.Window>? window = null)
+        {
             initialiser.WireColumnPresentation(
                 table => graphs.Single(g => ReferenceEquals(g.Table.Object, table)).ListColumns.Object,
                 (columns, index) => graphs
                     .Single(g => ReferenceEquals(g.ListColumns.Object, columns))
                     .Columns[index - 1].Object);
+
+            // The pre-header hide addresses WHOLE worksheet columns, before any table
+            // exists, so it resolves through the sheet graph that owns the worksheet.
+            initialiser.WorksheetColumnAt = (target, index) => graphs
+                .Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                .WorksheetColumn(index).Object;
+            initialiser.Window = window;
+        }
         /// <summary>
         /// Completes the graph with an explicit catalogue writer instead of
         /// the default no-op stub: the given writer's outcome drives the
@@ -665,7 +999,9 @@ public class WorkbookInitialiserTests
         public TestableInitialiser BuildWithWriter(
             WorksheetGraph? activeSheet,
             IConfigCatalogueWriter catalogueWriter,
-            IWorksheetProtectionGuard? protectionGuard = null)
+            IWorksheetProtectionGuard? protectionGuard = null,
+            ITypeOptionsMaterialiser? typeOptions = null,
+            Mock<Excel.Window>? window = null)
         {
             _ = Workbook.SetupGet(w => w.ActiveSheet)
                 .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
@@ -686,9 +1022,6 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
-                titleCellAt: target =>
-                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
-                        .TitleCell.Object,
                 usedRangeAddressAt: usedRange =>
                     graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
                         .UsedRangeAddress,
@@ -696,8 +1029,9 @@ public class WorkbookInitialiserTests
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .PivotTableCount,
                 catalogueWriter: catalogueWriter,
-                protectionGuard: protectionGuard);
-            WireColumnPresentationFor(graphs, initialiser);
+                protectionGuard: protectionGuard,
+                typeOptions: typeOptions);
+            WireColumnPresentationFor(graphs, initialiser, window);
             return initialiser;
         }
     }
@@ -774,6 +1108,214 @@ public class WorkbookInitialiserTests
     }
 
     [Fact]
+    public void Initialise_locks_the_table_header_row_for_every_column()
+    {
+        // R5.18k follow-up. `ListColumn.Range` includes the header cell, so the per-column
+        // pass writes each authoring column's UNLOCKED flag over its own header too. Once
+        // the visible columns led the table (R5.18k) that left an unlocked `Type` header
+        // above a protected body, and a user could rename a schema column -- which breaks
+        // the name-keyed column map every adapter builds. Measured live by
+        // ProtectionToggleIntegrationTests: the header cell read Locked = False.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        _ = Assert.Single(active.HeaderRowLockWrites);
+        Assert.True(active.HeaderRowLockWrites[0]);
+    }
+
+    [Fact]
+    public void Initialise_formats_the_start_and_finish_columns_as_dates()
+    {
+        // Excel stores a date as a serial number, so a General-formatted cell shows the
+        // serial. The WHOLE worksheet column is formatted, which is what covers the
+        // empty cells and the rows that do not exist yet; a body-only write would leave
+        // every new row General, which is how a date reached the sheet as a number.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        // dd-mmm-yy, the pattern the columns are styled with (owner ruling 2026-11-14).
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
+        Assert.Equal(
+            new[] { (IndexOf("Start"), pattern), (IndexOf("Finish"), pattern) },
+            active.NumberFormatWrites);
+    }
+
+    [Fact]
+    public void Initialise_applies_the_theme_font_and_middle_alignment_to_every_column()
+    {
+        // R5.18d, owner ruling D5: the visible table is presented from the same code-owned
+        // typography tokens the chart and its export use, so the live panel and the exported
+        // panel cannot drift apart. Every schema column is covered, hidden engine columns
+        // included: hiding a column does not stop the row-height and read paths from using it.
+        //
+        // The COVERAGE is per column; the WRITE is not. The theme's body font and vertical
+        // centring are identical for every column, so they are written once over the table's
+        // whole columns — measured 2026-11-14, the per-column version cost 252.3 ms for 17
+        // columns and was 55% of Initialise. The assertions below therefore check that the
+        // theme reaches the columns once with the right values, and that the alignment,
+        // which genuinely varies, is still written per column.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        TestableInitialiser initialiser = graph.Build(active);
+        _ = initialiser.Initialise();
+
+        IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+        Assert.Single(initialiser.BodyFontWrites);
+        Assert.Equal(1, initialiser.VerticalCentreWrites);
+        Assert.Equal(
+            (GanttTableAppearance.FontFamily, GanttTableAppearance.BodyFontSizePt),
+            initialiser.BodyFontWrites[0]);
+        Assert.Equal(columns.Count, initialiser.HorizontalAlignmentWrites.Count);
+
+        // The header band and the border colour are table-wide, so exactly one write each
+        // rather than one per column.
+        Assert.Equal(1, initialiser.HeaderFormatWrites);
+        Assert.Equal(1, initialiser.BorderColourWrites);
+    }
+
+    [Fact]
+    public void Initialise_writes_the_period_band_type_onto_the_header_row()
+    {
+        // Owner ruling 2026-11-14: the header row and the chart's period band are one
+        // heading, so the header is the 9pt regular the band renders. The bold flag is
+        // asserted explicitly rather than left unset, because Excel's table style bolds a
+        // header row — a header the adapter never unbolds is still bold on the sheet.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal(GanttTableAppearance.FontFamily, active.HeaderFontName);
+        Assert.Equal(GanttTableAppearance.HeaderFontSizePt, active.HeaderFontSize);
+        Assert.Equal(9.0, active.HeaderFontSize);
+        Assert.Equal(false, active.HeaderFontBold);
+        Assert.Equal(GanttTableAppearance.HeaderTextColour.ARGB, active.HeaderFontColour);
+        Assert.Equal(GanttTableAppearance.HeaderFill.ARGB, active.HeaderFillColour);
+    }
+
+    [Fact]
+    public void Initialise_assigns_the_neutral_built_in_table_style()
+    {
+        // Owner ruling 2026-11-14: hiding and re-showing a table column makes Excel
+        // re-apply the table's own style, and its default style is not the neutral one the
+        // guide describes. Assigning "Table Style Light 1" during Initialise is what makes
+        // the host's own re-application keep the same thin grey lines.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal([GanttTableAppearance.TableStyleName], active.TableStyleWrites);
+        Assert.Equal("TableStyleLight1", GanttTableAppearance.TableStyleName);
+    }
+
+    [Fact]
+    public void Initialise_leaves_a_table_already_carrying_the_style_alone()
+    {
+        // The same read-before-write discipline as the hidden flag and the date format:
+        // rewriting an unchanged style would mark the workbook dirty for a sheet already in
+        // the intended state.
+        var active = BlankActiveSheet();
+        active.SetExistingTableStyle(GanttTableAppearance.TableStyleName);
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Empty(active.TableStyleWrites);
+    }
+
+    [Fact]
+    public void Initialise_weights_only_the_four_outside_borders()
+    {
+        // The table's outside edge and the chart frame are one boundary (owner ruling
+        // 2026-11-14). Only the four edge indices are written: an interior index here
+        // would redraw the cell grid the table style owns.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        TestableInitialiser initialiser = graph.Build(active);
+        _ = initialiser.Initialise();
+
+        Excel.XlBordersIndex[] expectedEdges =
+        [
+            Excel.XlBordersIndex.xlEdgeTop,
+            Excel.XlBordersIndex.xlEdgeBottom,
+            Excel.XlBordersIndex.xlEdgeLeft,
+            Excel.XlBordersIndex.xlEdgeRight,
+        ];
+        Assert.Equal(expectedEdges, initialiser.OutsideBorders.Select(border => border.Edge));
+        Assert.All(
+            initialiser.OutsideBorders,
+            border => Assert.Equal(Excel.XlBorderWeight.xlThin, border.Weight));
+        Assert.Equal(GanttTableAppearance.BorderColour.ARGB, active.TableBorderColour);
+    }
+
+    [Fact]
+    public void Initialise_centres_the_value_columns_and_left_aligns_the_prose()
+    {
+        // Stated column-by-column rather than only derived, so a column moved between the
+        // two classes fails here instead of passing because both sides moved.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        TestableInitialiser initialiser = graph.Build(active);
+        _ = initialiser.Initialise();
+
+        Assert.Equal(GanttCellAlignment.Centre, initialiser.HorizontalAlignmentWrites[IndexOf("Start")]);
+        Assert.Equal(GanttCellAlignment.Centre, initialiser.HorizontalAlignmentWrites[IndexOf("Finish")]);
+        Assert.Equal(GanttCellAlignment.Centre, initialiser.HorizontalAlignmentWrites[IndexOf("Duration")]);
+        Assert.Equal(GanttCellAlignment.Left, initialiser.HorizontalAlignmentWrites[IndexOf("Description")]);
+        Assert.Equal(GanttCellAlignment.Left, initialiser.HorizontalAlignmentWrites[IndexOf("Type")]);
+
+        // And every column got exactly one decision, in schema order.
+        IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+        Assert.Equal(
+            columns.Select(column => GanttTableAppearance.AlignmentFor(column.Name)),
+            initialiser.HorizontalAlignmentWrites);
+    }
+
+    [Fact]
+    public void Initialise_leaves_a_date_column_that_already_carries_the_format_alone()
+    {
+        // The same read-before-write discipline as the hidden flag: rewriting an
+        // unchanged format marks the workbook dirty for a sheet already in the intended
+        // state, so only the column that still needs it is written.
+        var active = BlankActiveSheet();
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
+        active.SetExistingNumberFormat([(IndexOf("Start"), pattern)]);
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal(
+            new[] { (IndexOf("Finish"), pattern) },
+            active.NumberFormatWrites);
+    }
+
+    [Fact]
     public void Initialise_hides_every_engine_column_and_leaves_the_authoring_ones_visible()
     {
         // Stated column-by-column rather than derived, so a column moved into the
@@ -811,6 +1353,76 @@ public class WorkbookInitialiserTests
             Assert.True(hidden[index]);
             Assert.True(active.LockedWrites[index]);
         }
+    }
+
+    [Fact]
+    public void Initialise_hides_the_engine_columns_before_it_writes_the_header_row()
+    {
+        // Live report 2026-11-15: the whole schema flashed at its default column width
+        // before the presentation pass hid the engine columns. The pre-header hide is only
+        // a fix if it lands BEFORE the header write, which is what this pins -- the final
+        // hidden state alone would pass with the old order too.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        int headerAt = active.WriteOrder.IndexOf("header");
+        Assert.True(
+            headerAt >= 0,
+            $"the header row was never written; writes seen: {string.Join(',', active.WriteOrder)}");
+        int engineColumns = GanttTableSchema.Default.Columns.Count(column => column.IsHidden);
+        Assert.Equal(
+            engineColumns,
+            active.WriteOrder.Take(headerAt).Count(step => step == "hidden"));
+    }
+
+    [Fact]
+    public void Initialise_switches_the_window_gridlines_off()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var window = WindowWithGridlines(visible: true);
+
+        _ = graph.Build(active, window).Initialise();
+
+        _ = window.SetupGet(w => w.DisplayGridlines).Returns(false);
+        window.VerifySet(w => w.DisplayGridlines = false, Times.Once());
+    }
+
+    [Fact]
+    public void Initialise_leaves_a_window_whose_gridlines_are_already_off_alone()
+    {
+        // Read-before-write, like every other presentation write: a converged window must
+        // not be rewritten, or every Initialise would dirty the workbook for no change.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var window = WindowWithGridlines(visible: false);
+
+        _ = graph.Build(active, window).Initialise();
+
+        window.VerifySet(w => w.DisplayGridlines = It.IsAny<bool>(), Times.Never());
+    }
+
+    /// <summary>
+    /// A window mock whose <c>DisplayGridlines</c> reads back whatever was last written.
+    /// </summary>
+    /// <param name="visible">The state the host starts in.</param>
+    /// <returns>The window mock.</returns>
+    private static Mock<Excel.Window> WindowWithGridlines(bool visible)
+    {
+        bool current = visible;
+        var window = new Mock<Excel.Window>();
+        _ = window.SetupGet(w => w.DisplayGridlines).Returns(() => current);
+        _ = window.SetupSet(w => w.DisplayGridlines = It.IsAny<bool>())
+            .Callback<bool>(value => current = value);
+        return window;
     }
 
     /// <summary>
@@ -954,6 +1566,134 @@ public class WorkbookInitialiserTests
     }
 
     /// <summary>
+    /// A catalogue-writer refusal is reported with ITS OWN reason, not a catch-all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Six refusal reasons, one mapping, previously one test.</b> Only
+    /// <c>TargetProtected</c> was covered; the other five arms existed so that a user
+    /// whose Initialise failed is told what actually happened. The switch's own comment
+    /// states the point: "A catch-all 'everything else is TargetProtected' would tell
+    /// the user their sheet is protected when the actual cause was a missing config
+    /// sheet, an unpreservable catalogue, or a host write failure."
+    /// </para>
+    /// <para>
+    /// A missing configuration sheet maps to <c>ConfigSheetExists</c> rather than to a
+    /// write failure because the remedy is different: the user must remove the sheet
+    /// that is in the way, not try the write again.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(ConfigWriteRefusalReason.NoActiveWorkbook, InitialiseRefusalReason.NoActiveWorkbook)]
+    [InlineData(ConfigWriteRefusalReason.ConfigSheetMissing, InitialiseRefusalReason.ConfigSheetExists)]
+    [InlineData(ConfigWriteRefusalReason.CataloguePreservationInvalid, InitialiseRefusalReason.CatalogueDrift)]
+    [InlineData(ConfigWriteRefusalReason.HostRejected, InitialiseRefusalReason.CatalogueWriteFailed)]
+    [InlineData(ConfigWriteRefusalReason.ThemeValidationFailed, InitialiseRefusalReason.CatalogueWriteFailed)]
+    public void A_catalogue_refusal_is_reported_with_its_own_reason(
+        ConfigWriteRefusalReason reason,
+        InitialiseRefusalReason expected)
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Refused(reason));
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.Equal(WorkbookInitialiseOutcome.Refused(expected), outcome);
+    }
+
+    /// <summary>
+    /// A TypeOptions refusal rolls back EVERY mutation, including the plot anchor.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The last rollback path, and the one nothing could reach.</b> The type-options
+    /// materialisation is the final mutation of the create path: by then the header row,
+    /// the data table, the configuration sheet and the plot-anchor defined name have all
+    /// been written. Its refusal must undo all four, or a refusal that promises no
+    /// mutation hands the user a table, a very-hidden sheet and a stale defined name.
+    /// </para>
+    /// <para>
+    /// It was unreachable because every test injected a materialiser that always
+    /// succeeds; the fake above exists to make the arm executable.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(TypeOptionsRefusalReason.NoActiveWorkbook, InitialiseRefusalReason.NoActiveWorkbook)]
+    [InlineData(TypeOptionsRefusalReason.TargetProtected, InitialiseRefusalReason.TargetProtected)]
+    public void A_type_options_refusal_rolls_back_every_mutation_and_names_its_reason(
+        TypeOptionsRefusalReason reason,
+        InitialiseRefusalReason expected)
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        var anchorName = new Mock<Excel.Name>();
+        TestableInitialiser initialiser = graph.BuildWithWriter(
+            active,
+            writer.Object,
+            typeOptions: new RefusingTypeOptionsMaterialiser(reason));
+        initialiser.RollbackName = anchorName.Object;
+
+        var outcome = initialiser.Initialise();
+
+        Assert.Equal(WorkbookInitialiseOutcome.Refused(expected), outcome);
+
+        // The three mutations that outlive the refusal if they are not undone: the
+        // plot-anchor defined name (which the next Initialise would treat as a live
+        // anchor), the configuration sheet (a very-hidden sheet in the user's workbook)
+        // and the table (a real tblGanttData).
+        Assert.Equal(GanttWorkbookContract.PlotAnchorDefinedName, initialiser.RollbackNameText);
+        anchorName.Verify(n => n.Delete(), Times.Once);
+        config.Worksheet.Verify(w => w.Delete(), Times.Once);
+        active.Table.Verify(t => t.Delete(), Times.Once);
+    }
+
+    /// <summary>
+    /// A rollback on a sheet that carries no plot-anchor name is a no-op, not a throw.
+    /// </summary>
+    /// <remarks>
+    /// The documented contract of the rollback is "no-op when the name does not exist".
+    /// Excel reports that case as a <c>COMException</c>, but the adapter also resolves
+    /// the name through its own seam, which answers null — and a null must reach the
+    /// same no-op rather than escape as a
+    /// <see cref="NullReferenceException"/> from inside a failure handler.
+    /// </remarks>
+    [Fact]
+    public void A_rollback_when_the_plot_anchor_name_is_absent_deletes_nothing_and_does_not_throw()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        TestableInitialiser initialiser = graph.BuildWithWriter(
+            active,
+            writer.Object,
+            typeOptions: new RefusingTypeOptionsMaterialiser(TypeOptionsRefusalReason.TargetProtected));
+        initialiser.RollbackName = null;
+
+        var outcome = initialiser.Initialise();
+
+        Assert.Equal(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+            outcome);
+
+        // The lookup was still attempted; it simply resolved nothing to delete.
+        Assert.Equal(GanttWorkbookContract.PlotAnchorDefinedName, initialiser.RollbackNameText);
+        config.Worksheet.Verify(w => w.Delete(), Times.Once);
+    }
+
+    /// <summary>
     /// A failure inside column presentation still rolls the TABLE back, not just the
     /// header row.
     /// </summary>
@@ -1088,7 +1828,6 @@ public class WorkbookInitialiserTests
         config.Worksheet.Verify(w => w.Delete(), Times.Once);
         active.Table.Verify(t => t.Delete(), Times.Once);
         active.HeaderRange.Verify(h => h.ClearContents(), Times.Once);
-        active.TitleCell.Verify(c => c.ClearContents(), Times.Once);
     }
 
     /// <summary>
@@ -1130,89 +1869,12 @@ public class WorkbookInitialiserTests
     }
 
     /// <summary>
-    /// The table title is written into the reserved row ABOVE the header, as a cell
-    /// value rather than a drawn shape (ADR-0030 D4/D6).
+    /// The header row is written as a single rectangular payload in schema order.
     /// </summary>
     /// <remarks>
-    /// The title comes from the <c>ChartTitle</c> setting rather than a local
-    /// literal, so the cell and the export composition's title entity cannot name
-    /// different charts. The assertion is against the settings catalogue, not the
-    /// literal <c>"Gantt Chart"</c>, so retuning the default does not require editing
-    /// this test.
+    /// The assertion is against the settings catalogue, not the literal
+    /// <c>"Gantt Chart"</c>, so retuning the default does not require editing this test.
     /// </remarks>
-    [Fact]
-    public void Initialise_writes_the_title_into_the_reserved_row()
-    {
-        var active = BlankActiveSheet();
-        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
-        var graph = new WorkbookGraph(active);
-        graph.EnqueueCreated(config);
-
-        var outcome = graph.Build(active).Initialise();
-
-        Assert.True(outcome.Succeeded);
-        Assert.Equal(
-            GanttCatalogues.SettingDefault("ChartTitle"),
-            Assert.Single(active.TitleWrites));
-    }
-
-    /// <summary>
-    /// The title write is a CELL, not part of the header's value assignment.
-    /// </summary>
-    /// <remarks>
-    /// <b>The counterweight for the test above.</b> If both wrote through the same
-    /// range, a title write could pass as a header write and this suite would assert
-    /// the header twice while never proving the title cell is distinct. It also pins
-    /// that the title does not disturb the header's single <c>object[,]</c> payload.
-    /// </remarks>
-    [Fact]
-    public void The_title_write_does_not_contaminate_the_header_payload()
-    {
-        var active = BlankActiveSheet();
-        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
-        var graph = new WorkbookGraph(active);
-        graph.EnqueueCreated(config);
-
-        _ = graph.Build(active).Initialise();
-
-        // The header still carries exactly one rectangular payload, and the title is
-        // not among the header's writes.
-        Assert.Single(active.WrittenValues);
-        Assert.Single(active.TitleWrites);
-        Assert.DoesNotContain(active.WrittenValues, value => value is string);
-    }
-
-    /// <summary>
-    /// A refused Initialise clears the title cell it had written, so the sheet is
-    /// left as it was found.
-    /// </summary>
-    /// <remarks>
-    /// <b>Positive test for the rollback path.</b> The reserved row is written to,
-    /// never structurally inserted, so the only thing a refusal can leave behind is
-    /// the title cell. Leaving it would mean a command that reported "refused" had
-    /// still authored content on the user's sheet — the zero-mutation guarantee the
-    /// refusals promise.
-    /// </remarks>
-    [Fact]
-    public void A_catalogue_refusal_clears_the_title_cell_it_wrote()
-    {
-        var active = BlankActiveSheet();
-        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
-        var graph = new WorkbookGraph(active);
-        graph.EnqueueCreated(config);
-        var writer = new Mock<IConfigCatalogueWriter>();
-        writer.Setup(w => w.Write())
-            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected));
-
-        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
-
-        Assert.False(outcome.Succeeded);
-
-        // The title WAS written, and the rollback cleared it.
-        Assert.Single(active.TitleWrites);
-        active.TitleCell.Verify(c => c.ClearContents(), Times.Once);
-    }
-
     [Fact]
     public void Initialise_writes_the_headers_in_the_exact_schema_order()
     {

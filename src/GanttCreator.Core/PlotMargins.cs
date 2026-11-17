@@ -108,7 +108,7 @@ public static class GanttPlotMargins
     /// <returns>The per-side margin in points.</returns>
     public static double MarginPt(GanttPlotMargin margin, double customCm)
     {
-        var cm = margin == GanttPlotMargin.Custom
+        double cm = margin == GanttPlotMargin.Custom
             ? Math.Clamp(customCm, MinimumCustomCm, MaximumCustomCm)
             : PresetCm(margin);
         // A corrupt stored value (NaN / Infinity) survives the clamp — it is not

@@ -14,14 +14,16 @@
       1. dotnet --version
       2. skill tree in sync
       3. status accuracy
-      4. script analyzer (PSScriptAnalyzer)
-      5. workflow lint (actionlint)
-      6. script lint (Pester)
-      7. restore
-      8. format (production only; tests/ tolerated per tests/Directory.Build.props)
-      9. build Release -warnaserror
-     10. publish AddIn (packed XLL)
-     11. test (OfficeIntegration excluded)
+      4. ribbon glyph assets
+      5. ribbon icon ids
+      6. script analyzer (PSScriptAnalyzer)
+      7. workflow lint (actionlint)
+      8. script lint (Pester)
+      9. restore
+     10. format (production only; tests/ tolerated per tests/Directory.Build.props)
+     11. build Release -warnaserror
+     12. publish AddIn (packed XLL)
+     13. test (OfficeIntegration excluded)
 #>
 
 [CmdletBinding()]
@@ -55,9 +57,16 @@ function Invoke-Step {
     # step that runs only cmdlets (or returns early) cannot inherit a stale
     # exit code from the previous native command and report a false PASS.
     $global:LASTEXITCODE = 0
+    $stepOut = $null
     try {
-        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
+        # Console stays live; the report is written ONCE per step instead of once
+        # per output line. The Pester step alone emits ~600 lines, and every
+        # Add-Content was a file open/append/close (W15).
+        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Write-Host $_ }
         $sw.Stop()
+        if ($stepOut) {
+            Add-Content -LiteralPath $report -Value ($stepOut -join [Environment]::NewLine)
+        }
         $status = if ($LASTEXITCODE -eq 0) { 'PASS' } else { "FAIL (exit $LASTEXITCODE)" }
         $line = "  -> {0} in {1:N1}s" -f $status, $sw.Elapsed.TotalSeconds
         Write-Host $line
@@ -92,6 +101,26 @@ Invoke-Step 'status accuracy' {
     # resolve, every backticked repo path claimed must exist, and every
     # roadmap ID mentioned must be defined in docs/03-ROADMAP.md.
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-status.ps1')
+}
+
+Invoke-Step 'ribbon glyph assets' {
+    # R5.19: every control declares getImage, the ribbon and the generated glyph
+    # catalogue agree, and each glyph exists in both palettes at its declared size
+    # with an approved stroke colour. A wrong colour, a missing palette variant or
+    # an orphan asset all render as something invisible or wrong, so the gate
+    # measures the pixels rather than trusting the file name.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-ribbon-glyphs.ps1')
+}
+
+Invoke-Step 'ribbon icon ids' {
+    # R5.16a: any remaining imageMso in Ribbon.xml must exist in the Office 2010
+    # Icons Gallery and in the [MS-CUSTOMUI] idMso table. imageMso fails silently,
+    # so a typo would otherwise ship a blank glyph. R5.19 removed every id from
+    # this tab, so the check now reports that there is nothing left to verify
+    # rather than failing on an empty set; it stays wired so a reintroduced id is
+    # still validated. The check self-tests first and reports "Skipped" when the
+    # git-ignored references are absent.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-ribbon-icons.ps1')
 }
 
 Invoke-Step 'script analyzer (PSScriptAnalyzer)' {

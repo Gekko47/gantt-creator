@@ -30,11 +30,11 @@ public class ExcelConfigSheetVisibilityRepairer(object? application, IWorksheetP
         }
 
         Excel.Sheets sheets = workbook.Sheets;
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet sheet
-                && string.Equals(sheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsConfigSheetName(sheet.Name))
             {
                 ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(sheet);
                 if (protection != ProtectionGuardOutcome.NotProtected)

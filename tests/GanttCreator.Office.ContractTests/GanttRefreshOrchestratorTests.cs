@@ -23,11 +23,54 @@ namespace GanttCreator.Office.ContractTests;
 /// </remarks>
 public class GanttRefreshOrchestratorTests
 {
+    [Fact]
+    public void A_pending_change_batch_still_reads_and_validates_the_complete_table()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(1, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(2, null, "Not a chart type", "Invalid row", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+            ],
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        // Partial render: the valid row plots, the invalid row is skipped with a
+        // fill. The refresh succeeds; the issues are carried on the outcome for the
+        // caller to surface (warnings panel, status bar).
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+
+        // One full read. The pending batch does NOT cause a second read — identity
+        // repair and the type-change normaliser report zero writes here, and re-reading
+        // the whole table for a no-op was a redundant slot on every refresh.
+        Assert.Equal(1, fakes.TableReadCount);
+        Assert.Equal(0, fakes.TargetedTableReadCount);
+        Assert.NotEmpty(fakes.Shapes.Calls);
+        Assert.Contains(outcome.ValidationIssues, issue => issue.RowNumber == 2);
+    }
+
+    [Fact]
+    public void A_successful_full_reconciliation_clears_the_pending_change_batch()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ChangeTracker tracker = new();
+        tracker.Record(1, 4, null, "As-Planned Activity");
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithChanges(tracker).Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.False(tracker.HasChanges);
+        Assert.NotEmpty(fakes.Shapes.Calls);
+    }
+
     /// <summary>One valid planned activity, enough for a scene to be built.</summary>
     private static GanttRowDto[] ValidRows() =>
     [
         Row(
-            rowNumber: 2,
+            rowNumber: 1,
             id: null,
             type: "As-Planned Activity",
             description: "Design",
@@ -46,8 +89,8 @@ public class GanttRefreshOrchestratorTests
     /// quirk of the test helper.
     /// </remarks>
     /// <summary>
-    /// A successful refresh hands the reporter an EMPTY issue list, which is the call
-    /// that clears the notes a previous Validate left behind.
+    /// A successful refresh reconciles an EMPTY highlight target list, clearing stale
+    /// row/cell indicators.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -66,48 +109,65 @@ public class GanttRefreshOrchestratorTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void A_successful_refresh_reports_an_empty_issue_list_so_stale_notes_are_cleared()
+    public void A_successful_refresh_reconciles_empty_highlights_to_clear_stale_indicators()
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal);
-        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
+        IReadOnlyList<HighlightTarget> reported = Assert.Single(fakes.HighlightReconciliations);
         Assert.Empty(reported);
     }
 
     /// <summary>
-    /// A refresh that finds a blocking error still writes the notes, because the notes
-    /// are how the user is told what to fix.
+    /// A refresh that finds a blocking error still highlights its row — and with no chart on
+    /// the sheet it renders the EMPTY chart and says why (owner ruling 2026-11-16).
     /// </summary>
     /// <remarks>
-    /// The counterweight to the empty-list assertion above, and the reason the reporter
-    /// is called before the render decision rather than after it. Calling it only on the
-    /// success path would mean a blocked refresh left the PREVIOUS report in place —
-    /// the notes would never show the current error, and the user would be chasing a
-    /// message about a problem they had already fixed.
+    /// <para>
+    /// The counterweight to the empty-list assertion above, and the reason the reporter is
+    /// called before the render decision rather than after it: a blocked refresh must show the
+    /// CURRENT error set, not the previous one.
+    /// </para>
+    /// <para>
+    /// The empty-chart half is the first-Add case — one scaffold row, no dates, nothing else on
+    /// the sheet. It used to raise a modal error for a normal step, with no chart to protect;
+    /// the decision now depends on whether a chart EXISTS, and the reason the plot is blank is
+    /// carried by the scene so the Warnings panel can report it after the dialog would have gone.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void A_blocked_refresh_still_reports_the_errors_it_found()
+    public void A_blocked_refresh_with_no_chart_highlights_its_errors_and_renders_an_empty_chart()
     {
         RefreshFakes fakes = new()
         {
             Rows =
             [
-                Row(2, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal);
 
-        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
-        Assert.Equal(outcome.ValidationIssues.Count, reported.Count);
-        Assert.NotEmpty(reported);
+        IReadOnlyList<HighlightTarget> reported = Assert.Single(fakes.HighlightReconciliations);
+        Assert.Contains(reported, target => target.Row == 1);
+
+        // The reason a blank plot is blank lives in the scene, not in a dialog.
+        Assert.Contains(
+            outcome.Warnings,
+            warning => warning.Code == GanttCreator.Core.Scene.SceneWarningCodes.EmptyChart);
+
+        // The frame and its period bands ARE what an empty chart draws (owner ruling
+        // 2026-11-16: "frame and bands, no bars"), so the chart-owned primitives are expected.
+        // What must not appear is any ROW-owned entity: a bar, milestone, label or delineator.
+        Assert.DoesNotContain(
+            fakes.Shapes.Calls,
+            call => call.StartsWith("Create:", StringComparison.Ordinal)
+                && !call["Create:".Length..].StartsWith("chart:", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -121,10 +181,10 @@ public class GanttRefreshOrchestratorTests
     /// the user keeps their last valid chart and gets told why nothing changed.
     /// </remarks>
     [Fact]
-    public void A_refused_notes_update_stops_the_refresh_before_any_shape_is_touched()
+    public void A_refused_highlight_update_stops_the_refresh_before_any_shape_is_touched()
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
-        fakes.ValidationNotesRefused = true;
+        fakes.WarningHighlightsRefused = true;
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
@@ -154,15 +214,15 @@ public class GanttRefreshOrchestratorTests
         {
             Rows =
             [
-                Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
-        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator(validationReporter: null);
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestratorWithWarningHighlighter(null);
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
-        Assert.Empty(fakes.ReportedIssues);
+        Assert.Empty(fakes.HighlightReconciliations);
     }
 
     private static GanttRowDto Row(
@@ -171,7 +231,8 @@ public class GanttRefreshOrchestratorTests
         string type,
         string description,
         DateOnly? start,
-        DateOnly? finish) =>
+        DateOnly? finish,
+        string? styleKey = null) =>
         new(
             rowNumber,
             id ?? NewId(),
@@ -182,7 +243,7 @@ public class GanttRefreshOrchestratorTests
             start,
             finish,
             parentId: null,
-            styleKey: null,
+            styleKey: styleKey,
             labelPositionText: null,
             fillColourText: null,
             strokeColourText: null,
@@ -199,6 +260,210 @@ public class GanttRefreshOrchestratorTests
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
         return (fakes, fakes.BuildOrchestrator());
+    }
+
+    /// <summary>
+    /// The row-height normaliser is handed the <c>Type</c> column the refresh already
+    /// read, so it does not read one cell per body row through COM after the fact.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The assertion is on the ARGUMENT, not on a call count. The normaliser still walks
+    /// every body row for its height; the saving is the per-row Type read it no longer
+    /// issues, and the only way to prove that from outside is to see the column arrive.
+    /// </para>
+    /// <para>
+    /// The fixture is one row because this fake's style registry holds one style and its
+    /// lane anchors need the single-lane layout the other tests use; the body-index
+    /// mapping of the projection, and the type-to-token decision it feeds, are pinned by
+    /// the height-normaliser depth tests, where the host and the caller can be made to
+    /// disagree on purpose.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_row_height_normaliser_is_handed_the_bulk_read_type_texts()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(["As-Planned Activity"], fakes.LastTypeTexts);
+    }
+
+    /// <summary>
+    /// The heights the normalisation measured reach the panel measurement, so the panel
+    /// does not read every body row again for figures this refresh already holds.
+    /// </summary>
+    /// <remarks>
+    /// The chain matters more than either port on its own: the normaliser returns its
+    /// measurement, and the orchestrator has to pass it on. A normaliser that returned the
+    /// figures to a caller that dropped them would look identical from either port's own
+    /// test, and the second read would survive unnoticed.
+    /// </remarks>
+    [Fact]
+    public void The_panel_measurement_is_handed_the_heights_the_normalisation_measured()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            RowHeightBodyHeights = [18d],
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal([18d], fakes.LastMeasuredBodyHeightsPt);
+    }
+
+    [Fact]
+    public void Scheduled_refresh_skips_unchanged_shape_writes_and_explicit_refresh_forces_full_updates()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        GanttRefreshOutcome first = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+        Assert.True(first.Succeeded, "first refresh refused: " + first.Refusal);
+        Assert.NotNull(cache.Snapshot);
+        int shapeWritesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+        int zOrderCallsAfterFirst = fakes.Shapes.ZOrderLists.Count;
+
+        GanttRefreshOutcome scheduled = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(scheduled.Succeeded, "scheduled refresh refused: " + scheduled.Refusal);
+        Assert.Equal(shapeWritesAfterFirst, fakes.Shapes.ShapeCalls.Count);
+        Assert.Equal(zOrderCallsAfterFirst, fakes.Shapes.ZOrderLists.Count);
+
+        GanttRefreshOutcome explicitRefresh = fakes.BuildOrchestratorWithDeltaCache(cache, useDeltaCache: false).Refresh();
+
+        Assert.True(explicitRefresh.Succeeded, "explicit refresh refused: " + explicitRefresh.Refusal);
+        Assert.True(fakes.Shapes.ShapeCalls.Count > shapeWritesAfterFirst);
+        Assert.Equal(zOrderCallsAfterFirst + 1, fakes.Shapes.ZOrderLists.Count);
+        Assert.NotNull(cache.Snapshot);
+    }
+
+    /// <summary>
+    /// A refresh traces its delta decision, the structural writes of the run, and the
+    /// reconciliation result — the evidence a skipped shape needs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this test exists.</b> The reported defect is a splitter band left
+    /// stretched after a collapsed group moved past it: the scheduled refresh said
+    /// nothing, and the manual Refresh fixed it. The two paths differ only in the
+    /// delta snapshot, so the log has to name (a) whether this run used the snapshot,
+    /// (b) what structural writes it made, and (c) how many shape writes it actually
+    /// issued. Without those three facts the cause can only be guessed.
+    /// </para>
+    /// <para>
+    /// The second scheduled run is the load-bearing half: every payload is unchanged,
+    /// so the result line must report <c>written=0</c> while still naming the desired
+    /// count. That is exactly the state in which a live shape Excel moved on its own
+    /// would stay stale, and it is now visible in the log rather than inferred.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_scheduled_refresh_traces_its_delta_decision_and_reconcile_result()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+        List<string> trace = [];
+
+        GanttRefreshOutcome first = fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh();
+        Assert.True(first.Succeeded, "first refresh refused: " + first.Refusal);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh delta=True", StringComparison.Ordinal));
+
+        trace.Clear();
+        GanttRefreshOutcome scheduled = fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh();
+        Assert.True(scheduled.Succeeded, "scheduled refresh refused: " + scheduled.Refusal);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh result ok=True", StringComparison.Ordinal)
+                && line.Contains("written=0", StringComparison.Ordinal));
+
+        trace.Clear();
+        GanttRefreshOutcome explicitRefresh = fakes
+            .BuildOrchestratorWithDeltaCache(cache, useDeltaCache: false, trace: trace.Add)
+            .Refresh();
+        Assert.True(explicitRefresh.Succeeded, "explicit refresh refused: " + explicitRefresh.Refusal);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh delta=False", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A scheduled refresh does not blindly rewrite every shape just because it wrote
+    /// row structure: it verifies the live shapes and writes only the drifted ones.
+    /// </summary>
+    /// <remarks>
+    /// The earlier interim rule forced a full reconcile on any structural write, which
+    /// made the cache stop paying exactly on the refreshes the user performs most.
+    /// Verified skip replaces it: the same certainty, at a few property reads per
+    /// unchanged shape.
+    /// </remarks>
+    [Fact]
+    public void A_structural_write_does_not_bypass_verified_skips()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        // The result line reports the move-only count (ADR-0053). A pass with no
+        // geometry-only updates says geom=0 rather than omitting the field, so a reader of
+        // the log never has to guess which build produced the line.
+        List<string> trace = [];
+        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh().Succeeded);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh result ok=True", StringComparison.Ordinal)
+                && line.Contains("geom=", StringComparison.Ordinal));
+        int writesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+
+        fakes.RowHeightsWritten = 2;
+        fakes.OutlineGroupsApplied = 1;
+        GanttRefreshOutcome second = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(second.Succeeded, "refused: " + second.Refusal + " " + second.Message);
+        Assert.Equal(writesAfterFirst, fakes.Shapes.ShapeCalls.Count);
+        Assert.True(fakes.Shapes.GeometryMatchChecks > 0, "the candidates must be verified against the host");
+    }
+
+    /// <summary>
+    /// A scheduled refresh rewrites a shape the host moved on its own, even though the
+    /// scene payload is byte-identical — the case that left the splitter band stale.
+    /// </summary>
+    [Fact]
+    public void A_refresh_rewrites_a_shape_whose_live_geometry_drifted()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache).Refresh().Succeeded);
+        int writesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+        string drifted = fakes.Shapes.Requests.Keys.First();
+        _ = fakes.Shapes.DriftedGeometry.Add(drifted);
+
+        GanttRefreshOutcome second = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(second.Succeeded, "refused: " + second.Refusal + " " + second.Message);
+        Assert.Contains(
+            fakes.Shapes.ShapeCalls,
+            call => string.Equals(call, "Update:" + drifted, StringComparison.Ordinal));
+        Assert.True(fakes.Shapes.ShapeCalls.Count > writesAfterFirst);
+    }
+
+    [Fact]
+    public void A_failed_shape_reconcile_does_not_commit_a_delta_snapshot()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        fakes.Shapes.Refusals["Create#1"] = ShapeWriteRefusal.HostRejected;
+        ShapeDeltaCache cache = new();
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Null(cache.Snapshot);
     }
 
     /// <summary>
@@ -230,6 +495,230 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(GanttCatalogues.MetricDefault("GanttRowHeightPt"), fakes.LastManagedHeightPt);
         Assert.Equal(GanttCatalogues.MetricDefault("SplitterHeightPt"), fakes.LastSplitterHeightPt);
         Assert.Equal(GanttCatalogues.MetricDefault("SpacerHeightPt"), fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// The row heights written on Refresh are the WORKBOOK's metrics, not the token
+    /// catalogue's defaults.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the test that would have caught the ignored-setting defect.</b> The
+    /// Theme dialog writes the user's "Row height", "Splitter height" and "Spacer
+    /// height" to the metrics table, and the orchestrator then normalised the sheet
+    /// to the catalogue's DEFAULTS - so the setting was stored, reported as written,
+    /// and had no effect at all on the sheet. The scene factory read the workbook's
+    /// metrics while the sheet was normalised to the defaults, so the two disagreed
+    /// about how tall a row is: the exact disagreement row-height normalisation
+    /// exists to prevent (ADR-0026 D2/D3).
+    /// </para>
+    /// <para>
+    /// The values are asserted against the map the test supplied, not against
+    /// literals, so the assertion is about the WORKBOOK being the authority rather
+    /// than about a particular number.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_row_heights_written_are_the_workbooks_metrics()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Metrics = new Dictionary<string, double>
+            {
+                ["GanttRowHeightPt"] = 27,
+                ["SplitterHeightPt"] = 31,
+                ["SpacerHeightPt"] = 12,
+            },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(27, fakes.LastManagedHeightPt);
+        Assert.Equal(31, fakes.LastSplitterHeightPt);
+        Assert.Equal(12, fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// A metric the workbook does not carry falls back to the catalogue's default,
+    /// so a workbook written before a token existed still normalises to a defined
+    /// height rather than to nothing.
+    /// </summary>
+    [Fact]
+    public void A_metric_the_workbook_does_not_carry_falls_back_to_the_catalogue_default()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Metrics = new Dictionary<string, double> { ["GanttRowHeightPt"] = 27 },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(27, fakes.LastManagedHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("SplitterHeightPt"), fakes.LastSplitterHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("SpacerHeightPt"), fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// The live title occupies the RESERVED ROW exactly: the same row that carries
+    /// the year band over the plot columns.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The title's height came from the TitleBandHeightPt token (24pt) while the
+    /// reserved row it is drawn in is normalised to YearBandHeightPt (18pt). The two
+    /// disagreed, so the textbox began 6pt ABOVE the reserved row, in the top
+    /// padding row, and the chart frame's top edge - the reserved row's top - cut
+    /// straight through the title instead of enclosing it. One row has one
+    /// authority: the row itself.
+    /// </para>
+    /// <para>
+    /// The grid here models a sheet with a real reserved row: 18pt of padding row
+    /// above, then the 18pt reserved row, then the 15pt header, so the first body
+    /// row's top is 51pt down.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_live_title_occupies_the_reserved_row()
+    {
+        PanelCellGrid grid = GridWithAReservedRow();
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = grid,
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.True(
+            fakes.Shapes.Requests.ContainsKey("ChartTitle"),
+            "No ChartTitle shape was written: " + string.Join(", ", fakes.Shapes.Calls));
+
+        RectD? bounds = fakes.Shapes.Requests["ChartTitle"].Geometry.Bounds;
+        Assert.NotNull(bounds);
+
+        // The reserved row's top is the top padding row's height (18pt) and its
+        // height is 18pt, so the title sits in the row the year band occupies.
+        Assert.Equal(18, bounds!.Value.Top, precision: 9);
+        Assert.Equal(18, bounds!.Value.Height, precision: 9);
+    }
+
+    /// <summary>
+    /// The live title is DISABLED when no table column is visible (ADR-0065 D4, owner
+    /// amendment 2026-11-17): the table-width textbox would otherwise overlap the chart.
+    /// </summary>
+    [Fact]
+    public void The_live_title_is_omitted_when_no_column_is_visible()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = ZeroColumnGridWithAReservedRow(),
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.False(
+            fakes.Shapes.Requests.ContainsKey("ChartTitle"),
+            "A ChartTitle shape was written with no visible column: "
+                + string.Join(", ", fakes.Shapes.Calls));
+        Assert.False(
+            fakes.Shapes.Survives("ChartTitle"),
+            "The title shape survived the zero-column refresh.");
+    }
+
+    /// <summary>
+    /// The title returns when any column is visible again (ADR-0065 D4, owner amendment
+    /// 2026-11-17): hiding every column removes the owned shape, and the next refresh
+    /// re-creates it without a separate command.
+    /// </summary>
+    [Fact]
+    public void The_live_title_is_restored_when_a_column_is_visible_again()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = GridWithAReservedRow(),
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        Assert.True(orchestrator.Refresh().Succeeded);
+        Assert.True(fakes.Shapes.Survives("ChartTitle"));
+
+        fakes.MeasuredGrid = ZeroColumnGridWithAReservedRow();
+        Assert.True(orchestrator.Refresh().Succeeded);
+        Assert.False(
+            fakes.Shapes.Survives("ChartTitle"),
+            "The title survived after every column was hidden.");
+        Assert.Contains("Delete:ChartTitle", fakes.Shapes.Calls);
+
+        fakes.MeasuredGrid = GridWithAReservedRow();
+        Assert.True(orchestrator.Refresh().Succeeded);
+        Assert.True(
+            fakes.Shapes.Survives("ChartTitle"),
+            "The title did not return after a column was shown.");
+    }
+
+    /// <summary>
+    /// A zero-column grid that still carries the reserved row the live title occupies.
+    /// </summary>
+    private static PanelCellGrid ZeroColumnGridWithAReservedRow()
+    {
+        PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
+            [],
+            [15d],
+            15d,
+            [],
+            originTopPt: 51d,
+            originLeftPt: 0d,
+            topPaddingHeightPt: 18d);
+
+        Assert.True(created.Succeeded, "The zero-column grid was refused: " + created.Refusal);
+        Assert.NotNull(created.Grid);
+        return created.Grid;
+    }
+
+    /// <summary>
+    /// A grid that models a sheet with a real reserved row: an 18pt top padding
+    /// row, an 18pt reserved row, a 15pt header row, and one 15pt body row.
+    /// </summary>
+    private static PanelCellGrid GridWithAReservedRow()
+    {
+        PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 24d)],
+            [15d],
+            15d,
+            ["Type"],
+            originTopPt: 51d,
+            originLeftPt: 0d,
+            topPaddingHeightPt: 18d);
+
+        Assert.True(created.Succeeded, "The grid was refused: " + created.Refusal);
+        Assert.NotNull(created.Grid);
+        return created.Grid;
     }
 
     /// <summary>
@@ -435,6 +924,10 @@ public class GanttRefreshOrchestratorTests
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
 
+        // Make identity repair report a write, so the conditional re-read is in the
+        // sequence this test pins; the no-op case has its own test.
+        fakes.IdentityRepairedCount = 1;
+
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
         Assert.True(outcome.Succeeded, "SCAFFOLD refusal=" + outcome.Refusal + " msg=" + outcome.Message);
@@ -454,7 +947,7 @@ public class GanttRefreshOrchestratorTests
                 // follows. Placed BEFORE the render decision on purpose: a refresh that
                 // now finds no errors must clear the notes a previous Validate left
                 // behind, and that call has to happen on the blocked path too.
-                "Notes",
+                "Highlights",
                 "Outline",
                 "Duration",
                 "RowHeights",
@@ -524,25 +1017,28 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// A blocking validation error stops the refresh before any write, and the
-    /// previous chart is untouched.
+    /// A blocking validation error with a chart ALREADY on the sheet stops the refresh, so a
+    /// transient all-invalid table cannot wipe it (owner ruling 2026-11-16).
     /// </summary>
     /// <remarks>
-    /// The issue list is carried on the outcome even though the refresh refused, so
-    /// the caller can report exactly which row and field is wrong rather than a bare
-    /// "something is invalid".
+    /// The issue list is carried on the outcome even though the refresh refused, so the caller
+    /// can report exactly which row and field is wrong rather than a bare "something is
+    /// invalid". The single <c>ListOwned</c> read is the decision itself: it is how the
+    /// pipeline tells "a chart exists" from "nothing has been drawn yet", and it mutates
+    /// nothing.
     /// </remarks>
     [Fact]
-    public void A_blocking_validation_error_stops_the_refresh_and_reports_the_issues()
+    public void A_blocking_validation_error_with_an_existing_chart_stops_the_refresh_and_reports_the_issues()
     {
         RefreshFakes fakes = new()
         {
             Rows =
             [
                 // A blank Id is a blocking error, so the row never becomes an event.
-                Row(2, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
+        _ = fakes.Shapes.Owned("chart:background");
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
@@ -550,7 +1046,9 @@ public class GanttRefreshOrchestratorTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
         Assert.NotEmpty(outcome.ValidationIssues);
-        Assert.Empty(fakes.Shapes.Calls);
+
+        // No mutation of any kind: the only shape call is the ownership read that decided this.
+        Assert.All(fakes.Shapes.Calls, call => Assert.Equal("ListOwned", call));
 
         // The worksheet writes are downstream of validation and must not have run.
         Assert.DoesNotContain("Duration", fakes.Steps);
@@ -779,7 +1277,7 @@ public class GanttRefreshOrchestratorTests
     {
         // The FIRST read returns a row with no usable Id: the blocking error that
         // makes identity repair necessary in the first place.
-        RefreshFakes fakes = new() { Rows = [RowWithoutId()] };
+        RefreshFakes fakes = new() { Rows = [RowWithoutId()], IdentityRepairedCount = 1 };
 
         // After repair the same row carries a well-formed Id, which is what the
         // repairer writes to the worksheet.
@@ -818,6 +1316,7 @@ public class GanttRefreshOrchestratorTests
         RefreshFakes fakes = new()
         {
             Rows = [RowWithoutId()],
+            IdentityRepairedCount = 1,
             TableReadRefusedAfterRepair = true,
         };
 
@@ -879,5 +1378,420 @@ public class GanttRefreshOrchestratorTests
             fakes.Outline,
             fakes.Factory,
             fakes.Shapes));
+    }
+
+    /// <summary>
+    /// A present type-change normaliser forces a re-read before validation.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why the re-read is asserted, not merely the call.</b> The normaliser WRITES
+    /// engine-hidden cells to the sheet. Validating the snapshot taken at step 1 would
+    /// then judge the values the normaliser just corrected, so a row whose stale
+    /// hidden cell is now right would still be refused — the same defect identity
+    /// repair had. The step ordering is the claim: normalise, then read, then validate.
+    /// </remarks>
+    [Fact]
+    public void A_type_change_normaliser_is_followed_by_a_reread_before_validation()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows(), TypeCellsWritten = 1 };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(1, fakes.NormaliseCount);
+
+        // The re-read is the step IMMEDIATELY after the normalise, because the point of
+        // it is that validation sees the corrected cells and nothing in between can move
+        // the boundary. Counting reads would not say that: this pipeline reads the table
+        // a third time on the render path.
+        int normaliseAt = fakes.Steps.IndexOf("Normalise");
+        Assert.True(normaliseAt >= 0, "Normalise never ran; steps=" + string.Join(", ", fakes.Steps));
+        Assert.True(
+            normaliseAt + 1 < fakes.Steps.Count
+                && string.Equals(fakes.Steps[normaliseAt + 1], "Read", StringComparison.Ordinal),
+            "expected the read straight after Normalise; steps=" + string.Join(", ", fakes.Steps));
+    }
+
+    /// <summary>
+    /// The re-read after normalisation reports a missing workbook as exactly that.
+    /// </summary>
+    /// <remarks>
+    /// The second arm of the re-read refusal. It exists because the two refusals have
+    /// different user remedies — open a workbook versus find the table — and collapsing
+    /// them into one message sends the user looking for a workbook they already have.
+    /// </remarks>
+    [Fact]
+    public void A_reread_after_normalisation_with_no_workbook_refuses_as_no_active_workbook()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            TypeCellsWritten = 1,
+            TableReadRefusedAfterRepair = true,
+            RereadRefusalReason = GanttTableReadRefusalReason.NoActiveWorkbook,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        // The normaliser must have RUN for this refusal to be the re-read's. Without
+        // this, a first read that refused for the same reason would satisfy the
+        // assertion, and the branch under test would stay unproven.
+        Assert.True(
+            fakes.NormaliseCount == 1,
+            "normaliser never ran: refusal=" + outcome.Refusal + " reads=" + fakes.TableReadCount
+                + " steps=" + string.Join(",", fakes.Steps));
+        Assert.Equal(GanttRefreshRefusal.NoActiveWorkbook, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>The re-read after normalisation reports a missing table as exactly that.</summary>
+    [Fact]
+    public void A_reread_after_normalisation_with_no_table_refuses_as_a_table_miss()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            TypeCellsWritten = 1,
+            TableReadRefusedAfterRepair = true,
+            RereadRefusalReason = GanttTableReadRefusalReason.TableMissing,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        Assert.Equal(1, fakes.NormaliseCount);
+        Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A no-op identity repair does not trigger a second full-table read.
+    /// </summary>
+    /// <remarks>
+    /// The re-read exists only because repair may have WRITTEN Ids. Reporting zero means
+    /// the step-1 snapshot is still the sheet's content, so re-reading it was a redundant
+    /// slot on every refresh — the kind of cost this optimisation row removes without
+    /// changing what validation sees.
+    /// </remarks>
+    [Fact]
+    public void A_no_op_identity_repair_does_not_trigger_a_second_read()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(1, fakes.TableReadCount);
+    }
+
+    /// <summary>
+    /// A no-op type-change pass does not trigger a second full-table read, and a written
+    /// cell still does.
+    /// </summary>
+    [Fact]
+    public void A_write_from_the_type_change_normaliser_still_triggers_the_reread()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows(), TypeCellsWritten = 1 };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(2, fakes.TableReadCount);
+    }
+
+    /// <summary>
+    /// A dangling <c>StyleKey</c> is healed on the SAME refresh, not the next one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The whole reason <c>ApplyStyleKeyToEvents</c> exists.</b> The validated events
+    /// carry the key read from column K at step 1. When that key names a style the user
+    /// has deleted, validation reports a warning and keeps the raw value, the planner
+    /// heals the cell to the type's code-owned default, and the scene then resolves the
+    /// key carried by the EVENT. Without the mirror the scene sees
+    /// <c>StyleThatWasDeleted</c> and the build refuses
+    /// <see cref="SceneBuilderRefusal.UnresolvableStyle"/> — so a user who tidied up
+    /// their styles would have to press Refresh twice, with the first press appearing to
+    /// fail.
+    /// </para>
+    /// <para>
+    /// The assertion is therefore on the refresh SUCCEEDING with the healed key, plus
+    /// the writer's own count reaching the outcome. A test asserting only that the
+    /// writer was called would pass with the mirror removed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_dangling_style_key_is_healed_and_rendered_in_the_same_refresh()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(
+                    rowNumber: 1,
+                    id: null,
+                    type: "As-Planned Activity",
+                    description: "Design",
+                    start: new DateOnly(2024, 1, 8),
+                    finish: new DateOnly(2024, 1, 19),
+                    styleKey: "StyleThatWasDeleted"),
+            ],
+            StyleKeyCellsWritten = 1,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithStyleKeyWriter().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(1, fakes.StyleKeyPlanWriteCount);
+        Assert.Equal(1, outcome.StyleKeyCellsWritten);
+        Assert.NotEmpty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A 1904-date-system workbook is refused as unreadable, naming the date system.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is <see cref="GanttRefreshRefusal.TableMissing"/> because a workbook
+    /// the add-in cannot date is a workbook whose table it cannot read, but the MESSAGE
+    /// has to name the real cause: telling the user the table is missing sends them
+    /// looking for a table that is there.
+    /// </remarks>
+    [Fact]
+    public void A_1904_workbook_is_refused_with_the_date_system_named()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            TableReadRefused = true,
+            FirstReadRefusal = GanttTableReadRefusalReason.DateSystemUnsupported,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
+        Assert.Contains("1904", outcome.Message!, StringComparison.Ordinal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A row already carrying its type's default style key costs no write at all.
+    /// </summary>
+    /// <remarks>
+    /// The empty-plan early return, and a product guarantee rather than an optimisation:
+    /// writing the value that is already in the cell marks the workbook dirty on every
+    /// Refresh for no change. The counterweight to the healing test above.
+    /// </remarks>
+    [Fact]
+    public void A_style_key_already_matching_its_type_is_not_written()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(
+                    rowNumber: 1,
+                    id: null,
+                    type: "As-Planned Activity",
+                    description: "Design",
+                    start: new DateOnly(2024, 1, 8),
+                    finish: new DateOnly(2024, 1, 19),
+                    styleKey: "AsPlannedActivity"),
+            ],
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithStyleKeyWriter().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(0, fakes.StyleKeyPlanWriteCount);
+        Assert.Equal(0, outcome.StyleKeyCellsWritten);
+    }
+
+    /// <summary>
+    /// A refused <c>StyleKey</c> write reports the <c>Duration</c> cells that already
+    /// landed, and mutates no shape.
+    /// </summary>
+    /// <remarks>
+    /// The refusal happens after the Duration write, so reporting zero worksheet writes
+    /// would tell the user their sheet was untouched when it was not — the workbook
+    /// would be dirty for a reason the refresh denied.
+    /// </remarks>
+    [Fact]
+    public void A_refused_style_key_write_reports_the_duration_cells_already_written()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            StyleKeyWriteRefused = true,
+            DurationCellsWritten = 3,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithStyleKeyWriter().Refresh();
+
+        Assert.Equal(GanttRefreshRefusal.StyleKeyWriteRefused, outcome.Refusal);
+        Assert.Equal(3, outcome.DurationCellsWritten);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A scene-build refusal stops before any shape write and reports the reason.
+    /// </summary>
+    /// <remarks>
+    /// The scene build sits between the worksheet writes and the first shape write, so
+    /// it is the step where a careless reordering first becomes visible. The row uses
+    /// <c>As-Built Activity</c>, whose style the fake registry does not carry, which is
+    /// exactly the <see cref="SceneBuilderRefusal.UnresolvableStyle"/> input a
+    /// hand-edited workbook produces.
+    /// </remarks>
+    [Fact]
+    public void A_scene_build_refusal_reports_that_the_chart_was_not_rebuilt()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(
+                    rowNumber: 1,
+                    id: null,
+                    type: "As-Built Activity",
+                    description: "Install",
+                    start: new DateOnly(2024, 1, 8),
+                    finish: new DateOnly(2024, 1, 19)),
+            ],
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.Equal(GanttRefreshRefusal.SceneBuildRefused, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// The arming step locks the owned shapes and leaves the sheet RELEASED for the write phase.
+    /// </summary>
+    /// <remarks>
+    /// Not protecting here is the correction the live measurement forced: a protected sheet refuses
+    /// shape creation, so arming must end with the sheet open and <see cref="WorksheetProtectionWindow"/>
+    /// re-applies the protection when the writes finish. A lock-then-protect sequence inside this step
+    /// would make the very first refresh fail at its first shape write.
+    /// </remarks>
+    [Fact]
+    public void A_refresh_locks_the_owned_shapes_and_leaves_the_sheet_released()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(1, fakes.Shapes.LockOwnedShapesCallCount);
+        Assert.Equal(["Read"], fakes.SheetProtection.Calls);
+        Assert.True(fakes.SheetProtectionArming.IsArmed);
+        Assert.False(fakes.SheetProtection.State!.ContentsProtected);
+    }
+
+    /// <summary>
+    /// The second refresh over the same workbook does not re-arm, because arming is a session fact.
+    /// </summary>
+    /// <remarks>
+    /// A re-arm per pass would be an unprotect plus a protect on every automatic refresh — the extra
+    /// step the owner ruled out. The two orchestrators here model the live composition, which builds
+    /// a new one per refresh and shares only the state object.
+    /// </remarks>
+    [Fact]
+    public void A_second_refresh_does_not_re_arm_the_protection()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
+        Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
+
+        Assert.Equal(0, fakes.SheetProtection.ProtectCount);
+        Assert.Equal(["Read"], fakes.SheetProtection.Calls);
+        Assert.Equal(1, fakes.Shapes.LockOwnedShapesCallCount);
+    }
+
+    /// <summary>
+    /// A sheet that was already protected is released, because <c>UserInterfaceOnly</c> does not
+    /// survive a reopen and the write phase needs an open sheet.
+    /// </summary>
+    [Fact]
+    public void An_already_protected_sheet_is_released_before_the_writes()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        fakes.SheetProtection.State = new WorksheetProtectionState(ContentsProtected: true, ShapesProtected: true);
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(["Read", "Unprotect"], fakes.SheetProtection.Calls);
+        Assert.False(fakes.SheetProtection.State!.ContentsProtected);
+    }
+
+    /// <summary>
+    /// A workbook that opts out is never protected and never swept, so the feature costs it nothing.
+    /// </summary>
+    /// <remarks>
+    /// Absent means on, which is the catalogue default, so the opt-out has to be asserted
+    /// explicitly: a test that omitted the key would pass on a pipeline that ignored the setting.
+    /// </remarks>
+    [Fact]
+    public void A_workbook_that_opts_out_is_never_protected()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Settings = new Dictionary<string, string> { ["ProtectGanttSheet"] = "FALSE" },
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Empty(fakes.SheetProtection.Calls);
+        Assert.Equal(0, fakes.Shapes.LockOwnedShapesCallCount);
+        Assert.False(fakes.SheetProtectionArming.IsArmed);
+    }
+
+    /// <summary>
+    /// A refused lock sweep loses the lock, not the chart, and is recorded.
+    /// </summary>
+    /// <remarks>
+    /// The refresh still rendering is the product decision — no chart at all is worse than a correct
+    /// chart the user can drag — and the trace is the only evidence a user can act on, so it is
+    /// asserted rather than assumed.
+    /// </remarks>
+    [Fact]
+    public void A_refused_lock_sweep_keeps_the_chart_and_is_recorded()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        fakes.Shapes.Refusals["LockOwnedShapes"] = ShapeWriteRefusal.TargetProtected;
+        List<string> traces = [];
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection(traces.Add).Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Contains(
+            traces,
+            line => line.Contains("lock refused=TargetProtected", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Turning the setting off after it has been armed releases the add-in's protection.
+    /// </summary>
+    /// <remarks>
+    /// The setting is both the ownership record and the user's switch (ADR-0055 D2), so an opt-out
+    /// that only stopped future arming would leave the sheet locked against the user's explicit
+    /// choice for the rest of the session.
+    /// </remarks>
+    [Fact]
+    public void Turning_the_setting_off_after_arming_releases_the_protection()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
+        fakes.Settings = new Dictionary<string, string> { ["ProtectGanttSheet"] = "FALSE" };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(1, fakes.SheetProtection.UnprotectCount);
+        Assert.False(fakes.SheetProtectionArming.IsArmed);
+        Assert.False(fakes.SheetProtection.State!.ContentsProtected);
     }
 }

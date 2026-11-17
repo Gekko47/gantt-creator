@@ -89,6 +89,17 @@ public sealed record ReferenceFixtureRow
     /// <summary>Gets the explicit label position.</summary>
     public string? LabelPosition { get; init; }
 
+    /// <summary>
+    /// Gets the row's date-label choice, or null for the type default.
+    /// </summary>
+    /// <remarks>
+    /// Present since R5.18m (owner ruling 2026-11-13): the default is no date
+    /// labels, so the canonical fixture names it explicitly on the rows that
+    /// keep the §23 date labels represented for the equivalence contract.
+    /// Omitting the property means "blank cell", which is the default.
+    /// </remarks>
+    public string? DateLabelPosition { get; init; }
+
     /// <summary>Gets the per-row fill override.</summary>
     public string? FillColour { get; init; }
 

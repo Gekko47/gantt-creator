@@ -32,12 +32,22 @@ namespace GanttCreator.Office;
 /// shape that carries no text. The scene resolves this (ADR-0018 D4); the
 /// adapter only maps it to the host's alignment constant.
 /// </param>
+/// <param name="StrokeDash">
+/// The resolved stroke dash pattern. Solid is the default: a line is
+/// continuous unless an approved named style specifies otherwise.
+/// </param>
 /// <param name="TextColour">
 /// The resolved label text colour, or <see langword="null"/> when the scene
 /// resolved none. Entity guide §17's delay inside/outside switch is expressed
 /// by which value the scene put on the label it emitted, not by anything the
 /// adapter decides, so a <see langword="null"/> means "leave the font colour
 /// alone" and is never substituted.
+/// </param>
+/// <param name="HostOwnsExtent">
+/// <see langword="true"/> when the host owns this shape's vertical extent
+/// (ADR-0052 D6): the shape spans the plot's full height and is placed with
+/// <c>xlMoveAndSize</c> so Excel resizes it live on collapse/expand. The
+/// default is <see langword="false"/> (scene-owned, <c>xlMove</c>).
 /// </param>
 /// <remarks>
 /// Every value is a primitive or a Core-owned type. No interop type crosses
@@ -58,7 +68,9 @@ public sealed record OfficeShapeRequest(
     bool? Bold = null,
     string? Text = null,
     GanttTextAlignment? Alignment = null,
-    ColourHex? TextColour = null);
+    ColourHex? TextColour = null,
+    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid,
+    bool HostOwnsExtent = false);
 
 /// <summary>
 /// Narrow port over the live renderer's shape writes: create, update, and
@@ -168,6 +180,141 @@ public interface IShapeWritePort
     /// </para>
     /// </remarks>
     ShapeWriteOutcome Update(OfficeShapeRequest request);
+
+    /// <summary>
+    /// Moves or resizes one existing owned shape to the request's geometry, WITHOUT
+    /// re-applying its content, style or typography.
+    /// </summary>
+    /// <param name="request">The scene's desired shape; only its kind and box are applied.</param>
+    /// <returns>The same typed result <see cref="Update"/> returns.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>When this is correct.</b> When the shape's content and appearance are provably
+    /// unchanged — the reconciliation knows this from the payload cache's per-part hashes,
+    /// and a kind change is never routed here — so the only thing that can differ is where
+    /// the shape sits. A row relocation, a row-height change, or a date edit that keeps the
+    /// plot scale are exactly that case, and they are the common ones: a full update costs
+    /// ~15–18 ms per primitive on the live host, while the four geometry writes cost ~0.5 ms.
+    /// </para>
+    /// <para>
+    /// <b>What it deliberately does not do.</b> It does not repair a fill, stroke, font or
+    /// text a user changed by hand. The explicit Refresh re-applies everything, so a
+    /// hand-edited shape converges there; an automatic refresh converges the geometry and
+    /// leaves the user's own formatting alone (ADR-0053).
+    /// </para>
+    /// <para>
+    /// The authorisation rule is unchanged: the ownership tag, not the name, authorises the
+    /// write, and an absent or unowned shape is <see cref="ShapeWriteRefusal.NotFound"/>.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request);
+
+    /// <summary>
+    /// Locks every shape this add-in owns, so the user cannot drag or delete it (ADR-0055).
+    /// </summary>
+    /// <returns>The same typed result the other write operations return.</returns>
+    /// <remarks>
+    /// <para>
+    /// A create stamps <c>Locked</c> already; this is the one-time back-fill for shapes created
+    /// before the rule existed. It is deliberately a separate operation rather than something
+    /// <see cref="ListOwned"/> does, because <see cref="ListOwned"/> runs on every refresh and
+    /// ADR-0055 forbids adding a step there: reading <c>Locked</c> once per shape per pass would
+    /// cost more than the write it avoids. This runs when protection is armed — once per
+    /// workbook — and when the CHART toggle is switched back on.
+    /// </para>
+    /// <para>
+    /// Ownership is proved by the tag, exactly as <see cref="Delete"/> and <see cref="Update"/>
+    /// prove it, so a user's shape that happens to share a name is never locked. The write is
+    /// conditional: a shape already locked is read and left alone.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome LockOwnedShapes();
+
+    /// <summary>
+    /// Clears <c>Locked</c> on ONE owned shape, so the user can drag it deliberately (ADR-0055).
+    /// </summary>
+    /// <param name="primitiveId">The scene primitive id, which is also the shape's name.</param>
+    /// <returns>The typed result; <see cref="ShapeWriteRefusal.NotFound"/> for an absent or unowned shape.</returns>
+    /// <remarks>
+    /// <para>
+    /// Ownership is proved by the tag, exactly as every other operation proves it, so a user's shape
+    /// that shares a name is refused rather than unlocked — the command must not hand the user a
+    /// writable chart element the add-in does not own.
+    /// </para>
+    /// <para>
+    /// Clearing <c>Locked</c> is inert while the sheet is protected, so the caller must release the
+    /// protection as well; the two together are what makes a shape draggable. The CHART toggle records
+    /// the release in <see cref="ProtectionPreferences"/>, which is what keeps the automatic refresh
+    /// out of the way until the toggle is switched back on or the user asks for an explicit Refresh.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome UnlockShape(string primitiveId);
+
+    /// <summary>
+    /// Begins a reconciliation batch, in which the target worksheet and the protection
+    /// guard are resolved ONCE for every operation until the returned scope is disposed.
+    /// </summary>
+    /// <returns>The batch scope; disposing it ends the batch.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why.</b> Resolving the target walks <c>Sheets</c> and <c>ListObjects</c> and queries
+    /// the protection guard -- about six round trips, two of them collection walks, on the
+    /// expensive side of this port's cost model. That work was repeated for every create,
+    /// update, geometry move, delete, geometry check and z-order preflight, so a 42-primitive
+    /// relocation paid it 42 times for a target that cannot change while the batch runs
+    /// (ADR-0020 disables events for the whole refresh).
+    /// </para>
+    /// <para>
+    /// <b>What a batch does NOT change.</b> Each operation still validates its request, still
+    /// authorises itself against the shape's ownership tag, and still resolves the shape by
+    /// name -- a name can appear or disappear inside a batch when a create or delete runs.
+    /// Only the target and the guard are hoisted, and the guard's per-target check still runs
+    /// once (R4.8 D3), just not once per shape.
+    /// </para>
+    /// <para>
+    /// Batches do not nest. A caller that opens one twice is a defect and is refused rather
+    /// than silently sharing state.
+    /// </para>
+    /// </remarks>
+    IDisposable BeginBatch();
+
+    /// <summary>
+    /// Reports whether the live shape already matches the request's GEOMETRY and
+    /// PLACEMENT, so a payload-equality skip can be verified against the host instead of
+    /// trusted.
+    /// </summary>
+    /// <param name="request">The scene's desired shape.</param>
+    /// <returns>
+    /// <see langword="true"/> when the owned shape for the identifier carries the
+    /// request's bounding box and the placement the request's class requires
+    /// (<c>xlMove</c> for a scene-owned shape, <c>xlMoveAndSize</c> for a host-owned
+    /// one, ADR-0052 D6–D8); <see langword="false"/> for an absent, unowned, moved,
+    /// resized, or wrongly-placed shape.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why geometry can be verified when text and style cannot.</b> R4.7 D5 rejected
+    /// a full property diff because a <see langword="null"/> text colour or font means
+    /// "leave the host alone", so intent is unobservable after a write. Geometry has no
+    /// such member: the scene states four absolute numbers, so comparing the host's four
+    /// numbers to them cannot be ambiguous. Without this check the delta cache's
+    /// payload signature proves what the SCENE wanted, not what the HOST holds — and the
+    /// host moves and resizes <c>xlMoveAndSize</c> shapes whenever rows are inserted,
+    /// hidden, shown, or re-heighted.
+    /// </para>
+    /// <para>
+    /// For a host-owned shape the height comparison uses
+    /// <see cref="HostOwnedGeometry.HostResizeTolerancePt"/>
+    /// rather than the strict geometry tolerance, because Excel resizes
+    /// <c>xlMoveAndSize</c> shapes proportionally and repeated collapse/expand cycles
+    /// can drift by a fraction of a point (ADR-0052 D8).
+    /// </para>
+    /// <para>
+    /// Cheap by design: one indexed name lookup and five property reads per unchanged
+    /// shape, against a full update that costs one or more writes per shape.
+    /// </para>
+    /// </remarks>
+    bool GeometryMatches(OfficeShapeRequest request);
 
     /// <summary>Deletes one owned shape by its scene identifier.</summary>
     /// <param name="primitiveId">The stable scene primitive identifier.</param>

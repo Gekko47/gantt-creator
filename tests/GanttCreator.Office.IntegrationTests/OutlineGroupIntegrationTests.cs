@@ -289,9 +289,15 @@ public class OutlineGroupIntegrationTests(ITestOutputHelper output)
             Assert.True(first.Succeeded, $"First refresh refused: {first.Refusal}");
             Assert.Equal(ExcelOutlineGroupWriter.ChildOutlineLevel, ReadLevel(scope, table, 2));
 
+            // A repeat pass reports ZERO groups created, and that is the rule rather than
+            // a regression: a span whose every row already carries the child level is not
+            // rewritten, because re-writing it re-groups the rows and moves every
+            // xlMoveAndSize shape over the span (measured 2026-11-03, pinned by the
+            // writer's contract tests). Stability is therefore "nothing written, level
+            // unchanged", which the level assertion below states.
             OutlineGroupOutcome second = writer.Apply(hierarchy);
             Assert.True(second.Succeeded, $"Second refresh refused: {second.Refusal}");
-            Assert.Equal(1, second.GroupsApplied);
+            Assert.Equal(0, second.GroupsApplied);
             Assert.Equal(ExcelOutlineGroupWriter.ChildOutlineLevel, ReadLevel(scope, table, 2));
 
             // The parent is gone, so the child is promoted and no group remains.

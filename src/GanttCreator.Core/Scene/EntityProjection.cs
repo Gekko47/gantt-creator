@@ -243,7 +243,8 @@ public static class ProjectionResolver
             GanttEntityType.AsBuiltMilestone
                 or GanttEntityType.AsPlannedMilestone
                 or GanttEntityType.BaselineMilestone
-                or GanttEntityType.CriticalMilestone => atEvent.ParentId is null
+                or GanttEntityType.CriticalMilestone
+                or GanttEntityType.CustomMilestone => atEvent.ParentId is null
                 ? ProjectionMode.OwnLane
                 : ProjectionMode.MilestoneOnParent,
 

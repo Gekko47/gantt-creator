@@ -66,7 +66,15 @@ public enum ParentChildRefusalReason
     /// <summary>The move would create a parent cycle.</summary>
     Cycle = 9,
 
-    /// <summary>A <c>CriticalInterval</c> child would land on a non-span parent.</summary>
+    /// <summary>
+    /// A <c>CriticalInterval</c> child would land on a non-span parent.
+    /// <b>No planner path produces this.</b> The demote search refuses every
+    /// non-owning candidate before any span test could run, and the owning set
+    /// is exactly the span set minus <c>CriticalInterval</c>
+    /// (<c>EntityHierarchyCatalogTests</c> pins that equivalence). The member is
+    /// kept because the AddIn refusal translator maps it, and the validator
+    /// reports the underlying rule as <c>GanttValidationCodes.ParentNotSpan</c>.
+    /// </summary>
     ParentNotSpan = 10,
 }
 
@@ -325,13 +333,14 @@ public static class HierarchyMutations
 
         // The move target is the bottom of the run: the highest body index
         // among the siblings, which is the promoted row's own index when it
-        // is already last.
-        var moveTo = siblings.Count == 0
-            ? target.RowNumber
-            : siblings[^1].RowNumber;
+        // is already last. The run always contains the target itself (its
+        // ParentId is parentId), so it can never be empty - the "empty run"
+        // fallback that used to sit here was unreachable and only produced a
+        // mutation survivor no test could kill.
+        int moveTo = siblings[^1].RowNumber;
 
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent sibling in siblings)
         {
             if (sibling.Id == selectedId)
@@ -419,11 +428,10 @@ public static class HierarchyMutations
 
         foreach (GanttEvent candidate in above)
         {
-            if (candidate.Type == GanttEntityType.Delineator)
-            {
-                continue;
-            }
-
+            // No Delineator arm is owed here: Delineator is absent from
+            // EntityHierarchyCatalog's child-owning set, so MayOwnChildren below
+            // already skips it - the explicit check that used to sit here could
+            // never change the outcome.
             if (!EntityHierarchyCatalog.MayOwnChildren(candidate.Type))
             {
                 continue;
@@ -435,23 +443,28 @@ public static class HierarchyMutations
                 continue;
             }
 
-            if (IsDescendantOf(byId, candidate.Id, selectedId))
-            {
-                return DemotePlan.Refused(ParentChildRefusalReason.Cycle);
-            }
-
-            if (target.Type == GanttEntityType.CriticalInterval && !IsSpan(candidate.Type))
-            {
-                return DemotePlan.Refused(ParentChildRefusalReason.ParentNotSpan);
-            }
-
+            // No Cycle arm is owed here either. Every candidate that reaches this
+            // point has a null ParentId (checked above), and a descendant of the
+            // selection must reach it through a parent chain, so the descendant
+            // test could only ever return false. ParentChildRefusalReason.Cycle
+            // therefore has no producer; the validator refuses a cyclic table
+            // before any planner runs.
+            //
+            // No "a Critical Interval may only land on a span" arm is owed here.
+            // Every candidate that reaches this point passed MayOwnChildren above,
+            // and that set is exactly the span set minus Critical Interval itself,
+            // so a span test could only restate the guard that already ran and could
+            // never refuse anything. The rule is enforced one guard earlier, and it
+            // is stricter: a milestone, splitter, spacer or delineator candidate is
+            // refused regardless of the target's type.
             // The selection's content moves to sit directly beneath the new
             // parent's existing child run, so the demotion stays one
             // contiguous outline group: the run's last child's row plus one.
-            var moveTo = candidate.RowNumber + 1;
-            foreach (GanttEvent child in rows
-                .Where(row => row.ParentId == candidate.Id)
-                .OrderBy(static row => row.RowNumber))
+            // The landing position is the maximum body index in the candidate's
+            // child run, so it is order-independent: the ordering this loop used
+            // to impose could not change the result.
+            int moveTo = candidate.RowNumber + 1;
+            foreach (GanttEvent child in rows.Where(row => row.ParentId == candidate.Id))
             {
                 if (child.RowNumber >= moveTo)
                 {
@@ -461,7 +474,7 @@ public static class HierarchyMutations
 
             // The demoted row plus its re-homed children all join the run, so
             // capacity counts them together against the seven-child maximum.
-            var joining = 1 + rehomed.Count;
+            int joining = 1 + rehomed.Count;
             if (childCountByParent.GetValueOrDefault(candidate.Id) + joining > EntityHierarchyCatalog.MaxChildrenPerParent)
             {
                 // No parent further up can take this landing either: the
@@ -471,7 +484,7 @@ public static class HierarchyMutations
                 return DemotePlan.Refused(ParentChildRefusalReason.ParentUnavailable);
             }
 
-            var order = childCountByParent.GetValueOrDefault(candidate.Id);
+            int order = childCountByParent.GetValueOrDefault(candidate.Id);
             List<SiblingOrderWrite> writes = [new(target.Id, order)];
             foreach (GanttEvent child in rehomed)
             {
@@ -517,8 +530,8 @@ public static class HierarchyMutations
         ArgumentNullException.ThrowIfNull(selectedId);
 
         List<GanttEvent> ordered = [.. rows.OrderBy(static row => row.RowNumber)];
-        var index = -1;
-        for (var position = 0; position < ordered.Count; position++)
+        int index = -1;
+        for (int position = 0; position < ordered.Count; position++)
         {
             if (ordered[position].Id == selectedId)
             {
@@ -553,7 +566,7 @@ public static class HierarchyMutations
                 windowLength++;
             }
 
-            var neighbour = FindAdjacentTopLevel(ordered, windowStart, windowLength, moveUp);
+            int neighbour = FindAdjacentTopLevel(ordered, windowStart, windowLength, moveUp);
             if (neighbour < 0)
             {
                 return MovePlan.NoChange(selectedId);
@@ -561,8 +574,8 @@ public static class HierarchyMutations
 
             swapStart = neighbour;
             swapLength = 1;
-            var next = neighbour + 1;
-            var limit = moveUp ? windowStart : ordered.Count;
+            int next = neighbour + 1;
+            int limit = moveUp ? windowStart : ordered.Count;
             while (next < limit && ordered[next].ParentId == ordered[neighbour].Id)
             {
                 swapLength++;
@@ -580,7 +593,7 @@ public static class HierarchyMutations
             // Anything else (its parent, another parent's child, a
             // top-level row, the body edge) is the run boundary: the
             // selection is already at the top or bottom of its set.
-            var neighbour = moveUp ? index - 1 : index + 1;
+            int neighbour = moveUp ? index - 1 : index + 1;
             if (neighbour < 0
                 || neighbour >= ordered.Count
                 || ordered[neighbour].ParentId != target.ParentId)
@@ -602,7 +615,7 @@ public static class HierarchyMutations
         List<GanttEvent> post = [.. ordered];
         BlockSwap(post, windowStart, windowLength, swapStart, swapLength);
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent row in post)
         {
             if (row.ParentId != affectedRun)
@@ -635,7 +648,7 @@ public static class HierarchyMutations
     {
         if (moveUp)
         {
-            for (var position = windowStart - 1; position >= 0; position--)
+            for (int position = windowStart - 1; position >= 0; position--)
             {
                 if (ordered[position].ParentId is null)
                 {
@@ -646,7 +659,7 @@ public static class HierarchyMutations
             return -1;
         }
 
-        for (var position = windowStart + windowLength; position < ordered.Count; position++)
+        for (int position = windowStart + windowLength; position < ordered.Count; position++)
         {
             if (ordered[position].ParentId is null)
             {
@@ -675,18 +688,18 @@ public static class HierarchyMutations
         int secondStart,
         int secondLength)
     {
-        var lowStart = Math.Min(firstStart, secondStart);
-        var highStart = Math.Max(firstStart, secondStart);
-        var lowLength = firstStart < secondStart ? firstLength : secondLength;
-        var highLength = firstStart < secondStart ? secondLength : firstLength;
+        int lowStart = Math.Min(firstStart, secondStart);
+        int highStart = Math.Max(firstStart, secondStart);
+        int lowLength = firstStart < secondStart ? firstLength : secondLength;
+        int highLength = firstStart < secondStart ? secondLength : firstLength;
 
         List<GanttEvent> span = list.GetRange(lowStart, highStart - lowStart + highLength);
         List<GanttEvent> low = span.GetRange(0, lowLength);
-        var secondOffset = highStart - lowStart;
+        int secondOffset = highStart - lowStart;
         List<GanttEvent> gap = span.GetRange(lowLength, secondOffset - lowLength);
         List<GanttEvent> high = span.GetRange(secondOffset, highLength);
 
-        var writeIndex = lowStart;
+        int writeIndex = lowStart;
         foreach (GanttEvent row in high)
         {
             list[writeIndex++] = row;
@@ -701,37 +714,6 @@ public static class HierarchyMutations
         {
             list[writeIndex++] = row;
         }
-    }
-
-    /// <summary>
-    /// Whether the parent chain of <paramref name="id"/> contains
-    /// <paramref name="rootId"/>. Guards the demote scan against pathological
-    /// input where the nearest-above row is already below the selection in
-    /// the parent graph.
-    /// </summary>
-    private static bool IsDescendantOf(
-        Dictionary<GanttRowId, GanttEvent> byId,
-        GanttRowId id,
-        GanttRowId rootId)
-    {
-        GanttRowId? cursor = byId.TryGetValue(id, out GanttEvent? current) ? current.ParentId : null;
-        HashSet<GanttRowId> seen = [];
-        while (cursor is not null)
-        {
-            if (cursor == rootId)
-            {
-                return true;
-            }
-
-            if (!seen.Add(cursor) || !byId.TryGetValue(cursor, out GanttEvent? next))
-            {
-                return false;
-            }
-
-            cursor = next.ParentId;
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -752,7 +734,7 @@ public static class HierarchyMutations
         int joinedRowNumber)
     {
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent row in rows
             .Where(row => row.ParentId is null && row.RowNumber < joinedRowNumber)
             .OrderBy(static row => row.RowNumber))
@@ -785,7 +767,7 @@ public static class HierarchyMutations
         GanttRowId leavingId)
     {
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent row in rows
             .Where(static row => row.ParentId is null)
             .OrderBy(static row => row.RowNumber))
@@ -802,28 +784,4 @@ public static class HierarchyMutations
         return writes;
     }
 
-    /// <summary>
-    /// Whether the type is a span a <c>CriticalInterval</c> child may land on.
-    /// Mirrors the validator's span rule without duplicating its diagnostics.
-    /// </summary>
-    private static bool IsSpan(GanttEntityType type) => type switch
-    {
-        GanttEntityType.Splitter => false,
-        GanttEntityType.Spacer => false,
-        GanttEntityType.AsBuiltActivity => true,
-        GanttEntityType.AsPlannedActivity => true,
-        GanttEntityType.BaselineActivity => true,
-        GanttEntityType.CriticalInterval => false,
-        GanttEntityType.DelayEvent => true,
-        GanttEntityType.AsBuiltProcurement => true,
-        GanttEntityType.AsPlannedProcurement => true,
-        GanttEntityType.BaselineProcurement => true,
-        GanttEntityType.CustomActivity => true,
-        GanttEntityType.AsBuiltMilestone => false,
-        GanttEntityType.AsPlannedMilestone => false,
-        GanttEntityType.BaselineMilestone => false,
-        GanttEntityType.CriticalMilestone => false,
-        GanttEntityType.Delineator => false,
-        _ => false,
-    };
 }

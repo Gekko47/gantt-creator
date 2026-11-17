@@ -186,19 +186,19 @@ public static class PlotGeometryResolver
             return Refused(PlotGeometryRefusal.InvalidOrigin);
         }
 
-        var plotWidth = PlotWidth(preset, textPanelWidthPt, leftChromePt, rightChromePt);
+        double plotWidth = PlotWidth(preset, textPanelWidthPt, leftChromePt, rightChromePt);
         if (plotWidth < MinimumPlotWidthPt)
         {
             // Report the shortfall rather than rendering a too-narrow plot. The
             // number makes the message actionable: it tells the user how much a
             // column must be narrowed, instead of merely that it failed.
-            var shortfall = MinimumPlotWidthPt - plotWidth;
+            double shortfall = MinimumPlotWidthPt - plotWidth;
             return new PlotGeometryOutcome(
                 new PlotGeometry(preset, textPanelWidthPt, default, shortfall),
                 PlotGeometryRefusal.InsufficientPlotWidth);
         }
 
-        var originX = textPanelWidthPt + leftChromePt;
+        double originX = textPanelWidthPt + leftChromePt;
         return !double.IsFinite(originX) || originX + plotWidth > preset.WidthPt
             ? Refused(PlotGeometryRefusal.InvalidOrigin)
             : new PlotGeometryOutcome(

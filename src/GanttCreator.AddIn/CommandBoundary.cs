@@ -154,7 +154,7 @@ public sealed class CommandBoundary
         // handled inside the translator. The resolver runs inside the same
         // try so a COM control-ID probe failure is reported, not thrown.
 #pragma warning disable CA1031
-        var commandName = fallbackCommandName;
+        string commandName = fallbackCommandName;
         try
         {
             commandName = SafeResolveCommandName(resolveCommandName, fallbackCommandName);
@@ -182,7 +182,7 @@ public sealed class CommandBoundary
     /// <param name="fallbackCommandName">Used when the resolver returns blank.</param>
     private static string SafeResolveCommandName(Func<string> resolveCommandName, string fallbackCommandName)
     {
-        var resolved = resolveCommandName();
+        string resolved = resolveCommandName();
         return string.IsNullOrWhiteSpace(resolved) ? fallbackCommandName : resolved;
     }
 
@@ -195,7 +195,7 @@ public sealed class CommandBoundary
     /// <param name="ex">The caught exception.</param>
     private void ReportFailure(string commandName, Exception ex)
     {
-        var operationId = NextOperationId();
+        string operationId = NextOperationId();
         WriteErrorRecord(commandName, ex, operationId);
         ShowTranslatedDialog(ex, operationId);
     }
@@ -216,7 +216,7 @@ public sealed class CommandBoundary
 #pragma warning disable CA1031
         try
         {
-            var hresult = ex.HResult.ToString("X8", CultureInfo.InvariantCulture);
+            string hresult = ex.HResult.ToString("X8", CultureInfo.InvariantCulture);
             _log?.Write(
                 "CommandError: op={0} command={1} stage=ribbon-callback excel-version={2} exception={3} hresult=0x{4} detail={5}",
                 operationId,
@@ -242,7 +242,7 @@ public sealed class CommandBoundary
     /// <param name="operationId">The operation ID for this failure.</param>
     private void ShowTranslatedDialog(Exception ex, string operationId)
     {
-        var message = CommandErrorTranslator.Translate(ex, operationId);
+        string message = CommandErrorTranslator.Translate(ex, operationId);
         // CA1031: the presenter (TaskDialog or test capture) must never make
         // the boundary throw.
 #pragma warning disable CA1031
@@ -290,7 +290,7 @@ public sealed class CommandBoundary
     private string NextOperationId()
     {
         DateTimeOffset now = _timeProvider.GetUtcNow();
-        var sequence = Interlocked.Increment(ref _sequence).ToString("00", CultureInfo.InvariantCulture);
+        string sequence = Interlocked.Increment(ref _sequence).ToString("00", CultureInfo.InvariantCulture);
         return string.Create(
             CultureInfo.InvariantCulture,
             $"GC-{now:yyyyMMdd}-{now:HHmmss}-{now:fff}-{sequence}");

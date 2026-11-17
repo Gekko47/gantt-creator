@@ -33,11 +33,61 @@ internal sealed class RefreshFakes
     /// <summary>Whether the table read refuses.</summary>
     public bool TableReadRefused { get; set; }
 
+    /// <summary>
+    /// The refusal the FIRST table read reports, or <see langword="null"/> for
+    /// <see cref="GanttTableReadRefusalReason.TableMissing"/>.
+    /// </summary>
+    /// <remarks>
+    /// The first read has its own refusal mapping in the orchestrator — an unsupported
+    /// 1904 workbook is a table-read refusal with its own message, not a missing table —
+    /// and a fake that could only produce one reason made every other message
+    /// unreachable.
+    /// </remarks>
+    public GanttTableReadRefusalReason? FirstReadRefusal { get; set; }
+
     /// <summary>Whether the configuration read refuses.</summary>
     public bool ConfigReadRefused { get; set; }
 
+    /// <summary>
+    /// The metrics the configuration read returns, so a test can prove the
+    /// workbook's own values reach the row-height normalisation.
+    /// </summary>
+    /// <remarks>
+    /// The Theme dialog writes the user's row, splitter and spacer heights to the
+    /// metrics table, and the orchestrator used to normalise the sheet to the
+    /// token catalogue's DEFAULTS instead - so the setting was stored and then
+    /// ignored on every Refresh. A fake that returned an empty map could not
+    /// tell that apart from a workbook that never carried the metric.
+    /// </remarks>
+    public IReadOnlyDictionary<string, double> Metrics { get; set; } = new Dictionary<string, double>();
+
+    /// <summary>
+    /// The settings the configuration read returns, so a test can supply the
+    /// chart title and its visibility.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Settings { get; set; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// The grid the panel measurement returns, or null for the Excel-like
+    /// default.
+    /// </summary>
+    /// <remarks>
+    /// The default grid models a sheet with no reserved row, so a test that
+    /// needs the title to land in one injects a grid that has it.
+    /// </remarks>
+    public PanelCellGrid? MeasuredGrid { get; set; }
+
     /// <summary>Whether the protection guard reports a protected target.</summary>
     public ProtectionGuardOutcome Protection { get; set; } = ProtectionGuardOutcome.NotProtected;
+
+    /// <summary>The protection port the refresh's arming step writes through (ADR-0055).</summary>
+    public FakeWorksheetProtectionPort SheetProtection { get; } = new();
+
+    /// <summary>
+    /// The cross-refresh arming memory, shared by every orchestrator a test builds over these fakes,
+    /// which is what the live composition does with a new orchestrator per refresh.
+    /// </summary>
+    public ProtectionArmingState SheetProtectionArming { get; } = new();
 
     /// <summary>Whether the panel measurement refuses.</summary>
     public bool MeasurementRefused { get; set; }
@@ -62,8 +112,29 @@ internal sealed class RefreshFakes
     /// <summary>Whether the outline write refuses.</summary>
     public bool OutlineRefused { get; set; }
 
+    /// <summary>
+    /// How many outline groups the fake reports as applied, so a test can prove that a
+    /// structural outline write forces a full shape update.
+    /// </summary>
+    public int OutlineGroupsApplied { get; set; }
+
+    /// <summary>How many stale outline groups the fake reports as cleared.</summary>
+    public int OutlineRowsUngrouped { get; set; }
+
     /// <summary>Whether the row-height normalisation refuses.</summary>
     public bool RowHeightRefused { get; set; }
+
+    /// <summary>
+    /// How many row heights the fake reports as written, so a test can prove that a
+    /// structural height write forces a full shape update.
+    /// </summary>
+    public int RowHeightsWritten { get; set; }
+
+    /// <summary>
+    /// The body heights the fake normaliser reports as the ones it measured, so a test can
+    /// prove the orchestrator passes them to the panel measurement.
+    /// </summary>
+    public IReadOnlyList<double> RowHeightBodyHeights { get; set; } = [];
 
     /// <summary>The managed-row target the orchestrator last passed, or null if never called.</summary>
     public double? LastManagedHeightPt { get; set; }
@@ -102,6 +173,18 @@ internal sealed class RefreshFakes
     /// </summary>
     public double? LastAnchorRowHeightPt { get; set; }
 
+    /// <summary>
+    /// The <c>Type</c> texts the orchestrator last handed to the height normaliser, or
+    /// <see langword="null"/> when it supplied none.
+    /// </summary>
+    /// <remarks>
+    /// Recorded rather than discarded for the same reason as the height targets: the
+    /// whole point of passing the bulk-read column is that the normaliser does not read
+    /// it again, and a fake that dropped the argument could not distinguish a caller
+    /// that passes the texts from one that does not.
+    /// </remarks>
+    public IReadOnlyList<string?>? LastTypeTexts { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -135,6 +218,17 @@ internal sealed class RefreshFakes
     public IReadOnlyList<string> LastMeasuredColumns => PanelFake.LastMeasuredColumns;
 
     /// <summary>
+    /// The body heights the orchestrator handed to the panel measurement, or
+    /// <see langword="null"/> when it supplied none.
+    /// </summary>
+    /// <remarks>
+    /// Surfaces the measurement fake's record so a test can prove the orchestrator
+    /// reuses the heights its own normalisation just measured instead of making the
+    /// measurement read every body row again.
+    /// </remarks>
+    public IReadOnlyList<double>? LastMeasuredBodyHeightsPt => PanelFake.LastBodyHeightsPt;
+
+    /// <summary>
     /// The concrete panel fake, for the tests that assert on what it recorded.
     /// </summary>
     private FakePanelMeasurement PanelFake => _panel ??= new FakePanelMeasurement(this);
@@ -159,8 +253,8 @@ internal sealed class RefreshFakes
     /// <summary>The row-identity repairer fake.</summary>
     public IGanttRowIdentityRepairer Identity => new FakeIdentityRepairer(this);
 
-    /// <summary>The validation-notes reporter fake.</summary>
-    public IGanttValidationReporter Notes => new FakeValidationReporter(this);
+    /// <summary>The row/cell warning highlighter fake.</summary>
+    public IRowWarningHighlighter Highlighter => new FakeRowWarningHighlighter(this);
 
     /// <summary>Whether the column-classification restore refuses.</summary>
     public bool ColumnPresentationRefused { get; set; }
@@ -169,13 +263,25 @@ internal sealed class RefreshFakes
     /// Every issue list the reporter was handed, in call order, so a test can assert
     /// what the orchestrator reported rather than only how many times it called.
     /// </summary>
-    public List<IReadOnlyList<GanttValidationIssue>> ReportedIssues { get; } = [];
+    public List<IReadOnlyList<HighlightTarget>> HighlightReconciliations { get; } = [];
 
     /// <summary>Whether the notes reporter refuses.</summary>
-    public bool ValidationNotesRefused { get; set; }
+    public bool WarningHighlightsRefused { get; set; }
 
     /// <summary>Whether the row-identity repair refuses.</summary>
     public bool IdentityRefused { get; set; }
+
+    /// <summary>
+    /// How many Id cells the fake repairer reports as written. Zero models the normal
+    /// case, in which the orchestrator must not re-read the whole table.
+    /// </summary>
+    public int IdentityRepairedCount { get; set; }
+
+    /// <summary>
+    /// How many engine-hidden cells the fake type-change normaliser reports as written.
+    /// Zero models a no-op pass.
+    /// </summary>
+    public int TypeCellsWritten { get; set; }
 
     /// <summary>
     /// The rows the table reader returns AFTER identity repair has run, or
@@ -199,8 +305,42 @@ internal sealed class RefreshFakes
     /// <summary>Whether the table re-read performed after identity repair refuses.</summary>
     public bool TableReadRefusedAfterRepair { get; set; }
 
+    /// <summary>
+    /// The refusal the fake table reader reports on every read AFTER the first.
+    /// </summary>
+    /// <remarks>
+    /// Settable so a test can distinguish the two distinct re-read steps — the one after
+    /// identity repair and the one after type-change normalisation — and can drive each
+    /// to a different refusal. Both steps map a failed re-read onto the same two
+    /// refusals, but only the reasons are shared; the code paths are separate, so a test
+    /// that could only produce <see cref="GanttTableReadRefusalReason.TableMissing"/>
+    /// would leave the no-workbook arm of the normalisation path unproven.
+    /// </remarks>
+    public GanttTableReadRefusalReason RereadRefusalReason { get; set; } =
+        GanttTableReadRefusalReason.TableMissing;
+
+    /// <summary>Whether the StyleKey write refuses.</summary>
+    public bool StyleKeyWriteRefused { get; set; }
+
+    /// <summary>How many StyleKey cells the fake writer reports as written.</summary>
+    public int StyleKeyCellsWritten { get; set; }
+
+    /// <summary>How many rows the last StyleKey plan asked to write.</summary>
+    /// <remarks>
+    /// Recorded from the plan rather than derived from the rows, so "the planner had
+    /// nothing to do" and "the orchestrator skipped the write" stay distinguishable
+    /// claims. Deriving it would make the assertion a restatement of the planner.
+    /// </remarks>
+    public int StyleKeyPlanWriteCount { get; private set; }
+
+    /// <summary>How many times the type-change normaliser was asked to run.</summary>
+    public int NormaliseCount { get; private set; }
+
     /// <summary>How many times the table reader was called.</summary>
     public int TableReadCount { get; private set; }
+
+    /// <summary>How many unsafe changed-row reads were requested.</summary>
+    public int TargetedTableReadCount { get; private set; }
 
     /// <summary>Builds the orchestrator over these fakes.</summary>
     /// <returns>The composed orchestrator.</returns>
@@ -218,7 +358,85 @@ internal sealed class RefreshFakes
             ColumnPresentation,
             Identity,
             null,
-            Notes);
+            null,
+            Highlighter,
+            null);
+
+    /// <summary>Builds the orchestrator with the ADR-0055 arming step wired.</summary>
+    /// <param name="trace">The diagnostic sink, or null for no trace.</param>
+    /// <returns>The composed orchestrator.</returns>
+    /// <remarks>
+    /// The ownership source and the arming memory are deliberately the fakes' shared instances:
+    /// arming is a session fact that outlives one orchestrator, so a test that wants to see the
+    /// second pass has to build a second orchestrator over the same memory.
+    /// </remarks>
+    public GanttRefreshOrchestrator BuildOrchestratorWithProtection(Action<string>? trace = null) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            null,
+            trace: trace,
+            protectionArming: new WorksheetProtectionArming(SheetProtection, Shapes, SheetProtectionArming, trace));
+
+    /// <summary>Builds the orchestrator with a pending worksheet change batch.</summary>
+    public GanttRefreshOrchestrator BuildOrchestratorWithChanges(ChangeTracker tracker) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            null,
+            changeTracker: tracker);
+
+    /// <summary>Builds an orchestrator using the injected payload-signature cache.</summary>
+    /// <param name="cache">The cache to consult and commit.</param>
+    /// <param name="useDeltaCache">Whether this run may skip unchanged payload writes.</param>
+    /// <param name="trace">The diagnostic sink, or null for no trace.</param>
+    public GanttRefreshOrchestrator BuildOrchestratorWithDeltaCache(
+        ShapeDeltaCache cache,
+        bool useDeltaCache = true,
+        Action<string>? trace = null) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            null,
+            shapeDeltaCache: cache,
+            useDeltaCache: useDeltaCache,
+            trace: trace);
 
     /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
     /// <param name="scope">The scope to record against.</param>
@@ -236,17 +454,20 @@ internal sealed class RefreshFakes
             Shapes,
             ColumnPresentation,
             Identity,
-            scope);
+            scope,
+            null,
+            Highlighter,
+            null);
 
     /// <summary>
-    /// Builds the orchestrator with an explicit notes reporter, so a test can prove the
-    /// dependency is genuinely optional rather than merely defaulted.
+    /// Builds the orchestrator with an explicit warning highlighter, so a test can prove
+    /// the dependency is genuinely optional rather than merely defaulted.
     /// </summary>
-    /// <param name="validationReporter">
-    /// The reporter to wire, or <see langword="null"/> to omit it entirely.
+    /// <param name="warningHighlighter">
+    /// The highlighter to wire, or <see langword="null"/> to omit it entirely.
     /// </param>
     /// <returns>The composed orchestrator.</returns>
-    public GanttRefreshOrchestrator BuildOrchestrator(IGanttValidationReporter? validationReporter) =>
+    public GanttRefreshOrchestrator BuildOrchestratorWithWarningHighlighter(IRowWarningHighlighter? warningHighlighter) =>
         new(
             TableReader,
             ConfigReader,
@@ -260,7 +481,63 @@ internal sealed class RefreshFakes
             ColumnPresentation,
             Identity,
             null,
-            validationReporter);
+            null,
+            warningHighlighter,
+            null);
+
+    /// <summary>
+    /// Builds the orchestrator with ONLY the type-change normaliser wired.
+    /// </summary>
+    /// <remarks>
+    /// One optional collaborator at a time, so a test that observes an extra table read
+    /// can attribute it to the normaliser rather than to any other step that also
+    /// re-reads.
+    /// </remarks>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestratorWithTypeChangeNormaliser() =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            columnPresentation: null,
+
+            // Identity repair is deliberately OMITTED. It re-reads the table too, so a
+            // wired identity repairer would consume the injected re-read refusal first
+            // and leave the normalisation path unproven — the test would pass through a
+            // different branch than the one it names.
+            identityRepairer: null,
+            stateScope: null,
+            styleKeyWriter: null,
+            rowWarningHighlighter: Highlighter,
+            typeChangeNormaliser: new FakeTypeChangeNormaliser(this));
+
+    /// <summary>
+    /// Builds the orchestrator with ONLY the StyleKey writer wired.
+    /// </summary>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestratorWithStyleKeyWriter() =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            columnPresentation: null,
+            identityRepairer: null,
+            stateScope: null,
+            styleKeyWriter: new FakeStyleKeyWriter(this),
+            rowWarningHighlighter: Highlighter,
+            typeChangeNormaliser: null);
 
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {
@@ -276,15 +553,22 @@ internal sealed class RefreshFakes
             {
                 if (owner.TableReadRefusedAfterRepair)
                 {
-                    return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+                    return GanttTableReadOutcome.Refused(owner.RereadRefusalReason);
                 }
 
                 return GanttTableReadOutcome.Ok(owner.RowsAfterRepair ?? owner.Rows);
             }
 
             return owner.TableReadRefused
-                ? GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing)
+                ? GanttTableReadOutcome.Refused(
+                    owner.FirstReadRefusal ?? GanttTableReadRefusalReason.TableMissing)
                 : GanttTableReadOutcome.Ok(owner.Rows);
+        }
+
+        public GanttTableReadOutcome Read(IReadOnlyList<int> rowNumbers)
+        {
+            owner.TargetedTableReadCount++;
+            return GanttTableReadOutcome.Ok([.. owner.Rows.Where(row => rowNumbers.Contains(row.RowNumber))]);
         }
     }
 
@@ -302,7 +586,7 @@ internal sealed class RefreshFakes
                 // ordering claims are about what happens after composition.
                 : ConfigReadOutcome.Ok(
                     "wb",
-                    new Dictionary<string, string>(),
+                    owner.Settings,
                     new GanttStyleRegistry(
                         [
                             new GanttStyleDefinition(
@@ -326,7 +610,8 @@ internal sealed class RefreshFakes
                                 HatchPattern: GanttHatchPattern.None,
                                 StandardOutlinePt: 1,
                                 ActivityHeightPt: 12),
-                        ]));
+                        ]),
+                    owner.Metrics);
         }
     }
 
@@ -349,12 +634,30 @@ internal sealed class RefreshFakes
         /// </summary>
         public IReadOnlyList<string> LastMeasuredColumns { get; private set; } = [];
 
-        public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+        /// <summary>
+        /// The body heights the orchestrator handed over, or <see langword="null"/> when it
+        /// supplied none.
+        /// </summary>
+        /// <remarks>
+        /// Recorded so a test can prove the orchestrator reuses the heights its own
+        /// normalisation just measured instead of making this port read every row again.
+        /// </remarks>
+        public IReadOnlyList<double>? LastBodyHeightsPt { get; private set; }
+
+        public PanelGridOutcome Measure(
+            IReadOnlyList<string> includedColumns,
+            IReadOnlyList<double>? bodyRowHeightsPt = null)
         {
             owner.Steps.Add("Measure");
             LastMeasuredColumns = includedColumns;
-            return owner.MeasurementRefused
-                ? PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing)
+            LastBodyHeightsPt = bodyRowHeightsPt;
+            if (owner.MeasurementRefused)
+            {
+                return PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing);
+            }
+
+            return owner.MeasuredGrid is { } grid
+                ? PanelGridOutcome.Ok(grid)
                 : MeasureLikeExcel(includedColumns);
         }
 
@@ -388,14 +691,28 @@ internal sealed class RefreshFakes
                     new PanelColumn(name, hidden.Contains(name) ? 0d : 24d)),
             ];
 
+            // The grid models the LIVE sheet's vertical layout, because a grid
+            // without the reserved row is a sheet that cannot exist (ADR-0030
+            // D4/D5): the top padding row, then the reserved row that carries the
+            // table title and the year band, then the header row that IS the
+            // period band's row, then the body. The old fake had a header and a
+            // body but no reserved row, so the year band would have been drawn
+            // over the header - and a live chart whose content starts above row 1
+            // is now refused rather than silently misplaced (ADR-0047).
+            //
             // Total width of 120pt across the visible columns keeps the plot resolver
             // from refusing for insufficient width, so these tests exercise composition
             // rather than the shortfall path.
+            double reservedRowHeightPt = GanttCatalogues.MetricDefault("YearBandHeightPt");
+            double headerHeightPt = GanttCatalogues.MetricDefault("PeriodBandHeightPt");
             PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
                 columns,
-                [15.0],
-                15,
-                includedColumns);
+                [GanttCatalogues.MetricDefault("GanttRowHeightPt")],
+                headerHeightPt,
+                includedColumns,
+                originTopPt: reservedRowHeightPt + headerHeightPt,
+                originLeftPt: 0d,
+                topPaddingHeightPt: 0d);
 
             return created.Succeeded && created.Grid is not null
                 ? PanelGridOutcome.Ok(created.Grid)
@@ -427,9 +744,15 @@ internal sealed class RefreshFakes
             double header,
             double reservedRow,
             double paddingRow,
-            double anchorRow)
+            double anchorRow,
+            IReadOnlyList<string?>? typeTexts = null)
         {
             owner.Steps.Add("RowHeights");
+
+            // The texts are recorded, not discarded: passing the bulk-read column is the
+            // whole point of this parameter, and only a fake that keeps it can prove the
+            // orchestrator supplies it.
+            owner.LastTypeTexts = typeTexts;
 
             // The targets are recorded, not discarded. This fake previously
             // ignored all three arguments and returned Ok(0), so it could not fail on
@@ -453,7 +776,7 @@ internal sealed class RefreshFakes
 
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)
-                : RowHeightNormalisationOutcome.Ok(0);
+                : RowHeightNormalisationOutcome.Ok(owner.RowHeightsWritten, owner.RowHeightBodyHeights);
         }
     }
 
@@ -475,36 +798,84 @@ internal sealed class RefreshFakes
             owner.Steps.Add("Identity");
             return owner.IdentityRefused
                 ? GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed)
-                : GanttRowIdentityRepairOutcome.Ok(0);
+                : GanttRowIdentityRepairOutcome.Ok(owner.IdentityRepairedCount);
         }
     }
 
-    /// <summary>
-    /// The validation-notes reporter fake. It records the issue list it was handed
-    /// rather than only a count, because the clearing defect this stands in for turns
-    /// on WHICH list arrived: a successful refresh must report an EMPTY list, and that
-    /// empty call is the one that removes a corrected row's note.
-    /// </summary>
-    private sealed class FakeValidationReporter(RefreshFakes owner) : IGanttValidationReporter
+    /// <summary>A type-change normaliser that records that it ran.</summary>
+    /// <remarks>
+    /// The step takes no input and reports only a count, so there is nothing else to
+    /// model. What matters to the orchestrator is that the write happened at all and
+    /// that the rows are re-read afterwards, which is what the tests assert.
+    /// </remarks>
+    private sealed class FakeTypeChangeNormaliser(RefreshFakes owner) : ITypeChangeNormaliser
     {
-        public GanttValidationReportOutcome Report(IReadOnlyList<GanttValidationIssue> issues)
+        public GanttTypeChangeNormaliseOutcome Normalise()
         {
-            owner.Steps.Add("Notes");
-            owner.ReportedIssues.Add(issues);
-            return owner.ValidationNotesRefused
+            owner.Steps.Add("Normalise");
+            owner.NormaliseCount++;
+            return new GanttTypeChangeNormaliseOutcome(owner.TypeCellsWritten);
+        }
+    }
+
+    /// <summary>A StyleKey writer that records the plan it was asked to write.</summary>
+    /// <remarks>
+    /// <c>WriteCount</c> comes from the plan, not from a settable field, so a test can
+    /// tell "the planner found nothing to write" from "the orchestrator never called the
+    /// writer" without either assertion restating the other.
+    /// </remarks>
+    private sealed class FakeStyleKeyWriter(RefreshFakes owner) : IStyleKeyWritePort
+    {
+        public StyleKeyWriteOutcome Write(StyleKeyWritePlan plan)
+        {
+            owner.Steps.Add("StyleKey");
+            owner.StyleKeyPlanWriteCount = plan.WriteCount;
+
+            return owner.StyleKeyWriteRefused
+                ? StyleKeyWriteOutcome.Refused(StyleKeyWriteRefusalReason.WriteFailed)
+                : StyleKeyWriteOutcome.Ok(owner.StyleKeyCellsWritten, plan.WriteCount);
+        }
+    }
+
+    private sealed class FakeRowWarningHighlighter(RefreshFakes owner) : IRowWarningHighlighter
+    {
+        public GanttValidationReportOutcome HighlightRow(int rowNumber, GanttValidationSeverity severity) =>
+            GanttValidationReportOutcome.Ok(0);
+
+        public GanttValidationReportOutcome HighlightCell(int rowNumber, int column, GanttValidationSeverity severity) =>
+            GanttValidationReportOutcome.Ok(0);
+
+        public GanttValidationReportOutcome ClearHighlight(int rowNumber, int? column = null) =>
+            GanttValidationReportOutcome.Ok(0);
+
+        public GanttValidationReportOutcome ReconcileHighlights(
+            IReadOnlyList<HighlightTarget> currentTargets,
+            IReadOnlyList<int>? rowsToReconcile = null)
+        {
+            owner.Steps.Add("Highlights");
+            owner.HighlightReconciliations.Add(currentTargets);
+            return owner.WarningHighlightsRefused
                 ? GanttValidationReportOutcome.Refused(GanttValidationReportRefusalReason.TargetProtected)
-                : GanttValidationReportOutcome.Ok(issues.Count);
+                : GanttValidationReportOutcome.Ok(currentTargets.Count);
         }
     }
 
     private sealed class FakeOutlineWriter(RefreshFakes owner) : IOutlineGroupPort
     {
-        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false)
         {
             owner.Steps.Add("Outline");
             return owner.OutlineRefused
                 ? OutlineGroupOutcome.Refused(OutlineGroupRefusalReason.TargetProtected)
-                : OutlineGroupOutcome.Ok(0, 0);
+                : OutlineGroupOutcome.Ok(owner.OutlineGroupsApplied, owner.OutlineRowsUngrouped);
+        }
+
+        public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction)
+        {
+            owner.Steps.Add("Collapse");
+            return owner.OutlineRefused
+                ? OutlineCollapseOutcome.Refused(OutlineCollapseRefusalReason.TargetProtected)
+                : OutlineCollapseOutcome.Ok(0);
         }
     }
 
@@ -519,7 +890,8 @@ internal sealed class RefreshFakes
             IReadOnlyList<GanttEvent> events,
             IReadOnlyDictionary<string, string> settings,
             GanttStyleRegistry registry,
-            PanelCellGrid grid)
+            PanelCellGrid grid,
+            IReadOnlyDictionary<string, double> themedMetrics)
         {
             owner.Steps.Add("Factory");
             if (owner.FactoryRefused)
@@ -534,7 +906,7 @@ internal sealed class RefreshFakes
             // text-metrics implementation for hosts with no real font yet, so the
             // composition is identical on every run without a second fake here.
             return new ExcelSceneBuildRequestFactory(new FakeTextMetrics())
-                .Create(events, settings, registry, grid);
+                .Create(events, settings, registry, grid, themedMetrics);
         }
     }
 }

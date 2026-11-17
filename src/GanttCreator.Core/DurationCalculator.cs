@@ -171,7 +171,7 @@ public static class DurationCalculator
                     return false;
                 }
 
-                if (!TryInclusiveDays(start.Value, finish.Value, out var days))
+                if (!TryInclusiveDays(start.Value, finish.Value, out int days))
                 {
                     text = null;
                     refusal = new DurationRefusalEntry(rowNumber, DurationRefusal.FinishBeforeStart);
@@ -225,7 +225,7 @@ public static class DurationCalculator
                     @event.Type,
                     @event.Start,
                     @event.Finish,
-                    out var text,
+                    out string? text,
                     out DurationRefusalEntry? refusal))
             {
                 refusals.Add(refusal!);
@@ -234,7 +234,7 @@ public static class DurationCalculator
                 // previous Refresh. Leaving yesterday's number on a row whose dates are
                 // now invalid is precisely the misleading value D4 forbids, so the
                 // plan blanks the cell instead of abandoning it.
-                if (currentDurationByRow.TryGetValue(@event.RowNumber, out var stale)
+                if (currentDurationByRow.TryGetValue(@event.RowNumber, out string? stale)
                     && !string.IsNullOrEmpty(stale))
                 {
                     writes.Add(new DurationWrite(@event.RowNumber, string.Empty));
@@ -243,7 +243,7 @@ public static class DurationCalculator
                 continue;
             }
 
-            _ = currentDurationByRow.TryGetValue(@event.RowNumber, out var current);
+            _ = currentDurationByRow.TryGetValue(@event.RowNumber, out string? current);
             if (!string.Equals(current, text, StringComparison.Ordinal))
             {
                 writes.Add(new DurationWrite(@event.RowNumber, text!));

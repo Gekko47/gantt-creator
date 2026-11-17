@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
@@ -21,12 +22,32 @@ namespace GanttCreator.Office.IntegrationTests;
 /// serials must produce identical <see cref="GanttRowDto"/>s under both supported
 /// locale display formats (GB <c>DD/MM/YYYY</c> and US <c>MM/DD/YYYY</c>), which
 /// proves the reader parses cell values rather than display text (Checklist F).
+/// <para>
+/// The packed XLL is deliberately NOT registered here. These facts drive the
+/// Office adapters directly, and a loaded add-in coalesces an automatic pass on
+/// the test's own writes; that pass repairs row identity (it fills a blank or
+/// malformed Id) between the write and the read, which is the product behaving
+/// correctly and the test racing it. Measured 2026-11-16: with the add-in
+/// loaded, the locale fact read a generated Id on a row the test had left
+/// blank. The live add-in path is covered by
+/// <c>AutoRefreshTriggerIntegrationTests</c>, so nothing is lost by not loading
+/// it here.
+/// </para>
 /// </remarks>
 public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 {
-    private readonly ITestOutputHelper _output = output;
+    /// <summary>
+    /// The span row's schema-valid identifier. It must satisfy
+    /// <see cref="GanttRowId"/> (34 characters: <c>G-</c> plus 32 lowercase
+    /// hex), otherwise the add-in's coalesced automatic pass legitimately
+    /// repairs it and this test stops asserting what it wrote.
+    /// </summary>
+    private const string SpanRowId = "G-0000000000000000000000000000000a";
 
-    private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
+    /// <summary>The milestone row's schema-valid identifier.</summary>
+    private const string MilestoneRowId = "G-0000000000000000000000000000000b";
+
+    private readonly ITestOutputHelper _output = output;
 
     /// <summary>
     /// Resolves the Gantt sheet and table through a scope that releases every
@@ -66,8 +87,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
 
@@ -75,6 +94,13 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
             WorkbookInitialiseOutcome outcome = initialiser.Initialise();
             Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
+
+            // The add-in is loaded here, so its scheduler coalesces a pass on the
+            // writes below. Since ADR-0055 that pass arms and protects the sheet,
+            // which would refuse the later NumberFormat write; switch the chart
+            // lock off through the user setting, as every other operating body
+            // does, so this test proves the reader rather than racing the product.
+            OfficeFixture.DisableChartProtection(workbook);
 
             // Locate the table on the now-labelled sheet and clear any
             // pre-existing body rows so the geometry read below is the
@@ -99,6 +125,14 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 
             Excel.Range body = scope.Track(table.DataBodyRange);
             Assert.NotNull(body);
+
+            // R5.21's 60 px visible-column default is too narrow for a ten-character
+            // date, so Excel paints "#########" and the GB/US display comparison below
+            // would compare two clipped strings. Widen Finish for this fact so it proves
+            // locale formatting rather than column width; whether a default-width date
+            // is readable is R5.21's product question, not this reader fact's.
+            Excel.Range finishColumn = scope.Track(body.Cells[1, GetColumnIndex("Finish")].EntireColumn);
+            finishColumn.ColumnWidth = 12;
 
             Excel.Range bodyRows = scope.Track(body.Rows);
             Excel.Range spanRange = scope.Track(spanRow.Range);
@@ -129,14 +163,14 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             const double finishSerial = 44931.0; // 2023-01-05
             const double milestoneSerial = 44932.0; // 2023-01-06
 
-            SetBodyCell(body, spanOffset, "Id", "G-span", scope);
+            SetBodyCell(body, spanOffset, "Id", SpanRowId, scope);
             SetBodyCell(body, spanOffset, "LaneId", "L-1", scope);
             SetBodyCell(body, spanOffset, "StackIndex", 1.0, scope);
             SetBodyCell(body, spanOffset, "Type", "As-Planned Activity", scope);
             SetBodyCell(body, spanOffset, "Start", startSerial, scope);
             SetBodyCell(body, spanOffset, "Finish", finishSerial, scope);
             SetBodyCell(body, spanOffset, "Visible", true, scope);
-            SetBodyCell(body, milestoneOffset, "Id", "G-milestone", scope);
+            SetBodyCell(body, milestoneOffset, "Id", MilestoneRowId, scope);
             SetBodyCell(body, milestoneOffset, "LaneId", "L-1", scope);
             SetBodyCell(body, milestoneOffset, "StackIndex", 2.0, scope);
             SetBodyCell(body, milestoneOffset, "Type", "Milestone", scope);
@@ -216,8 +250,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             workbook.Date1904 = true;
@@ -257,8 +289,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
 
@@ -361,7 +391,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 
         GanttRowDto span = outcome.Rows[spanOffset - 1];
         Assert.Equal(spanOffset, span.RowNumber);
-        Assert.Equal("G-span", span.Id);
+        Assert.Equal(SpanRowId, span.Id);
         Assert.Equal("L-1", span.LaneId);
         Assert.Equal(1, span.StackIndex);
         Assert.Equal("As-Planned Activity", span.TypeText);
@@ -371,7 +401,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
 
         GanttRowDto milestone = outcome.Rows[milestoneOffset - 1];
         Assert.Equal(milestoneOffset, milestone.RowNumber);
-        Assert.Equal("G-milestone", milestone.Id);
+        Assert.Equal(MilestoneRowId, milestone.Id);
         Assert.Equal("L-1", milestone.LaneId);
         Assert.Equal(2, milestone.StackIndex);
         Assert.Equal("Milestone", milestone.TypeText);
@@ -417,9 +447,6 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(
-                fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
 
@@ -539,6 +566,116 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             scope.Dispose();
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
+    }
+
+    /// <summary>
+    /// R5.16b live gate (ADR-0058): the reader reports whether the active sheet
+    /// carries <c>tblGanttData</c>, and the adapter's one
+    /// <c>AppEvents_SheetActivate</c> connection fires on a real activation.
+    /// The contract tests substitute both seams with Moq; this proves the COM
+    /// property and the event really behave the way the substitution assumes.
+    /// </summary>
+    /// <remarks>
+    /// This body carries one forced kill in the leak signal, like every other
+    /// body that calls <see cref="ExcelGanttTableReader.Read()"/>: the reader
+    /// takes no ownership of Excel's shared roots by design. The ratchet
+    /// ceiling was raised 37 -> 38 by owner decision on 2026-11-12 to keep this
+    /// proof; see the measurement in <c>verify-office.ps1</c>.
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task The_reader_and_the_adapter_follow_the_active_sheet()
+    {
+        var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
+            WorkbookInitialiseOutcome outcome = initialiser.Initialise();
+            Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
+
+            // Resolving the table is what makes the sheet the Gantt sheet; the
+            // table proxy itself is tracked and released by the shared helper.
+            Excel.Worksheet ganttSheet = ResolveGanttTable(workbook, scope).Sheet;
+
+            var reader = new ExcelGanttTableReader(fixture.Excel);
+            GanttTableReadOutcome onGantt = reader.Read();
+            Assert.True(onGantt.Succeeded, "the reader refused the sheet it had just initialised");
+            Assert.True(
+                onGantt.ActiveSheetIsGanttSheet,
+                "the reader did not report the Gantt sheet while it was the active sheet");
+
+            // A second visible sheet, so the active sheet is provably not the
+            // Gantt sheet. The table is still readable from it, which is exactly
+            // the case the ribbon gate exists for.
+            Excel.Sheets sheets = scope.Track(workbook.Sheets);
+            Excel.Worksheet notes = scope.Track((Excel.Worksheet)sheets.Add());
+            notes.Name = "Notes";
+            notes.Activate();
+
+            GanttTableReadOutcome onNotes = reader.Read();
+            Assert.True(onNotes.Succeeded, "the reader must still read the table from another active sheet");
+            Assert.False(
+                onNotes.ActiveSheetIsGanttSheet,
+                "the reader reported the Gantt sheet while another sheet was active");
+
+            var adapter = new ExcelApplicationAdapter(fixture.Excel);
+            int activations = 0;
+            IDisposable subscription = adapter.SubscribeSheetActivated(
+                () => Interlocked.Increment(ref activations));
+            try
+            {
+                ganttSheet.Activate();
+
+                bool fired = await WaitUntilAsync(
+                    () => Volatile.Read(ref activations) > 0,
+                    TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+                Assert.True(fired, "the adapter reported no sheet activation within 10 s");
+            }
+            finally
+            {
+                subscription.Dispose();
+            }
+
+            Assert.True(
+                reader.Read().ActiveSheetIsGanttSheet,
+                "the reader did not follow the Gantt sheet back after the round trip");
+
+            _output.WriteLine(
+                $"Excel build {fixture.Excel.Version}; activations observed={activations}; " +
+                $"active sheet on return='{((Excel.Worksheet)scope.Track(workbook.ActiveSheet)).Name}'");
+        }
+        finally
+        {
+            // Release the COM proxies the test body took BEFORE the fixture quits
+            // Excel: a chain still referenced here keeps the process alive past Quit().
+            scope.Dispose();
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// Polls a named observable condition with a deadline. A sleep would be a
+    /// guess about how long Excel takes; this fails loudly with the deadline
+    /// named instead.
+    /// </summary>
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan deadline)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < deadline)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        return condition();
     }
 
     /// <summary>

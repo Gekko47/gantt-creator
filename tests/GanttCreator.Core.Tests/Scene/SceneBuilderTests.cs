@@ -68,6 +68,27 @@ public sealed class SceneBuilderTests
             height,
             8);
 
+    /// <summary>
+    /// A user-authored style with its own milestone size. A user style is
+    /// one the workbook's own rows carry, so it is not a code-owned preset:
+    /// its milestone size is an override of the chart-wide metric.
+    /// </summary>
+    private static GanttStyleDefinition UserStyle(string key, double milestoneSizePt) =>
+        new(
+            key,
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+            EntityColourCapability.Fill | EntityColourCapability.Stroke,
+            GanttLabelPosition.Inside,
+            "#92D050",
+            "#404040",
+            "#000000",
+            GanttHatchPattern.None,
+            0,
+            0,
+            0.5,
+            8,
+            milestoneSizePt);
+
     private static readonly IReadOnlyList<GanttStyleDefinition> SharedStyles =
     [
         Style("AsPlannedActivity", 8),
@@ -92,7 +113,8 @@ public sealed class SceneBuilderTests
             [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
             [.. Enumerable.Repeat(10.0, rowCount)],
             10,
-            ["Id", "Description"]).Grid!;
+            ["Id", "Description"],
+            allowEmptyRows: rowCount == 0).Grid!;
 
     private static FrameBandsTheme FrameTheme() => new(
         new SceneStyle("Background"),
@@ -176,13 +198,47 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void Auto_date_label_selection_renders_both_date_labels()
+    public void A_blank_date_label_selection_renders_no_date_labels()
     {
-        // R5.14 D3: a blank DateLabelPosition cell (Auto, null) keeps
-        // every existing row's behaviour -- both section-23 date labels.
-        // The label pass (description and date) requires a resolved
-        // LabelStyle, so the request supplies one, exactly as the
+        // R5.18m (owner ruling 2026-11-13): a blank DateLabelPosition cell, and a
+        // stored `Auto`, both resolve to the type default, which is None -- a bar
+        // shows no dates until the user asks for them. The label pass requires a
+        // resolved LabelStyle, so the request supplies one exactly as the
         // description-label tests do.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21))
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Empty(DateLabels(outcome));
+    }
+
+    [Fact]
+    public void A_stored_auto_date_label_selection_renders_no_date_labels()
+    {
+        // The legacy stored text keeps parsing (no workbook is rewritten), and it
+        // now means the type default rather than "both labels".
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.Auto)
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Empty(DateLabels(outcome));
+    }
+
+    [Fact]
+    public void Both_date_label_selection_renders_both_date_labels()
+    {
+        // `Both` is the explicit both-dates choice (owner ruling 2026-11-13).
         //
         // The bar is centred mid-month with a blank description. Each date
         // label measures 80pt (10 chars x the 8pt per-character fake
@@ -194,7 +250,8 @@ public sealed class SceneBuilderTests
         GanttEvent centred = Event(
             1,
             start: new DateOnly(2024, 1, 11),
-            finish: new DateOnly(2024, 1, 21))
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.Both)
         with { Description = null };
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
@@ -328,7 +385,9 @@ public sealed class SceneBuilderTests
             type,
             $"Row {row}",
             start ?? new DateOnly(2024, 1, 5),
-            finish ?? (type is GanttEntityType.AsPlannedMilestone ? null : new DateOnly(2024, 1, 10)),
+            finish ?? (type is GanttEntityType.AsPlannedMilestone or GanttEntityType.CustomMilestone
+                ? null
+                : new DateOnly(2024, 1, 10)),
             parentId,
             styleKey,
             null,
@@ -343,6 +402,111 @@ public sealed class SceneBuilderTests
             DateLabelPosition = dateLabelPosition,
         };
 
+
+    [Fact]
+    public void A_custom_milestone_row_renders_a_diamond()
+    {
+        // A Custom Milestone row is a milestone row, so it must reach the
+        // milestone marker builder. It was missing from that pass, so a
+        // custom milestone rendered no diamond at all.
+        GanttStyleRegistry registry = new([UserStyle("MyMilestone", 0)]);
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            MilestoneRequest(
+                Event(1, GanttEntityType.CustomMilestone, styleKey: "MyMilestone"),
+                registry));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Contains(outcome.Result!.Scene.Primitives, p => p.ZLayer == ZLayer.Milestone);
+    }
+
+    [Fact]
+    public void A_user_authored_style_milestone_size_overrides_the_chart_metric()
+    {
+        // The style's own size wins when it is greater than zero, so a custom
+        // style can carry its own diamond size.
+        GanttStyleRegistry registry = new([UserStyle("MyMilestone", 16)]);
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            MilestoneRequest(
+                Event(1, GanttEntityType.CustomMilestone, styleKey: "MyMilestone"),
+                registry));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(16, DiamondSpan(outcome.Result!), 3);
+    }
+
+    [Fact]
+    public void A_zero_style_milestone_size_uses_the_chart_metric()
+    {
+        // Zero means "use the chart's milestone size", so the chart-wide knob
+        // stays live for a style that does not set its own.
+        GanttStyleRegistry registry = new([UserStyle("MyMilestone", 0)]);
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            MilestoneRequest(
+                Event(1, GanttEntityType.CustomMilestone, styleKey: "MyMilestone"),
+                registry));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(8, DiamondSpan(outcome.Result!), 3);
+    }
+
+    [Fact]
+    public void A_built_in_milestone_always_uses_the_chart_metric()
+    {
+        // A built-in style's row carries the catalogue's token default, not a
+        // live value, so honouring it would shadow the chart-wide knob.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.AsPlannedMilestone)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(8, DiamondSpan(outcome.Result!), 3);
+    }
+
+    /// <summary>
+    /// Builds a request whose registry is the one supplied, so a test can
+    /// resolve a user-authored style.
+    /// </summary>
+    private static SceneBuildRequest MilestoneRequest(
+        GanttEvent milestone,
+        GanttStyleRegistry registry)
+    {
+        SceneBuildRequest request = Request(milestone);
+        return new SceneBuildRequest
+        {
+            Events = request.Events,
+            Registry = registry,
+            Grid = request.Grid,
+            PlotBounds = request.PlotBounds,
+            Metrics = request.Metrics,
+            LaneMetrics = request.LaneMetrics,
+            FrameTheme = request.FrameTheme,
+            PlotStart = request.PlotStart,
+            PlotFinish = request.PlotFinish,
+            GridLinePt = request.GridLinePt,
+            MajorBoundaryPt = request.MajorBoundaryPt,
+            MilestoneSizePt = request.MilestoneSizePt,
+            TitleBandHeightPt = request.TitleBandHeightPt,
+            YearBandHeightPt = request.YearBandHeightPt,
+            PeriodBandHeightPt = request.PeriodBandHeightPt,
+            DelineatorLinePt = request.DelineatorLinePt,
+            DelineatorStackGapPt = request.DelineatorStackGapPt,
+            LabelGapPt = request.LabelGapPt,
+            RowHeightPt = request.RowHeightPt,
+            ChartPadding = request.ChartPadding,
+            MinimumHeaderLabelWidthPt = request.MinimumHeaderLabelWidthPt,
+        };
+    }
+
+    /// <summary>
+    /// Returns the tip-to-tip span of the scene's milestone diamond.
+    /// </summary>
+    private static double DiamondSpan(SceneBuildResult result)
+    {
+        ScenePolygon diamond = Assert.IsType<ScenePolygon>(
+            Assert.Single(
+                result.Scene.Primitives,
+                primitive => primitive.ZLayer == ZLayer.Milestone));
+        return diamond.Points.Max(point => point.X) - diamond.Points.Min(point => point.X);
+    }
 
     [Fact]
     public void A_valid_request_builds_a_scene_with_the_frame_and_the_bar()
@@ -367,6 +531,38 @@ public sealed class SceneBuilderTests
     public void An_empty_event_list_is_refused()
     {
         Assert.Equal(SceneBuilderRefusal.EmptyEvents, SceneBuilder.TryBuild(Request()).Refusal);
+    }
+
+    [Fact]
+    public void A_null_event_list_is_refused()
+    {
+        // The guard's FIRST disjunct. Without this fact, deleting the null check makes
+        // the builder dereference Events.Count on a null list, and the remaining
+        // empty-list facts still pass because they supply an instance.
+        Assert.Equal(
+            SceneBuilderRefusal.EmptyEvents,
+            SceneBuilder.TryBuild(Request(Event(1)) with { Events = null! }).Refusal);
+    }
+
+    [Fact]
+    public void A_null_event_entry_is_refused()
+    {
+        // The guard's THIRD disjunct. Nothing else in the suite constructs a list
+        // carrying a null entry, so this is the one branch a mutation can delete
+        // without a red test - and the one that stops a null reaching lane layout.
+        Assert.Equal(
+            SceneBuilderRefusal.EmptyEvents,
+            SceneBuilder.TryBuild(Request(Event(1)) with { Events = [null!] }).Refusal);
+    }
+
+    [Fact]
+    public void An_intentionally_empty_live_scene_still_builds_its_frame()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request() with { AllowEmptyEvents = true });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Contains(outcome.Result!.Scene.Primitives, primitive => primitive.PrimitiveId == "chart:background");
+        Assert.DoesNotContain(outcome.Result!.Scene.Primitives, primitive => primitive.ZLayer == ZLayer.ActivityBody);
     }
 
     [Fact]
@@ -416,8 +612,15 @@ public sealed class SceneBuilderTests
         // rather than supplied, that fudge is no longer needed: the bands may extend
         // above the plot and the scene stays coherent, because the chart bounds
         // follow the content instead of constraining it.
+        //
+        // The profile is named because this fixture's geometry puts the year band
+        // ABOVE the origin (20 - 20 - 16 = -16). That is legitimate in the EXPORT
+        // coordinate space, which the renderer translates to a zero origin, and it
+        // is not legitimate on a live sheet, where nothing can be drawn above row
+        // 1 (ADR-0047). The live case has its own test below.
         SceneBuildRequest request = Request(Event(1)) with
         {
+            Profile = SceneCompositionProfile.Raster,
             PlotBounds = new RectD(200, 20, 300, 140),
         };
 
@@ -427,6 +630,317 @@ public sealed class SceneBuilderTests
         SceneValidationReport report = SceneValidator.Validate(outcome.Result!.Scene);
         Assert.True(report.IsClean, "Findings: " + string.Join("; ", report.Findings));
     }
+
+    /// <summary>
+    /// ADR-0047: a live chart's coordinates are the sheet's own, so content that
+    /// would start above row 1 cannot be drawn where the model says. Excel
+    /// clamps it instead, which moves the band down over the row it belongs to,
+    /// so the build is refused rather than silently misplaced.
+    /// </summary>
+    [Fact]
+    public void A_live_chart_whose_content_would_start_above_the_sheet_is_refused()
+    {
+        // The same geometry as the awkward case above: the year band's top is
+        // 20 - 20 - 16 = -16, which is above the top of the sheet.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                PlotBounds = new RectD(200, 20, 300, 140),
+            });
+
+        Assert.False(outcome.Succeeded, "The build succeeded, so a chart that cannot be drawn was composed.");
+        Assert.Equal(SceneBuilderRefusal.ChartAboveSheet, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// ADR-0047: the frame's own top margin may reach above the sheet, and is
+    /// then clamped - the frame is shortened at the top so that its BOTTOM edge
+    /// stays exactly where it belongs. A clamped top with an unchanged height
+    /// would move the bottom down, and the chart's background and right edge
+    /// would end below the row they belong to.
+    /// </summary>
+    [Fact]
+    public void A_live_frame_whose_top_margin_reaches_above_the_sheet_is_shortened_at_the_top()
+    {
+        // The content's top is 0 (the year band sits on the sheet's top edge) and
+        // the frame's top margin reaches 6pt above it, so the unclamped frame
+        // would start at -6.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                PlotBounds = new RectD(200, 36, 300, 140),
+                ChartPadding = new ChartPaddingPt(0, 6, 0, 0),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        Assert.Equal(0, scene.ChartBounds.Top, precision: 9);
+
+        // The bottom is where it was: the content's bottom (the plot's, 36 + 140)
+        // plus the bottom margin. A clamp that moved the bottom would be the
+        // defect this test exists to prevent.
+        Assert.Equal(176, scene.ChartBounds.Bottom, precision: 9);
+
+        Assert.Contains(
+            scene.Warnings,
+            warning => warning.Code == "FrameClampedToSheet");
+    }
+
+    /// <summary>
+    /// ADR-0048: a live chart's title is an owned textbox placed in the table's own
+    /// columns, so the table and the title sit to the LEFT of the plot. The border
+    /// must enclose them, or the chart reads as two unrelated objects.
+    /// </summary>
+    [Fact]
+    public void A_live_charts_border_encloses_the_visible_data_table()
+    {
+        // A grid whose table starts at X=40: a real workbook's table starts after
+        // the hidden engine columns, so the origin is a measurement, not a zero.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 40), new PanelColumn("Description", 160)],
+            [10.0],
+            10,
+            ["Type", "Description"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            topPaddingHeightPt: 6,
+            bottomPaddingHeightPt: 6,
+            anchorRowHeightPt: 0.25).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The vertical rule closes on the GUTTER's outer edge - the chart's own left
+        // margin - not on the table's first column and not at the plot's left edge (owner
+        // ruling 2026-11-16). Its CENTRE sits half the frame stroke INSIDE that edge,
+        // because on the live sheet a stroke is drawn inside the rectangle it closes
+        // (ADR-0061 D4), so the stroke spans the margin boundary exactly. This grid
+        // declares no gutter, so its outer edge and the table's origin are one coordinate.
+        const double halfStroke = 0.5;
+        SceneLine left = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.To!.X, precision: 9);
+
+        // The top and bottom rules START at the frame's left edge and run to the plot's
+        // right edge, so the frame is ONE rectangle rather than a step.
+        SceneLine top = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:top", StringComparison.Ordinal));
+        Assert.Equal(grid.PanelLeftPt, top.From!.X, precision: 9);
+        Assert.Equal(600, top.To!.X, precision: 9);
+
+        // The BACKGROUND is untouched: a background over the table would paint
+        // the user's own cells, so only the border grew.
+        SceneRect background = scene.Primitives.OfType<SceneRect>()
+            .Single(rect => string.Equals(rect.PrimitiveId, "chart:background", StringComparison.Ordinal));
+        Assert.Equal(300, background.Bounds.Left, precision: 9);
+    }
+
+    /// <summary>
+    /// The live panel rectangle is the measured table, not the plot: its width is the
+    /// SUM of every column's measured width and its edges are the table's own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The rectangle is not emitted as its own primitive. On the live path
+    /// <see cref="PanelBuilder"/> is not called at all (the worksheet's own cells are
+    /// the panel), so <c>LiveDataPanelBounds</c> reaches the scene only as the union
+    /// the outer frame is drawn on, and the frame's edges are what this fact reads.
+    /// </para>
+    /// <para>
+    /// <b>Why two unequal columns, and why the table must extend past the plot.</b> A
+    /// one-column grid makes <c>Sum</c> and <c>Max</c> the same number, and a table
+    /// narrower than the plot leaves the union's right edge on the plot's, so a
+    /// <c>Sum</c> → <c>Max</c> mutation would never reach the frame and the test would
+    /// pass for the wrong reason. Here the larger column is 400 while the sum is 600,
+    /// and the table spans 30..640 against a plot of 300..600, so both mutated edges
+    /// move the frame.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_live_frames_edges_are_the_tables_edges_and_its_width_is_the_summed_columns()
+    {
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 200), new PanelColumn("Description", 400)],
+            [10.0],
+            10,
+            ["Type", "Description"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            leadingGutterPt: 10).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The left edge is the GUTTER's outer edge (30), not the table's origin (40) and not
+        // the plot's left edge: the gutter is the chart's left margin and sits INSIDE the
+        // frame, so the margin reads the same on all four sides (owner ruling 2026-11-16).
+        // As above, the stroke centre sits half a stroke inside the outline it closes.
+        const double halfStroke = 0.5;
+        SceneLine left = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(grid.PanelLeftPt + halfStroke, left.To!.X, precision: 9);
+        Assert.Equal(30 + halfStroke, left.From!.X, precision: 9);
+
+        // The right edge is the origin plus the SUM of the measured column widths
+        // (40 + 200 + 400). The largest column alone would close the frame at 440,
+        // and swapping the subtraction for an addition would put it far past 640.
+        SceneLine right = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:right", StringComparison.Ordinal));
+        Assert.Equal(640 - halfStroke, right.From!.X, precision: 9);
+        Assert.Equal(640 - halfStroke, right.To!.X, precision: 9);
+    }
+
+    /// <summary>
+    /// A live grid with NO visible columns still builds, and the frame encloses the plot
+    /// rather than collapsing onto the zero-width panel (ADR-0065 D4).
+    /// </summary>
+    [Fact]
+    public void A_zero_column_live_grid_still_builds_and_the_frame_encloses_the_plot()
+    {
+        // The live grid's right edge is the plot anchor's measured left edge; with every
+        // table column hidden the probe measured both at the table origin (40 here).
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [],
+            [10.0],
+            10,
+            [],
+            originTopPt: 60,
+            originLeftPt: 40,
+            leadingGutterPt: 10,
+            plotOriginRightPt: 40).Grid!;
+
+        Assert.Empty(grid.Columns);
+        Assert.Equal(0d, grid.TotalWidthPt);
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        const double halfStroke = 0.5;
+        SceneLine left = outcome.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+        SceneLine right = outcome.Result.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:right", StringComparison.Ordinal));
+
+        // The gutter strip is still the left margin, and the plot still closes the right edge:
+        // the zero-width panel contributes 30..40, the plot contributes 300..600.
+        Assert.Equal(30 + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(600 - halfStroke, right.From!.X, precision: 9);
+    }
+
+    /// <summary>
+    /// The live frame's LEFT margin reads the measured gutter, the same 4pt the other three
+    /// sides take from <c>ChartOuterPaddingPt</c> (owner ruling 2026-11-16).
+    /// </summary>
+    /// <remarks>
+    /// The other three sides are the chart bounds' own margins; the gutter is sized from the
+    /// same token (ADR-0061 D3). This pins the coupling rather than the number: whatever the
+    /// gutter measures, the frame closes on its OUTER edge, so a frame drawn at the table's
+    /// first column - the 2026-11-15 interim state, reported as "the left framing border has
+    /// mistakenly been moved inward" - fails here.
+    /// </remarks>
+    [Fact]
+    public void The_live_frames_left_margin_is_the_measured_gutter()
+    {
+        double gutterPt = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 120)],
+            [10.0],
+            10,
+            ["Type"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            leadingGutterPt: gutterPt).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine left = outcome.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+
+        // The stroke centre is half a stroke inside the outline; the OUTLINE is the margin.
+        const double halfStroke = 0.5;
+        Assert.Equal(gutterPt, 40 - (left.From!.X - halfStroke), precision: 9);
+    }
+
+    /// <summary>
+    /// An intentionally empty live chart is built, carries the reason it is empty, and draws
+    /// only the chart's own furniture (owner ruling 2026-11-16).
+    /// </summary>
+    /// <remarks>
+    /// The orchestrator used to refuse "no row can be drawn" outright, which raised a modal
+    /// error for the normal first-Add step. The scene now reports the state instead, so the
+    /// Warnings panel can say why the plot is blank after the refresh has finished.
+    /// </remarks>
+    [Fact]
+    public void An_empty_live_chart_carries_the_reason_it_is_empty()
+    {
+        GanttEvent removed = Event(1);
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 120)],
+            [10.0],
+            10,
+            ["Type"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            allowEmptyRows: true).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(removed) with
+            {
+                Events = [],
+                AllowEmptyEvents = true,
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // Why the plot is blank travels with the scene, not only with a dialog.
+        Assert.Contains(scene.Warnings, warning => warning.Code == SceneWarningCodes.EmptyChart);
+
+        // The frame and the period bands are drawn; nothing row-owned is.
+        Assert.Contains(scene.Primitives, primitive => primitive.PrimitiveId == "chart:frame:left");
+        Assert.DoesNotContain(
+            scene.Primitives,
+            primitive => primitive.PrimitiveId.StartsWith(removed.Id.Value, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship()
     {
@@ -601,18 +1115,49 @@ public sealed class SceneBuilderTests
             SceneBuilder.TryBuild(Request(Event(1)) with { FrameTheme = null }).Refusal);
     }
 
+    [Fact]
+    public void Anchoring_without_a_measured_grid_is_refused_as_a_missing_grid()
+    {
+        // ADR-0034 D1: a live composition anchors every lane to the worksheet row it
+        // renders on. The measured grid is required for the frame regardless, so a
+        // request that asks for anchoring and supplies no grid is refused by the
+        // MISSING-GRID rule before the anchor-specific one can run - observed here
+        // rather than assumed, because the anchor branch is unreachable in that case
+        // and its guard is therefore a redundant second check.
+        Assert.Equal(
+            SceneBuilderRefusal.NullPanelGrid,
+            SceneBuilder.TryBuild(Request(Event(1)) with { AnchorLanesToRows = true, Grid = null }).Refusal);
+    }
+
 
     [Fact]
-    public void An_unresolvable_style_is_refused_rather_than_defaulted_silently()
+    public void Custom_activity_resolves_via_builtin_preset_when_style_is_blank()
     {
-        // Custom Activity has no Type default, so a blank style key has nothing to
-        // fall back to. The build must refuse instead of rendering an unstyled bar.
-        // Note that an *empty registry* is deliberately not the trigger: the
-        // resolver falls back to the built-in preset for Types that have one.
-        Assert.Equal(
-            SceneBuilderRefusal.UnresolvableStyle,
-            SceneBuilder.TryBuild(
-                Request(Event(1, GanttEntityType.CustomActivity, styleKey: null))).Refusal);
+        // Custom Activity now carries a code-owned DefaultStyleKey and matching
+        // built-in preset, so a blank style key resolves through the preset
+        // instead of refusing with UnresolvableStyle.
+        var result = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.CustomActivity, styleKey: null)));
+        Assert.Null(result.Refusal);
+    }
+
+    [Fact]
+    public void Custom_activity_with_a_deleted_style_renders_a_visible_bar()
+    {
+        // R5.6a: the user deleted the custom style this row was using. The
+        // scene must still produce a RENDERABLE shape -- the earlier preset
+        // carried null metrics, which resolved to a zero-height bar that drew
+        // nothing and could be refused mid-refresh. The height must come from
+        // the code-owned preset's ActivityHeightPt token.
+        var result = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.CustomActivity, styleKey: "DeletedCustomStyle")));
+
+        Assert.Null(result.Refusal);
+        SceneRect bar = Assert.Single(
+            result.Result!.Scene.Primitives.OfType<SceneRect>(),
+            candidate => candidate.Style?.StyleKey == "CustomActivity");
+        Assert.True(bar.Bounds.Height > 0, "The healed bar must have a real height.");
+        Assert.NotNull(bar.Style!.FillColour);
     }
 
     [Fact]
@@ -1194,10 +1739,12 @@ public sealed class SceneBuilderTests
                 && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
 
         double rowHeightPt = GanttCatalogues.MetricDefault("GanttRowHeightPt");
-        RectD bounds = finalLabel.TextBounds;
 
-        // The height is preserved exactly; only the position moves.
-        Assert.Equal(rowHeightPt, bounds.Height);
+        // The box is the row less the inset at each edge, and that height is preserved
+        // exactly; only the position moves.
+        double boxHeightPt = LabelPlanner.BoxHeightFor(rowHeightPt);
+        RectD bounds = finalLabel.TextBounds;
+        Assert.Equal(boxHeightPt, bounds.Height);
 
         // Non-vacuity, as arithmetic rather than a hard-coded number: the UNCLAMPED
         // position is the box centred on its own bar, and on this final lane that box
@@ -1205,11 +1752,11 @@ public sealed class SceneBuilderTests
         // centred one — Y grows downwards, so containing an overhanging box moves its
         // top up — and the fixture must be one where the centred box really would have
         // been refused.
-        double centredTop = finalBar.Bounds.Top + ((finalBar.Bounds.Height - rowHeightPt) / 2);
+        double centredTop = finalBar.Bounds.Top + ((finalBar.Bounds.Height - boxHeightPt) / 2);
         Assert.True(
-            centredTop + rowHeightPt > scene.ChartBounds.Bottom,
+            centredTop + boxHeightPt > scene.ChartBounds.Bottom,
             $"fixture does not exercise the clamp: the centred box already fits "
-            + $"({centredTop}..{centredTop + rowHeightPt} within {scene.ChartBounds.Bottom}).");
+            + $"({centredTop}..{centredTop + boxHeightPt} within {scene.ChartBounds.Bottom}).");
         Assert.True(
             bounds.Top < centredTop,
             $"clamping must move the box UP into the chart, not down: {bounds.Top} vs centred {centredTop}.");
@@ -1728,6 +2275,7 @@ public sealed class SceneBuilderTests
             (GanttEntityType.AsPlannedMilestone, 1),
             (GanttEntityType.AsBuiltMilestone, 1),
             (GanttEntityType.BaselineMilestone, 1),
+            (GanttEntityType.CustomMilestone, 1),
             (GanttEntityType.DelayEvent, 2),
             (GanttEntityType.AsBuiltActivity, 3),
             (GanttEntityType.AsPlannedActivity, 4),
@@ -1856,7 +2404,12 @@ public sealed class SceneBuilderTests
         // would be suppressed for that reason rather than the one under test.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(
-                Event(1, GanttEntityType.AsPlannedMilestone, start: new DateOnly(2024, 1, 20), styleKey: "AsPlannedMilestone")
+                Event(
+                    1,
+                    GanttEntityType.AsPlannedMilestone,
+                    start: new DateOnly(2024, 1, 20),
+                    styleKey: "AsPlannedMilestone",
+                    dateLabelPosition: GanttDateLabelPosition.Start)
                 with { Description = null })
             with { LabelStyle = new SceneStyle("DefaultText") });
 
@@ -1889,7 +2442,7 @@ public sealed class SceneBuilderTests
         // failing text-metrics seam makes the planner refuse: it cannot measure the
         // text it is required to place.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
-            Request(Event(1))
+            Request(Event(1, dateLabelPosition: GanttDateLabelPosition.Both))
             with
             {
                 LabelStyle = new SceneStyle("DefaultText"),
@@ -1928,7 +2481,11 @@ public sealed class SceneBuilderTests
         // edge is genuinely clipped, and section 23 forbids suppressing its true
         // date. The fallback box is what guarantees the date is emitted at all.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
-            Request(Event(1, start: new DateOnly(2023, 12, 20), finish: new DateOnly(2024, 1, 10)))
+            Request(Event(
+                1,
+                start: new DateOnly(2023, 12, 20),
+                finish: new DateOnly(2024, 1, 10),
+                dateLabelPosition: GanttDateLabelPosition.Start))
             with { LabelStyle = new SceneStyle("DefaultText") });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);

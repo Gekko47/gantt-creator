@@ -46,8 +46,18 @@ public sealed record GanttEvent(
     int? SortOrder)
 {
     /// <summary>
+    /// The analyst's own reference for the row (R5.21, ADR-0064), or
+    /// <see langword="null"/> when blank. Free text, unrelated to <see cref="Id"/>:
+    /// it never resolves a parent, an owner, or an ordering, and it is reproduced
+    /// only as the <c>Activity ID</c> data-panel cell.
+    /// </summary>
+    public string? ActivityId { get; init; }
+
+    /// <summary>
     /// The explicit date-label choice, or <see langword="null"/> when blank
-    /// (<c>Auto</c>: both date labels the type uses). Set from the row's
+    /// (blank and <c>Auto</c> both mean the type default, which is <c>None</c>
+    /// since the 2026-11-13 ruling; <c>Both</c> is the explicit both-dates
+    /// choice). Set from the row's
     /// DateLabelPosition cell by <see cref="GanttRowValidator"/>; layout
     /// never supplies it. The <see langword="null"/> default keeps the
     /// pre-R5.14 both-labels behaviour for every event constructed without

@@ -64,8 +64,8 @@ public sealed class TimeScale
             return new TimeScaleCreationOutcome(null, TimeScaleCreationRefusal.NonFiniteOrDegenerateWidth);
         }
 
-        var totalPlotDays = plotFinish.DayNumber - plotStart.DayNumber + 1;
-        var dayWidth = (plotRightPt - plotLeftPt) / totalPlotDays;
+        int totalPlotDays = plotFinish.DayNumber - plotStart.DayNumber + 1;
+        double dayWidth = (plotRightPt - plotLeftPt) / totalPlotDays;
         return !double.IsFinite(dayWidth) || dayWidth <= 0
             ? new TimeScaleCreationOutcome(null, TimeScaleCreationRefusal.NonFiniteOrDegenerateWidth)
             : new TimeScaleCreationOutcome(
@@ -79,7 +79,7 @@ public sealed class TimeScale
     /// <returns><see langword="true"/> when the date is inside the inclusive plot range.</returns>
     public bool TryDateToX(DateOnly date, out double x)
     {
-        var inRange = date >= PlotStart && date <= PlotFinish;
+        bool inRange = date >= PlotStart && date <= PlotFinish;
         x = inRange
             ? PlotLeftPt + ((date.DayNumber - PlotStart.DayNumber) * DayWidth)
             : 0;
@@ -91,7 +91,7 @@ public sealed class TimeScale
     /// <returns>The point X coordinate.</returns>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the date is outside the inclusive plot range.</exception>
     public double DateToX(DateOnly date) =>
-        TryDateToX(date, out var x)
+        TryDateToX(date, out double x)
             ? x
             : throw new ArgumentOutOfRangeException(nameof(date), date, "Date is outside the time-scale range.");
 
@@ -101,7 +101,7 @@ public sealed class TimeScale
     /// <returns>The inclusive duration in days.</returns>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when either date is outside the scale or finish is before start.</exception>
     public int DurationDays(DateOnly start, DateOnly finish) =>
-        TryDurationDays(start, finish, out var durationDays)
+        TryDurationDays(start, finish, out int durationDays)
             ? durationDays
             : throw new ArgumentOutOfRangeException(nameof(finish), finish, "Activity dates must be ordered and inside the time-scale range.");
 
@@ -112,7 +112,7 @@ public sealed class TimeScale
     /// <returns><see langword="true"/> when the activity dates are valid.</returns>
     public bool TryDurationDays(DateOnly start, DateOnly finish, out int durationDays)
     {
-        var valid = start >= PlotStart && start <= PlotFinish &&
+        bool valid = start >= PlotStart && start <= PlotFinish &&
             finish >= PlotStart && finish <= PlotFinish && finish >= start;
         durationDays = valid ? finish.DayNumber - start.DayNumber + 1 : 0;
         return valid;
@@ -123,7 +123,7 @@ public sealed class TimeScale
     /// <param name="finish">The inclusive activity finish date.</param>
     /// <returns>The activity right edge in points.</returns>
     public double ActivityRightX(DateOnly start, DateOnly finish) =>
-        TryDurationDays(start, finish, out var durationDays)
+        TryDurationDays(start, finish, out int durationDays)
             ? DateToX(start) + (durationDays * DayWidth)
             : throw new ArgumentOutOfRangeException(nameof(finish), finish, "Activity dates must be ordered and inside the time-scale range.");
 

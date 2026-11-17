@@ -30,14 +30,29 @@ public static class PlotRangeResolver
     /// <param name="startDateText">The stored <c>PlotStartDate</c> text.</param>
     /// <param name="finishDateText">The stored <c>PlotFinishDate</c> text.</param>
     /// <param name="paddingDays">The automatic-mode padding, in days per side.</param>
+    /// <param name="today">
+    /// The caller's current day, or <see langword="null"/> when the caller has none to
+    /// offer. It is an input rather than a clock read, because Core must stay
+    /// deterministic and a test that depended on the machine's date would fail once a
+    /// year.
+    /// </param>
     /// <returns>The raw extent, or the typed refusal.</returns>
+    /// <remarks>
+    /// When an end is in <see cref="PlotRangeMode.DataRange"/> but the events carry no
+    /// extent at all — the empty-table case a freshly initialised workbook is in — a known
+    /// <paramref name="today"/> falls back to that day's calendar year, which is the
+    /// owner's default plot range. Without it the refusal stands, so a caller that cannot
+    /// name the day never gets an invented year. An explicit end is never widened or
+    /// narrowed by the fallback: the fallback only supplies the end that had nothing.
+    /// </remarks>
     public static PlotRangeOutcome TryResolve(
         IReadOnlyList<GanttEvent>? events,
         string? startModeText,
         string? finishModeText,
         string? startDateText,
         string? finishDateText,
-        int paddingDays)
+        int paddingDays,
+        DateOnly? today = null)
     {
         if (events is null)
         {
@@ -74,7 +89,17 @@ public static class PlotRangeResolver
         {
             if (!TryDeriveDataExtent(events, paddingDays, out DateOnly dataStart, out DateOnly dataFinish))
             {
-                return new PlotRangeOutcome(null, null, PlotRangeRefusal.NoPlotRange);
+                // An empty table has no extent to derive. Refusing here is what left a
+                // freshly initialised workbook with no chart drawn at all — the reported
+                // "the chart looks broken until the first refresh". With a known day the
+                // range becomes that day's calendar year, which is the owner's default.
+                if (today is not { } anchor)
+                {
+                    return new PlotRangeOutcome(null, null, PlotRangeRefusal.NoPlotRange);
+                }
+
+                dataStart = new DateOnly(anchor.Year, 1, 1);
+                dataFinish = new DateOnly(anchor.Year, 12, 31);
             }
 
             start ??= dataStart;
@@ -110,7 +135,7 @@ public static class PlotRangeResolver
             return false;
         }
 
-        var trimmed = text.Trim();
+        string trimmed = text.Trim();
 
         // A bare Excel serial first: the ribbon edit box echoes the coerced
         // numeric form back on getText (e.g. 46118, or 46118.0 from an
@@ -119,7 +144,7 @@ public static class PlotRangeResolver
         // 1900-epoch converter so the ribbon and the table reader cannot
         // disagree on what a serial means. The fractional time-of-day, when
         // present, is truncated to the calendar date by FromOADate.
-        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var serial)
+        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out double serial)
             && ExcelDateSystemConverter.Instance.TryConvertDate(
                 serial, ExcelDateSystemKind.Windows1900, out DateOnly? serialDate)
             && serialDate is { } serialDay
@@ -154,6 +179,17 @@ public static class PlotRangeResolver
     /// Parses one explicit date: blank is missing, unparsable is unparsable,
     /// and the default value is the <c>TimeScale</c> default-dates refusal.
     /// </summary>
+    /// <remarks>
+    /// <b>The default-date branch below is unreachable today, on purpose.</b>
+    /// <see cref="TryParsePlotDate"/> filters <c>default</c> in all three of its forms, so a
+    /// text that would parse to <see cref="DateOnly.MinValue"/> is already reported as
+    /// unparsable before it gets here. The check stays because it is the guard for the refusal
+    /// the scene-build factory maps to a user message: if the parser is ever relaxed to accept
+    /// a date the caller should not bless, this is where it must be caught, and deleting it
+    /// would silently move the failure one layer out. A test pins the parser's own rejection
+    /// (`TryParsePlotDate_refuses_the_default_date_value`) so a relaxation is a red gate rather
+    /// than a silent behaviour change.
+    /// </remarks>
     private static DateOnly? ParseExplicitDate(string? text, out PlotRangeRefusal? refusal)
     {
         refusal = null;
@@ -199,8 +235,8 @@ public static class PlotRangeResolver
         dataStart = default;
         dataFinish = default;
 
-        var starts = new List<DateOnly>();
-        var finishes = new List<DateOnly>();
+        List<DateOnly> starts = [];
+        List<DateOnly> finishes = [];
         foreach (GanttEvent @event in events)
         {
             if (@event.Start is { } start)
@@ -220,7 +256,7 @@ public static class PlotRangeResolver
             return false;
         }
 
-        var padding = Math.Max(0, paddingDays);
+        int padding = Math.Max(0, paddingDays);
         DateOnly earliest = starts.Min();
         DateOnly latest = starts.Max();
         if (finishes.Count > 0 && finishes.Max() > latest)
@@ -249,41 +285,59 @@ public static class PlotRangeResolver
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        if (!PlotRangeModes.TryParse(settings.Mode, out _))
+        if (!PlotRangeModes.TryParse(settings.StartMode, out _))
         {
             throw new ArgumentException(
-                $"Invalid plot-range mode: {settings.Mode}",
+                $"Invalid plot-range start mode: {settings.StartMode}",
                 nameof(settings));
         }
 
-        if (settings.Mode == nameof(PlotRangeMode.Explicit))
+        if (!PlotRangeModes.TryParse(settings.FinishMode, out _))
+        {
+            throw new ArgumentException(
+                $"Invalid plot-range finish mode: {settings.FinishMode}",
+                nameof(settings));
+        }
+
+        // Validate dates only for ends in Explicit mode. A DataRange end
+        // derives its date from the events, so no date text is needed there.
+        DateOnly? startParsed = null;
+        DateOnly? finishParsed = null;
+
+        if (settings.StartMode == nameof(PlotRangeMode.Explicit))
         {
             if (string.IsNullOrWhiteSpace(settings.StartDate))
             {
                 throw new ArgumentException("Explicit mode requires a start date.", nameof(settings));
             }
 
+            if (!TryParsePlotDate(settings.StartDate, out DateOnly parsed))
+            {
+                throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
+            }
+            startParsed = parsed;
+        }
+
+        if (settings.FinishMode == nameof(PlotRangeMode.Explicit))
+        {
             if (string.IsNullOrWhiteSpace(settings.FinishDate))
             {
                 throw new ArgumentException("Explicit mode requires a finish date.", nameof(settings));
             }
 
-            if (!TryParsePlotDate(settings.StartDate, out DateOnly startParsed))
-            {
-                throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
-            }
-
-            if (!TryParsePlotDate(settings.FinishDate, out DateOnly finishParsed))
+            if (!TryParsePlotDate(settings.FinishDate, out DateOnly parsed))
             {
                 throw new ArgumentException($"Unparsable finish date: {settings.FinishDate}", nameof(settings));
             }
+            finishParsed = parsed;
+        }
 
-            if (startParsed > finishParsed)
-            {
-                throw new ArgumentException(
-                    $"Start date {settings.StartDate} is after finish date {settings.FinishDate}.",
-                    nameof(settings));
-            }
+        // When both ends are explicit, start must not be after finish.
+        if (startParsed is { } s && finishParsed is { } f && s > f)
+        {
+            throw new ArgumentException(
+                $"Start date {settings.StartDate} is after finish date {settings.FinishDate}.",
+                nameof(settings));
         }
     }
 }

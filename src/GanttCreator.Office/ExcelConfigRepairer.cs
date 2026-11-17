@@ -36,7 +36,7 @@ public class ExcelConfigRepairer(
             return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.PlanRefused);
         }
 
-        var confirmCount = plan.ConfirmRequiredFindings.Count;
+        int confirmCount = plan.ConfirmRequiredFindings.Count;
         if (confirmCount > 0 && !confirmRequiredChanges)
         {
             return ConfigRepairOutcome.Ok(0, confirmCount, plan.QuarantinedFindings.Count);
@@ -54,8 +54,8 @@ public class ExcelConfigRepairer(
             );
         }
 
-        var repaired = 0;
-        var catalogueRepair = plan.Findings.Any(finding =>
+        int repaired = 0;
+        bool catalogueRepair = plan.Findings.Any(finding =>
             finding.Kind
                 is ConfigIntegrityFindingKind.CatalogueTableMissing
                     or ConfigIntegrityFindingKind.CatalogueTableCorrupt

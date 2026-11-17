@@ -43,6 +43,18 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
     public List<string> Calls { get; } = [];
 
     /// <summary>
+    /// The shape request last written for each primitive, so a test can assert
+    /// on a shape's GEOMETRY.
+    /// </summary>
+    /// <remarks>
+    /// The fake recorded the shape's name and its ownership tag, and nothing
+    /// about where the shape was put. A test that could not see the geometry
+    /// could not tell whether the title sat in the reserved row or over the
+    /// header - which is the whole question the live title's placement turns on.
+    /// </remarks>
+    public Dictionary<string, OfficeShapeRequest> Requests { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Gets the shape-mutating calls only, in order — the create, update, and
     /// delete calls, excluding the reads and the z-order pass.
     /// </summary>
@@ -189,6 +201,8 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         // sheet forever, indistinguishable from a user's own.
         _shapes[request.PrimitiveId] = FakeShape.ForPrimitive(request.PrimitiveId);
         _owned.Add(request.PrimitiveId);
+        _ = DriftedGeometry.Remove(request.PrimitiveId);
+        Requests[request.PrimitiveId] = request;
 
         return ShapeWriteOutcome.Ok();
     }
@@ -206,9 +220,43 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         // happens. The check is the ownership filter, not name membership: a user
         // shape that happens to share an identifier is refused exactly as the
         // adapter refuses it (R4.8 D1).
-        return CarriesOwnTag(request.PrimitiveId)
-            ? ShapeWriteOutcome.Ok()
-            : ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        if (!CarriesOwnTag(request.PrimitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        // A write converges the shape, so a modelled drift is cleared — the next
+        // verification must find it matching, exactly as the live host would.
+        _ = DriftedGeometry.Remove(request.PrimitiveId);
+        Requests[request.PrimitiveId] = request;
+        return ShapeWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// The move-only update (ADR-0053). Recorded under its own call name so a test can
+    /// prove a shape that only moved was moved rather than re-styled, which is the whole
+    /// point of the scope.
+    /// </summary>
+    /// <param name="request">The scene's desired shape.</param>
+    /// <returns>The typed result.</returns>
+    public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        Calls.Add("UpdateGeometry:" + request.PrimitiveId);
+        if (RefusalFor("UpdateGeometry", request.PrimitiveId) is { } refusal)
+        {
+            return ShapeWriteOutcome.Refused(refusal);
+        }
+
+        if (!CarriesOwnTag(request.PrimitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        _ = DriftedGeometry.Remove(request.PrimitiveId);
+        Requests[request.PrimitiveId] = request;
+        return ShapeWriteOutcome.Ok();
     }
 
     public ShapeWriteOutcome Delete(string primitiveId)
@@ -233,6 +281,54 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         return ShapeWriteOutcome.Ok();
     }
 
+    /// <summary>How many shape-write batches the caller opened.</summary>
+    public int BatchesStarted { get; private set; }
+
+    /// <summary>How many of those batches were disposed.</summary>
+    /// <remarks>
+    /// Paired with <see cref="BatchesStarted"/> this is how a test proves the reconcile
+    /// disposes its batch on every exit path — including the refusal path that returns
+    /// early from the middle of a plan. A leaked batch is not observable through
+    /// <see cref="Calls"/>, so without this counter the guarantee would be untestable.
+    /// </remarks>
+    public int BatchesDisposed { get; private set; }
+
+    private int _batchDepth;
+
+    /// <summary>
+    /// Opens the adapter's batch scope. The fake models the real contract: batches do not
+    /// nest, and a scope disposes exactly once.
+    /// </summary>
+    /// <returns>The scope that ends the batch.</returns>
+    public IDisposable BeginBatch()
+    {
+        if (_batchDepth > 0)
+        {
+            throw new InvalidOperationException("A shape-write batch is already open. Batches do not nest.");
+        }
+
+        BatchesStarted++;
+        _batchDepth++;
+        return new BatchScope(this);
+    }
+
+    private sealed class BatchScope(FakeShapeWritePort owner) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                throw new InvalidOperationException("A shape-write batch was disposed twice.");
+            }
+
+            _disposed = true;
+            owner.BatchesDisposed++;
+            owner._batchDepth--;
+        }
+    }
+
     /// <summary>
     /// Whether the shape the host holds under this name carries the ownership tag
     /// for that same identifier — the fake's model of the adapter's
@@ -253,6 +349,71 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         ListOwnedCallCount++;
         Calls.Add("ListOwned");
         return [.. _owned];
+    }
+
+    /// <summary>How many owned shapes the last <see cref="LockOwnedShapes"/> call locked.</summary>
+    public int LockedShapeCount { get; private set; }
+
+    /// <summary>How many times <see cref="LockOwnedShapes"/> was called.</summary>
+    public int LockOwnedShapesCallCount { get; private set; }
+
+    /// <inheritdoc />
+    public ShapeWriteOutcome LockOwnedShapes()
+    {
+        LockOwnedShapesCallCount++;
+        Calls.Add("LockOwnedShapes");
+        if (Refusals.TryGetValue("LockOwnedShapes", out ShapeWriteRefusal? refusal) && refusal is { } reason)
+        {
+            return ShapeWriteOutcome.Refused(reason);
+        }
+
+        LockedShapeCount = _owned.Count;
+        return ShapeWriteOutcome.Ok();
+    }
+
+    /// <summary>The identifiers this fake was asked to unlock, in order.</summary>
+    public List<string> Unlocked { get; } = [];
+
+    /// <inheritdoc />
+    public ShapeWriteOutcome UnlockShape(string primitiveId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
+        Calls.Add("UnlockShape:" + primitiveId);
+        if (Refusals.TryGetValue("UnlockShape", out ShapeWriteRefusal? refusal) && refusal is { } reason)
+        {
+            return ShapeWriteOutcome.Refused(reason);
+        }
+
+        if (!_shapes.ContainsKey(primitiveId) || !_owned.Contains(primitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        Unlocked.Add(primitiveId);
+        return ShapeWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Identifiers whose live geometry has drifted from the last write — the model of a
+    /// host that moved or resized a shape on its own (a row insert, a hidden row, a user
+    /// drag).
+    /// </summary>
+    /// <remarks>
+    /// Empty by default, so an unchanged fake host verifies as matching and the
+    /// existing "scheduled refresh skips unchanged shapes" pins keep their meaning. A
+    /// test seeds an identifier here to prove the reconciler rewrites it despite an
+    /// identical payload signature.
+    /// </remarks>
+    public HashSet<string> DriftedGeometry { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>How many times the reconciler asked the host to verify a shape.</summary>
+    public int GeometryMatchChecks { get; private set; }
+
+    public bool GeometryMatches(OfficeShapeRequest request)
+    {
+        GeometryMatchChecks++;
+        return _owned.Contains(request.PrimitiveId)
+            && !DriftedGeometry.Contains(request.PrimitiveId);
     }
 
     public ShapeWriteOutcome ApplyZOrder(IReadOnlyList<string> backToFront)

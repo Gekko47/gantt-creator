@@ -51,15 +51,14 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     private readonly Excel.Application? _application = application as Excel.Application;
 
     /// <inheritdoc />
-    public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+    public PanelGridOutcome Measure(
+        IReadOnlyList<string> includedColumns,
+        IReadOnlyList<double>? bodyRowHeightsPt = null)
     {
         ArgumentNullException.ThrowIfNull(includedColumns);
 
-        if (includedColumns.Count == 0)
-        {
-            return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
-        }
-
+        // ADR-0065 D4: an empty list is a real measurement of a fully hidden table, not a
+        // caller error. Every column that IS listed is still measured and validated below.
         Excel.Application? application = _application;
         if (application is null)
         {
@@ -98,7 +97,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         }
 
         List<PanelColumn> columns = [];
-        foreach (var name in includedColumns)
+        foreach (string name in includedColumns)
         {
             Excel.ListColumn? column = FindColumn(table, name);
             if (column is null)
@@ -106,7 +105,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                 return PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing);
             }
 
-            var width = ReadColumnWidth(column);
+            double? width = ReadColumnWidth(column);
             if (width is null)
             {
                 return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -123,29 +122,55 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // "first row's height" case is a plain number that passes every check while
         // describing a body most of which is taller. Reading the rows removes the
         // ambiguity instead of detecting it.
+        //
+        // The caller may hand the heights over instead. The row-height normalisation that
+        // runs immediately before this measurement has already read every one of them,
+        // and when that pass wrote nothing its readings are still the sheet's state, so
+        // reading them again is one COM read per body row for a value the caller holds.
+        // The list is used only when its length matches the LIVE body row count: anything
+        // else -- a list from a sheet that has since gained or lost a row -- falls back to
+        // reading, so a stale or partial list can never be laid out as if it were the
+        // sheet. A supplied height that is non-finite or negative is refused by
+        // `PanelCellGrid.TryCreate`, exactly as a read one would be.
+        Excel.Range? body = table.DataBodyRange;
         List<double> rowHeights = [];
-        if (table.DataBodyRange is { } body)
+        if (body is not null)
         {
-            for (var rowIndex = 1; rowIndex <= GetBodyRowCount(body); rowIndex++)
+            int bodyRowCount = GetBodyRowCount(body);
+            if (bodyRowHeightsPt is { Count: > 0 } supplied && supplied.Count == bodyRowCount)
             {
-                if (GetBodyRowAt(body, rowIndex) is not { } row || ToPoints(row.RowHeight) is not { } height)
+                rowHeights.AddRange(supplied);
+            }
+            else
+            {
+                for (int rowIndex = 1; rowIndex <= bodyRowCount; rowIndex++)
                 {
-                    // One absent row must not become one guessed height. The panel's row
-                    // positions are cumulative, so a single wrong height would displace
-                    // every row below it and the result would look plausible.
-                    return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
-                }
+                    if (GetBodyRowAt(body, rowIndex) is not { } row || ToPoints(row.RowHeight) is not { } height)
+                    {
+                        // One absent row must not become one guessed height. The panel's row
+                        // positions are cumulative, so a single wrong height would displace
+                        // every row below it and the result would look plausible.
+                        return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+                    }
 
-                // A ZERO height is passed through deliberately (ADR-0034): Excel reports a
-                // HIDDEN row's height as zero, and a collapsed outline group hides its
-                // child rows, so zero is a real measurement of the displayed sheet rather
-                // than a missing one. Core accepts it and the rows below share its top;
-                // a negative height is still refused there.
-                rowHeights.Add(height);
+                    // A ZERO height is passed through deliberately (ADR-0034): Excel reports a
+                    // HIDDEN row's height as zero, and a collapsed outline group hides its
+                    // child rows, so zero is a real measurement of the displayed sheet rather
+                    // than a missing one. Core accepts it and the rows below share its top;
+                    // a negative height is still refused there.
+                    rowHeights.Add(height);
+                }
             }
         }
 
-        if (rowHeights.Count == 0)
+        // ADR-0050/R5.18j: an intentionally EMPTY table is a supported live state — the
+        // first Refresh after Initialise draws the frame over the default range — and
+        // Excel reports it as NO body at all (`DataBodyRange` is null), not as a
+        // zero-row range. Refusing that state is why a freshly initialised workbook
+        // never drew a chart: the measurement refused the one input the empty-chart
+        // contract exists for. A body that EXISTS but yields no measurable height is
+        // still refused, because that is an unreadable table rather than an empty one.
+        if (body is not null && rowHeights.Count == 0)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
@@ -163,14 +188,37 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // the host reports no figure: a zero origin is exactly the page-coordinate
         // assumption this change removes, and it would reintroduce the misalignment
         // silently.
+        // The plot originates at the PLOT ANCHOR COLUMN's left edge, not at the summed
+        // widths of the visible columns. Read it before the origin so the zero-column
+        // fallback below has the number it needs.
+        double? plotOriginRight = ReadPlotAnchorLeft(table);
+        double? originLeft = ReadOriginLeft(table);
+
+        // ADR-0065 D4: with every table column hidden the anchor column's left edge and the
+        // table's origin are the same measured coordinate (the probe measured both at
+        // 14.25pt). Use the anchor only as the EMPTY-set fallback; a non-empty set with an
+        // unreadable origin still refuses rather than guessing.
+        if (originLeft is null && includedColumns.Count == 0)
+        {
+            originLeft = plotOriginRight;
+        }
+
         if (ReadOriginTop(table) is not { } originTop
-            || ReadOriginLeft(table) is not { } originLeft
+            || originLeft is not { } resolvedOriginLeft
             || ReadTopPaddingHeight(table) is not { } topPaddingHeight
             || ReadAnchorHeight(table) is not { } anchorHeight
             || ReadBottomPaddingHeight(table) is not { } bottomPaddingHeight)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
+
+        // ADR-0059/R5.18k: column A is the add-in's leading gutter, not a table column,
+        // and it is what gives the frame a left margin equal to the framing rows' top and
+        // bottom margins. A column whose width the host does not report composes with NO
+        // gutter rather than refusing: the gutter is decoration, and the alternative is
+        // no chart at all over a missing border. Every measurement that POSITIONS content
+        // — the origin, the rows — still refuses, which is the line this draws.
+        double leadingGutter = ReadLeadingGutterWidth(table) ?? 0d;
 
         // Core validates the grid: a non-positive or non-finite width or height, a
         // blank or duplicated column name, a missing required column, and a negative
@@ -182,10 +230,13 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             headerHeight,
             includedColumns,
             originTop,
-            originLeft,
+            resolvedOriginLeft,
             topPaddingHeight,
             bottomPaddingHeight,
-            anchorHeight);
+            anchorHeight,
+            allowEmptyRows: true,
+            leadingGutterPt: leadingGutter,
+            plotOriginRightPt: plotOriginRight);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -208,7 +259,17 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         ArgumentNullException.ThrowIfNull(table);
 
         Excel.Range? body = table.DataBodyRange;
-        return body is null ? null : ToPoints(body.Top);
+
+        // With no body rows the first body row's top is still the header's bottom, and
+        // it is measured rather than defaulted for the same reason every other origin
+        // is: a zero would be the page-coordinate assumption ADR-0030 removed.
+        Excel.Range? header = table.HeaderRowRange;
+        double? bodyTop = body is null ? null : ToPoints(body.Top);
+        double? headerTop = header is null ? null : ToPoints(header.Top);
+        double? headerHeight = header is null ? null : ToPoints(header.Height);
+
+        return bodyTop
+            ?? (headerTop is { } top && headerHeight is { } height ? top + height : null);
     }
 
     /// <summary>
@@ -237,7 +298,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     internal virtual double? ReadBottomPaddingHeight(Excel.ListObject table) =>
         table.DataBodyRange is not { } body
-            ? null
+            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowHeaderRow: 3)
             : ReadVerifiedBottomPaddingHeight(table, body);
 
     /// <summary>
@@ -262,8 +323,47 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     internal virtual double? ReadAnchorHeight(Excel.ListObject table) =>
         table.DataBodyRange is not { } body
-            ? null
+            ? ReadEmptyBodyLayoutRowHeight(table, offsetBelowHeaderRow: 2)
             : ReadVerifiedAnchorHeight(table, body);
+
+    /// <summary>
+    /// Reads a reserved row's height when the table has NO body rows (ADR-0050).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="offsetBelowHeaderRow">
+    /// 2 for the anchor row, 3 for the bottom padding row. The offset is counted from the
+    /// HEADER row and starts at 2, not 1, because an empty table still occupies one body
+    /// row's worth of sheet: Excel shows the table's INSERT ROW directly below the header,
+    /// at the standard row height, and the anchor sits below it (owner ruling 2026-11-14).
+    /// Counting from 1 would read the insert row as the anchor.
+    /// </param>
+    /// <returns>The measured height, or <see langword="null"/> when the row cannot be verified.</returns>
+    /// <remarks>
+    /// <para>
+    /// The layout authority derives these rows from a POSITIVE body length
+    /// (<see cref="GanttSheetLayout.AnchorRowIndex"/> throws for zero), which is correct
+    /// for a verification that needs a measured span. An empty body has no span to
+    /// verify against, so the position comes from the measured HEADER row instead of a
+    /// contract constant, and the row itself is still verified empty before its height
+    /// is trusted — the two rules the non-empty path applies are kept, only the source
+    /// of the index changes.
+    /// </para>
+    /// <para>
+    /// An occupied or unreadable row returns <see langword="null"/>, which the caller
+    /// maps to the typed measurement refusal: a user's own row is never resized or
+    /// measured as a chart margin.
+    /// </para>
+    /// </remarks>
+    private double? ReadEmptyBodyLayoutRowHeight(Excel.ListObject table, int offsetBelowHeaderRow)
+    {
+        if (table.HeaderRowRange is not { } header)
+        {
+            return null;
+        }
+
+        int row = GetRangeRow(header) + offsetBelowHeaderRow;
+        return IsLayoutRowEmpty(table, row) is true ? ReadRowHeightAt(table, row) : null;
+    }
 
     /// <summary>
     /// Resolves the reserved anchor row from the body's MEASURED span and reads its
@@ -274,10 +374,10 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
     private double? ReadVerifiedAnchorHeight(Excel.ListObject table, Excel.Range body)
     {
-        var firstBodyRow = GetRangeRow(body);
-        var rowCount = GetBodyRowCount(body);
-        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+        int firstBodyRow = GetRangeRow(body);
+        int rowCount = GetBodyRowCount(body);
+        int lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+        int? candidate = lastBodyRow > 0 ? lastBodyRow + 1 : null;
 
         AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
             firstBodyRow,
@@ -321,14 +421,14 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     private double? ReadVerifiedBottomPaddingHeight(Excel.ListObject table, Excel.Range body)
     {
-        var firstBodyRow = GetRangeRow(body);
-        var rowCount = GetBodyRowCount(body);
-        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+        int firstBodyRow = GetRangeRow(body);
+        int rowCount = GetBodyRowCount(body);
+        int lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
 
         // One past the anchor row, which is itself one past the body. Expressed as
         // anchor + 1 rather than lastBodyRow + 2 so the relationship between the two
         // reserved rows is the visible fact.
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 2 : (int?)null;
+        int? candidate = lastBodyRow > 0 ? lastBodyRow + 2 : null;
 
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow,
@@ -462,8 +562,83 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     {
         ArgumentNullException.ThrowIfNull(table);
 
+        // With no body rows the table's left edge is the header's left: every column of
+        // a table shares its left edge, so this is the same measured number the body
+        // would report, read from the range that still exists (ADR-0050 empty table).
         Excel.Range? body = table.DataBodyRange;
-        return body is null ? null : ToPoints(body.Left);
+        Excel.Range? header = table.HeaderRowRange;
+
+        return body is not null
+            ? ToPoints(body.Left)
+            : header is null
+                ? null
+                : ToPoints(header.Left);
+    }
+
+    /// <summary>
+    /// Reads the measured width of the add-in's leading gutter column, in points
+    /// (ADR-0059, R5.18k).
+    /// </summary>
+    /// <param name="table">The Gantt data table, whose worksheet owns the gutter column.</param>
+    /// <returns>The measured width, or <see langword="null"/> when it cannot be read.</returns>
+    /// <remarks>
+    /// The worksheet is reached through the table's <c>Parent</c> rather than through a
+    /// second sheet walk, so this cannot measure the gutter of a DIFFERENT sheet than the
+    /// one the table is on. Null is a real answer: an adapter that cannot see the column
+    /// composes without a margin, which is what every composition did before the gutter
+    /// existed.
+    /// </remarks>
+    internal virtual double? ReadPlotAnchorLeft(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        // The ANCHOR COLUMN's left edge, with no inset. While the engine columns are
+        // hidden this is the same coordinate as the table's visible right edge (a hidden
+        // column has zero width), which is why it must be measured rather than summed:
+        // the sum of the measured columns stops at the last VISIBLE one and the two only
+        // agree by accident. The plot's own inset away from this edge is a width-budget
+        // decision (GanttSheetLayout.LivePlotOriginInsetPt), applied as the plot's left
+        // chrome by the scene-request factory, not here.
+        return table.Parent is Excel.Worksheet worksheet
+            && GetPlotAnchorColumn(worksheet) is { } column
+            ? ToPoints(column.Left)
+            : null;
+    }
+
+    /// <summary>
+    /// Returns the worksheet column the plot anchor's left edge is measured from. Test
+    /// seam over the <c>Columns</c> indexer.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? GetPlotAnchorColumn(Excel.Worksheet worksheet)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[GanttSheetLayout.PlotAnchorColumnIndex];
+    }
+
+    internal virtual double? ReadLeadingGutterWidth(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        return table.Parent is Excel.Worksheet worksheet
+            && GetLeadingGutterColumn(worksheet) is { } column
+            ? ToPoints(column.Width)
+            : null;
+    }
+
+    /// <summary>
+    /// Returns the worksheet column that holds the leading gutter. Test seam over the
+    /// <c>Columns</c> indexer.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <returns>The whole-column range.</returns>
+    internal virtual Excel.Range? GetLeadingGutterColumn(Excel.Worksheet worksheet)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[GanttSheetLayout.LeadingGutterColumnIndex];
     }
 
     /// <summary>
@@ -491,8 +666,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     {
         ArgumentNullException.ThrowIfNull(sheets);
 
-        var sheetCount = GetSheetCount(sheets);
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = GetSheetCount(sheets);
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             Excel._Worksheet? sheet = GetSheetAt(sheets, sheetIndex);
             if (sheet is null)
@@ -506,12 +681,11 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                 continue;
             }
 
-            var tableCount = GetListObjectCount(objects);
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = GetListObjectCount(objects);
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 Excel.ListObject? table = GetListObjectAt(objects, tableIndex);
-                if (table is not null &&
-                    string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+                if (table is not null && GanttChartContract.IsDataTableNameExact(table.Name))
                 {
                     return table;
                 }
@@ -562,8 +736,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             return null;
         }
 
-        var count = GetColumnCount(columns);
-        for (var index = 1; index <= count; index++)
+        int count = GetColumnCount(columns);
+        for (int index = 1; index <= count; index++)
         {
             Excel.ListColumn? column = GetColumnAt(columns, index);
             if (column is not null && string.Equals(column.Name, name, StringComparison.Ordinal))

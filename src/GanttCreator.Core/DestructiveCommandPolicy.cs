@@ -173,8 +173,8 @@ public static class DestructiveCommandPolicy
         // recognised command.
         _ = Classify(commandClass);
 
-        var commandName = CommandDisplayName(commandClass);
-        var subject = CommandSubject(commandClass);
+        string commandName = CommandDisplayName(commandClass);
+        string subject = CommandSubject(commandClass);
 
         // ADR-0008 D3/D2: the body must explicitly state the change cannot be
         // undone, using exactly that phrasing. The exact line is pinned in test
@@ -184,7 +184,7 @@ public static class DestructiveCommandPolicy
         // Count-only body: the text names the command and its subject but never
         // enumerates row counts, table sizes, or catalogue row counts from the
         // workbook. That keeps the builder Office-free and deterministic.
-        var body = string.Create(
+        string body = string.Create(
             CultureInfo.InvariantCulture,
             $"{commandName} {subject}. {noUndoLine}");
 

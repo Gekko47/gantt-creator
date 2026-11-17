@@ -527,6 +527,36 @@ public sealed class FrameBandsBuilderTests
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Frame);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Title);
     }
+
+    [Fact]
+    public void The_plot_edge_lines_sit_on_the_frame_layer_while_interior_lines_stay_on_the_grid_layer()
+    {
+        // The period band is a FILLED rect at Frame (80) that begins exactly on the
+        // plot's left edge, so a Grid-layer (20) edge line is painted over inside the
+        // header row and the table-to-plot boundary disappears — reported live on
+        // 2026-11-14, once the plot was moved onto the column edge. The two edge lines
+        // therefore belong to the frame's layer; interior lines stay at Grid, because
+        // they sit BETWEEN bands and never over them.
+        FrameBandsCreationOutcome outcome = Build(CreateRequest());
+        Assert.True(outcome.Succeeded);
+
+        SceneLine[] lines = [.. outcome.Result!.Primitives.OfType<SceneLine>()];
+        SceneLine[] edges =
+        [
+            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)),
+        ];
+        Assert.Equal(2, edges.Length);
+        Assert.All(edges, edge => Assert.Equal(ZLayer.Frame, edge.ZLayer));
+
+        SceneLine[] interior =
+        [
+            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
+                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(interior);
+        Assert.All(interior, line => Assert.Equal(ZLayer.Grid, line.ZLayer));
+    }
+
     [Fact]
     public void The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides()
     {
@@ -875,7 +905,9 @@ public sealed class FrameBandsBuilderTests
 
     private static FrameBandsRequest CreateRequest(
         double plotBandHeaderOverlapPt = 0.5,
-        double chartAnchorRowHeightPt = 0.25)
+        double chartAnchorRowHeightPt = 0.25,
+        bool sheetCoordinates = false,
+        RectD? dataPanelBounds = null)
     {
         TimeScale scale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400).Scale!;
         return new FrameBandsRequest(
@@ -898,8 +930,93 @@ public sealed class FrameBandsBuilderTests
             true,
             plotBandHeaderOverlapPt,
             chartAnchorRowHeightPt,
-            _theme
+            _theme,
+            SheetCoordinates: sheetCoordinates,
+            DataPanelBounds: dataPanelBounds
         );
+    }
+
+    [Fact]
+    public void On_the_live_sheet_every_frame_stroke_is_drawn_inside_the_outline()
+    {
+        // Live report 2026-11-15: the left frame line sat on the sheet's own left edge and
+        // lost half of its stroke outside the worksheet, so the border read as three sides;
+        // the plot's left line lost half to the panel's last cell fill, so the table and the
+        // chart had no separator. Both are one rule: on the LIVE sheet a stroke is drawn
+        // INSIDE the rectangle it closes. The EXTENTS still span the whole outline, which is
+        // what keeps the four corners closed instead of notching them.
+        FrameBandsRequest request = CreateRequest(
+            sheetCoordinates: true,
+            dataPanelBounds: new RectD(0, 100, 100, 100));
+        FrameBandsResult result = Build(request).Result!;
+
+        // Every border on the sheet is the theme's 1pt major boundary - the frame, the plot's
+        // rectangle and the header cells - so all four insets are half of that one stroke.
+        const double frameHalf = 0.5;
+        const double borderHalf = 0.5;
+        RectD chart = result.Geometry.ChartBounds;
+        RectD panel = request.DataPanelBounds!.Value;
+        double outlineLeft = Math.Min(chart.Left, panel.Left);
+        double outlineRight = Math.Max(chart.Right, panel.Right);
+        double outlineTop = Math.Min(chart.Top, panel.Top);
+        double outlineBottom = Math.Max(chart.Bottom, panel.Bottom);
+
+        SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+        SceneLine left = lines.Single(line => line.PrimitiveId == "chart:frame:left");
+        Assert.Equal(outlineLeft + frameHalf, left.From.X, 6);
+        Assert.Equal(outlineTop, left.From.Y, 6);
+        Assert.Equal(outlineBottom, left.To.Y, 6);
+
+        SceneLine right = lines.Single(line => line.PrimitiveId == "chart:frame:right");
+        Assert.Equal(outlineRight - frameHalf, right.From.X, 6);
+
+        SceneLine top = lines.Single(line => line.PrimitiveId == "chart:frame:top");
+        Assert.Equal(outlineTop + frameHalf, top.From.Y, 6);
+        Assert.Equal(outlineLeft, top.From.X, 6);
+        Assert.Equal(outlineRight, top.To.X, 6);
+
+        SceneLine bottom = lines.Single(line => line.PrimitiveId == "chart:frame:bottom");
+        Assert.Equal(outlineBottom - frameHalf, bottom.From.Y, 6);
+
+        // The separator: the plot's left edge, drawn inside the plot and above the bands.
+        SceneLine separator = lines.Single(
+            line => line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)
+                && Math.Abs(line.From.X - (request.PlotBounds.Left + borderHalf)) < 1e-9);
+        Assert.Equal(ZLayer.Frame, separator.ZLayer);
+
+        // Every border is one weight - the table's lines, the header cells, the plot's
+        // rectangle and the frame - while the grid between periods stays minor, and the top
+        // edge closes the rectangle (owner ruling 2026-11-15).
+        Assert.Equal("MajorGrid", separator.Style.StyleKey);
+        SceneLine plotTop = lines.Single(line => line.PrimitiveId == "chart:plot:top");
+        Assert.Equal("MajorGrid", plotTop.Style.StyleKey);
+        Assert.Equal(request.PlotBounds.Top + borderHalf, plotTop.From.Y, 6);
+        SceneLine closing = lines.Single(line => line.PrimitiveId == "chart:plot-closing");
+        Assert.Equal("MajorGrid", closing.Style.StyleKey);
+
+        // Each year band and each period cell is boxed at the major weight, which is what
+        // separates the labels (owner ruling 2026-11-15).
+        Assert.Contains(lines, line => line.PrimitiveId.EndsWith(":border:top", StringComparison.Ordinal)
+            && line.Style.StyleKey == "MajorGrid");
+    }
+
+    [Fact]
+    public void The_export_frame_keeps_its_strokes_on_the_outline()
+    {
+        // The inset is a LIVE-sheet rule. An export composition draws its own panel with
+        // nothing abutting the frame, so its geometry must stay exactly where it was --
+        // otherwise the export fidelity contract would move by half a point with no
+        // reported defect behind it.
+        FrameBandsRequest request = CreateRequest();
+        FrameBandsResult result = Build(request).Result!;
+        RectD chart = result.Geometry.ChartBounds;
+        SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+        SceneLine left = lines.Single(line => line.PrimitiveId == "chart:frame:left");
+        SceneLine top = lines.Single(line => line.PrimitiveId == "chart:frame:top");
+        Assert.Equal(chart.Left, left.From.X, 6);
+        Assert.Equal(chart.Top, top.From.Y, 6);
     }
 
     [Fact]
@@ -930,6 +1047,88 @@ public sealed class FrameBandsBuilderTests
             Assert.Contains(parentId, rectIds);
         });
     }
+
+    /// <summary>
+    /// ADR-0048: a LIVE chart's title is an owned textbox in the table's own
+    /// columns, so the table and the title sit to the LEFT of the plot. The
+    /// border must enclose them, or the chart reads as two unrelated objects.
+    /// </summary>
+    [Fact]
+    public void The_outer_frame_encloses_the_data_panel_a_live_chart_supplies()
+    {
+        // The live shape of the request: the panel bounds ARE the plot bounds (a
+        // live chart's panel is the worksheet's own cells, so the frame falls back
+        // to the plot), and the visible table is to the LEFT of the plot.
+        FrameBandsRequest request =
+            CreateRequest() with
+            {
+                PanelBounds = new RectD(100, 100, 300, 100),
+                DataPanelBounds = new RectD(-200, 100, 200, 100),
+            };
+
+        FrameBandsResult result = Build(request).Result!;
+        RectD bounds = result.Geometry.ChartBounds;
+
+        // The top and bottom rules now START at the table's first column, so
+        // they cross the columns between the table and the plot.
+        SceneLine top = FrameLine(result, "chart:frame:top");
+        Assert.Equal(-200, top.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, top.To!.X, precision: 9);
+
+        SceneLine bottom = FrameLine(result, "chart:frame:bottom");
+        Assert.Equal(-200, bottom.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, bottom.To!.X, precision: 9);
+
+        // The vertical rule closes the rectangle at the table's first column, and
+        // the chart's own top and bottom are unchanged.
+        SceneLine left = FrameLine(result, "chart:frame:left");
+        Assert.Equal(-200, left.From!.X, precision: 9);
+        Assert.Equal(-200, left.To!.X, precision: 9);
+        Assert.Equal(bounds.Top, left.From!.Y, precision: 9);
+        Assert.Equal(bounds.Bottom, left.To!.Y, precision: 9);
+
+        // The right rule is where it always was.
+        SceneLine right = FrameLine(result, "chart:frame:right");
+        Assert.Equal(bounds.Right, right.From!.X, precision: 9);
+
+        // The BACKGROUND is not the union: a background over the table would
+        // paint the user's own cells, so only the border grew.
+        SceneRect background = result.Primitives.OfType<SceneRect>()
+            .Single(rect => string.Equals(rect.PrimitiveId, "chart:background", StringComparison.Ordinal));
+        Assert.Equal(bounds.Left, background.Bounds.Left, precision: 9);
+        Assert.NotEqual(-200, background.Bounds.Left, precision: 9);
+    }
+
+    /// <summary>
+    /// The counterweight to the test above: with no data panel supplied - which
+    /// is what the EXPORT compositions do, because they draw their own panel -
+    /// the border is exactly where it was.
+    /// </summary>
+    [Fact]
+    public void The_outer_frame_is_unchanged_when_no_data_panel_is_supplied()
+    {
+        FrameBandsRequest request = CreateRequest() with { PanelBounds = new RectD(100, 100, 300, 100) };
+
+        FrameBandsResult result = Build(request).Result!;
+        RectD bounds = result.Geometry.ChartBounds;
+
+        SceneLine top = FrameLine(result, "chart:frame:top");
+        Assert.Equal(bounds.Left, top.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, top.To!.X, precision: 9);
+
+        SceneLine bottom = FrameLine(result, "chart:frame:bottom");
+        Assert.Equal(bounds.Left, bottom.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, bottom.To!.X, precision: 9);
+
+        SceneLine left = FrameLine(result, "chart:frame:left");
+        Assert.Equal(bounds.Left, left.From!.X, precision: 9);
+        Assert.Equal(bounds.Top, left.From!.Y, precision: 9);
+        Assert.Equal(bounds.Bottom, left.To!.Y, precision: 9);
+    }
+
+    private static SceneLine FrameLine(FrameBandsResult result, string primitiveId) =>
+        result.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, primitiveId, StringComparison.Ordinal));
 
     private sealed class FixedMeasurer(Func<string, double> measure) : ITextWidthMeasurer
     {

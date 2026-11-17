@@ -30,9 +30,14 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome initialised = initialiser.Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
+            // ADR-0055: the pack this test loads would otherwise protect the sheet on its own
+            // background refresh and refuse this test's next insert with TargetProtected. This test
+            // is about the inserter, so it turns the chart lock off through the user switch.
+            OfficeFixture.DisableChartProtection(workbook);
+
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
-            var shapesBefore = sheet.Shapes.Count;
+            var chartShapes = new ExcelShapeWriter(fixture.Excel);
             var inserter = new ExcelGanttRowInserter(fixture.Excel);
 
             GanttRowInsertOutcome activity = inserter.Insert(
@@ -56,13 +61,27 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(milestone.BodyIndex > activity.BodyIndex);
             Assert.True(delineator.BodyIndex > milestone.BodyIndex);
             Assert.True(table.ListRows.Count >= delineator.BodyIndex);
-            Assert.Equal(shapesBefore, sheet.Shapes.Count);
+
+            // The CHART did not render. Asserted on the add-in's OWNED shapes rather than on
+            // `Worksheet.Shapes.Count`, because Excel itself materialises a legacy Forms
+            // control named `Drop Down 1` on this sheet once a validated cell of the Type
+            // column is selected (measured 2026-11-14: 0 shapes after the first insert, 1
+            // after the first row selection). That control is host chrome for the in-cell
+            // list; it is not a chart shape, it is not the add-in's to delete, and counting
+            // it made this test fail on a correct product. `ListOwned` is exactly the set the
+            // refresh creates and reconciles, so it is the set a command must leave alone.
+            Assert.Empty(chartShapes.ListOwned());
             Assert.Contains(
                 workbook.Names.Cast<Excel.Name>(),
                 name => string.Equals(name.Name, GanttWorkbookContract.TypeOptionsDefinedName, StringComparison.OrdinalIgnoreCase));
             Excel.Name typeOptions = workbook.Names.Item(GanttWorkbookContract.TypeOptionsDefinedName);
             Assert.Contains(GanttWorkbookContract.ConfigSheetName, typeOptions.RefersTo, StringComparison.Ordinal);
-            Assert.Contains("$B$2:$B$17", typeOptions.RefersTo, StringComparison.Ordinal);
+            // The range is derived from the catalogue rather than hard-coded:
+            // the type count moves with the catalogue (R5.6a added
+            // CustomMilestone), and a pinned range would fail on the next
+            // legitimate type addition instead of on a real defect.
+            string expectedTypeRange = $"$B$2:$B${GanttCatalogues.TypeRows.Count + 1}";
+            Assert.Contains(expectedTypeRange, typeOptions.RefersTo, StringComparison.Ordinal);
             Excel.ListColumn typeColumn = table.ListColumns["Type"];
             Assert.NotNull(typeColumn.DataBodyRange);
             Excel.Validation validation = typeColumn.DataBodyRange.Validation;
@@ -98,6 +117,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
 
@@ -120,6 +140,63 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             // stale and only the live Office gate caught it.
             Assert.Equal(GanttTableSchema.Default.Columns.Count, table.DataBodyRange.Columns.Count);
             AssertRow(table.ListRows[1], "As-Planned Activity", "AsPlannedActivity", FixedId('0').Value);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// A second workbook opened in the SAME Excel session initialises and accepts its
+    /// first activity, with the first workbook's table and names still in the instance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Live reproduction attempt for operation <c>GC-20261110-175027-358-01</c>
+    /// (2026-11-10), where <c>Validation.Add</c> threw <c>0x800A03EC</c> while the Type
+    /// column's list rule was re-applied after "a new table and a new activity".
+    /// </para>
+    /// <para>
+    /// The hypothesis this pins: every other insert test owns ONE workbook, and a
+    /// re-created table inside one workbook turned out not to be reachable — see the
+    /// R5.16 work item, where deleting <c>_GanttCreatorConfig</c> to make a second
+    /// Initialise legal is itself refused by the host with the same <c>0x800A03EC</c>.
+    /// The owner's session had a 90-shape chart at 16:45 and a one-row table at 17:50
+    /// with no second XLL open line, which is exactly what a second workbook in the same
+    /// Excel instance looks like.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task A_second_workbook_in_the_same_session_accepts_its_first_activity()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook first = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(first);
+
+            Excel.Workbook second = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(second);
+
+            using var scope = new OfficeFixture.ComScope();
+            var sheet = (Excel.Worksheet)scope.Track(second.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = scope.Track(sheet.ListObjects[GanttTableSchema.TableName]);
+
+            GanttRowInsertOutcome outcome = new ExcelGanttRowInserter(fixture.Excel).Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('5'));
+
+            Assert.True(outcome.Succeeded, $"Insert refused: {outcome.Refusal}");
+            Assert.Equal(1, table.ListRows.Count);
+            AssertRow(table.ListRows[1], "As-Planned Activity", "AsPlannedActivity", FixedId('5').Value);
         }
         finally
         {
@@ -159,6 +236,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
 
             // The workbook is NOT tracked: CreateWorkbook hands that proxy to the
             // fixture, which closes and releases it during teardown, and tracking it
@@ -319,6 +397,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
 
             using var scope = new OfficeFixture.ComScope();
             var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
@@ -489,6 +568,126 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// An appended activity must not inherit the pastel-red error fill of the row above it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reported defect.</b> Adding an activity at the bottom of the table painted
+    /// a red block on the blank rows below the last activity, and each further add put one
+    /// more red row below the previous one. Nothing in the add-in writes there: the
+    /// worksheet-row insert asked Excel to copy the format of the row above
+    /// (<c>xlFormatFromLeftOrAbove</c>), which is the last body row, and Excel copies the
+    /// cell interiors with the format. The pastel red on that row's <c>Start</c> and
+    /// <c>Finish</c> cells was therefore cloned into the new row — two columns wide,
+    /// exactly one row lower, and further down with every add.
+    /// </para>
+    /// <para>
+    /// <b>Why live.</b> The copy origin is an Excel decision made inside
+    /// <c>Rows[n].Insert</c>; no contract test can observe it, because the adapter's
+    /// insert seam is substituted in every behavioural test.
+    /// </para>
+    /// <para>
+    /// <b>Why the copy origin alone was not enough (measured 2026-11-16).</b>
+    /// <c>xlFormatFromRightOrBelow</c> stopped the row BELOW the table from being painted,
+    /// which is what the original report described — but the new body row still arrives
+    /// carrying the fill, because <c>ListRows.Add</c> formats it from the last body row. The
+    /// reported symptom is a <b>milestone</b>: a milestone reads <c>Start</c> only, so a
+    /// pastel <c>Finish</c> cell on a milestone is never a finding — it was an inherited fill
+    /// that the report's tracker could not clear, because the tracker only clears addresses it
+    /// wrote. The adapter now clears the new row's fill explicitly
+    /// (<c>ExcelGanttRowInserter.ClearRowFill</c>), and that is what the milestone assertion
+    /// pins. The milestone's <c>Start</c> may legitimately be pink: a milestone with no date
+    /// yet is an error.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task An_appended_row_does_not_clone_the_error_fill_of_the_row_above()
+    {
+        const int pastelRed = 0x00C8C8FF;
+
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(
+                fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            ExcelWorkbookInitialiser initialiser = new(fixture.Excel);
+            WorkbookInitialiseOutcome initialised = initialiser.Initialise();
+            Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
+
+            // ADR-0055: the loaded pack protects the sheet on its own background refresh,
+            // which would refuse this test's insert with TargetProtected.
+            OfficeFixture.DisableChartProtection(workbook);
+
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var inserter = new ExcelGanttRowInserter(fixture.Excel);
+
+            GanttRowInsertOutcome first = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('a'));
+            Assert.True(first.Succeeded, $"first insert refused: {first.Refusal}");
+
+            // Paint the last body row exactly as the error report does, so the row the
+            // milestone is created in is formatted from a pink row.
+            Excel.Range lastRow = table.ListRows[table.ListRows.Count].Range;
+            lastRow.Cells[1, ColumnIndex(table, "Start")].Interior.Color = pastelRed;
+            lastRow.Cells[1, ColumnIndex(table, "Finish")].Interior.Color = pastelRed;
+
+            GanttRowInsertOutcome milestone = inserter.Insert(
+                GanttEntityType.AsPlannedMilestone,
+                () => FixedId('b'));
+            Assert.True(milestone.Succeeded, $"milestone insert refused: {milestone.Refusal}");
+
+            // The reported defect: a milestone has no use for Finish, so a pastel Finish cell
+            // on a milestone row is never a finding - it is the inherited fill.
+            Excel.Range milestoneRow = table.ListRows[table.ListRows.Count].Range;
+            Excel.Range milestoneFinish = milestoneRow.Cells[1, ColumnIndex(table, "Finish")];
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(milestoneFinish.Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
+
+            // The original half of the report: the rows BELOW the table stay clean.
+            int belowTableRow = table.Range.Row + table.Range.Rows.Count;
+            Excel.Range belowTable = sheet.Rows[belowTableRow];
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(belowTable.Cells[1, ColumnIndex(table, "Start")].Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(belowTable.Cells[1, ColumnIndex(table, "Finish")].Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
+
+            _output.WriteLine(
+                "The milestone's Finish cell is clean, and the rows below the table kept no fill.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>Resolves a table column's one-based index from its header name.</summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="headerName">The schema column name.</param>
+    /// <returns>The one-based index.</returns>
+    private static int ColumnIndex(Excel.ListObject table, string headerName)
+    {
+        for (int index = 1; index <= table.ListColumns.Count; index++)
+        {
+            if (string.Equals(table.ListColumns[index].Name, headerName, StringComparison.Ordinal))
+            {
+                return index;
+            }
+        }
+
+        throw new InvalidOperationException($"'{headerName}' is not a column of '{table.Name}'.");
+    }
+
     private static int RequiredBodyIndex(GanttRowInsertOutcome outcome)
     {
         Assert.True(outcome.Succeeded, $"Insert refused: {outcome.Refusal}");
@@ -496,50 +695,52 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         return outcome.BodyIndex.Value;
     }
 
-    private static void AssertId(Excel.ListRow row, string id)
-    {
-        Assert.Equal(id, Convert.ToString(
-            row.Range.Cells[1, 1].Value2,
-            System.Globalization.CultureInfo.InvariantCulture));
-    }
+    private static void AssertId(Excel.ListRow row, string id) =>
+        Assert.Equal(id, ColumnValue(row.Range, "Id"));
 
     private static void AssertRow(Excel.ListRow row, string type, string styleKey, string id)
     {
         Excel.Range range = row.Range;
 
-        // Resolved by COLUMN NAME, never by a literal index. R4.7A inserted
-        // SiblingOrder after ParentId, which moved StyleKey from index 9 to 10
-        // and left this helper reading a blank cell: the assertion compared the
-        // expected style key against null and passed for the wrong reason on
-        // every earlier run. R4.7C inserted Duration after Finish, moving it to 11,
-        // and the cross-check below caught that rather than letting it pass.
-        // Excel's 1-based Cells indices are offset by the header row, hence the +1.
-        Assert.Equal(id, ColumnValue(range, "Id", 1));
-        Assert.Equal(type, ColumnValue(range, "Type", 4));
-        Assert.Equal(styleKey, ColumnValue(range, "StyleKey", 11));
+        // Resolved by NAME, never by a literal index, and cross-checked against the
+        // schema inside ColumnValue. Two generations of this helper went stale the other
+        // way: R4.7A moved StyleKey from 9 to 10, and R5.18k reordered the table so Id
+        // sits at 6 where the literal still said 1. The cross-check caught both, which
+        // is why it stays and the literals do not.
+        Assert.Equal(id, ColumnValue(range, "Id"));
+        Assert.Equal(type, ColumnValue(range, "Type"));
+        Assert.Equal(styleKey, ColumnValue(range, "StyleKey"));
     }
 
     /// <summary>
-    /// Reads one cell by the column's position in the workbook schema, so a future
-    /// column insertion cannot silently shift what this helper reads.
+    /// Reads one cell by COLUMN NAME, resolved through the workbook's own table and
+    /// cross-checked against the schema's position for the same name.
     /// </summary>
     /// <param name="rowRange">The row's range.</param>
     /// <param name="columnName">The schema column name.</param>
-    /// <param name="expectedIndex">The 1-based Excel index the schema implies, asserted as a cross-check.</param>
     /// <returns>The cell's text.</returns>
-    private static string ColumnValue(Excel.Range rowRange, string columnName, int expectedIndex)
+    /// <remarks>
+    /// The cross-check is the point of this helper: both sides resolve the name
+    /// independently — the workbook through its ListObject and the schema through its
+    /// own order — so a mismatch means the two have diverged, which is a defect rather
+    /// than a stale expectation. The previous signature took the index as an argument,
+    /// which made every caller a place to keep a literal in step with the schema.
+    /// </remarks>
+    private static string ColumnValue(Excel.Range rowRange, string columnName)
     {
-        var index = GanttTableSchema.Default.Columns
+        Excel.ListObject table = rowRange.ListObject!;
+        Excel.ListColumns columns = table.ListColumns;
+        int liveIndex = columns[columnName].Index;
+
+        int schemaIndex = GanttTableSchema.Default.Columns
             .Select((column, position) => (column.Name, Position: position))
             .Single(entry => string.Equals(entry.Name, columnName, StringComparison.Ordinal))
-            .Position;
+            .Position + 1;
 
-        // The cross-check is the point: a mismatch here means the workbook and the
-        // schema have diverged, which is a defect rather than a stale literal.
-        Assert.Equal(expectedIndex, index + 1);
+        Assert.Equal(schemaIndex, liveIndex);
 
         return Convert.ToString(
-            rowRange.Cells[1, index + 1].Value2,
+            rowRange.Cells[1, liveIndex].Value2,
             System.Globalization.CultureInfo.InvariantCulture);
     }
 }

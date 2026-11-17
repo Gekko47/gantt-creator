@@ -15,4 +15,11 @@
   <ItemGroup>
     <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The documented test seams on the Excel adapters are internal virtual members;
+         the contract tests subclass them to prove the bulk-write behaviour without COM. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GanttCreator.Office.ContractTests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

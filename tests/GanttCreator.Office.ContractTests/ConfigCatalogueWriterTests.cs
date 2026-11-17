@@ -66,6 +66,22 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_formats_the_settings_value_column_as_text_and_no_other_column()
+    {
+        // R5.6d: the settings table has TWO columns (SettingKey, SettingValue),
+        // so the Value column is the second one. The guard used to require
+        // three columns, so the formatting never ran: Excel coerced the
+        // free-text settings (the plot dates) by locale and the chart
+        // -appearance editors - the only path that rewrites the settings
+        // table - surfaced it as errors in the sheet.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        string formatted = Assert.Single(fake.TextFormattedColumns);
+        Assert.Equal("SettingValue", formatted);
+    }
+
+    [Fact]
     public void Write_materialises_the_types_from_the_code_owned_catalogue_only()
     {
         var fake = new ConfigSheetFake();
@@ -409,17 +425,18 @@ public class ConfigCatalogueWriterTests
             "Inside",
             "Auto Inside",
             "Fill, Stroke",
+            "Solid",
         ];
         fake.Tables[1].Body.Add(userStyle);
 
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
-        Assert.Equal(16, fake.Tables[1].Body.Count);
+        Assert.Equal(18, fake.Tables[1].Body.Count);
 
         var outcome = ConfigGraph.BuildWriter(fake).Write();
 
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         Assert.Equal(5, fake.Tables.Count);
-        Assert.Equal(16, fake.Tables[1].Body.Count);
+        Assert.Equal(18, fake.Tables[1].Body.Count);
         Assert.Equal(userStyle, fake.Tables[1].Body[^1]);
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
     }
@@ -518,7 +535,7 @@ public class ConfigCatalogueWriterTests
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         Assert.Equal("Bottom", CellText(fake.Tables[3].Body[index][1]));
         ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
-        Assert.True(read.Succeeded);
+        Assert.True(read.Succeeded, $"Read() refused: {read.Refusal}");
         Assert.Equal("Bottom", read.Settings["LegendPosition"]);
     }
 
@@ -582,7 +599,7 @@ public class ConfigCatalogueWriterTests
 
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
-        Assert.True(read.Succeeded);
+        Assert.True(read.Succeeded, $"Read() refused: {read.Refusal}");
         Assert.Equal("Explicit", read.Settings["PlotStartMode"]);
         Assert.Equal("Explicit", read.Settings["PlotFinishMode"]);
         Assert.Equal("01/01/2026", read.Settings["PlotStartDate"]);
@@ -661,6 +678,267 @@ public class ConfigCatalogueWriterTests
         }
     }
 
+    [Fact]
+    public void WriteTheme_writes_the_chart_chrome_colours_to_the_settings_table()
+    {
+        // R5.6a: the chart-chrome colours are settings, so the theme write
+        // persists them beside the themed styles and metrics.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+                ["AlternateBandColour"] = "#E0E0E0",
+            });
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal("#F0F0F0", SettingValue(settings, "ChartBackgroundColour"));
+        Assert.Equal("#E0E0E0", SettingValue(settings, "AlternateBandColour"));
+    }
+
+    [Fact]
+    public void WriteTheme_preserves_the_settings_the_chrome_edit_does_not_carry()
+    {
+        // The chart title and the time scale belong to the workbook, not to
+        // the colour edit, so a colour change must not reset them.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        int titleIndex = settings.Body.ToList().FindIndex(
+            row => (string?)row[0] == "ChartTitle");
+        settings.Body[titleIndex][1] = "My Report";
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+            });
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake written = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal("My Report", SettingValue(written, "ChartTitle"));
+        Assert.Equal("#F0F0F0", SettingValue(written, "ChartBackgroundColour"));
+    }
+
+    [Fact]
+    public void WriteTheme_update_preserves_the_fields_the_edit_does_not_carry()
+    {
+        // R5.6a F2: an update that changes one colour must not reset the
+        // style's pattern, outline width, sizes, or label vocabulary. The
+        // earlier writer rebuilt the whole row from catalogue defaults, so
+        // the "not carried" fields were silently overwritten.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[1].Body.Add(
+        [
+            "UserStyle",
+            "User Style",
+            "#112233",
+            "#445566",
+            "Cross",
+            4.0,
+            0.5,
+            "#FFFFFF",
+            0.75,
+            8.0,
+            12.0,
+            "Inside",
+            "Auto Inside",
+            "Fill, Stroke, Hatch",
+            "Solid",
+        ]);
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Update,
+                "UserStyle",
+                DisplayName: "User Style",
+                FillColour: "#AABBCC",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF")]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        object?[] row = styles.Body[^1];
+        Assert.Equal("#AABBCC", row[2]);
+        Assert.Equal("Cross", row[4]);
+        Assert.Equal(0.75, CellDouble(row[8]));
+        Assert.Equal(8.0, CellDouble(row[9]));
+        Assert.Equal(12.0, CellDouble(row[10]));
+        Assert.Equal("Inside", row[11]);
+        Assert.Equal("Auto Inside", row[12]);
+        Assert.Equal("Fill, Stroke, Hatch", row[13]);
+    }
+
+    /// <summary>
+    /// A built-in preset's theme edit reaches that preset's own row.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The branch no test reached.</b> Every existing theme test either edits only
+    /// the chrome colours or adds a CUSTOM style, so the writer always took the
+    /// "no edit for this preset" arm and rebuilt the row from the catalogue. The arm
+    /// that overwrites a built-in preset's colours — the one the Theme dialog's
+    /// built-in tabs actually drive — had never run in a test.
+    /// </para>
+    /// <para>
+    /// The row is located by its key rather than by position, because the styles table
+    /// also carries the user's custom rows and a positional assertion would pass while
+    /// reading the wrong row.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void WriteTheme_applies_a_built_in_edit_and_takes_an_editable_dash()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit(
+                "DefaultDelineator",
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF",
+                StrokeDash: GanttStrokeDash.Dash)],
+            new Dictionary<string, double>());
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        int index = styles.Body.FindIndex(
+            row => string.Equals(row[0] as string, "DefaultDelineator", StringComparison.Ordinal));
+        Assert.True(index >= 0, "the styles table has no DefaultDelineator row");
+
+        object?[] row = styles.Body[index];
+        Assert.Equal("#112233", row[2]);
+        Assert.Equal("#445566", row[3]);
+        Assert.Equal("#FFFFFF", row[7]);
+        Assert.Equal("Dash", row[14]);
+    }
+
+    /// <summary>
+    /// A dash edit for a style whose dash is code-owned REFUSES the whole request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Refused, not trimmed — and that is the opposite of what I expected.</b> I wrote
+    /// this test expecting the writer to discard the dash and keep the colours; the run
+    /// came back <c>ThemeValidationFailed</c>. The request validator is the single
+    /// authority (<see cref="GanttStyleDashPolicy.IsUserEditable"/> is its only consumer
+    /// besides the reader), and it refuses rather than silently dropping a value the
+    /// caller asked for: a theme edit that carries a line type the reader exact-matches
+    /// against a code-owned preset would otherwise be accepted and then quietly not
+    /// applied, which is the "promised a change and discarded it" defect the policy
+    /// exists to prevent.
+    /// </para>
+    /// <para>
+    /// The cost of that rule is recorded rather than hidden: the writer's own
+    /// <c>IsUserEditable</c> ternary therefore has an arm no request can reach, because
+    /// only the delineator can arrive carrying a dash. The assertion here is on the
+    /// refusal plus the untouched row, which is the behaviour a caller can observe.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void WriteTheme_refuses_a_dash_for_a_style_whose_dash_is_not_editable()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        GanttStylePreset preset = GanttCatalogues.StylePresets.First(
+            candidate => string.Equals(candidate.StyleKey, "AsPlannedActivity", StringComparison.Ordinal));
+        Assert.False(GanttStyleDashPolicy.IsUserEditable(preset.StyleKey));
+        Assert.NotEqual(GanttStrokeDash.LongDash, preset.StrokeDash);
+
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit(
+                preset.StyleKey,
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: string.Empty,
+                StrokeDash: GanttStrokeDash.LongDash)],
+            new Dictionary<string, double>());
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.ThemeValidationFailed, outcome.Refusal);
+
+        // Nothing was written: the row still carries the code-owned preset's values.
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        int index = styles.Body.FindIndex(
+            row => string.Equals(row[0] as string, preset.StyleKey, StringComparison.Ordinal));
+        Assert.True(index >= 0, "the styles table has no row for " + preset.StyleKey);
+
+        object?[] row = styles.Body[index];
+        Assert.Equal(preset.FillColour, row[2]);
+        Assert.Equal(preset.StrokeDash.ToString(), row[14]);
+    }
+
+    [Fact]
+    public void WriteTheme_create_writes_the_carried_pattern_and_sizes()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Create,
+                "UserStyle",
+                DisplayName: "User Style",
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF",
+                HatchPattern: GanttHatchPattern.ForwardDiagonal,
+                StandardOutlinePt: 1.25,
+                ActivityHeightPt: 9.5,
+                MilestoneSizePt: 11,
+                DefaultLabelPosition: GanttLabelPosition.Inside,
+                AllowedLabelPositions: new HashSet<GanttLabelPosition>
+                {
+                    GanttLabelPosition.Auto,
+                    GanttLabelPosition.Inside,
+                })]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        object?[] row = styles.Body[^1];
+        Assert.Equal("UserStyle", row[0]);
+        Assert.Equal("ForwardDiagonal", row[4]);
+        Assert.Equal(1.25, CellDouble(row[8]));
+        Assert.Equal(9.5, CellDouble(row[9]));
+        Assert.Equal(11.0, CellDouble(row[10]));
+        Assert.Equal("Inside", row[11]);
+        Assert.Equal("Auto Inside", row[12]);
+        Assert.Equal("StyleDefined", row[13]);
+    }
+
     private static void AssertContractTable(
         ConfigSheetFake.TableFake table,
         string[] expectedHeaders,
@@ -678,4 +956,32 @@ public class ConfigCatalogueWriterTests
             bool flag => flag ? "TRUE" : "FALSE",
             _ => Convert.ToString(cell, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
         };
+
+    /// <summary>
+    /// Reads one setting's value from a settings-table row set, by key.
+    /// </summary>
+    /// <param name="settings">The settings table.</param>
+    /// <param name="key">The setting key.</param>
+    /// <returns>The stored value, or null when the key is absent.</returns>
+    private static string? SettingValue(ConfigSheetFake.TableFake settings, string key)
+    {
+        foreach (object?[] row in settings.Body)
+        {
+            if ((string?)row[0] == key)
+            {
+                return (string?)row[1];
+            }
+        }
+
+        return null;
+    }
+
+    private static double CellDouble(object? cell) =>
+        cell switch
+        {
+            null => 0,
+            double d => d,
+            _ => Convert.ToDouble(cell, System.Globalization.CultureInfo.InvariantCulture),
+        };
+
 }

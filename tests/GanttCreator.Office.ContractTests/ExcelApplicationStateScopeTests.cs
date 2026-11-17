@@ -129,6 +129,26 @@ public class ExcelApplicationStateScopeTests
 
             SelectionRestored = true;
         }
+
+        /// <summary>How many times the scope gave the selection's reference back.</summary>
+        public int SelectionReleaseCalls { get; private set; }
+
+        /// <summary>The value handed to the release seam.</summary>
+        public object? ReleasedSelection { get; private set; }
+
+        /// <summary>
+        /// Whether the release ran after the restore. The order matters: the restore calls
+        /// <c>Select()</c> on the proxy, so releasing first would use an interface pointer after
+        /// giving it back.
+        /// </summary>
+        public bool SelectionReleasedAfterRestore { get; private set; }
+
+        internal override void ReleaseSelectionProxy(object selection)
+        {
+            SelectionReleaseCalls++;
+            ReleasedSelection = selection;
+            SelectionReleasedAfterRestore = SelectionRestored;
+        }
     }
 
     /// <summary>Applies every suppression the scope offers.</summary>
@@ -363,6 +383,49 @@ public class ExcelApplicationStateScopeTests
 
         Assert.True(scope.ScreenUpdatingState, "An earlier restore must not be masked by the selection failure.");
         Assert.Contains(records, record => record.Contains("selection", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// R5.20 D4: the scope gives the captured selection's COM reference back on dispose, and it
+    /// does so after the restore.
+    /// </summary>
+    /// <remarks>
+    /// Reading <c>Application.Selection</c> hands the scope a new interface pointer it owns.
+    /// Dropping the field instead — the behaviour before this — left one live COM chain per pass,
+    /// Excel's <c>Quit()</c> then returned without terminating the process, and the office gate had
+    /// to force a kill for nearly every test body. That is the D4 leak the ratchet was measuring.
+    /// </remarks>
+    [Fact]
+    public void The_captured_selection_is_released_after_the_restore()
+    {
+        var records = new List<string>();
+        var selection = new object();
+        var scope = new TestableScope(records.Add) { SelectionState = selection };
+        SuppressAll(scope);
+        scope.CaptureSelection();
+
+        scope.Dispose();
+
+        Assert.Equal(1, scope.SelectionReleaseCalls);
+        Assert.Same(selection, scope.ReleasedSelection);
+        Assert.True(
+            scope.SelectionReleasedAfterRestore,
+            "The release must follow the restore; the restore calls Select() on that proxy.");
+    }
+
+    /// <summary>
+    /// A scope that captured no selection has nothing to give back, so it must not call the
+    /// release seam at all — the condition that keeps this from being an unconditional release.
+    /// </summary>
+    [Fact]
+    public void A_scope_that_captured_no_selection_releases_nothing()
+    {
+        var scope = new TestableScope(_ => { });
+        SuppressAll(scope);
+
+        scope.Dispose();
+
+        Assert.Equal(0, scope.SelectionReleaseCalls);
     }
 
     /// <summary>

@@ -36,6 +36,61 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         new(id, RowOwner, layer, from, to, Style);
 
     /// <summary>
+    /// The host-owned class is decided from the scene's own plot bounds, so a primitive
+    /// that spans them on either axis is the only thing Excel is allowed to resize live
+    /// (ADR-0052 D6, amended 2026-11-13).
+    /// </summary>
+    /// <remarks>
+    /// The fixture scene's plot is <c>(10, 10, 80, 80)</c>, so a primitive spanning
+    /// y=10..90 or x=10..90 is host-owned and anything shorter is not. The five
+    /// primitives here are the whole decision surface: a plot-spanning band, a
+    /// plot-spanning vertical delineator and a plot-width horizontal rule take
+    /// <c>xlMoveAndSize</c>; a bar and a rule that stops short of the plot keep
+    /// <c>xlMove</c>, because neither has an extent the host could stretch with the sheet.
+    /// </remarks>
+    [Fact]
+    public void Translate_classifies_only_the_plot_spanning_primitives_as_host_owned()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        GanttScene scene = SceneOf(
+            Rect("chart:band", new RectD(20, 10, 40, 80), ZLayer.AlternateBand),
+            Rect("row-1:bar", new RectD(10, 20, 80, 30)),
+            Line("row-1:delineator", new PointD(50, 10), new PointD(50, 90), ZLayer.Delineator),
+            Line("chart:frame:top", new PointD(10, 10), new PointD(90, 10), ZLayer.Grid),
+            Line("row-1:rule", new PointD(30, 40), new PointD(70, 40), ZLayer.Grid));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+
+        Assert.True(outcome.Complete, "The fixture scene must translate completely.");
+        Assert.True(RequestFor(outcome, "chart:band").HostOwnsExtent);
+        Assert.True(RequestFor(outcome, "row-1:delineator").HostOwnsExtent);
+        Assert.True(RequestFor(outcome, "chart:frame:top").HostOwnsExtent);
+        Assert.False(RequestFor(outcome, "row-1:bar").HostOwnsExtent);
+        Assert.False(RequestFor(outcome, "row-1:rule").HostOwnsExtent);
+    }
+
+    /// <summary>
+    /// A caller that supplies no plot bounds cannot classify anything as host-owned, so a
+    /// shape can never be handed to the host's resize behaviour by accident.
+    /// </summary>
+    [Fact]
+    public void TryTranslate_without_plot_bounds_classifies_nothing_as_host_owned()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+
+        bool translated = renderer.TryTranslate(
+            Rect("chart:band", new RectD(20, 10, 40, 80), ZLayer.AlternateBand),
+            out OfficeShapeRequest? request);
+
+        Assert.True(translated);
+        Assert.NotNull(request);
+        Assert.False(request.HostOwnsExtent);
+    }
+
+    private static OfficeShapeRequest RequestFor(SceneTranslationOutcome outcome, string primitiveId) =>
+        outcome.Requests.Single(request => request.PrimitiveId == primitiveId);
+
+    /// <summary>
     /// R4.6: a rectangle's resolved style must reach the request. Before this row
     /// the renderer dropped the style for every family except text, so a planned
     /// bar, a critical overlay, and a procurement hatch all reached the writer

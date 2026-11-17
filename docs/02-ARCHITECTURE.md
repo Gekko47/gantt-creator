@@ -76,7 +76,7 @@ Required columns:
 | `StrokeColour` | `#RRGGBB` or blank | Per-row outline, hatch, critical, or delineator colour override |
 | `Visible` | Boolean or blank | Blank/true renders; false retains the row without rendering |
 
-Optional columns can be added only by an approved schema ADR, initially `SortOrder` and user notes. Core data columns remain visible; property columns may be shown/hidden using the Ribbon but remain on the same worksheet. Do not introduce one column per critical interval. A critical interval is another event record tied to a lane or parent.
+Optional columns can be added only by an approved schema ADR, initially `SortOrder` and user notes. Core data columns remain on the same worksheet and are never moved to the configuration sheet; every user-visible column, including the core data columns, may be hidden and restored from the Ribbon's Columns control, and zero visible columns is a supported state (ADR-0065). Property columns may be shown/hidden the same way. Do not introduce one column per critical interval. A critical interval is another event record tied to a lane or parent.
 
 Workbook-level configuration uses one worksheet named `_GanttCreatorConfig` with `Visible = xlSheetVeryHidden`, plus workbook-defined names prefixed `GanttCreator.` that point to its validation ranges. Shape ownership uses a deterministic shape name plus tags/alternative text.
 
@@ -189,11 +189,11 @@ Refresh is idempotent:
 6. Apply z-order deterministically.
 7. Restore application state even after failure.
 
-Refresh runs only when the user invokes the Ribbon Refresh command or another explicitly documented render command. Normal cell edits, Type dropdown changes, per-row colour changes, label-position changes, and selection changes must not call the renderer. A failed Refresh leaves the last valid chart unchanged.
+Chart-affecting table edits and successful chart-setting/property commands schedule a coalesced automatic refresh; selection and navigation changes never render. The automatic pass is suspended while the workbook's persisted `AutoRefreshEnabled` switch (schema version 25, R5.20, ADR-0050 D6) is off, in which case only the Ribbon Refresh rebuilds; the explicit Refresh is never suspended, and sheet activation and a workbook switch still reconcile. The Ribbon Refresh command remains a full validation and repair pass. Automatic refresh reads and validates the complete current table/configuration and builds a complete scene before any shape mutation. If blocking errors exist, the last valid chart remains unchanged and the validation state is surfaced without a modal error loop. Excel shape writes are not transactional: if a host failure occurs after mutation begins, report refresh as incomplete, invalidate the in-memory delta cache, and make the next attempt perform a full reconciliation. Do not claim the previous scene survived unless tested compensation actually restored it.
 
 Per-entity Ribbon properties are enabled only for one selected expanded entity row. They write `FillColour`, `StrokeColour`, or `LabelPosition` in the table; they never directly modify the current generated shape. Collapsed roll-ups, multi-row selections, headers, and unsupported entity capabilities disable the corresponding controls.
 
-Prefer updating existing shapes to delete/recreate when it materially preserves user selection and performance. If diff rendering becomes unreliable, replace the complete owned set atomically within the state scope; document the choice with benchmarks.
+Prefer updating existing shapes to delete/recreate when it materially preserves user selection and performance. Delta reconciliation may reduce host writes only after a complete validated scene exists; compare deterministic content signatures as well as stable IDs, and update/create/delete only changed entities. Structural, ordering, chart-wide style/theme, date-range, time-scale, and metrics changes may invalidate broad portions or all of the scene. Cache state is in memory only, never on `_GanttCreatorConfig`; cache misses, workbook switches, initialization, explicit Refresh, or a failed partial write use full reconciliation. Profile before introducing incremental scene construction, and document the dependency/invalidation closure and benchmark evidence.
 
 ## Editable export composition
 

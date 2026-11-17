@@ -91,6 +91,11 @@ public enum GanttRefreshRefusal
     ColumnPresentationRefused = 15,
 
     /// <summary>
+    /// The <c>StyleKey</c> column could not be written.
+    /// </summary>
+    StyleKeyWriteRefused = 17,
+
+    /// <summary>
     /// The add-in's own cell notes could not be brought into line with the current
     /// validation findings.
     /// </summary>
@@ -120,13 +125,34 @@ public enum GanttRefreshRefusal
 /// </param>
 /// <param name="ShapesWritten">How many shape operations the reconciliation performed.</param>
 /// <param name="DurationCellsWritten">How many <c>Duration</c> cells were written.</param>
+/// <param name="StyleKeyCellsWritten">How many <c>StyleKey</c> cells were written.</param>
 public sealed record GanttRefreshOutcome(
     GanttRefreshRefusal? Refusal,
     string? Message,
     IReadOnlyList<GanttValidationIssue> ValidationIssues,
     int ShapesWritten,
-    int DurationCellsWritten)
+    int DurationCellsWritten,
+    int StyleKeyCellsWritten)
 {
+    /// <summary>Scene warnings from the last successfully built scene.</summary>
+    public IReadOnlyList<SceneWarning> Warnings { get; init; } = [];
+
+    /// <summary>
+    /// The inclusive plot start the successful pass rendered, or null when the pass
+    /// wrote no chart.
+    /// </summary>
+    /// <remarks>
+    /// R5.1a: the ribbon's plot-date boxes display the derived date for an end in AUTO
+    /// mode, so the caller needs the range the chart actually used. Carrying it on the
+    /// outcome is what lets the silent path repaint those two boxes without re-reading
+    /// the table and re-deriving the range — the alternative was a full
+    /// <c>RibbonStateService.Refresh()</c> after every automatic pass.
+    /// </remarks>
+    public DateOnly? PlotStart { get; init; }
+
+    /// <summary>The inclusive plot finish the successful pass rendered, or null when unknown.</summary>
+    public DateOnly? PlotFinish { get; init; }
+
     /// <summary>Gets whether the refresh completed.</summary>
     public bool Succeeded => Refusal is null;
 
@@ -156,11 +182,25 @@ public sealed record GanttRefreshOutcome(
     /// <param name="issues">The validation issues found, warnings included.</param>
     /// <param name="shapesWritten">How many shape operations ran.</param>
     /// <param name="durationCellsWritten">How many duration cells were written.</param>
+    /// <param name="styleKeyCellsWritten">How many <c>StyleKey</c> cells were written.</param>
+    /// <param name="warnings">The scene warnings from the successfully built scene, if any.</param>
+    /// <param name="plotStart">The inclusive plot start the scene used, when known.</param>
+    /// <param name="plotFinish">The inclusive plot finish the scene used, when known.</param>
     /// <returns>The successful outcome.</returns>
     public static GanttRefreshOutcome Ok(
         IReadOnlyList<GanttValidationIssue> issues,
         int shapesWritten,
-        int durationCellsWritten) => new(null, null, issues, shapesWritten, durationCellsWritten);
+        int durationCellsWritten,
+        int styleKeyCellsWritten,
+        IReadOnlyList<SceneWarning>? warnings = null,
+        DateOnly? plotStart = null,
+        DateOnly? plotFinish = null) =>
+        new GanttRefreshOutcome(null, null, issues, shapesWritten, durationCellsWritten, styleKeyCellsWritten)
+        {
+            Warnings = warnings ?? [],
+            PlotStart = plotStart,
+            PlotFinish = plotFinish,
+        };
 
     /// <summary>Creates a refusal.</summary>
     /// <param name="refusal">Why the refresh did not complete.</param>
@@ -171,6 +211,7 @@ public sealed record GanttRefreshOutcome(
     /// only for a refusal reached before any worksheet write.
     /// </param>
     /// <param name="shapesWritten">How many shape operations ran before the refusal.</param>
+    /// <param name="styleKeyCellsWritten">How many <c>StyleKey</c> cells were written before the refusal.</param>
     /// <returns>The refusal outcome.</returns>
     /// <remarks>
     /// The counts used to be hardcoded to zero, which made the class's own promise —
@@ -183,12 +224,20 @@ public sealed record GanttRefreshOutcome(
         string message,
         IReadOnlyList<GanttValidationIssue>? issues = null,
         int durationCellsWritten = 0,
-        int shapesWritten = 0) =>
-        // NOTE: the record's positional order is (ShapesWritten, DurationCellsWritten),
-        // which is the REVERSE of this method's parameter order. Named arguments are
-        // used deliberately: passing them positionally swapped the two counts, which
-        // is exactly the class of defect this method was widened to fix.
-        new(refusal, message, issues ?? [], ShapesWritten: shapesWritten, DurationCellsWritten: durationCellsWritten);
+        int shapesWritten = 0,
+        int styleKeyCellsWritten = 0) =>
+        // NOTE: the record's positional order is (ShapesWritten, DurationCellsWritten,
+        // StyleKeyCellsWritten), which is the REVERSE of this method's parameter
+        // order. Named arguments are used deliberately: passing them positionally
+        // swapped the counts, which is exactly the class of defect this method was
+        // widened to fix.
+        new(
+            refusal,
+            message,
+            issues ?? [],
+            ShapesWritten: shapesWritten,
+            DurationCellsWritten: durationCellsWritten,
+            StyleKeyCellsWritten: styleKeyCellsWritten);
 }
 
 /// <summary>

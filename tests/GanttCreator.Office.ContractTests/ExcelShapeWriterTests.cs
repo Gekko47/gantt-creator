@@ -145,6 +145,15 @@ public class ExcelShapeWriterTests
             TestableWriter owner = this;
             string name = string.Empty;
             string alternativeText = string.Empty;
+
+            // Placement is a real write on the create path and a gettable property, so
+            // it is modelled with a backing store: the assertion is that the adapter
+            // placed the shape with xlMove, not that Moq accepted a set.
+            _ = mock.SetupProperty(s => s.Placement, Excel.XlPlacement.xlMoveAndSize);
+
+            // ADR-0055: `Locked` is written by the ownership stamp, so it needs a backing
+            // store for the same reason Placement does.
+            _ = mock.SetupProperty(s => s.Locked, false);
             _ = mock.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => name = value);
             _ = mock.SetupGet(s => s.Name).Returns(() => name);
             _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
@@ -179,6 +188,18 @@ public class ExcelShapeWriterTests
         }
     }
 
+    /// <summary>
+    /// A writer whose name indexer the test drives directly, so the honest
+    /// "the host raises for a missing name" behaviour can be proved without a host.
+    /// </summary>
+    /// <param name="lookup">The indexed lookup to perform.</param>
+    private sealed class LookupWriter(Func<Excel.Shapes, string, Excel.Shape?> lookup)
+        : ExcelShapeWriter(ActiveApplication().Object, ClearGuard().Object)
+    {
+        internal override Excel.Shape? GetShapeByExactName(Excel.Shapes shapes, string name) =>
+            lookup(shapes, name);
+    }
+
     private static Mock<IWorksheetProtectionGuard> ClearGuard()
     {
         var guard = new Mock<IWorksheetProtectionGuard>();
@@ -201,8 +222,271 @@ public class ExcelShapeWriterTests
         double x = 10,
         double y = 20,
         double width = 100,
-        double height = 30) =>
-        new(id, OfficeShapeKind.Rectangle, new OfficeShapeGeometry(Bounds: new RectD(x, y, width, height)), ZLayer.ActivityBody);
+        double height = 30,
+        bool hostOwnsExtent = false) =>
+        new(
+            id,
+            OfficeShapeKind.Rectangle,
+            new OfficeShapeGeometry(Bounds: new RectD(x, y, width, height)),
+            ZLayer.ActivityBody,
+            HostOwnsExtent: hostOwnsExtent);
+
+    /// <summary>
+    /// A missing name resolves to <see langword="null"/>, not an escaping COM error.
+    /// </summary>
+    /// <remarks>
+    /// The indexed lookup is the O(1) replacement for the O(N) name scan, and the host
+    /// reports "no such shape" by raising rather than returning null. Every caller
+    /// (create's already-exists check, update, delete, the z-order preflight) depends on
+    /// the null contract, so the miss is pinned here.
+    /// </remarks>
+    /// <remarks>
+    /// <b>Measured encodings.</b> Excel 16.0 x64 raises
+    /// <see cref="ArgumentException"/> ("The item with the specified name wasn't found.",
+    /// 0x80070057) from <c>Shapes.Item(name)</c>; <see cref="InvalidOperationException"/>
+    /// and <see cref="System.Runtime.InteropServices.COMException"/> are the other shapes
+    /// the interop boundary produces. Every one of them is the miss, and an escaping
+    /// exception crashed `Create`'s already-exists check in a live session.
+    /// </remarks>
+    [Fact]
+    public void A_name_the_host_reports_as_missing_resolves_to_null()
+    {
+        var writer = new LookupWriter((_, _) => throw new ArgumentException("The item with the specified name wasn't found."));
+
+        Assert.Null(writer.FindShapeByName(new Mock<Excel.Shapes>().Object, "row-1:bar"));
+    }
+
+    /// <summary>A miss encoded as an operation-invalid exception is the same miss.</summary>
+    [Fact]
+    public void A_miss_reported_as_invalid_operation_resolves_to_null()
+    {
+        var writer = new LookupWriter((_, _) => throw new InvalidOperationException("The specified name is not defined."));
+
+        Assert.Null(writer.FindShapeByName(new Mock<Excel.Shapes>().Object, "row-1:bar"));
+    }
+
+    /// <summary>A name the host resolves is returned by the indexed lookup.</summary>
+    [Fact]
+    public void A_name_the_host_resolves_is_returned_by_the_indexed_lookup()
+    {
+        Excel.Shape expected = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new LookupWriter((_, _) => expected);
+
+        Assert.Same(expected, writer.FindShapeByName(new Mock<Excel.Shapes>().Object, "row-1:bar"));
+    }
+
+    /// <summary>
+    /// Verified skip compares the live box and placement against the scene, and refuses
+    /// to match a shape the host has moved or left on its default placement.
+    /// </summary>
+    /// <remarks>
+    /// The signature only proves the payload is unchanged. This is the check that makes
+    /// skipping safe when the host itself moved the shape: a row insert, a hidden row or
+    /// a user drag shows up here as a mismatch and forces the rewrite.
+    /// </remarks>
+    [Fact]
+    public void Geometry_matches_only_when_the_box_and_placement_match()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest();
+
+        // A fresh shape sits at 0,0 on the host's default placement.
+        Assert.False(writer.GeometryMatches(request));
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.True(writer.GeometryMatches(request));
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+
+        // The host moves it, as a row insert would.
+        existing.Top = 21f;
+        Assert.False(writer.GeometryMatches(request));
+
+        // The box is right but the placement is not, so it must still be rewritten.
+        existing.Top = 20f;
+        existing.Placement = Excel.XlPlacement.xlMoveAndSize;
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// A created shape is placed with <c>xlMove</c>, so the host moves it with its cell
+    /// but never resizes it when a row it spans is hidden, shown, or re-heighted.
+    /// </summary>
+    /// <remarks>
+    /// The scene owns the geometry. The host's default <c>xlMoveAndSize</c> tied the
+    /// displayed height to the rows the shape spans, and the measured consequence was a
+    /// splitter band at 18pt in the scene that rendered four rows tall in one state and
+    /// a thin line in another. The insert behaviour the row inserter relies on is the
+    /// MOVE half, which <c>xlMove</c> keeps.
+    /// </remarks>
+    [Fact]
+    public void Create_places_the_shape_with_move_not_move_and_size()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.Equal(Excel.XlPlacement.xlMove, created.Placement);
+    }
+
+    /// <summary>
+    /// An update re-places a shape created under the old rule, so an existing workbook
+    /// heals on its next Refresh instead of needing its shapes rebuilt.
+    /// </summary>
+    [Fact]
+    public void An_update_replaces_a_move_and_size_placement_with_move()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(RectangleRequest());
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+    }
+
+    /// <summary>
+    /// A host-owned shape — one that spans the plot's full height — is created with
+    /// <c>xlMoveAndSize</c>, so Excel stretches it live when a group collapses or
+    /// expands (ADR-0052 D6–D7).
+    /// </summary>
+    /// <remarks>
+    /// This is the opposite answer to the bar next door, and deliberately so. The scene's
+    /// height for this class is derived from the same measured rows the host ties the
+    /// shape to, so host resizing is the chart following its own rows rather than the
+    /// renderer losing control of its output.
+    /// </remarks>
+    [Fact]
+    public void Create_places_a_host_owned_shape_with_move_and_size()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest(hostOwnsExtent: true));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.Equal(Excel.XlPlacement.xlMoveAndSize, created.Placement);
+    }
+
+    /// <summary>
+    /// An update heals a host-owned shape that ADR-0052 had re-placed with <c>xlMove</c>
+    /// back to <c>xlMoveAndSize</c>, so an existing workbook regains the live stretch on
+    /// its next Refresh instead of needing its shapes rebuilt.
+    /// </summary>
+    [Fact]
+    public void An_update_heals_a_host_owned_shape_to_move_and_size()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        existing.Placement = Excel.XlPlacement.xlMove;
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(RectangleRequest(hostOwnsExtent: true));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(Excel.XlPlacement.xlMoveAndSize, existing.Placement);
+    }
+
+    /// <summary>
+    /// A host-owned shape matches within the stated host-resize tolerance and stops
+    /// matching just outside it, so a collapse/expand cycle does not force a rewrite
+    /// while a real geometry change still does (ADR-0052 D8).
+    /// </summary>
+    [Fact]
+    public void A_host_owned_shape_matches_within_the_host_resize_tolerance()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest(hostOwnsExtent: true);
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.Equal(Excel.XlPlacement.xlMoveAndSize, existing.Placement);
+
+        // Excel resized the shape proportionally, as a collapse would: inside the
+        // tolerance is a match, because that drift is the host's own rounding.
+        existing.Height = 30f + (float)(HostOwnedGeometry.HostResizeTolerancePt * 0.8);
+        Assert.True(writer.GeometryMatches(request));
+
+        // Outside the tolerance is a real difference the scene must correct.
+        existing.Height = 30f + (float)(HostOwnedGeometry.HostResizeTolerancePt * 1.2);
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// The wider host-resize tolerance is scoped to the host-owned class and must not
+    /// leak to a scene-owned shape, whose height the scene still owns exactly.
+    /// </summary>
+    [Fact]
+    public void A_scene_owned_shape_is_not_rescued_by_the_host_resize_tolerance()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest();
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+
+        existing.Height = 30f + (float)(HostOwnedGeometry.HostResizeTolerancePt * 0.8);
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// A host-owned shape left on <c>xlMove</c> does not match, because the live stretch
+    /// this class exists to restore is absent and only a rewrite re-applies it.
+    /// </summary>
+    [Fact]
+    public void A_host_owned_shape_on_move_placement_does_not_match()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest(hostOwnsExtent: true);
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.True(writer.GeometryMatches(request));
+
+        existing.Placement = Excel.XlPlacement.xlMove;
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// The move-only update writes the box and placement and touches NEITHER text nor style.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the cost that matters (ADR-0053): a relocation writes geometry for every
+    /// primitive in the moved window, and a full update would re-apply fill, stroke, hatch,
+    /// font, text, alignment and colour to each — measured ~15–18 ms per primitive against
+    /// ~0.5 ms for a move.
+    /// </para>
+    /// <para>
+    /// The assertion is on the two recordings a full update populates: <c>Requests</c> (the
+    /// content write) and <c>StyledRequests</c> (the style write). The first call below is a
+    /// full update, so the fixtures are proven non-vacuous before the move is measured.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void UpdateGeometry_moves_the_shape_without_re_applying_text_or_style()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome full = writer.Update(RectangleRequest());
+        Assert.True(full.Succeeded, full.Refusal?.ToString());
+        Assert.NotEmpty(writer.StyledRequests);
+
+        writer.StyledRequests.Clear();
+        writer.Requests.Clear();
+
+        ShapeWriteOutcome moved = writer.UpdateGeometry(RectangleRequest(x: 55, y: 66));
+
+        Assert.True(moved.Succeeded, moved.Refusal?.ToString());
+        Assert.Empty(writer.StyledRequests);
+        Assert.Empty(writer.Requests);
+        Assert.Equal(55f, existing.Left);
+        Assert.Equal(66f, existing.Top);
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+    }
 
     [Fact]
     public void Create_writes_the_primitive_id_as_the_shape_name_and_the_tag_as_the_alternative_text()
@@ -937,7 +1221,10 @@ public class ExcelShapeWriterTests
     public void Create_refuses_an_identifier_longer_than_the_host_name_limit_before_creating_anything()
     {
         var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
-        var tooLong = new string('r', ExcelShapeWriter.MaxShapeNameLength + 1);
+
+        // In the role-derived form the writer creates, so the length rule is what the
+        // refusal is about rather than the identifier-form rule.
+        string tooLong = "row-1:" + new string('r', ExcelShapeWriter.MaxShapeNameLength - 5);
 
         ShapeWriteOutcome outcome = writer.Create(RectangleRequest(id: tooLong));
 
@@ -953,7 +1240,7 @@ public class ExcelShapeWriterTests
     public void Create_accepts_an_identifier_exactly_at_the_host_name_limit()
     {
         var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
-        var atLimit = new string('r', ExcelShapeWriter.MaxShapeNameLength);
+        string atLimit = "row-1:" + new string('r', ExcelShapeWriter.MaxShapeNameLength - 6);
 
         ShapeWriteOutcome outcome = writer.Create(RectangleRequest(id: atLimit));
 
@@ -1030,18 +1317,26 @@ public class ExcelShapeWriterTests
         Assert.Empty(writer.ListOwned());
     }
 
+    /// <remarks>
+    /// The names are in the two forms this writer actually creates -- a role-derived
+    /// <c><owner>:<role></c> and the chart title -- because the scan reads a
+    /// shape's tag only for names in those forms (ADR-0054, O4) and the writer refuses to
+    /// create anything else. A sentinel whose name is also outside the forms is still
+    /// present, and must still be excluded: that is the "user's own drawing" case the
+    /// name pre-filter is mostly for.
+    /// </remarks>
     [Fact]
     public void ListOwned_returns_only_validly_tagged_shapes_in_ordinal_name_order()
     {
         var writer = new TestableWriter(
             ActiveApplication().Object,
             ClearGuard().Object,
-            NewShape("z-last", ShapeOwnershipTag.ForPrimitiveId("z-last")),
+            NewShape("row-2:z-last", ShapeOwnershipTag.ForPrimitiveId("row-2:z-last")),
             NewShape("user-shape", null),
-            NewShape("a-first", ShapeOwnershipTag.ForPrimitiveId("a-first")),
-            NewShape("broken", ShapeOwnershipTag.Prefix + "not-a-hash"));
+            NewShape("row-1:a-first", ShapeOwnershipTag.ForPrimitiveId("row-1:a-first")),
+            NewShape("row-3:broken", ShapeOwnershipTag.Prefix + "not-a-hash"));
 
-        Assert.Equal(["a-first", "z-last"], writer.ListOwned());
+        Assert.Equal(["row-1:a-first", "row-2:z-last"], writer.ListOwned());
     }
 
     private static Excel.Shape NewShape(
@@ -1059,7 +1354,17 @@ public class ExcelShapeWriterTests
         string currentAlternativeText = alternativeText ?? string.Empty;
         float currentLeft = 0f;
         float currentTop = 0f;
+        float currentWidth = 0f;
+        float currentHeight = 0f;
         var shape = new Mock<Excel.Shape>();
+
+        // Seeded with the host's default so a test can prove the update HEALS a shape
+        // created before the placement rule changed.
+        _ = shape.SetupProperty(s => s.Placement, Excel.XlPlacement.xlMoveAndSize);
+
+        // ADR-0055: a shape the host already holds is UNLOCKED until the back-fill runs, so a
+        // test can tell "locked from birth" from "locked by the one-time sweep".
+        _ = shape.SetupProperty(s => s.Locked, false);
         _ = shape.SetupGet(s => s.Name).Returns(() => currentName);
         _ = shape.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => currentName = value);
         _ = shape.SetupGet(s => s.AlternativeText).Returns(() => currentAlternativeText);
@@ -1067,13 +1372,19 @@ public class ExcelShapeWriterTests
             .Callback<string>(value => currentAlternativeText = value);
         // Geometry is recorded through backing fields so a test can assert that an
         // update actually MOVED the shape, rather than inferring it from a success
-        // flag. A mock with no setup silently returns 0 for every property. The PIA
-        // types Left/Top as Single, which is the host side of the port's own
-        // double -> float rounding boundary.
+        // flag. The PIA types Left/Top/Width/Height as Single, which is the host
+        // side of the port's own double -> float rounding boundary. Width and
+        // Height must be mocked too: ApplyGeometry writes all four, and a mock
+        // with no Width/Height setup throws MissingMethodException instead of
+        // recording the write.
         _ = shape.SetupGet(s => s.Left).Returns(() => currentLeft);
         _ = shape.SetupSet(s => s.Left = It.IsAny<float>()).Callback<float>(value => currentLeft = value);
         _ = shape.SetupGet(s => s.Top).Returns(() => currentTop);
         _ = shape.SetupSet(s => s.Top = It.IsAny<float>()).Callback<float>(value => currentTop = value);
+        _ = shape.SetupGet(s => s.Width).Returns(() => currentWidth);
+        _ = shape.SetupSet(s => s.Width = It.IsAny<float>()).Callback<float>(value => currentWidth = value);
+        _ = shape.SetupGet(s => s.Height).Returns(() => currentHeight);
+        _ = shape.SetupSet(s => s.Height = It.IsAny<float>()).Callback<float>(value => currentHeight = value);
         _ = shape.Setup(s => s.Delete()).Callback(() => onDelete?.Invoke());
         // A seeded shape needs its own z-order recorder: the writer's built-in
         // `ZOrderShapes` is wired only into the shapes `AddShape` creates, so a
@@ -1092,5 +1403,541 @@ public class ExcelShapeWriterTests
         }
 
         return shape.Object;
+    }
+
+    /// <summary>
+    /// A writer whose host is a fixed set of shapes, with the per-call costs ADR-0054
+    /// removes counted rather than hidden behind Moq's silence.
+    /// </summary>
+    /// <remarks>
+    /// It deliberately does <em>not</em> override <see cref="ExcelShapeWriter.FindShapeByName"/>:
+    /// the batch's proxy memo lives in the base implementation, so overriding the lookup
+    /// would make every O2 assertion vacuous. Only the leaves the base calls
+    /// (<c>GetShapeByExactName</c>, <c>GetShapeCount</c>, <c>GetShapeAt</c>,
+    /// <c>FindGanttWorksheet</c>) are substituted, which is where each counted round trip
+    /// actually happens.
+    /// </remarks>
+    private sealed class BatchWriter : ExcelShapeWriter
+    {
+        private readonly Dictionary<string, Mock<Excel.Shape>> _byName = new(StringComparer.Ordinal);
+        private readonly List<Mock<Excel.Shape>> _ordered = [];
+        private readonly Mock<Excel.Shapes> _collection = new();
+
+        /// <summary>
+        /// The modelled live z-order, back to front — index 0 is the shape at the BACK,
+        /// which is what <c>Shape.ZOrderPosition</c> of 1 means (Microsoft: Shapes(1) is
+        /// the shape at the back of the z-order).
+        /// </summary>
+        /// <remarks>
+        /// The first version of this double handed each shape a fixed position, so a test
+        /// could only assert which <c>ZOrder</c> calls the adapter made. That is precisely
+        /// how a wrong pass survived: the calls looked plausible while the resulting stack
+        /// was inverted. Modelling the collection and applying <c>msoSendToBack</c> for real
+        /// lets a test assert the ORDER the user sees.
+        /// </remarks>
+        private readonly List<string> _zOrder = [];
+
+        public BatchWriter()
+            : base(ActiveApplication().Object, ClearGuard().Object)
+        {
+        }
+
+        /// <summary>
+        /// Whether the host reports a usable position. When false, every shape reports 0,
+        /// which models a double or a host that will not describe its z-order.
+        /// </summary>
+        public bool ReportsPositions { get; set; } = true;
+
+        /// <summary>Gets the live z-order after the pass, back to front.</summary>
+        public IReadOnlyList<string> LiveOrder => _zOrder;
+
+        /// <summary>How many times the worksheet had to be resolved.</summary>
+        public int WorksheetResolutions { get; private set; }
+
+        /// <summary>How many host name-indexer lookups were issued.</summary>
+        public int IndexedNameLookups { get; private set; }
+
+        /// <summary>How many alternative-text reads the ownership scan issued.</summary>
+        public int AlternativeTextReads { get; private set; }
+
+        /// <summary>How many placement writes the adapter issued.</summary>
+        public int PlacementWrites { get; private set; }
+
+        /// <summary>The shape name behind each z-order command, in call order.</summary>
+        public List<string> ZOrderCalls { get; } = [];
+
+        /// <summary>Adds a shape the host already holds, at the front of the z-order.</summary>
+        /// <param name="name">The shape's name.</param>
+        /// <param name="alternativeText">Its alternative text, or null for none.</param>
+        /// <param name="placement">Its placement.</param>
+        /// <returns>This writer, for chaining.</returns>
+        /// <remarks>
+        /// Adds in call order, each one in front of the last, which is what the host does.
+        /// A test that wants a starting order that is NOT the desired order seeds the shapes
+        /// it wants at the back first and then calls <see cref="SendToBack"/>.
+        /// </remarks>
+        public BatchWriter Add(
+            string name,
+            string? alternativeText,
+            Excel.XlPlacement placement = Excel.XlPlacement.xlMove)
+        {
+            Excel.XlPlacement currentPlacement = placement;
+            var shape = new Mock<Excel.Shape>();
+            _ = shape.SetupGet(s => s.Name).Returns(name);
+            _ = shape.SetupGet(s => s.AlternativeText).Returns(() =>
+            {
+                AlternativeTextReads++;
+                return alternativeText ?? string.Empty;
+            });
+            _ = shape.SetupGet(s => s.Placement).Returns(() => currentPlacement);
+            _ = shape.SetupSet(s => s.Placement = It.IsAny<Excel.XlPlacement>())
+                .Callback<Excel.XlPlacement>(value =>
+                {
+                    currentPlacement = value;
+                    PlacementWrites++;
+                });
+            _ = shape.SetupGet(s => s.ZOrderPosition)
+                .Returns(() => ReportsPositions
+                    ? _zOrder.FindIndex(candidate => string.Equals(candidate, name, StringComparison.Ordinal)) + 1
+                    : 0);
+            _ = shape.Setup(s => s.ZOrder(It.IsAny<MsoZOrderCmd>()))
+                .Callback<MsoZOrderCmd>(command => ApplyZOrderCommand(name, command));
+
+            _byName[name] = shape;
+            _ordered.Add(shape);
+            _zOrder.Add(name);
+            return this;
+        }
+
+        /// <summary>Moves a shape to the back, as a test seeding a starting order would.</summary>
+        /// <param name="name">The shape to move.</param>
+        /// <returns>This writer, for chaining.</returns>
+        public BatchWriter SendToBack(string name)
+        {
+            ApplyZOrderCommand(name, MsoZOrderCmd.msoSendToBack);
+            return this;
+        }
+
+        /// <summary>States the starting z-order directly, back to front, recording nothing.</summary>
+        /// <param name="backToFront">Every modelled shape name, backmost first.</param>
+        /// <returns>This writer, for chaining.</returns>
+        public BatchWriter SeedOrder(params string[] backToFront)
+        {
+            ArgumentNullException.ThrowIfNull(backToFront);
+            _zOrder.Clear();
+            _zOrder.AddRange(backToFront);
+            return this;
+        }
+
+        private void ApplyZOrderCommand(string name, MsoZOrderCmd command)
+        {
+            ZOrderCalls.Add(name);
+
+            // Only msoSendToBack is modelled because it is the only command the adapter
+            // issues; msoBringToFront would be a different absolute move and its absence is
+            // itself part of the contract (R4.5 D2).
+            Assert.Equal(MsoZOrderCmd.msoSendToBack, command);
+            _ = _zOrder.Remove(name);
+            _zOrder.Insert(0, name);
+        }
+
+        internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets)
+        {
+            WorksheetResolutions++;
+            return new Mock<Excel._Worksheet>().Object;
+        }
+
+        internal override Excel.Shapes? GetShapes(Excel._Worksheet sheet) => _collection.Object;
+
+        internal override int GetShapeCount(Excel.Shapes shapes) => _ordered.Count;
+
+        internal override Excel.Shape? GetShapeAt(Excel.Shapes shapes, int index) =>
+            index >= 1 && index <= _ordered.Count ? _ordered[index - 1].Object : null;
+
+        internal override Excel.Shape? GetShapeByExactName(Excel.Shapes shapes, string name)
+        {
+            IndexedNameLookups++;
+            return _byName.TryGetValue(name, out Mock<Excel.Shape>? shape)
+                ? shape.Object
+                : throw new ArgumentException("The item with the specified name wasn't found.");
+        }
+
+        internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
+        {
+        }
+
+        internal override void ApplyStyle(Excel.Shape shape, OfficeShapeRequest request)
+        {
+        }
+    }
+
+    /// <summary>
+    /// O1: one worksheet resolution serves every operation in a batch (ADR-0054).
+    /// </summary>
+    /// <remarks>
+    /// The contrast is the point. Outside a batch each operation walks <c>Sheets</c> and
+    /// <c>ListObjects</c> and re-queries the guard; inside one the target is resolved once.
+    /// A relocation of 40 primitives was paying that walk 40 times.
+    /// </remarks>
+    [Fact]
+    public void A_batch_resolves_the_worksheet_once_for_every_operation()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"))
+            .Add("row-2:bar", ShapeOwnershipTag.ForPrimitiveId("row-2:bar"));
+
+        using (writer.BeginBatch())
+        {
+            Assert.True(writer.Update(RectangleRequest("row-1:bar")).Succeeded);
+            Assert.True(writer.Update(RectangleRequest("row-2:bar")).Succeeded);
+        }
+
+        Assert.Equal(1, writer.WorksheetResolutions);
+    }
+
+    /// <summary>
+    /// The counter above is meaningful: without a batch the same two updates resolve twice.
+    /// </summary>
+    [Fact]
+    public void Outside_a_batch_every_operation_resolves_the_worksheet_again()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"))
+            .Add("row-2:bar", ShapeOwnershipTag.ForPrimitiveId("row-2:bar"));
+
+        Assert.True(writer.Update(RectangleRequest("row-1:bar")).Succeeded);
+        Assert.True(writer.Update(RectangleRequest("row-2:bar")).Succeeded);
+
+        Assert.Equal(2, writer.WorksheetResolutions);
+    }
+
+    /// <summary>
+    /// O2: a batch answers every name lookup from ONE scan, and reuses the proxy it found
+    /// for the z-order preflight (ADR-0054).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both passes name the same shape, and a name lookup is a host round trip. The memo is
+    /// batch-scoped, so it can never outlive the pass that built it — a stale proxy across
+    /// refreshes would be a correctness hazard, not a saving.
+    /// </para>
+    /// <para>
+    /// This used to require exactly TWO indexed lookups, one per update. It now requires
+    /// ZERO: the batch builds a complete name index on its first lookup, so a hit AND a
+    /// miss are both answered from memory. That is not a loosening — it is the fix for the
+    /// measured cost of a miss. Excel's name indexer RAISES for an absent name, and the
+    /// first live plot creates 52 shapes on a sheet holding none, so the old path paid 52
+    /// COM exceptions: <c>lookup=1355.0</c> of a 1529 ms write. The z-order assertion below
+    /// is unchanged, so "the preflight reused the proxy and moved only what it had to" is
+    /// still proved.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_batch_answers_name_lookups_from_one_scan_and_reuses_the_proxy()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .SendToBack("row-1:a");
+
+        using (writer.BeginBatch())
+        {
+            Assert.True(writer.Update(RectangleRequest("row-1:a")).Succeeded);
+            Assert.True(writer.Update(RectangleRequest("row-1:b")).Succeeded);
+            Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b"]).Succeeded);
+        }
+
+        // No per-name host call at all inside the batch: both names were indexed by the
+        // single scan, and the preflight reused the proxies it found.
+        Assert.Equal(0, writer.IndexedNameLookups);
+        Assert.Equal(["row-1:a"], writer.ZOrderCalls);
+    }
+
+    /// <summary>
+    /// O3: an update does not rewrite a placement the host already reports (ADR-0054).
+    /// </summary>
+    /// <remarks>
+    /// Every warm refresh re-wrote <c>xlMove</c> onto every shape — a host write per shape
+    /// that changed nothing. The read that replaces it is one order of magnitude cheaper.
+    /// </remarks>
+    [Fact]
+    public void An_update_does_not_rewrite_placement_the_host_already_reports()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"), Excel.XlPlacement.xlMove);
+
+        Assert.True(writer.Update(RectangleRequest("row-1:bar")).Succeeded);
+
+        Assert.Equal(0, writer.PlacementWrites);
+    }
+
+    /// <summary>
+    /// The counterpart guard: a shape still on the host default IS re-placed, so the skipped
+    /// write never means a legacy shape stays resizable by a row-visibility change.
+    /// </summary>
+    [Fact]
+    public void An_update_heals_a_shape_still_reported_as_move_and_size()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"), Excel.XlPlacement.xlMoveAndSize);
+
+        Assert.True(writer.Update(RectangleRequest("row-1:bar")).Succeeded);
+
+        Assert.Equal(1, writer.PlacementWrites);
+    }
+
+    /// <summary>
+    /// O5: a stack that is already in the desired order issues no z-order command.
+    /// </summary>
+    /// <remarks>
+    /// <c>Shapes(1)</c> is the shape at the BACK of the z-order, so a correct back-to-front
+    /// list has strictly increasing positions. Calling this stack ordered in the wrong
+    /// direction is what shipped once: the pass then skipped the very shapes it had to move.
+    /// </remarks>
+    [Fact]
+    public void An_already_correct_stack_issues_no_z_order_command()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"));
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Empty(writer.ZOrderCalls);
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+    }
+
+    /// <summary>
+    /// O5: the correct FRONT run is left alone and only the shapes behind it are moved.
+    /// </summary>
+    /// <remarks>
+    /// <c>msoSendToBack</c> is absolute, so untouched shapes always end in front of every
+    /// moved shape; only a front run may be skipped. Skipping a back run would push the
+    /// touched shapes behind it and invert exactly what was skipped.
+    /// </remarks>
+    [Fact]
+    public void A_z_order_pass_moves_only_the_shapes_behind_an_already_correct_front_run()
+    {
+        // Live back-to-front: b, a, c. Desired: a, b, c. Only 'a' is out of place.
+        var writer = new BatchWriter()
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"))
+            .SeedOrder("row-1:b", "row-1:a", "row-1:c");
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Equal(["row-1:a"], writer.ZOrderCalls);
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+    }
+
+    /// <summary>
+    /// O5's regression pin: a reversed stack must be repaired in full, not read as ordered.
+    /// </summary>
+    /// <remarks>
+    /// Descending positions describe a chart stacked exactly upside down. Both the inverted
+    /// direction and a skip-the-back-prefix rule accept this as correct, which is how the
+    /// chart came out mis-stacked on a full refresh, so the resulting ORDER is asserted and
+    /// not just the call count.
+    /// </remarks>
+    [Fact]
+    public void A_reversed_stack_is_reordered_rather_than_read_as_correct()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"))
+            .SeedOrder("row-1:c", "row-1:b", "row-1:a");
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+    }
+
+    /// <summary>
+    /// O5's fallback: a host that reports no usable position gets the full absolute pass.
+    /// </summary>
+    [Fact]
+    public void A_host_that_reports_no_position_falls_back_to_the_full_pass()
+    {
+        var writer = new BatchWriter
+        {
+            ReportsPositions = false,
+        }
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"));
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Equal(["row-1:c", "row-1:b", "row-1:a"], writer.ZOrderCalls);
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+    }
+
+    /// <summary>
+    /// O5 convergence: every starting permutation ends in the desired order, and no
+    /// permutation ever issues more commands than the full pass would.
+    /// </summary>
+    /// <param name="start">The live order, back to front, before the pass.</param>
+    [Theory]
+    [InlineData("a,b,c")]
+    [InlineData("a,c,b")]
+    [InlineData("b,a,c")]
+    [InlineData("b,c,a")]
+    [InlineData("c,a,b")]
+    [InlineData("c,b,a")]
+    public void Every_starting_permutation_ends_in_the_desired_order(string start)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(start);
+        string[] live = [.. start.Split(',').Select(part => "row-1:" + part)];
+        var writer = new BatchWriter();
+
+        foreach (string name in live)
+        {
+            _ = writer.Add(name, ShapeOwnershipTag.ForPrimitiveId(name));
+        }
+
+        // The starting stack, stated exactly rather than reached by commands: this test is
+        // about the pass's arithmetic, not about how a shape got to its position.
+        _ = writer.SeedOrder(live);
+        Assert.Equal(live, writer.LiveOrder);
+        writer.ZOrderCalls.Clear();
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+        Assert.True(
+            writer.ZOrderCalls.Count <= 3,
+            $"The pass issued {writer.ZOrderCalls.Count} commands for a 3-shape order.");
+    }
+
+    /// <summary>
+    /// Positive test for the identifier-form validator: a name this writer cannot recognise
+    /// on the next refresh is refused rather than written.
+    /// </summary>
+    /// <remarks>
+    /// The ownership scan reads the tag only for names in the two enumerated forms, so an
+    /// out-of-form name would produce a shape no refresh could ever update or delete. That
+    /// is worse than a refusal, which is loud, typed, and fails a test the same day.
+    /// </remarks>
+    [Fact]
+    public void Create_refuses_an_identifier_the_ownership_scan_could_not_recognise()
+    {
+        var writer = new BatchWriter();
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest("Rectangle 1"));
+
+        Assert.Equal(ShapeWriteRefusal.UnsupportedIdentifierForm, outcome.Refusal);
+    }
+
+    /// <summary>The two forms the ownership scan accepts, and two it does not (O4).</summary>
+    /// <param name="name">The candidate shape name.</param>
+    /// <param name="expected">Whether the name could be one this writer created.</param>
+    [Theory]
+    [InlineData("row-1:bar", true)]
+    [InlineData("row-1:splitter-band", true)]
+    [InlineData("ChartTitle", true)]
+    [InlineData("Rectangle 1", false)]
+    [InlineData("Chart Title", false)]
+    public void CouldBeOwnedName_accepts_only_the_forms_the_writer_creates(string name, bool expected) =>
+        Assert.Equal(expected, ExcelShapeWriter.CouldBeOwnedName(name));
+
+    /// <summary>
+    /// O4: the ownership scan reads a shape's tag only for a name that could be ours.
+    /// </summary>
+    /// <remarks>
+    /// The tag read is a host round trip per shape on the sheet, and most shapes on a real
+    /// sheet are a user's drawings. The user shape here is not a candidate, so its tag is
+    /// never read — and it is still not reported as owned.
+    /// </remarks>
+    [Fact]
+    public void ListOwned_reads_the_tag_only_for_names_that_can_be_ours()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"))
+            .Add("user-shape", "a rectangle the user drew themselves");
+
+        Assert.Equal(["row-1:bar"], writer.ListOwned());
+
+        // One read for the candidate, none for the user's shape.
+        Assert.Equal(1, writer.AlternativeTextReads);
+    }
+
+    /// <summary>
+    /// ADR-0055: a created shape is locked from birth, so the user cannot drag it.
+    /// </summary>
+    [Fact]
+    public void Create_locks_the_shape_it_creates()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        Assert.True(writer.Create(RectangleRequest()).Succeeded);
+
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.True(created.Locked);
+    }
+
+    /// <summary>
+    /// ADR-0055's one-time back-fill: only tagged shapes are locked, and a user's shape that
+    /// shares a name is left unlocked because ownership is proved by the tag, not the name.
+    /// </summary>
+    [Fact]
+    public void LockOwnedShapes_locks_only_the_shapes_the_add_in_owns()
+    {
+        Excel.Shape owned = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        Excel.Shape alreadyLocked = NewShape("row-2:bar", ShapeOwnershipTag.ForPrimitiveId("row-2:bar"));
+        alreadyLocked.Locked = true;
+        Excel.Shape userShape = NewShape("row-1:label", "a note the user typed");
+        var writer = new TestableWriter(
+            ActiveApplication().Object, ClearGuard().Object, owned, alreadyLocked, userShape);
+
+        Assert.True(writer.LockOwnedShapes().Succeeded);
+
+        Assert.True(owned.Locked);
+        Assert.True(alreadyLocked.Locked);
+        Assert.False(userShape.Locked);
+    }
+
+    /// <summary>
+    /// ADR-0055 clause 6: unlocking clears the lock on the selected owned shape so the user can drag
+    /// it deliberately. The sheet must also be released for the drag to be possible, which is the
+    /// command's job, not this one.
+    /// </summary>
+    [Fact]
+    public void UnlockShape_clears_the_lock_on_an_owned_shape()
+    {
+        Excel.Shape owned = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        owned.Locked = true;
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, owned);
+
+        Assert.True(writer.UnlockShape("row-1:bar").Succeeded);
+
+        Assert.False(owned.Locked);
+    }
+
+    /// <summary>
+    /// The tag authorises the unlock, so a user's shape that shares a name is neither unlocked nor
+    /// touched — the whole point of the ownership check.
+    /// </summary>
+    [Fact]
+    public void UnlockShape_refuses_a_shape_the_add_in_does_not_own()
+    {
+        Excel.Shape userShape = NewShape("row-1:bar", "a note the user typed");
+        userShape.Locked = true;
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, userShape);
+
+        ShapeWriteOutcome outcome = writer.UnlockShape("row-1:bar");
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        Assert.True(userShape.Locked);
+    }
+
+    [Fact]
+    public void UnlockShape_refuses_an_absent_shape()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, writer.UnlockShape("row-9:bar").Refusal);
     }
 }

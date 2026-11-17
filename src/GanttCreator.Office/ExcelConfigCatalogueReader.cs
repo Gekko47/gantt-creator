@@ -98,9 +98,25 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             ?? ValidateMetrics(metricRows)
             ?? ValidateSettings(settingRows, out settings)
             ?? ValidateConfig(configRows, out workbookId);
-        return refusal is not null
-            ? ConfigReadOutcome.Refused(refusal.Value)
-            : ConfigReadOutcome.Ok(workbookId!, settings!, styles!);
+        if (refusal is not null)
+        {
+            return ConfigReadOutcome.Refused(refusal.Value);
+        }
+
+        // Project themed metric DefaultValues from the validated sheet rows.
+        // ValidateMetrics already confirmed each DefaultValue is a finite double
+        // inside [Minimum, Maximum], so projection here cannot fail.
+        Dictionary<string, double> metrics = new Dictionary<string, double>(StringComparer.Ordinal);
+        for (int index = 0; index < metricRows.Count; index++)
+        {
+            object?[] row = metricRows[index];
+            if (TryCellDouble(row[1], out double value) && double.IsFinite(value))
+            {
+                metrics[ToText(row[0])] = value;
+            }
+        }
+
+        return ConfigReadOutcome.Ok(workbookId!, settings!, styles!, metrics);
     }
 
     /// <summary>
@@ -111,15 +127,12 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
     /// <returns>The configuration worksheet, or <see langword="null"/>.</returns>
     private Worksheet? FindConfigSheet(Sheets sheets)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet
-                && string.Equals(
-                    worksheet.Name,
-                    GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.Ordinal))
+                && GanttWorkbookContract.IsConfigSheetName(worksheet.Name))
             {
                 return worksheet;
             }
@@ -137,11 +150,11 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
     private ListObject? FindTable(Worksheet config, string tableName)
     {
         ListObjects listObjects = GetListObjects(config);
-        var count = listObjects.Count;
-        for (var index = 1; index <= count; index++)
+        int count = listObjects.Count;
+        for (int index = 1; index <= count; index++)
         {
             ListObject table = GetTableAt(listObjects, index);
-            if (string.Equals(table.Name, tableName, StringComparison.Ordinal))
+            if (string.Equals(table.Name, tableName, StringComparison.OrdinalIgnoreCase))
             {
                 return table;
             }
@@ -178,13 +191,13 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         }
 
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
+        int columnCount = columns.Count;
         if (columnCount != expectedHeaders.Length)
         {
             return ConfigReadRefusalReason.HeaderMismatch;
         }
 
-        for (var index = 1; index <= columnCount; index++)
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             if (!string.Equals(column.Name, expectedHeaders[index - 1], StringComparison.Ordinal))
@@ -199,8 +212,8 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return null;
         }
 
-        var raw = GetBodyValues(body);
-        foreach (var row in ExcelValue2Matrix.ReadRows(raw))
+        object? raw = GetBodyValues(body);
+        foreach (object?[] row in ExcelValue2Matrix.ReadRows(raw))
         {
             rows.Add(row);
         }
@@ -221,7 +234,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
-        for (var index = 0; index < rows.Count; index++)
+        for (int index = 0; index < rows.Count; index++)
         {
             GanttTypeCatalogueRow expected = GanttCatalogues.TypeRows[index];
             string[] expectedCells =
@@ -262,7 +275,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
-        for (var index = 0; index < GanttCatalogues.StylePresets.Count; index++)
+        for (int index = 0; index < GanttCatalogues.StylePresets.Count; index++)
         {
             GanttStylePreset preset = GanttCatalogues.StylePresets[index];
             if (rows[index].Length < GanttCatalogues.StylesHeaders.Length)
@@ -275,29 +288,61 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             // unreachable for every style row (a malformed colour can never
             // equal a valid catalogue colour). Empty is permitted: the
             // stroke and fill tokens are optional for several presets.
-            foreach (var colourColumn in new[] { 2, 3, 7 })
+            foreach (int colourColumn in new[] { 2, 3, 7 })
             {
-                var colourText = ToText(rows[index][colourColumn]);
+                string colourText = ToText(rows[index][colourColumn]);
                 if (colourText.Length > 0 && !GanttColourToken.IsValidHex(colourText))
                 {
                     return ConfigReadRefusalReason.BadColourFormat;
                 }
             }
 
-            string[] textCells =
+            // Columns 2 (FillColour) and 3 (StrokeColour) are editable colour
+            // cells: `WriteTheme` writes user-edited colours there, so they
+            // must not be compared against the preset's original values.
+            // They are already validated for colour format above (columns 2,
+            // 3, 7 are checked for valid hex). Only text cells that cannot
+            // be edited — StyleKey (col 0), DisplayName (col 1), HatchPattern
+            // (col 4) — are compared exactly against the preset.
+            //
+            // Column 14 (StrokeDash) is projected rather than exact-matched
+            // for the one built-in style whose dash the user may change: the
+            // delineator's line type, so `WriteTheme` writes the chosen dash
+            // there. Every other built-in style's dash is code-owned and is
+            // still compared exactly against the preset. A row carrying a
+            // dash the reader cannot parse is a refusal, not a silent
+            // fallback to the preset.
+            (int column, string expected)[] textCells =
             [
-                preset.StyleKey,
-                preset.DisplayName,
-                preset.FillColour,
-                preset.StrokeColour,
-                preset.HatchPattern.ToString(),
+                (0, preset.StyleKey),
+                (1, preset.DisplayName),
+                (4, preset.HatchPattern.ToString()),
             ];
-            for (var column = 0; column < textCells.Length; column++)
+            foreach ((int column, string expected) in textCells)
             {
-                if (!CellMatches(rows[index][column], textCells[column]))
+                if (!CellMatches(rows[index][column], expected))
                 {
                     return ConfigReadRefusalReason.CatalogueMismatch;
                 }
+            }
+
+            GanttStrokeDash rowDash = preset.StrokeDash;
+            if (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey))
+            {
+                if (!Enum.TryParse(
+                    ToText(rows[index][14]),
+                    ignoreCase: false,
+                    out GanttStrokeDash parsedDash)
+                    || !Enum.IsDefined(parsedDash))
+                {
+                    return ConfigReadRefusalReason.CatalogueMismatch;
+                }
+
+                rowDash = parsedDash;
+            }
+            else if (!CellMatches(rows[index][14], preset.StrokeDash.ToString()))
+            {
+                return ConfigReadRefusalReason.CatalogueMismatch;
             }
 
             double[] expectedNumbers =
@@ -313,7 +358,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             // between HatchLinePt (6) and StandardOutlinePt (8), and
             // MilestoneSizePt (10) closes the original row. See StylesHeaders.
             int[] numberColumns = [5, 6, 8, 9, 10];
-            for (var column = 0; column < expectedNumbers.Length; column++)
+            for (int column = 0; column < expectedNumbers.Length; column++)
             {
                 if (!CellMatchesDouble(rows[index][numberColumns[column]], expectedNumbers[column]))
                 {
@@ -331,7 +376,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                         .OrderBy(name => name, StringComparer.Ordinal)),
                 preset.ColourCapability.ToString(),
             ];
-            for (var column = 0; column < capabilityCells.Length; column++)
+            for (int column = 0; column < capabilityCells.Length; column++)
             {
                 if (!CellMatches(rows[index][11 + column], capabilityCells[column]))
                 {
@@ -340,49 +385,70 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             }
         }
 
-        var seenStyleKeys = GanttCatalogues.StylePresets
+        HashSet<string> seenStyleKeys = GanttCatalogues.StylePresets
             .Select(preset => preset.StyleKey)
             .ToHashSet(StringComparer.Ordinal);
-        for (var index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
+        for (int index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
         {
             if (ValidateUserStyleCapabilities(rows[index]) is { } userStyleRefusal)
             {
                 return userStyleRefusal;
             }
 
-            var styleKey = ToText(rows[index][0]);
+            string styleKey = ToText(rows[index][0]);
             if (styleKey.Length == 0 || !seenStyleKeys.Add(styleKey))
             {
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
         }
 
-        var definitions = new List<GanttStyleDefinition>();
-        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        List<GanttStyleDefinition> definitions = [];
+        for (int index = 0; index < GanttCatalogues.StylePresets.Count; index++)
         {
+            GanttStylePreset preset = GanttCatalogues.StylePresets[index];
+            // Columns 2 (FillColour), 3 (StrokeColour), and 7 (TextColour) are
+            // editable colour cells: WriteTheme writes user-edited colours
+            // there, so Read() must project them from the row rather than from
+            // the code-owned preset defaults. Column 14 (StrokeDash) is
+            // projected for the one style whose dash the user may change: the
+            // delineator's line type. Columns 0, 1, 4, 11, 12, 13 are
+            // exact-matched against the preset above, so using preset.* for
+            // those is safe.
+            GanttStrokeDash rowDash = preset.StrokeDash;
+            if (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey)
+                && Enum.TryParse(
+                    ToText(rows[index][14]),
+                    ignoreCase: false,
+                    out GanttStrokeDash parsedDash)
+                && Enum.IsDefined(parsedDash))
+            {
+                rowDash = parsedDash;
+            }
+
             definitions.Add(new GanttStyleDefinition(
                 preset.StyleKey,
                 preset.AllowedLabelPositions,
                 preset.ColourCapability,
                 preset.DefaultLabelPosition,
-                preset.FillColour,
-                preset.StrokeColour,
-                preset.TextColour,
+                ToText(rows[index][2]),
+                ToText(rows[index][3]),
+                ToText(rows[index][7]),
                 preset.HatchPattern,
                 preset.HatchPitchPt,
                 preset.HatchLinePt,
                 preset.StandardOutlinePt,
                 preset.ActivityHeightPt,
-                preset.MilestoneSizePt));
+                preset.MilestoneSizePt,
+                DisplayName: null,
+                StrokeDash: rowDash));
         }
 
-        for (var index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
+        for (int index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
         {
-            var row = rows[index];
-            var allowed = ToText(row[12])
+            object?[] row = rows[index];
+            HashSet<GanttLabelPosition> allowed = [.. ToText(row[12])
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(text => Enum.Parse<GanttLabelPosition>(text, ignoreCase: false))
-                .ToHashSet();
+                .Select(text => Enum.Parse<GanttLabelPosition>(text, ignoreCase: false))];
             EntityColourCapability colour = Enum.Parse<EntityColourCapability>(ToText(row[13]), ignoreCase: false);
             // R2.7c: project the resolved columns the user row already validated.
             // Without this a user-authored style has capabilities but no formatting,
@@ -400,7 +466,9 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 ToDouble(row[6]),
                 ToDouble(row[8]),
                 ToDouble(row[9]),
-                ToDouble(row[10])));
+                ToDouble(row[10]),
+                ToText(row[1]),
+                Enum.Parse<GanttStrokeDash>(ToText(row[14]), ignoreCase: false)));
         }
 
         styles = new GanttStyleRegistry(definitions);
@@ -414,22 +482,22 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
-        var defaultText = ToText(row[11]);
+        string defaultText = ToText(row[11]);
         if (!Enum.TryParse(defaultText, ignoreCase: false, out GanttLabelPosition defaultPosition)
             || !Enum.IsDefined(defaultPosition))
         {
             return ConfigReadRefusalReason.ValueOutOfRange;
         }
 
-        var allowedTexts = ToText(row[12])
+        string[] allowedTexts = ToText(row[12])
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (allowedTexts.Length == 0)
         {
             return ConfigReadRefusalReason.ValueOutOfRange;
         }
 
-        var allowed = new HashSet<GanttLabelPosition>();
-        foreach (var allowedText in allowedTexts)
+        HashSet<GanttLabelPosition> allowed = [];
+        foreach (string allowedText in allowedTexts)
         {
             if (!Enum.TryParse(allowedText, ignoreCase: false, out GanttLabelPosition position)
                 || !Enum.IsDefined(position)
@@ -442,13 +510,15 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         // R2.7c: the resolved columns are validated here, not only projected later.
         // Without this a user row carrying a negative metric or a lowercase colour
         // would be projected as 0/empty and render as a silent blank style.
-        return !TryReadUserStyleMetrics(row, out var metrics)
+        return !TryReadUserStyleMetrics(row, out double[]? metrics)
             || metrics.Any(value => value < 0)
             || !IsOptionalUppercaseColour(ToText(row[2]))
             || !IsOptionalUppercaseColour(ToText(row[3]))
             || !IsOptionalUppercaseColour(ToText(row[7]))
             || !Enum.TryParse(ToText(row[4]), ignoreCase: false, out GanttHatchPattern hatchPattern)
             || !Enum.IsDefined(hatchPattern)
+            || !Enum.TryParse(ToText(row[14]), ignoreCase: false, out GanttStrokeDash strokeDash)
+            || !Enum.IsDefined(strokeDash)
             || !allowed.Contains(defaultPosition)
             || !Enum.TryParse(ToText(row[13]), ignoreCase: false, out EntityColourCapability colourCapability)
             || !IsKnownColourCapability(colourCapability)
@@ -468,7 +538,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
     {
         int[] columns = [5, 6, 8, 9, 10];
         metrics = new double[columns.Length];
-        for (var index = 0; index < columns.Length; index++)
+        for (int index = 0; index < columns.Length; index++)
         {
             if (!TryCellDouble(row[columns[index]], out metrics[index]))
             {
@@ -515,10 +585,10 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
-        for (var index = 0; index < rows.Count; index++)
+        for (int index = 0; index < rows.Count; index++)
         {
             GanttMetricToken metric = GanttCatalogues.Metrics[index];
-            var row = rows[index];
+            object?[] row = rows[index];
             if (row.Length < GanttCatalogues.MetricsHeaders.Length)
             {
                 return ConfigReadRefusalReason.RowCountMismatch;
@@ -529,22 +599,23 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.CatalogueMismatch;
             }
 
-            if (!TryCellDouble(row[1], out var @default)
-                || !TryCellDouble(row[2], out var minimum)
-                || !TryCellDouble(row[3], out var maximum))
+            if (!TryCellDouble(row[1], out double @default)
+                || !TryCellDouble(row[2], out double minimum)
+                || !TryCellDouble(row[3], out double maximum))
             {
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
             // Internal consistency first (a tampered range is a range
-            // refusal, not a drift finding), then exact catalogue equality.
+            // refusal, not a drift finding). The DefaultValue column is
+            // editable by theme edits (R5.6) — only Minimum and Maximum must
+            // match the code-owned token exactly.
             if (minimum > maximum || @default < minimum || @default > maximum)
             {
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
-            if (@default != metric.DefaultValue
-                || minimum != metric.Minimum
+            if (minimum != metric.Minimum
                 || maximum != metric.Maximum)
             {
                 return ConfigReadRefusalReason.CatalogueMismatch;
@@ -573,9 +644,9 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         }
 
         Dictionary<string, string> map = new(StringComparer.Ordinal);
-        for (var index = 0; index < rows.Count; index++)
+        for (int index = 0; index < rows.Count; index++)
         {
-            var row = rows[index];
+            object?[] row = rows[index];
             if (row.Length < GanttCatalogues.SettingsHeaders.Length)
             {
                 return ConfigReadRefusalReason.RowCountMismatch;
@@ -587,10 +658,21 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.CatalogueMismatch;
             }
 
-            var value = ToText(row[1]);
+            string value = ToText(row[1]);
             if (IsBooleanSetting(expected.Key) && value != "TRUE" && value != "FALSE")
             {
                 return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
+            // A chart-chrome colour must be an uppercase #RRGGBB. A malformed
+            // one is refused rather than substituted, so the chart never
+            // silently renders a colour the workbook did not ask for: the
+            // entity guide's rule is that a colour is never replaced behind
+            // the user's back.
+            if (GanttChartChrome.IsColourSettingKey(expected.Key)
+                && !GanttColourToken.IsValidHex(value))
+            {
+                return ConfigReadRefusalReason.BadColourFormat;
             }
 
             if (expected.Key == "ChartTitle" && string.IsNullOrWhiteSpace(value))
@@ -620,7 +702,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             }
 
             if (expected.Key == "MarginCm"
-                && (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var marginCm)
+                && (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double marginCm)
                     || !double.IsFinite(marginCm)
                     || marginCm < GanttPlotMargins.MinimumCustomCm
                     || marginCm > GanttPlotMargins.MaximumCustomCm))
@@ -661,7 +743,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
-        var approvedConfigKeys = new HashSet<string>(StringComparer.Ordinal)
+        HashSet<string> approvedConfigKeys = new HashSet<string>(StringComparer.Ordinal)
         {
             GanttCatalogues.ConfigSchemaVersionKey,
             GanttCatalogues.ConfigCatalogueHashKey,
@@ -669,14 +751,14 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             GanttCatalogues.ConfigAddInVersionKey,
         };
         Dictionary<string, string> map = new(StringComparer.Ordinal);
-        foreach (var row in rows)
+        foreach (object?[] row in rows)
         {
             if (row.Length < GanttCatalogues.ConfigHeaders.Length)
             {
                 return ConfigReadRefusalReason.RowCountMismatch;
             }
 
-            var key = ToText(row[0]);
+            string key = ToText(row[0]);
             if (key.Length == 0
                 || !approvedConfigKeys.Contains(key)
                 || !map.TryAdd(key, ToText(row[1])))
@@ -686,7 +768,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         }
 
         return map.Count == approvedConfigKeys.Count
-            ? !map.TryGetValue(GanttCatalogues.ConfigSchemaVersionKey, out var schemaText)
+            ? !map.TryGetValue(GanttCatalogues.ConfigSchemaVersionKey, out string? schemaText)
                 || schemaText != GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)
                 ? ConfigReadRefusalReason.CatalogueHashMismatch
                 : ValidateStoredHash(map, ref workbookId)
@@ -704,7 +786,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         Dictionary<string, string> map,
         ref string? workbookId)
     {
-        if (!map.TryGetValue(GanttCatalogues.ConfigCatalogueHashKey, out var hash)
+        if (!map.TryGetValue(GanttCatalogues.ConfigCatalogueHashKey, out string? hash)
             || !string.Equals(hash, GanttCatalogues.ComputeCatalogueHash(), StringComparison.OrdinalIgnoreCase))
         {
             return ConfigReadRefusalReason.CatalogueHashMismatch;
@@ -751,7 +833,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return false;
         }
 
-        for (var index = 0; index < expected.Length; index++)
+        for (int index = 0; index < expected.Length; index++)
         {
             if (!CellMatches(row[index], expected[index]))
             {
@@ -799,7 +881,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
     private static bool CellMatchesDouble(object? cell, double expected) =>
         cell is double number
             ? !double.IsNaN(number) && !double.IsInfinity(number) && number == expected
-            : TryCellDouble(cell, out var parsed) && parsed == expected;
+            : TryCellDouble(cell, out double parsed) && parsed == expected;
 
     /// <summary>
     /// Parses a cell as a finite double.
@@ -815,7 +897,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 text,
                 NumberStyles.Float,
                 CultureInfo.InvariantCulture,
-                out var parsed)
+                out double parsed)
                 && !double.IsNaN(parsed)
                 && !double.IsInfinity(parsed) => True(parsed, out value),
             _ => FalseDouble(out value),
@@ -841,7 +923,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
     /// <param name="value">The cell value.</param>
     /// <returns>The finite double, or zero.</returns>
     private static double ToDouble(object? value) =>
-        TryCellDouble(value, out var parsed) ? parsed : 0;
+        TryCellDouble(value, out double parsed) ? parsed : 0;
 
     /// <summary>
     /// Converts cell text: <see langword="null"/> and NaN/infinity become

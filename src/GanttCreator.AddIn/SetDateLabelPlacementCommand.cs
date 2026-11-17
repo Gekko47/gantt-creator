@@ -62,8 +62,26 @@ internal static class SetDateLabelPlacementCommand
         Present(presenter, DateLabelRefusalTranslator.Translate(outcome));
     }
 
-    /// <summary>Presents a refusal message; isolated for the same reason as the date-label command's.</summary>
+    /// <summary>
+    /// Presents a refusal message, degrading to silence when the host refuses to
+    /// present it. A dialog failure must never turn a completed command into an
+    /// escaping exception - the shape the description-label and date-label
+    /// commands already had, which this one was missing.
+    /// </summary>
     /// <param name="presenter">The user-safe presenter.</param>
     /// <param name="message">The translated refusal message.</param>
-    private static void Present(Action<string> presenter, string message) => presenter(message);
+    private static void Present(Action<string> presenter, string message)
+    {
+        // CA1031: presenter failure is outside command behaviour.
+#pragma warning disable CA1031
+        try
+        {
+            presenter(message);
+        }
+        catch
+        {
+            // Intentionally empty: a dialog failure must not escape into Excel.
+        }
+#pragma warning restore CA1031
+    }
 }

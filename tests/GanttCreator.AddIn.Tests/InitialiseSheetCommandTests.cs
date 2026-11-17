@@ -48,10 +48,11 @@ public class InitialiseSheetCommandTests
     }
 
     [Fact]
-    public void Success_is_silent_no_presenter_call_and_no_log_side_effect()
+    public void Success_shows_no_dialog()
     {
         // R2.2 decision D7: the renamed/populated sheet is self-evident, so a
-        // successful initialise produces no dialog and no log record.
+        // successful initialise produces no dialog. The durable technical
+        // record is NOT a dialog and is asserted separately below.
         var messages = new List<string>();
         var initialiser = InitialiserWith(
             WorkbookInitialiseOutcome.Adopted(GanttWorkbookContract.GanttSheetLabel));
@@ -60,6 +61,67 @@ public class InitialiseSheetCommandTests
 
         Assert.Empty(messages);
         initialiser.Verify(i => i.Initialise(), Times.Once);
+    }
+
+    [Fact]
+    public void Success_records_its_path_and_sheet_before_presenting()
+    {
+        // "Initialise produces a blank sheet" could not be answered from the
+        // log because the command wrote nothing at all. One record per attempt
+        // names what actually happened.
+        var records = new List<string>();
+        var presented = new List<string>();
+        var initialiser = InitialiserWith(
+            WorkbookInitialiseOutcome.CreatedNew(GanttWorkbookContract.GanttSheetLabel));
+
+        InitialiseSheetCommand.Run(initialiser.Object, presented.Add, trace: records.Add);
+
+        string record = Assert.Single(records);
+        Assert.Equal(
+            "gantt.initialise path=CreatedNew sheet=" + GanttWorkbookContract.GanttSheetLabel + " refusal=none",
+            record,
+            StringComparer.Ordinal);
+        Assert.Empty(presented);
+    }
+
+    [Fact]
+    public void Refusal_records_the_reason_and_names_no_sheet()
+    {
+        var records = new List<string>();
+        var initialiser = InitialiserWith(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected));
+
+        InitialiseSheetCommand.Run(initialiser.Object, _ => { }, trace: records.Add);
+
+        string record = Assert.Single(records);
+        Assert.Equal(
+            "gantt.initialise path=Refused sheet=none refusal=TargetProtected",
+            record,
+            StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public void Successful_initialise_schedules_the_one_time_empty_render()
+    {
+        int schedules = 0;
+        var initialiser = InitialiserWith(
+            WorkbookInitialiseOutcome.Adopted(GanttWorkbookContract.GanttSheetLabel));
+
+        InitialiseSheetCommand.Run(initialiser.Object, _ => { }, () => schedules++);
+
+        Assert.Equal(1, schedules);
+    }
+
+    [Fact]
+    public void Refused_initialise_does_not_schedule_a_render()
+    {
+        int schedules = 0;
+        var initialiser = InitialiserWith(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TableExists));
+
+        InitialiseSheetCommand.Run(initialiser.Object, _ => { }, () => schedules++);
+
+        Assert.Equal(0, schedules);
     }
 
     [Fact]

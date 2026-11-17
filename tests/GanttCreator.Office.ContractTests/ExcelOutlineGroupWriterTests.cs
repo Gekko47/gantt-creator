@@ -23,8 +23,9 @@ public sealed class ExcelOutlineGroupWriterTests
         IWorksheetProtectionGuard guard,
         Excel.Worksheet worksheet,
         Excel.ListObject table,
-        List<(int First, int Last, int Level)> writes)
-        : ExcelOutlineGroupWriter(application, guard)
+        List<(int First, int Last, int Level)> writes,
+        Action<string>? trace = null)
+        : ExcelOutlineGroupWriter(application, guard, trace)
     {
         internal override bool TryFindTable(
             Excel.Sheets sheets,
@@ -82,9 +83,51 @@ public sealed class ExcelOutlineGroupWriterTests
         /// </summary>
         internal int BodyRowCount { get; set; }
 
+        /// <summary>
+        /// The <c>Description</c> body range R5.18i indents. Null by default, so every test
+        /// written before that pass keeps exercising the outline-only path with no
+        /// indentation read or write at all.
+        /// </summary>
+        internal Excel.Range? IndentBody { get; set; }
+
+        /// <summary>The column names the adapter asked for, in order.</summary>
+        internal List<string> IndentColumnRequests { get; } = [];
+
+        /// <summary>
+        /// The indent each body row already carries. A row with no entry reports zero, which
+        /// is what a freshly initialised sheet holds.
+        /// </summary>
+        internal Dictionary<int, int> InitialIndents { get; set; } = [];
+
+        /// <summary>Every indent this pass wrote, as (body row, level).</summary>
+        internal List<(int BodyRow, int Level)> IndentWrites { get; } = [];
+
+        internal override Excel.Range? GetColumnBody(Excel.ListObject source, string columnName)
+        {
+            IndentColumnRequests.Add(columnName);
+            return IndentBody;
+        }
+
+        internal override Excel.Range GetCellAt(Excel.Range column, int index)
+        {
+            _indentBodyRow = index;
+            return new Mock<Excel.Range>().Object;
+        }
+
+        internal override object? ReadIndentLevelValue(Excel.Range cell) =>
+            InitialIndents.TryGetValue(_indentBodyRow, out int level) ? level : 0;
+
+        internal override bool WriteIndentLevel(Excel.Range cell, int level)
+        {
+            IndentWrites.Add((_indentBodyRow, level));
+            return true;
+        }
+
         private int _pendingFirst;
 
         private int _pendingLast;
+
+        private int _indentBodyRow;
 
         private Excel.Range SourceBody { get; } = new Mock<Excel.Range>().Object;
     }
@@ -246,6 +289,122 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
+    /// An applied group is traced with its body-row span, so a live log can name the
+    /// outline write that may have re-evaluated (and un-hidden) a collapsed span.
+    /// </summary>
+    [Fact]
+    public void An_applied_group_is_traced_with_its_span()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        List<string> trace = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes,
+            trace.Add);
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.outline group body-rows=2-3", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A span whose rows are ALREADY grouped is not rewritten, so a no-op Refresh does
+    /// not re-evaluate the group and disturb its collapsed rows.
+    /// </summary>
+    /// <remarks>
+    /// Writing the child level again is the same re-evaluation the reset pass avoids on
+    /// top-level rows: the host may treat it as a grouping change, and the grouped rows
+    /// are the ones a collapsed group hides. The measured consequence was a splitter
+    /// band moved by a no-op refresh that the delta cache then skipped. A span that is
+    /// new, resized, or moved still writes, because at least one of its rows is not at
+    /// the child level yet.
+    /// </remarks>
+    [Fact]
+    public void An_already_grouped_span_is_not_rewritten()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            InitialLevels = new Dictionary<int, object?>
+            {
+                [2] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+                [3] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+            },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.GroupsApplied);
+        Assert.Equal(0, outcome.RowsUngrouped);
+        Assert.Empty(writes);
+    }
+
+    /// <summary>
+    /// A forced apply rewrites a span whose rows all report the child level, because the level is
+    /// not proof of membership: Excel copies the level of the row above into a row inserted inside
+    /// a grouped span, so a new child reads level 2 while sitting outside the group's bracket.
+    /// </summary>
+    /// <remarks>
+    /// Measured live 2026-11-09 on the Add activity path: the plan held two groups with the new row
+    /// inside one, every row already read level 2, and the unforced skip wrote nothing - the insert
+    /// was left ungrouped on screen with no refusal anywhere. The insert path therefore forces the
+    /// write; a Refresh keeps the skip that this test's sibling above pins.
+    /// </remarks>
+    [Fact]
+    public void A_forced_apply_regroups_a_span_that_already_reports_the_child_level()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            InitialLevels = new Dictionary<int, object?>
+            {
+                [2] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+                [3] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+            },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)],
+            forceRegroup: true);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.GroupsApplied);
+        (int first, int last, int level) = Assert.Single(writes);
+
+        // The span, not its absolute address: the fixture maps body rows onto worksheet rows,
+        // so pinning the numbers here would test that mapping rather than the forced write.
+        Assert.Equal(2, (last - first) + 1);
+        Assert.Equal(ExcelOutlineGroupWriter.ChildOutlineLevel, level);
+    }
+
+    /// <summary>
     /// A flat table writes nothing at all: the common case must not add outline
     /// controls or dirty the workbook.
     /// </summary>
@@ -383,12 +542,18 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
-    /// A group survives the reset pass: the rows the plan DOES group must not be
-    /// reset, or the reset would erase the grouping the next phase is about to apply.
-    /// Body row 1 is the parent and rows 2-3 are its children, so only row 1 resets.
+    /// A span the plan groups is neither reset nor re-grouped when the sheet already
+    /// carries it, so an unchanged outline costs the host no write at all.
     /// </summary>
+    /// <remarks>
+    /// The reset pass is the dangerous one -- writing level 1 to a grouped row
+    /// re-evaluates the outline and can re-expand the group -- but re-writing level 2 to
+    /// an already-grouped row is the same re-evaluation from the other side, and the
+    /// live log showed it happening on every refresh while the delta cache skipped a
+    /// splitter band in the same run. Both passes therefore leave this span alone.
+    /// </remarks>
     [Fact]
-    public void A_grouped_child_is_not_reset_by_the_pass_that_clears_stale_levels()
+    public void A_grouped_child_is_neither_reset_nor_regrouped()
     {
         var (application, worksheet, table) = Graph();
         List<(int First, int Last, int Level)> writes = [];
@@ -413,13 +578,9 @@ public sealed class ExcelOutlineGroupWriterTests
             [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(1, outcome.GroupsApplied);
-
-        // The parent is already top-level and the children are planned at level 2,
-        // so the reset pass clears nothing. Only the grouping write lands.
-        var grouped = Assert.Single(writes, w => w.Level == ExcelOutlineGroupWriter.ChildOutlineLevel);
-        Assert.Equal(3, grouped.First);
-        Assert.Equal(4, grouped.Last);
+        Assert.Equal(0, outcome.GroupsApplied);
+        Assert.Equal(0, outcome.RowsUngrouped);
+        Assert.Empty(writes);
     }
 
     /// <summary>
@@ -552,5 +713,129 @@ public sealed class ExcelOutlineGroupWriterTests
             []);
 
         Assert.Throws<ArgumentNullException>(() => writer.Apply(null!));
+    }
+
+    /// <summary>
+    /// The indentation pass writes one step into the <c>Description</c> cell of every
+    /// grouped child, and leaves the parent's zero step untouched (R5.18i).
+    /// </summary>
+    [Fact]
+    public void A_grouped_child_is_indented_in_the_description_column()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            IndentBody = new Mock<Excel.Range>().Object,
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, writer.IndentWrites.Count);
+        Assert.Equal((2, 1), writer.IndentWrites[0]);
+        Assert.Equal((3, 1), writer.IndentWrites[1]);
+
+        // Addressed by the schema's display name, never by a column position: the left-hand
+        // columns move with the workbook layout, and an index would indent whatever sat there.
+        Assert.Equal(ExcelOutlineGroupWriter.IndentColumnName, Assert.Single(writer.IndentColumnRequests));
+    }
+
+    /// <summary>
+    /// A row that was a child and is now top level has its indent taken back, so a promoted
+    /// row cannot keep a step that no bracket explains.
+    /// </summary>
+    [Fact]
+    public void A_promoted_child_is_re_levelled_to_zero()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 2,
+            IndentBody = new Mock<Excel.Range>().Object,
+
+            // Body row 2 was a child of row 1 on the previous pass.
+            InitialIndents = new Dictionary<int, int> { [2] = 1 },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply([Event(1, NewId()), Event(2, NewId())]);
+
+        Assert.True(outcome.Succeeded);
+        (int bodyRow, int level) = Assert.Single(writer.IndentWrites);
+        Assert.Equal(2, bodyRow);
+        Assert.Equal(0, level);
+    }
+
+    /// <summary>
+    /// A table whose indents already match the plan writes nothing, so a no-op Refresh does
+    /// not dirty the workbook for a pass that changed no presentation.
+    /// </summary>
+    [Fact]
+    public void An_already_indented_row_is_not_rewritten()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            IndentBody = new Mock<Excel.Range>().Object,
+            InitialIndents = new Dictionary<int, int> { [2] = 1, [3] = 1 },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(writer.IndentWrites);
+    }
+
+    /// <summary>
+    /// A table without the visible <c>Description</c> column still gets its outline: the
+    /// missing column is a structure the Repair command owns, and indentation is
+    /// presentation, so it is skipped rather than turned into a refusal.
+    /// </summary>
+    [Fact]
+    public void A_table_without_the_description_column_still_applies_the_outline()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.GroupsApplied);
+        Assert.Empty(writer.IndentWrites);
+        Assert.Equal(ExcelOutlineGroupWriter.IndentColumnName, Assert.Single(writer.IndentColumnRequests));
     }
 }

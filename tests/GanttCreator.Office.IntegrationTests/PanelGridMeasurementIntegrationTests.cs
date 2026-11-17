@@ -1,5 +1,6 @@
 using System.Globalization;
 using GanttCreator.Core;
+using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 using Excel = Microsoft.Office.Interop.Excel;
 using Xunit.Abstractions;
@@ -90,16 +91,47 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
 
             // The precondition, asserted in this same session rather than a separate
             // one: a freshly initialised table has a header row and no data rows, so
-            // DataBodyRange is null and there is no body to reproduce. Refusing is
-            // correct; what was wrong before was relying on it as the accidental
-            // result of a test that meant to measure a populated table.
+            // DataBodyRange is null. ADR-0050/R5.18j make that a SUPPORTED live state —
+            // the first Refresh draws a frame over the default range — so the
+            // measurement must compose a zero-row grid rather than refuse.
+            //
+            // This assertion used to REQUIRE the refusal ("A table with no data rows has
+            // no panel body to measure"), which is exactly why a fresh workbook never
+            // drew a chart: the adapter refused the one input the empty-chart contract
+            // exists for, the orchestrator reported "the worksheet columns could not be
+            // measured", and a file opened from F5 stayed blank.
             Excel.ListObject table = scope.Track(ResolveGanttTable(scope, workbook));
-            _output.WriteLine($"fresh table ListRows.Count={scope.Track(table.ListRows).Count}");
-            PanelGridOutcome empty = new ExcelPanelGridMeasurement(fixture.Excel)
-                .Measure([MeasuredColumnName]);
+            int bodyRows = scope.Track(table.ListRows).Count;
+            _output.WriteLine($"fresh table ListRows.Count={bodyRows}");
+
+            // Every input the empty-body path composes from, printed so a refusal names
+            // its own cause instead of the generic "columns could not be measured".
+            var measurement = new ExcelPanelGridMeasurement(fixture.Excel);
+            int anchorRow = GanttSheetLayout.HeaderRowIndex + 1;
+            _output.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"reads: headerHeight={measurement.ReadHeaderRowHeight(table)}"
+                + $" originTop={measurement.ReadOriginTop(table)}"
+                + $" originLeft={measurement.ReadOriginLeft(table)}"
+                + $" topPadding={measurement.ReadTopPaddingHeight(table)}"
+                + $" anchor={measurement.ReadAnchorHeight(table)}"
+                + $" bottomPadding={measurement.ReadBottomPaddingHeight(table)}"
+                + $" anchorRowEmpty={measurement.IsLayoutRowEmpty(table, anchorRow)}"
+                + $" paddingRowEmpty={measurement.IsLayoutRowEmpty(table, anchorRow + 1)}"));
+
+            PanelGridOutcome empty = measurement.Measure([MeasuredColumnName]);
             _output.WriteLine($"empty table: success={empty.Succeeded} reason={empty.Refusal}");
-            Assert.False(empty.Succeeded, "A table with no data rows has no panel body to measure.");
-            Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, empty.Refusal);
+            Assert.True(empty.Succeeded, $"Empty-table measurement refused: {empty.Refusal}");
+            Assert.NotNull(empty.Grid);
+            Assert.Empty(empty.Grid.RowHeightsPt);
+
+            // With no body rows the plot's top is the header's BOTTOM, measured rather
+            // than assumed: the header row is the period band's row (ADR-0030 D4), so
+            // this is the same edge the populated case reports from the body's top.
+            Excel.Range header = scope.Track(table.HeaderRowRange);
+            double headerBottom = Convert.ToDouble(header.Top, CultureInfo.InvariantCulture)
+                + Convert.ToDouble(header.Height, CultureInfo.InvariantCulture);
+            Assert.Equal(headerBottom, empty.Grid.OriginTopPt, precision: 6);
 
             // Now add rows so there is a body.
             AddBodyRows(scope, table, 3);
@@ -113,6 +145,68 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
                 + " header=" + (uniform.Grid is null ? "-" : uniform.Grid.HeaderHeightPt.ToString(CultureInfo.InvariantCulture)));
             Assert.True(uniform.Succeeded, $"Uniform-height measurement refused: {uniform.Refusal}");
             Assert.NotNull(uniform.Grid);
+
+            // R5.18n geometry probe. "The table and the chart do not line up" is a
+            // subtraction, not a pixel judgement: every band the scene draws sits on a
+            // measured row edge, so the sheet's own row grid is printed next to the grid
+            // the measurement composed. A disagreement between the two IS the
+            // misalignment, with its size attached.
+            Excel.Worksheet ganttSheet = scope.Track((Excel.Worksheet)workbook.ActiveSheet);
+            for (var row = 1; row <= 8; row++)
+            {
+                Excel.Range line = scope.Track(ganttSheet.Rows[row]);
+
+                // Converted before formatting: the COM properties are dynamic, and an
+                // interpolated format specifier on a dynamic value is a compile error
+                // (CS9230), not a formatted number.
+                double top = Convert.ToDouble(line.Top, CultureInfo.InvariantCulture);
+                double height = Convert.ToDouble(line.RowHeight, CultureInfo.InvariantCulture);
+                _output.WriteLine($"sheet row {row}: top={top:F2} height={height:F2}");
+            }
+
+            PanelCellGrid grid = uniform.Grid;
+            _output.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"grid: originTop={grid.OriginTopPt:F2}"
+                + $" headerHeight={grid.HeaderHeightPt:F2}"
+                + $" topPadding={grid.TopPaddingHeightPt:F2}"
+                + $" bodyTotal={grid.TotalRowHeightPt:F2}"
+                + $" body={string.Join('/', grid.RowHeightsPt.Select(h => h.ToString("F2", CultureInfo.InvariantCulture)))}"));
+
+            // R5.18n geometry probe, second half. Initialise leaves EVERY row at Excel's
+            // default 15 pt, while the scene draws its year and period bands from the themed
+            // catalogue tokens (18 and 16) and the frame's margins from 5.75 and 0.25. Those
+            // only agree once the refresh normaliser has run, so the rows are printed before
+            // and after it: "the table and the chart do not line up" then has a cause and a
+            // size instead of a screenshot.
+            var normaliser = new ExcelRowHeightNormaliser(fixture.Excel);
+            RowHeightNormalisationOutcome normalised = normaliser.Normalise(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                GanttCatalogues.MetricDefault("SplitterHeightPt"),
+                GanttCatalogues.MetricDefault("SpacerHeightPt"),
+                GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+                GanttCatalogues.MetricDefault("YearBandHeightPt"),
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
+            _output.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"normalise: succeeded={normalised.Succeeded} rowsWritten={normalised.RowsWritten} refusal={normalised.Refusal}"));
+
+            for (var row = 1; row <= 8; row++)
+            {
+                Excel.Range line = scope.Track(ganttSheet.Rows[row]);
+                double top = Convert.ToDouble(line.Top, CultureInfo.InvariantCulture);
+                double height = Convert.ToDouble(line.RowHeight, CultureInfo.InvariantCulture);
+                _output.WriteLine($"after normalise row {row}: top={top:F2} height={height:F2}");
+            }
+
+            PanelGridOutcome afterNormalise = new ExcelPanelGridMeasurement(fixture.Excel)
+                .Measure([MeasuredColumnName]);
+            _output.WriteLine("after normalise grid: success=" + afterNormalise.Succeeded
+                + " originTop=" + (afterNormalise.Grid is null ? "-" : afterNormalise.Grid.OriginTopPt.ToString("F2", CultureInfo.InvariantCulture))
+                + " header=" + (afterNormalise.Grid is null ? "-" : afterNormalise.Grid.HeaderHeightPt.ToString("F2", CultureInfo.InvariantCulture))
+                + " topPadding=" + (afterNormalise.Grid is null ? "-" : afterNormalise.Grid.TopPaddingHeightPt.ToString("F2", CultureInfo.InvariantCulture))
+                + " body=" + (afterNormalise.Grid is null ? "-" : string.Join('/', afterNormalise.Grid.RowHeightsPt.Select(h => h.ToString("F2", CultureInfo.InvariantCulture)))));
 
             // Make the body genuinely mixed. The expected list is derived from the
             // row count the host actually reports rather than from how many rows were

@@ -23,7 +23,16 @@ public class ParentChildCommandTests
     public void Promote_throws_for_a_null_mutator()
     {
         Assert.Throws<ArgumentNullException>(
-            () => PromoteToParentCommand.Run(null!, _ => { }));
+            () => PromoteToParentCommand.Run(null!, Selector().Object, _ => { }));
+    }
+
+    [Fact]
+    public void Promote_throws_for_a_null_selector()
+    {
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(2, 4));
+        Assert.Throws<ArgumentNullException>(
+            () => PromoteToParentCommand.Run(mutator.Object, null!, _ => { }));
     }
 
     [Fact]
@@ -32,14 +41,23 @@ public class ParentChildCommandTests
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(2, 4));
         Assert.Throws<ArgumentNullException>(
-            () => PromoteToParentCommand.Run(mutator.Object, null!));
+            () => PromoteToParentCommand.Run(mutator.Object, Selector().Object, null!));
     }
 
     [Fact]
     public void Demote_throws_for_a_null_mutator()
     {
         Assert.Throws<ArgumentNullException>(
-            () => DemoteToChildCommand.Run(null!, _ => { }));
+            () => DemoteToChildCommand.Run(null!, Selector().Object, _ => { }));
+    }
+
+    [Fact]
+    public void Demote_throws_for_a_null_selector()
+    {
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(2, 4));
+        Assert.Throws<ArgumentNullException>(
+            () => DemoteToChildCommand.Run(mutator.Object, null!, _ => { }));
     }
 
     [Fact]
@@ -48,7 +66,7 @@ public class ParentChildCommandTests
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(2, 4));
         Assert.Throws<ArgumentNullException>(
-            () => DemoteToChildCommand.Run(mutator.Object, null!));
+            () => DemoteToChildCommand.Run(mutator.Object, Selector().Object, null!));
     }
 
     [Fact]
@@ -89,12 +107,15 @@ public class ParentChildCommandTests
         var messages = new List<string>();
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(6, 4));
+        Mock<IInsertedRowSelector> selector = Selector();
 
-        PromoteToParentCommand.Run(mutator.Object, messages.Add);
+        PromoteToParentCommand.Run(mutator.Object, selector.Object, messages.Add);
 
         Assert.Empty(messages);
         mutator.Verify(m => m.Promote(), Times.Once);
         mutator.Verify(m => m.Demote(), Times.Never);
+        // A quiet success reports no new index, so nothing is selected.
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -103,12 +124,72 @@ public class ParentChildCommandTests
         var messages = new List<string>();
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(3, 4));
+        Mock<IInsertedRowSelector> selector = Selector();
 
-        DemoteToChildCommand.Run(mutator.Object, messages.Add);
+        DemoteToChildCommand.Run(mutator.Object, selector.Object, messages.Add);
 
         Assert.Empty(messages);
         mutator.Verify(m => m.Demote(), Times.Once);
         mutator.Verify(m => m.Promote(), Times.Never);
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
+    }
+
+    /// <summary>
+    /// A promote relocates the row's content, so the selection follows the row to its
+    /// new index instead of staying on the address it used to occupy.
+    /// </summary>
+    /// <remarks>
+    /// The cell is selected rather than the row's full width, which is why the assertion
+    /// is on <c>SelectBodyCell</c>: selecting the row would put the cursor in every column
+    /// and lose the one the user was working in.
+    /// </remarks>
+    [Fact]
+    public void Promote_success_moves_the_selection_onto_the_promoted_rows_cell()
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(6, 4, movedToRowNumber: 7));
+        Mock<IInsertedRowSelector> selector = Selector();
+
+        PromoteToParentCommand.Run(mutator.Object, selector.Object, messages.Add);
+
+        Assert.Empty(messages);
+        selector.Verify(s => s.SelectBodyCell(7), Times.Once);
+        selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void Demote_success_moves_the_selection_onto_the_demoted_rows_cell()
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(6, 4, movedToRowNumber: 2));
+        Mock<IInsertedRowSelector> selector = Selector();
+
+        DemoteToChildCommand.Run(mutator.Object, selector.Object, messages.Add);
+
+        Assert.Empty(messages);
+        selector.Verify(s => s.SelectBodyCell(2), Times.Once);
+        selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_relocation_selection_failure_degrades_to_silence()
+    {
+        // The row moved; only the cursor stays put. A host selection failure must
+        // neither escape into Excel nor surface as an error dialog.
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(6, 4, movedToRowNumber: 7));
+        Mock<IInsertedRowSelector> selector = Selector();
+        selector.Setup(s => s.SelectBodyCell(It.IsAny<int>()))
+            .Throws(new InvalidOperationException("host busy"));
+
+        Exception? exception = Record.Exception(() =>
+            PromoteToParentCommand.Run(mutator.Object, selector.Object, messages.Add));
+
+        Assert.Null(exception);
+        Assert.Empty(messages);
     }
 
     [Fact]
@@ -177,8 +258,12 @@ public class ParentChildCommandTests
         var messages = new List<string>();
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Refused(refusal));
+        Mock<IInsertedRowSelector> selector = Selector();
 
-        PromoteToParentCommand.Run(mutator.Object, messages.Add);
+        PromoteToParentCommand.Run(mutator.Object, selector.Object, messages.Add);
+
+        // A refusal moved nothing, so the selection is left where it is.
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
 
         string message = Assert.Single(messages);
         Assert.Contains(expectedText, message, StringComparison.OrdinalIgnoreCase);
@@ -198,8 +283,11 @@ public class ParentChildCommandTests
         var messages = new List<string>();
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Refused(refusal));
+        Mock<IInsertedRowSelector> selector = Selector();
 
-        DemoteToChildCommand.Run(mutator.Object, messages.Add);
+        DemoteToChildCommand.Run(mutator.Object, selector.Object, messages.Add);
+
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
 
         string message = Assert.Single(messages);
         Assert.Contains(expectedText, message, StringComparison.OrdinalIgnoreCase);
@@ -274,7 +362,7 @@ public class ParentChildCommandTests
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.PlanRefused(planRefusal, selectedRowNumber: 4));
 
-        PromoteToParentCommand.Run(mutator.Object, messages.Add);
+        PromoteToParentCommand.Run(mutator.Object, Selector().Object, messages.Add);
 
         string message = Assert.Single(messages);
         Assert.Contains("Row 4", message, StringComparison.Ordinal);
@@ -297,7 +385,7 @@ public class ParentChildCommandTests
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.PlanRefused(planRefusal, selectedRowNumber: 7));
 
-        DemoteToChildCommand.Run(mutator.Object, messages.Add);
+        DemoteToChildCommand.Run(mutator.Object, Selector().Object, messages.Add);
 
         string message = Assert.Single(messages);
         Assert.Contains("Row 7", message, StringComparison.Ordinal);
@@ -318,7 +406,7 @@ public class ParentChildCommandTests
             CellsWritten: 0);
         Mock<IParentChildMutator> mutator = MutatorReturning(outcome);
 
-        PromoteToParentCommand.Run(mutator.Object, messages.Add);
+        PromoteToParentCommand.Run(mutator.Object, Selector().Object, messages.Add);
 
         string message = Assert.Single(messages);
         Assert.Contains("Diagnostics", message, StringComparison.OrdinalIgnoreCase);
@@ -338,7 +426,7 @@ public class ParentChildCommandTests
             CellsWritten: 0);
         Mock<IParentChildMutator> mutator = MutatorReturning(outcome);
 
-        DemoteToChildCommand.Run(mutator.Object, messages.Add);
+        DemoteToChildCommand.Run(mutator.Object, Selector().Object, messages.Add);
 
         string message = Assert.Single(messages);
         Assert.Contains("Row 3", message, StringComparison.Ordinal);
@@ -353,6 +441,7 @@ public class ParentChildCommandTests
 
         Exception? exception = Record.Exception(() => PromoteToParentCommand.Run(
             mutator.Object,
+            Selector().Object,
             _ => throw new InvalidOperationException("dialog down")));
 
         Assert.Null(exception);
@@ -366,6 +455,7 @@ public class ParentChildCommandTests
 
         Exception? exception = Record.Exception(() => DemoteToChildCommand.Run(
             mutator.Object,
+            Selector().Object,
             _ => throw new InvalidOperationException("dialog down")));
 
         Assert.Null(exception);

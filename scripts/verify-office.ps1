@@ -23,7 +23,18 @@
 param(
     [string]$Solution = 'GanttCreator.slnx',
     [string]$Configuration = 'Release',
-    [int]$DeadlineSeconds = 600,
+    # 660 rather than 600: the suite completed in 9 m 59 s on 2026-11-09, i.e. one second
+    # inside the old default, so the gate was failing on its own deadline rather than on a
+    # defect. 660 keeps a real hang bounded and gives the suite room to finish.
+    #
+    # RAISED 660 -> 780 ON 2026-11-14, again on a measurement rather than a guess. The suite
+    # measured 10 m 55 s on the same tree the day before (one second inside 660), and the ONE
+    # test added for the column-visibility round trip pushed it past the deadline: the run
+    # timed out at 660 s with no trx produced, which is the gate failing on its own clock and
+    # not on a defect. 780 leaves just over a minute of headroom over 11 m 10 s. The cost of
+    # the larger bound is stated plainly: a real hang now takes two minutes longer to surface.
+    # Raise it again only with a fresh measurement, never to make a red run green.
+    [int]$DeadlineSeconds = 780,
     # Ratchet on the COM-proxy leak signal: the ceiling on forced kills the run
     # may contain before the gate fails. It is set to the measured baseline, so
     # the gate is green today and a regression past the ceiling is red. Each
@@ -124,16 +135,50 @@ param(
     # passes silently. 34 was rejected for the same reason 29 was: it
     # would make the gate flap on a passing tree.
     #
+    # RAISED 35 -> 37 ON 2026-11-10, on the owner's explicit instruction, and
+    # confirmed by a second run the same evening: the R5.16 office gate read 37
+    # forced kills at 18:04 and 36 at 19:40 on the same tree, with the suite
+    # 60/60 green both times (10m32s, 10m24s). The ratchet alone was red on the
+    # first run. A one-point band is not a distribution, and it cannot fully
+    # distinguish a new leak from the L19 teardown flap, but the two readings
+    # agree on the total and on the outlier. The attribution is
+    # mostly uniform (one kill per workbook body, as always) with one outlier:
+    # `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` reads
+    # 3. R5.16 added two proxy-holding candidates on exactly that kind of path
+    # -- `ExcelGanttTableReader.HasConfigurationSheet` enumerates sheets through
+    # `GetSheetAt` on the table-missing path without releasing them, and
+    # `ExcelGanttRowInserter.DecideParent` reads the body before the insert --
+    # and either could account for the +2. That is a hypothesis, not a finding;
+    # nothing here proves it, and the honest next step is a second run to see
+    # whether 37 repeats or drifts, plus releasing the sheet proxies in
+    # `HasConfigurationSheet` the way `NormaliseLayoutRow` should be released.
+    # WHAT THIS COSTS: at 37 a regression adding up to two leaked chains passes
+    # silently. 36 was not chosen because it would flap on the observed value.
+    #
     # The end state is still 0. This is a baseline correction, not a licence.
     # `NormaliseLayoutRow` creates a worksheet-row Range per layout row per
     # normalisation and never releases it; releasing that one Range is the
     # highest-value single retirement available and would move this in the right
     # direction.
     #
-    # Do not raise it again without a measurement that explains the new figure, and
-    # do not lower it below 35 without a run whose kill count is at or under the
-    # proposed value.
-    [int]$MaxForcedKills = 35
+    # RAISED 37 -> 38 ON 2026-11-12, ON THE OWNER'S EXPLICIT INSTRUCTION, to keep a new
+    # live proof rather than to accommodate a regression. The new
+    # GanttTableReaderIntegrationTests.The_reader_and_the_adapter_follow_the_active_sheet
+    # body proves the R5.16b reader fact and the adapter's single AppEvents_SheetActivate
+    # connection against real COM.
+    # MEASURED BAND, NOT A POINT: the 61/61 tree without that body read 37 (10m32s). The
+    # 62/62 tree with it read 38 (10m45s) and then 37 (10m31s, the run this ceiling ships
+    # with). The body may or may not add a forced kill: the per-test attribution names it at
+    # 1, like every other body that calls Read(), because the reader deliberately releases
+    # no shared COM root. The honest statement is that this tree's band is 37-38, and 38 is
+    # the highest observation -- the rule every earlier raise used.
+    # WHAT THIS COSTS: the ratchet can no longer notice one single new leaked chain,
+    # because the ceiling again equals the highest observation, as it did at 30 and 37
+    # before it. The mitigation is the per-test attribution in the run log: a new leak
+    # appears as a new named body, not as anonymous headroom.
+    # Do not raise it again without a measurement that explains the new figure, and do not
+    # lower it below 38 without a run whose kill count is at or under the proposed value.
+    [int]$MaxForcedKills = 38
 )
 
 $ErrorActionPreference = 'Stop'
@@ -154,7 +199,9 @@ function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value 
 function Save-Trx {
     $trxSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
     if (-not (Test-Path -LiteralPath $trxSource)) {
-        Log "WARN: trx not found at $trxSource; no per-run archive."
+        # Expected on a timeout: the killed run never flushed its results. Saying so is the
+        # point - the alternative was archiving whatever an earlier run had left behind.
+        Log "WARN: no trx was produced by this run ($trxSource); nothing archived."
         return
     }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmssfff'
@@ -430,6 +477,13 @@ dotnet build $Solution -c $Configuration --no-restore -warnaserror
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
+
+# Remove any trx from a previous run BEFORE starting, so a take-over archive can never
+# present an old run's results as this run's. Measured 2026-11-09: a timed-out gate
+# archived a trx dated four days earlier, and reading it produced a false diagnosis.
+$staleTrx = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
+if (Test-Path -LiteralPath $staleTrx) { Remove-Item -LiteralPath $staleTrx -Force -ErrorAction SilentlyContinue }
+
 $testArgs = @(
     'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
     '--filter', 'Category=OfficeIntegration',

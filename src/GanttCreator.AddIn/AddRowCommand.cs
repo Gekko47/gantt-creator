@@ -12,15 +12,25 @@ internal static class AddRowCommand
 {
     /// <summary>Runs the production add-row command in the current Excel session.</summary>
     /// <param name="type">The canonical catalogue type to insert.</param>
-    internal static void RunForExcel(GanttEntityType type) =>
+    internal static void RunForExcel(GanttEntityType type)
+    {
+        // ADR-0055: inserting a table row is refused on a protected sheet (measured), so the command
+        // runs inside the release window. The render this triggers opens the same window and nests.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelGanttRowInserter(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
-                outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
+                outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application),
+                // The parent decision and the regroup that follows it are logged because a report
+                // that "the new activity is not in the group" cannot distinguish "no parent was
+                // assigned" from "a parent was assigned and the planner dropped the row".
+                trace: CommandBoundary.Instance.WriteTechnicalRecord),
             GanttRowId.New,
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
             type);
+    }
 
     /// <summary>Runs an injected add-row command.</summary>
     /// <param name="inserter">The row insertion port.</param>
@@ -158,6 +168,9 @@ internal static class AddRowCommand
         GanttRowInsertRefusalReason.RowInsertRefused =>
             "Gantt Creator could not add the row because Excel refused the insert, so no row was added. "
             + "Try again; if it keeps failing, see the Diagnostics dialog.",
+        GanttRowInsertRefusalReason.CriticalIntervalRequiresParent =>
+            "A critical interval must belong to an activity. Select an activity row (or one of its "
+            + "children) and add the critical interval again.",
         _ => "Gantt Creator could not add the row. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 }

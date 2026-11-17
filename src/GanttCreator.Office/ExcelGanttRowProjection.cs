@@ -37,27 +37,45 @@ internal static class ExcelGanttRowProjection
     /// The zero-based index of the first row whose <c>Id</c> could not be
     /// parsed, when the projection returns <see langword="null"/>.
     /// </param>
+    /// <param name="unparseableTypeIndex">
+    /// The zero-based index of the first row whose <c>Type</c> cell could not be
+    /// parsed, or <see langword="null"/> when every row's type was readable.
+    /// </param>
     /// <returns>The projected events, or <see langword="null"/> when a row's <c>Id</c> is unparseable.</returns>
+    /// <remarks>
+    /// <b>An unreadable <c>Type</c> is reported, not swallowed.</b> The projection
+    /// still succeeds — only an unparseable <c>Id</c> makes the table unusable — but
+    /// the row that carried it is named, because the projected <see cref="GanttEvent"/>
+    /// can only carry the enum's default. A caller that acts on a specific row's type
+    /// (the add-child mutator acts on the SELECTED row's) must therefore check this
+    /// index rather than trust the default, which would otherwise be indistinguishable
+    /// from a row whose type genuinely cannot own children.
+    /// </remarks>
     internal static List<GanttEvent>? ProjectRows(
         List<object?[]> body,
         int[] columnMap,
-        out int? failedIndex)
+        out int? failedIndex,
+        out int? unparseableTypeIndex)
     {
         failedIndex = null;
-        var events = new List<GanttEvent>(body.Count);
-        for (var index = 0; index < body.Count; index++)
+        unparseableTypeIndex = null;
+        List<GanttEvent> events = new List<GanttEvent>(body.Count);
+        for (int index = 0; index < body.Count; index++)
         {
-            var row = body[index];
+            object?[] row = body[index];
             if (!GanttRowId.TryParse(CellText(row, columnMap, "Id"), out GanttRowId? id) || id is null)
             {
                 failedIndex = index;
                 return null;
             }
 
-            _ = EntityTypeCatalog.TryParse(
-                CellText(row, columnMap, "Type"),
-                out GanttEntityType type);
-            var parentText = CellText(row, columnMap, "ParentId");
+            if (!EntityTypeCatalog.TryParse(
+                    CellText(row, columnMap, "Type"),
+                    out GanttEntityType type))
+            {
+                unparseableTypeIndex ??= index;
+            }
+            string parentText = CellText(row, columnMap, "ParentId");
             GanttRowId? parentId =
                 GanttRowId.TryParse(parentText, out GanttRowId? parsedParent) && parsedParent is not null
                     ? parsedParent
@@ -96,8 +114,8 @@ internal static class ExcelGanttRowProjection
         int[] columnMap,
         string columnName)
     {
-        var schemaIndex = SchemaIndexOf(columnName);
-        var tableIndex = columnMap[schemaIndex];
+        int schemaIndex = SchemaIndexOf(columnName);
+        int tableIndex = columnMap[schemaIndex];
         return tableIndex < 1 || tableIndex > row.Length
             ? string.Empty
             : row[tableIndex - 1] as string ?? string.Empty;
@@ -114,7 +132,7 @@ internal static class ExcelGanttRowProjection
     /// </exception>
     internal static int SchemaIndexOf(string columnName)
     {
-        for (var index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
+        for (int index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
         {
             if (GanttTableSchema.Default.Columns[index].Name == columnName)
             {

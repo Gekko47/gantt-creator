@@ -106,6 +106,16 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     {
         public bool? HasActiveWorkbook() => true;
 
+        public void ShowStatusBar(string message)
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
+        public void ClearStatusBar()
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
 
         private sealed class Subscription : IDisposable
@@ -141,7 +151,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
             ConfigReadOutcome.Ok(
                 "W-1",
                 new Dictionary<string, string>(),
-                styles ?? GanttStyleRegistry.Empty));
+                styles ?? GanttStyleRegistry.Empty, new Dictionary<string, double>()));;
         service.SetCatalogueReader(catalogues.Object);
 
         service.Activate();
@@ -191,6 +201,45 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     }
 
     [Fact]
+    public void The_dropdown_offers_the_fallback_set_for_a_custom_activity_with_no_style()
+    {
+        // R5.6d: a Custom Activity row whose style has not been chosen yet (or
+        // whose style was deleted) still renders - the scene falls back to the
+        // type's code-owned default style - so the dropdown offers that
+        // default's positions instead of being disabled on a perfectly
+        // renderable row.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("Custom Activity", null));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
+        Assert.Equal(6, service.GetDescriptionLabelCount());
+        Assert.Equal("Default", service.GetDescriptionLabelItemID(0));
+        Assert.Equal("Auto", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Left", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("Right", service.GetDescriptionLabelItemID(3));
+        Assert.Equal("Inside", service.GetDescriptionLabelItemID(4));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(5));
+    }
+
+    [Fact]
+    public void The_dropdown_offers_the_milestone_fallback_for_a_custom_milestone_with_no_style()
+    {
+        // R5.6d: the milestone fallback is the milestone vocabulary, so a
+        // Custom Milestone row with no style offers the milestone positions -
+        // and no Inside, which a milestone does not have.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("Custom Milestone", null));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
+        Assert.Equal(5, service.GetDescriptionLabelCount());
+        Assert.Equal("Default", service.GetDescriptionLabelItemID(0));
+        Assert.Equal("Auto", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Left", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("Right", service.GetDescriptionLabelItemID(3));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(4));
+    }
+
+    [Fact]
     public void The_dropdown_offers_no_auto_for_a_splitter()
     {
         // The splitter has no Auto in its catalogue set, and the projection
@@ -198,11 +247,12 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
-        Assert.Equal(5, service.GetDescriptionLabelCount());
-        Assert.Equal("DataPanelLeft", service.GetDescriptionLabelItemID(1));
-        Assert.Equal("PlotCentre", service.GetDescriptionLabelItemID(2));
-        Assert.Equal("Both", service.GetDescriptionLabelItemID(3));
-        Assert.Equal("None", service.GetDescriptionLabelItemID(4));
+        // R5.18l: a splitter no longer offers `DataPanelLeft`, so the projected list is
+        // one shorter and the three remaining positions shift down by one.
+        Assert.Equal(4, service.GetDescriptionLabelCount());
+        Assert.Equal("PlotCentre", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Both", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(3));
     }
 
     [Theory]
@@ -239,9 +289,10 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
-        Assert.Equal("Data panel", service.GetDescriptionLabelItemLabel(1));
-        Assert.Equal("Plot centre", service.GetDescriptionLabelItemLabel(2));
-        Assert.Equal("Both", service.GetDescriptionLabelItemLabel(3));
+        // R5.18l removed `DataPanelLeft`, so the list opens on Plot centre.
+        Assert.Equal("Plot centre", service.GetDescriptionLabelItemLabel(1));
+        Assert.Equal("Both", service.GetDescriptionLabelItemLabel(2));
+        Assert.Equal("None (hide)", service.GetDescriptionLabelItemLabel(3));
     }
 
     [Fact]
@@ -322,12 +373,18 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     }
 
     [Fact]
-    public void A_selection_change_invalidates_only_the_two_label_dropdowns()
+    public void A_selection_change_invalidates_only_the_controls_that_read_the_selection()
     {
         // Ruling 6: moving the selection must not re-query every getter on
-        // the ribbon, so the handler invalidates exactly the two label
-        // dropdowns that re-project from the newly selected row — the
-        // description-label and date-label dropdowns — and no other control.
+        // the ribbon, so the handler invalidates exactly the controls whose
+        // enablement or items are projected FROM the selection: the two label
+        // dropdowns, the custom-style dropdown, and the two shape-lock buttons.
+        //
+        // The shape pair was missing until 2026-11-09 and that omission WAS the
+        // reported defect: their getEnabled answer is not in the cached snapshot,
+        // so without an invalidation on selection change Excel keeps the state it
+        // computed at load (disabled, nothing selected) and the user can never
+        // unlock a shape. This test previously pinned the incomplete set.
         var ribbon = new Mock<IRibbonUI>();
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null), ribbon: ribbon.Object);
@@ -345,7 +402,22 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
             .Select(item => item.Arguments[0])
             .ToList();
 
-        Assert.Equal([RibbonControlIds.DescriptionLabel, RibbonControlIds.DateLabel], invalidated);
+        Assert.Equal(
+            [
+                RibbonControlIds.DescriptionLabel,
+                RibbonControlIds.DateLabel,
+                RibbonControlIds.CustomStyle,
+                // R5.9b: the structural gates follow the active row, so the
+                // five row-action controls re-evaluate with the dropdowns.
+                RibbonControlIds.PromoteToParent,
+                RibbonControlIds.DemoteToChild,
+                RibbonControlIds.MoveUp,
+                RibbonControlIds.MoveDown,
+                RibbonControlIds.Remove,
+                RibbonControlIds.ToggleChartLock,
+                RibbonControlIds.ToggleCellLock,
+            ],
+            invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }
 

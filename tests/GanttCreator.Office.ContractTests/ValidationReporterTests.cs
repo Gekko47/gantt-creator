@@ -135,6 +135,7 @@ public class ValidationReporterTests
         public Mock<Excel.Range> Body { get; } = new();
 
         public Dictionary<(int Row, int Column), CellGraph> Cells { get; } = [];
+        public TestableReporter? LastReporter { get; private set; }
 
         /// <summary>
         /// Cells that <c>SpecialCells(xlCellTypeComments)</c> reports, in the
@@ -156,13 +157,17 @@ public class ValidationReporterTests
         }
 
         /// <summary>Builds the reporter under test wired to this graph.</summary>
-        public TestableReporter Build() => new TestableReporter(
-            Application.Object,
-            sheetAt: (_, _) => Worksheet.Object,
-            tableAt: (_, _) => Table.Object,
-            columnAt: (_, index) => _columns[index - 1].Object,
-            cellAt: (_, row, column) => CellAt(row, column).Cell.Object,
-            enumerate: _ => CommentedCells.Select(cell => cell.Cell.Object));
+        public TestableReporter Build()
+        {
+            LastReporter = new TestableReporter(
+                Application.Object,
+                sheetAt: (_, _) => Worksheet.Object,
+                tableAt: (_, _) => Table.Object,
+                columnAt: (_, index) => _columns[index - 1].Object,
+                cellAt: (_, row, column) => CellAt(row, column).Cell.Object,
+                enumerate: _ => CommentedCells.Select(cell => cell.Cell.Object));
+            return LastReporter;
+        }
 
         public CellGraph Cell(int row, int column) => CellAt(row, column);
 
@@ -217,6 +222,12 @@ public class ValidationReporterTests
         public Func<Excel.Range?, int, int, Excel.Range> CellAt { get; }
 
         public Func<Excel.Range, IEnumerable<Excel.Range>> Enumerate { get; }
+
+        public List<Excel.Comment> DeletedComments { get; } = [];
+        public List<(Excel.Comment Comment, string Text)> RewrittenComments { get; } = [];
+
+        internal override void DeleteComment(Excel.Comment comment) => DeletedComments.Add(comment);
+        internal override void SetCommentText(Excel.Comment comment, string text) => RewrittenComments.Add((comment, text));
 
         internal override object GetSheetAt(Excel.Sheets sheets, int index) => SheetAt(sheets, index);
 
@@ -488,14 +499,16 @@ public class ValidationReporterTests
         userOnly.WithUserNote("Mine.");
         graph.WithCommentedCells(ownedOnly, userPlusOwned, userOnly);
 
-        GanttValidationReportOutcome outcome = graph.Build().Report([]);
+        var reporter = graph.Build();
+        GanttValidationReportOutcome outcome = reporter.Report([]);
 
         Assert.Equal(0, outcome.NotesWritten);
-        Assert.Equal(1, ownedOnly.NoteDeleteCount);
-        Assert.Equal(0, userPlusOwned.NoteDeleteCount);
-        Assert.Equal("Keep me.", Assert.Single(userPlusOwned.NoteTextWrites));
-        Assert.Empty(userOnly.NoteTextWrites);
-        Assert.Equal(0, userOnly.NoteDeleteCount);
+        Assert.Single(reporter.DeletedComments);
+        Assert.Contains(ownedOnly.ExistingComment!.Object, reporter.DeletedComments);
+        Assert.DoesNotContain(userPlusOwned.ExistingComment!.Object, reporter.DeletedComments);
+        Assert.DoesNotContain(userOnly.ExistingComment!.Object, reporter.DeletedComments);
+        Assert.Equal("Keep me.", Assert.Single(reporter.RewrittenComments.Select(rc => rc.Text)));
+        Assert.Equal(userPlusOwned.ExistingComment!.Object, Assert.Single(reporter.RewrittenComments).Comment);
     }
 
     [Fact]

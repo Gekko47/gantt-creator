@@ -73,6 +73,48 @@ public sealed record FrameBandsTheme(
 /// reproduces the pre-ADR-0038 geometry exactly.
 /// </param>
 /// <param name="Theme">Resolved frame/band styles.</param>
+/// <param name="SheetCoordinates">
+/// Whether the request's coordinates are absolute worksheet points, which is
+/// true of the LIVE composition and false of the EXPORT ones (ADR-0047).
+/// <para>
+/// A live chart's coordinates are the sheet's own, so nothing can be drawn
+/// above row 1. Excel clamps a shape's negative top to the top of the sheet,
+/// and a clamped top with an unchanged height moves the shape's BOTTOM down,
+/// so the chart's background and right edge end below the row they belong to -
+/// the sheet and the model then disagree about where the chart ends.
+/// </para>
+/// <para>
+/// Two rules follow, and both are applied by the frame builder. The CONTENT
+/// must be on the sheet: a band above row 1 cannot be drawn at all, so the
+/// build is refused rather than silently misplaced. The FRAME's own top
+/// margin may reach above the sheet, and is then clamped - the frame is
+/// shortened at the top so that its bottom edge stays exactly where it
+/// belongs.
+/// </para>
+/// <para>
+/// The EXPORT compositions build in their own coordinate space and are
+/// translated to a zero origin by the renderer, so a negative origin is
+/// legitimate there and this flag is off.
+/// </para>
+/// </param>
+/// <param name="DataPanelBounds">
+/// The visible data table's rectangle, in worksheet points, when the chart's
+/// outer border must enclose it as well as the plot (ADR-0048).
+/// <para>
+/// A LIVE chart's title is an owned textbox placed in the table's own columns,
+/// so the title and the table sit to the LEFT of the plot. A border drawn on
+/// the plot's rectangle therefore encloses neither of them, and the chart reads
+/// as two unrelated objects. The border is drawn on the union of the chart's
+/// rectangle and this one, which is a single rectangle whose left edge is the
+/// table's first column.
+/// </para>
+/// <para>
+/// <b>Only the border uses it.</b> The background, the bands, the grid lines
+/// and the closing line keep the plot's own rectangle: a background over the
+/// table would paint the user's own cells. The EXPORT compositions draw their
+/// own panel, so they pass no rectangle and their border is unchanged.
+/// </para>
+/// </param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
     GanttTimeScale Scale,
@@ -93,7 +135,9 @@ public sealed record FrameBandsRequest(
     bool ShowMajorGrid,
     double PlotBandHeaderOverlapPt,
     double ChartAnchorRowHeightPt,
-    FrameBandsTheme Theme
+    FrameBandsTheme Theme,
+    bool SheetCoordinates = false,
+    RectD? DataPanelBounds = null
 );
 
 /// <summary>The result of a successful frame/band build.</summary>
@@ -129,6 +173,17 @@ public enum FrameBandsRefusal
 
     /// <summary>One or more resolved styles were null.</summary>
     InvalidTheme = 6,
+
+    /// <summary>
+    /// The chart's content would be drawn above the top of the sheet.
+    /// </summary>
+    /// <remarks>
+    /// A live chart's coordinates are the sheet's own, so a band above row 1
+    /// cannot be drawn where the model says. Excel clamps it instead, which
+    /// moves the band down over the row it belongs to, so the build is
+    /// refused rather than silently misplaced (ADR-0047).
+    /// </remarks>
+    ContentAboveSheet = 7,
 }
 
 /// <summary>The typed result of attempting to build frame/bands.</summary>

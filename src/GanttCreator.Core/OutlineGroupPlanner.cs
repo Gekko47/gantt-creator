@@ -23,9 +23,9 @@ public sealed record OutlineGroup(int ParentRowNumber, IReadOnlyList<int> ChildR
     /// <inheritdoc />
     public override int GetHashCode()
     {
-        var hash = new HashCode();
+        HashCode hash = new HashCode();
         hash.Add(ParentRowNumber);
-        foreach (var child in ChildRowNumbers)
+        foreach (int child in ChildRowNumbers)
         {
             hash.Add(child);
         }
@@ -116,8 +116,8 @@ public static class OutlineGroupPlanner
         {
             if (child.ParentId is not { } parentId
                 || !parents.Contains(parentId)
-                || !rowNumberById.TryGetValue(parentId, out var parentRow)
-                || !rowNumberById.TryGetValue(child.Id, out var childRow))
+                || !rowNumberById.TryGetValue(parentId, out int parentRow)
+                || !rowNumberById.TryGetValue(child.Id, out int childRow))
             {
                 // A parent that is not a row of this table cannot own a group here.
                 continue;
@@ -140,7 +140,7 @@ public static class OutlineGroupPlanner
         }
 
         List<OutlineGroup> groups = [];
-        foreach ((var parentRow, List<int> children) in childrenByParentRow.OrderBy(static pair => pair.Key))
+        foreach ((int parentRow, List<int> children) in childrenByParentRow.OrderBy(static pair => pair.Key))
         {
             children.Sort();
 
@@ -149,8 +149,8 @@ public static class OutlineGroupPlanner
             // that block cannot be drawn under this parent without moving rows, so
             // it is reported rather than given a second group of its own -- one
             // child must never be both grouped and ungrouped by the same plan.
-            var run = new List<int>();
-            foreach (var child in children)
+            List<int> run = [];
+            foreach (int child in children)
             {
                 if (run.Count > 0 ? child == run[^1] + 1 : child == parentRow + 1)
                 {

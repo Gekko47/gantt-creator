@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace GanttCreator.Office;
 
 /// <summary>
@@ -60,6 +62,12 @@ public static partial class ShapeReconciler
     /// The identifiers the host currently holds, as returned by
     /// <see cref="IShapeWritePort.ListOwned"/>.
     /// </param>
+    /// <param name="unchangedIds">Cached IDs whose desired payload is unchanged.</param>
+    /// <param name="scopes">
+    /// How much of each changed shape has to be re-applied, or <see langword="null"/> to
+    /// re-apply everything. A shape absent from the map gets the full update, so a caller
+    /// that cannot classify a change never gets a partial write.
+    /// </param>
     /// <returns>The planned operations and the back-to-front z-order list.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="desired"/> or <paramref name="owned"/> is
@@ -86,7 +94,11 @@ public static partial class ShapeReconciler
     /// order.
     /// </para>
     /// </remarks>
-    public static ShapeReconcilePlan Plan(IReadOnlyList<OfficeShapeRequest> desired, IReadOnlyList<string> owned)
+    public static ShapeReconcilePlan Plan(
+        IReadOnlyList<OfficeShapeRequest> desired,
+        IReadOnlyList<string> owned,
+        IReadOnlySet<string>? unchangedIds = null,
+        IReadOnlyDictionary<string, ShapeUpdateScope>? scopes = null)
     {
         ArgumentNullException.ThrowIfNull(desired);
         ArgumentNullException.ThrowIfNull(owned);
@@ -113,7 +125,10 @@ public static partial class ShapeReconciler
 
             if (ownedIds.Contains(request.PrimitiveId))
             {
-                updates.Add(request);
+                if (unchangedIds?.Contains(request.PrimitiveId) != true)
+                {
+                    updates.Add(request);
+                }
             }
             else
             {
@@ -124,7 +139,12 @@ public static partial class ShapeReconciler
         List<ShapeReconcileOperation> operations = new(updates.Count + creates.Count + owned.Count);
         foreach (OfficeShapeRequest request in updates)
         {
-            operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Update, request.PrimitiveId, request));
+            operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Update, request.PrimitiveId, request)
+            {
+                Scope = scopes is not null && scopes.TryGetValue(request.PrimitiveId, out ShapeUpdateScope scope)
+                    ? scope
+                    : ShapeUpdateScope.All,
+            });
         }
 
         foreach (OfficeShapeRequest request in creates)
@@ -133,7 +153,7 @@ public static partial class ShapeReconciler
         }
 
         List<string> deletes = [];
-        foreach (var identifier in owned)
+        foreach (string identifier in owned)
         {
             if (!declared.Contains(identifier))
             {
@@ -146,7 +166,7 @@ public static partial class ShapeReconciler
         // the caller's order is what lets the fixed-point pin hold even if a
         // future caller passes a differently-ordered owned list.
         deletes.Sort(StringComparer.Ordinal);
-        foreach (var identifier in deletes)
+        foreach (string identifier in deletes)
         {
             operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Delete, identifier, null));
         }
@@ -205,14 +225,128 @@ public static partial class ShapeReconciler
             return new ShapeReconcileOutcome(ShapeReconcileRefusal.BlockingErrors, _emptyPlan, null, 0);
         }
 
-        IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
-        ShapeReconcilePlan plan = Plan(request.Desired, owned);
+        // One batch for the whole reconcile: the target shapes collection and the
+        // workbook guard are resolved once, and every proxy that a pass obtains is
+        // reused by the next (ADR-0054). The verification reads, the plan execution
+        // and the z-order pass all run inside it, so a move plans and writes against
+        // one resolved collection instead of resolving it per operation.
+        //
+        // Nothing about correctness moves: every operation still validates its own
+        // request, still confirms the ownership tag before writing, and still refuses
+        // with the same outcome. The batch only removes the repeat calls that returned
+        // the same answer.
+        using IDisposable batch = writer.BeginBatch();
 
-        var completed = 0;
+        IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
+        ShapeDeltaSnapshot? previous = request.PreviousSnapshot;
+        bool cacheMatchesOwned = previous is not null
+            && owned.Count == previous.Signatures.Count
+            && owned.All(previous.Signatures.ContainsKey);
+        HashSet<string>? unchangedIds = null;
+        if (cacheMatchesOwned && previous is not null)
+        {
+            unchangedIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (OfficeShapeRequest item in request.Desired)
+            {
+                if (previous.Signatures.TryGetValue(item.PrimitiveId, out string? signature)
+                    && string.Equals(signature, ShapeDeltaCache.Signature(item), StringComparison.Ordinal))
+                {
+                    _ = unchangedIds.Add(item.PrimitiveId);
+                }
+            }
+
+            // Verify the candidate skips against the LIVE host before trusting them.
+            //
+            // The signature proves the scene's payload is unchanged, not that the shape on
+            // the sheet still matches it: shapes are host objects, and Excel moves and
+            // resizes xlMoveAndSize shapes whenever rows are inserted, hidden, shown, or
+            // re-heighted - none of which changes the scene. A skipped shape whose live
+            // geometry has drifted is a chart that no Refresh repairs, and it is the class
+            // of defect the last two live sessions produced. Geometry is verifiable where
+            // text and style are not (R4.7 D5 rejected a full property diff because a null
+            // colour means "leave the host alone"; four absolute numbers carry no such
+            // ambiguity), so the check is sound and costs a handful of property reads per
+            // unchanged shape instead of a rewrite.
+            if (unchangedIds.Count > 0)
+            {
+                List<string> drifted = [];
+                foreach (OfficeShapeRequest item in request.Desired)
+                {
+                    if (unchangedIds.Contains(item.PrimitiveId) && !writer.GeometryMatches(item))
+                    {
+                        drifted.Add(item.PrimitiveId);
+                    }
+                }
+
+                foreach (string identifier in drifted)
+                {
+                    _ = unchangedIds.Remove(identifier);
+                }
+            }
+        }
+
+        // Classify what changed, so a shape that only MOVED is moved rather than
+        // re-styled and re-lettered (ADR-0053). The part hashes come from the same cache
+        // entries that decided "unchanged", and the classification is a pure in-memory
+        // comparison: no extra host call decides it.
+        //
+        // Only geometry-only is scoped. A shape whose appearance changed (a style-key change,
+        // a type change, a label change) or whose parts BOTH changed is re-applied in full:
+        // writing the style is the honest repair, and a full update is what the verified
+        // skip's counterpart has always done.
+        Dictionary<string, ShapeUpdateScope>? scopes = null;
+        if (unchangedIds is not null && previous is not null && previous.Parts.Count > 0)
+        {
+            foreach (OfficeShapeRequest item in request.Desired)
+            {
+                if (unchangedIds.Contains(item.PrimitiveId)
+                    || !previous.Parts.TryGetValue(item.PrimitiveId, out ShapePartSignatures? parts))
+                {
+                    continue;
+                }
+
+                bool geometrySame = string.Equals(
+                    parts.Geometry,
+                    ShapeDeltaCache.GeometrySignature(item),
+                    StringComparison.Ordinal);
+                bool appearanceSame = string.Equals(
+                    parts.Appearance,
+                    ShapeDeltaCache.AppearanceSignature(item),
+                    StringComparison.Ordinal);
+
+                // A kind change is never a move: the host builds a different shape for a
+                // diamond than for a bar, and ApplyGeometry on the wrong kind is not a
+                // repair. Re-applying everything is the honest answer.
+                bool kindSame = string.Equals(parts.Kind, item.Kind.ToString(), StringComparison.Ordinal);
+                if (!kindSame || geometrySame || !appearanceSame)
+                {
+                    continue;
+                }
+
+                // The shape moved — or the host moved it for us. An inserted or deleted
+                // worksheet row moves every xlMove shape with its cells, so the live box can
+                // already BE the scene's box. Verifying that costs a handful of property
+                // reads and removes the write entirely, which is what makes an insert cheap.
+                if (writer.GeometryMatches(item))
+                {
+                    _ = unchangedIds.Add(item.PrimitiveId);
+                    continue;
+                }
+
+                scopes ??= new Dictionary<string, ShapeUpdateScope>(StringComparer.Ordinal);
+                scopes[item.PrimitiveId] = ShapeUpdateScope.Geometry;
+            }
+        }
+
+        ShapeReconcilePlan plan = Plan(request.Desired, owned, unchangedIds, scopes);
+
+        int completed = 0;
         foreach (ShapeReconcileOperation operation in plan.Operations)
         {
             ShapeWriteOutcome outcome = operation.Action switch
             {
+                ShapeReconcileAction.Update when operation.Scope == ShapeUpdateScope.Geometry =>
+                    writer.UpdateGeometry(operation.Request!),
                 ShapeReconcileAction.Update => writer.Update(operation.Request!),
                 ShapeReconcileAction.Create => writer.Create(operation.Request!),
                 ShapeReconcileAction.Delete => writer.Delete(operation.PrimitiveId),
@@ -238,11 +372,65 @@ public static partial class ShapeReconciler
 
         // The z-order pass runs only once every shape write has succeeded, so a
         // half-applied plan is never stacked as though it were complete.
-        ShapeWriteOutcome zOrder = writer.ApplyZOrder(plan.BackToFront);
+        bool orderUnchanged = cacheMatchesOwned && previous is not null
+            && SurvivorOrderUnchanged(previous.BackToFront, plan);
+        ShapeWriteOutcome zOrder = ShapeWriteOutcome.Ok();
+        if (!orderUnchanged)
+        {
+            long zOrderStarted = Stopwatch.GetTimestamp();
+            zOrder = writer.ApplyZOrder(plan.BackToFront);
+            double zOrderMilliseconds = Stopwatch.GetElapsedTime(zOrderStarted).TotalMilliseconds;
+            return zOrder.Succeeded
+                ? new ShapeReconcileOutcome(null, plan, null, completed)
+                {
+                    ZOrderApplied = true,
+                    ZOrderMilliseconds = zOrderMilliseconds,
+                }
+                : new ShapeReconcileOutcome(ShapeReconcileRefusal.ZOrderRefused, plan, null, completed)
+                {
+                    ZOrderApplied = true,
+                    ZOrderMilliseconds = zOrderMilliseconds,
+                };
+        }
 
-        return zOrder.Succeeded
-            ? new ShapeReconcileOutcome(null, plan, null, completed)
-            : new ShapeReconcileOutcome(ShapeReconcileRefusal.ZOrderRefused, plan, null, completed);
+        return new ShapeReconcileOutcome(null, plan, null, completed);
+    }
+
+    /// <summary>
+    /// Whether the surviving owned shapes are already in the desired relative order.
+    /// </summary>
+    /// <param name="previous">The back-to-front order last applied.</param>
+    /// <param name="plan">The plan just executed.</param>
+    /// <returns><see langword="true"/> when the pass can be skipped.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Deletes do not reorder the survivors.</b> Removing a shape leaves every other
+    /// shape's relative position untouched, so a delete-only reconcile whose survivors
+    /// match the last applied order needs no z-order pass — the pass costs one lookup and
+    /// one host command per shape and was running on every such refresh.
+    /// </para>
+    /// <para>
+    /// <b>A CREATE is different and must never take this path.</b> A new shape is added
+    /// in front of the existing ones, so a create needs the pass to place it behind the
+    /// shapes the scene puts behind it. The caller therefore also requires that the plan
+    /// contains no create; this method only answers the relative-order question.
+    /// </para>
+    /// </remarks>
+    private static bool SurvivorOrderUnchanged(
+        IReadOnlyList<string> previous,
+        ShapeReconcilePlan plan)
+    {
+        if (plan.Of(ShapeReconcileAction.Create).Count > 0)
+        {
+            return false;
+        }
+
+        // Compare the previous order with the deleted shapes removed against the desired
+        // order: removing a shape does not move the survivors, so their relative order is
+        // what the pass would have to reproduce.
+        HashSet<string> planned = new(plan.BackToFront, StringComparer.Ordinal);
+        List<string> previousSurvivors = [.. previous.Where(planned.Contains)];
+        return previousSurvivors.SequenceEqual(plan.BackToFront, StringComparer.Ordinal);
     }
 
     /// <summary>

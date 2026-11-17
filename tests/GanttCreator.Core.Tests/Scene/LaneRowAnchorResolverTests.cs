@@ -142,6 +142,61 @@ public sealed class LaneRowAnchorResolverTests
     }
 
     /// <summary>
+    /// A BLANK table row between two valid rows leaves its own band empty, so the
+    /// table-to-Gantt one-to-one alignment holds and the blank row renders as an
+    /// intentional gap (R5.11 alignment guarantee).
+    /// </summary>
+    /// <remarks>
+    /// The blank row is skipped by the validator and therefore produces no event
+    /// and owns no lane. This is the resolver half of the guarantee: row 3's lane
+    /// sits on row 3's measured top (18 + 20 = 38 from the origin), not on the
+    /// stacked 18, so the middle band stays visibly empty rather than being
+    /// consumed.
+    /// </remarks>
+    [Fact]
+    public void A_blank_row_between_valid_rows_leaves_its_own_band_empty()
+    {
+        GanttEvent first = Event(1, "first");
+        GanttEvent later = Event(3, "later");
+
+        LaneRowAnchorResolution resolution = Resolve(
+            [Input(first), Input(later)],
+            [first, later],
+            Grid([18, 20, 18], originTopPt: 0));
+
+        Assert.True(resolution.Succeeded);
+        Assert.Equal(2, resolution.Anchors.Count);
+        Assert.Equal(38, resolution.Anchors[1].TopOffsetPt);
+        Assert.Equal(18, resolution.Anchors[1].HeightPt);
+    }
+
+    /// <summary>
+    /// A LEADING blank row is also left empty: an event whose body-row index is 2
+    /// anchors to measured row 2, not to row 1.
+    /// </summary>
+    /// <remarks>
+    /// This is the case a minimum-RowNumber offset could not express, which is why
+    /// the resolver uses the reader's one-based body index directly.
+    /// </remarks>
+    [Fact]
+    public void A_leading_blank_row_is_left_empty_and_the_first_event_keeps_its_row()
+    {
+        GanttEvent first = Event(2, "first");
+        GanttEvent later = Event(3, "later");
+
+        LaneRowAnchorResolution resolution = Resolve(
+            [Input(first), Input(later)],
+            [first, later],
+            Grid([18, 20, 18], originTopPt: 0));
+
+        Assert.True(resolution.Succeeded);
+        Assert.Equal(2, resolution.Anchors.Count);
+        Assert.Equal(18, resolution.Anchors[0].TopOffsetPt);
+        Assert.Equal(20, resolution.Anchors[0].HeightPt);
+        Assert.Equal(38, resolution.Anchors[1].TopOffsetPt);
+    }
+
+    /// <summary>
     /// A projected child does not anchor to its own row but its lane is anchored once,
     /// on the owner.
     /// </summary>

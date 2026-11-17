@@ -159,13 +159,13 @@ public sealed class AptosTextMetrics : ITextMetrics
             return false;
         }
 
-        var sumEm = 0L;
-        foreach (var character in text)
+        long sumEm = 0L;
+        foreach (char character in text)
         {
             sumEm += AdvanceEm(character);
         }
 
-        var widthPt = sumEm * (FontSizePt / FontAdvanceTable.UnitsPerEm);
+        double widthPt = sumEm * (FontSizePt / FontAdvanceTable.UnitsPerEm);
         measurement = new TextMeasurement(widthPt * (1d + WidthPaddingRatio), FontSizePt * _defaultLineHeightEm);
         return true;
     }
@@ -181,7 +181,7 @@ public sealed class AptosTextMetrics : ITextMetrics
         // A char is UTF-16, so a surrogate pair would measure as two unknown
         // characters. That over-estimates, which is the safe direction, and the
         // fallback is the widest ASCII advance rather than zero for the same reason.
-        var advance = FontAdvanceTable.AdvanceFor(character, _bold, _narrow);
+        int advance = FontAdvanceTable.AdvanceFor(character, _bold, _narrow);
         return advance > 0 ? advance : _fallbackAdvanceEm;
     }
 

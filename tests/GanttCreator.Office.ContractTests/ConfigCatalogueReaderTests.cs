@@ -15,6 +15,24 @@ namespace GanttCreator.Office.ContractTests;
 public class ConfigCatalogueReaderTests
 {
     [Fact]
+    public void Read_refuses_a_malformed_chart_chrome_colour()
+    {
+        // R5.6a: a chart-chrome colour is refused rather than substituted, so
+        // the chart never renders a colour the workbook did not ask for.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        int index = settings.Body.ToList().FindIndex(
+            row => (string?)row[0] == "ChartBackgroundColour");
+        settings.Body[index][1] = "not-a-colour";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.BadColourFormat), outcome);
+    }
+
+    [Fact]
     public void Read_refuses_when_the_milestone_size_column_drifts()
     {
         // Regression: the tblGanttStyles numeric columns are not contiguous
@@ -45,6 +63,114 @@ public class ConfigCatalogueReaderTests
     }
 
     [Fact]
+    public void Read_accepts_an_edited_delineator_line_type_as_a_theme_edit()
+    {
+        // The delineator's line type is a user-editable property of its style
+        // (R5.6c D1), so Read() must accept a dash that differs from the
+        // code-owned preset and project it into the definition.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int delineatorRow = IndexOfStyleRow(fake, "DefaultDelineator");
+        fake.Tables[1].Body[delineatorRow][14] = "Dash";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.Styles.TryGet("DefaultDelineator", out GanttStyleDefinition? definition));
+        Assert.Equal(GanttStrokeDash.Dash, definition!.StrokeDash);
+    }
+
+    [Fact]
+    public void Read_refuses_when_the_delineator_line_type_is_not_a_defined_type()
+    {
+        // A dash the reader cannot parse is a refusal, not a silent fallback
+        // to the preset: the renderer would then draw a line type the
+        // workbook never agreed to.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int delineatorRow = IndexOfStyleRow(fake, "DefaultDelineator");
+        fake.Tables[1].Body[delineatorRow][14] = "Squiggle";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_when_a_code_owned_line_type_drifts()
+    {
+        // Every other built-in style's dash is code-owned: the reader still
+        // compares that column exactly against the preset, so a hand-edited
+        // value is catalogue drift.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int activityRow = IndexOfStyleRow(fake, "AsPlannedActivity");
+        fake.Tables[1].Body[activityRow][14] = "Dash";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    /// <summary>
+    /// A number or a boolean typed into a TEXT catalogue cell is drift, not a crash.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why these arms matter even though the columns are textual.</b> The catalogue's
+    /// text columns are compared with <c>CellMatches</c>, whose switch has arms for
+    /// <c>double</c>, <c>bool</c> and an <c>IFormattable</c> fallback. Only the string and
+    /// null arms were covered, because the writer always stores text there. A user can
+    /// still type <c>TRUE</c> or a number into those cells by hand, and the reader's job
+    /// is to report that as catalogue drift so the remedy (Repair configuration) is
+    /// offered — not to throw out of <c>Convert</c> or to accept the row because the
+    /// value was "close".
+    /// </para>
+    /// <para>
+    /// The three cases are the three non-text arms: a boolean, an invariant-formatted
+    /// double, and an integer that falls through to <c>Convert.ToString</c>. The
+    /// unmodified round trip in this file is the positive control.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(12.5)]
+    [InlineData(7)]
+    [InlineData(null)]
+    public void Read_refuses_when_a_text_catalogue_cell_holds_a_non_text_value(object? cellValue)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int row = IndexOfStyleRow(fake, "AsPlannedActivity");
+        fake.Tables[1].Body[row][1] = cellValue;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    /// <summary>
+    /// Returns the index of a built-in style's row in the written styles
+    /// table.
+    /// </summary>
+    private static int IndexOfStyleRow(ConfigSheetFake fake, string styleKey)
+    {
+        for (int index = 0; index < fake.Tables[1].Body.Count; index++)
+        {
+            if (fake.Tables[1].Body[index][0]?.ToString() == styleKey)
+            {
+                return index;
+            }
+        }
+
+        throw new InvalidOperationException($"Style '{styleKey}' not found in the styles table.");
+    }
+
+    [Fact]
     public void Read_refuses_when_a_style_colour_is_lowercase_hex()
     {
         // Case sensitivity of the #RRGGBB contract: "#ff0000" has the right
@@ -59,19 +185,19 @@ public class ConfigCatalogueReaderTests
     }
 
     [Fact]
-    public void Read_reports_a_valid_but_different_colour_as_catalogue_drift()
+    public void Read_accepts_a_valid_but_different_colour_as_theme_edit()
     {
-        // Taxonomy pin: a well-formed colour that is not the catalogue value
-        // is drift (CatalogueMismatch), not a format problem. This is why the
-        // format check must run before the exact-match check — with
-        // exact-match first, BadColourFormat is unreachable for style rows.
+        // Theme editing (R5.6) writes user-edited colours at style columns 2
+        // (FillColour) and 3 (StrokeColour). Read() must accept valid hex
+        // colours that differ from the preset; they are theme edits, not
+        // catalogue drift. The format check still rejects malformed colours.
         var fake = new ConfigSheetFake();
         _ = ConfigGraph.BuildWriter(fake).Write();
         fake.Tables[1].Body[0][2] = "#123456";
 
         var outcome = ConfigGraph.BuildReader(fake).Read();
 
-        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+        Assert.True(outcome.Succeeded);
     }
 
     [Fact]
@@ -89,6 +215,35 @@ public class ConfigCatalogueReaderTests
         {
             Assert.Equal(setting.DefaultValue, outcome.Settings[setting.Key]);
         }
+    }
+
+    /// <summary>
+    /// Themed metric DefaultValues written by WriteTheme are projected into
+    /// ConfigReadOutcome.Metrics on the next Read(), so the dialog can show
+    /// the user's actual theme values rather than code-owned defaults.
+    /// </summary>
+    [Fact]
+    public void Read_projects_themed_metric_defaults_into_outcome_metrics()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        // Change GridLinePt's DefaultValue from its catalogue default.
+        var index = GanttCatalogues.Metrics.ToList()
+            .FindIndex(metric => metric.Name == "GridLinePt");
+        Assert.True(index >= 0, "GridLinePt must be present to project its DefaultValue.");
+        fake.Tables[2].Body[index][1] = 3.0;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.Metrics.TryGetValue("GridLinePt", out var themedValue));
+        Assert.Equal(3.0, themedValue);
+
+        // Non-edited metrics still report their catalogue defaults.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("DelineatorLinePt"),
+            outcome.Metrics["DelineatorLinePt"]);
     }
 
     [Fact]
@@ -555,6 +710,7 @@ public class ConfigCatalogueReaderTests
         "Inside",
         "Auto Inside",
         "Fill, Stroke",
+        "Solid",
     ];
 
     [Fact]

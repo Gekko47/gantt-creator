@@ -26,6 +26,10 @@ namespace GanttCreator.Office;
 /// <paramref name="FillRgb"/> and <paramref name="LineRgb"/> so the three cannot
 /// disagree about byte order.
 /// </param>
+/// <param name="StrokeDash">
+/// The resolved stroke dash pattern, or <see cref="GanttStrokeDash.Solid"/>
+/// when the shape has no visible stroke.
+/// </param>
 /// <remarks>
 /// <para>
 /// Every value is a primitive or a Core-owned type, so this record and the mapper
@@ -51,7 +55,8 @@ public sealed record OfficeShapeStyle(
     int? LineRgb,
     float? LineWeightPt,
     float LineTransparency,
-    int? TextRgb);
+    int? TextRgb,
+    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid);
 
 /// <summary>
 /// Maps a scene-resolved shape request onto the host's fill and line property
@@ -80,7 +85,7 @@ public static class OfficeStyleMapper
         // record that reported FillVisible = false while still carrying a FillRgb
         // would be a trap for the next caller, and "there is no fill colour"
         // and "the fill is switched off" are the same fact here.
-        var fillApplies = CarriesFill(request.Kind) && !IsTextLabel(request.Kind);
+        bool fillApplies = CarriesFill(request.Kind) && !IsTextLabel(request.Kind);
         GanttHatchPattern? hatch = !fillApplies || request.HatchPattern == GanttHatchPattern.None
             ? null
             : request.HatchPattern;
@@ -93,7 +98,7 @@ public static class OfficeStyleMapper
         // default `DefaultText` style carried a black FILL, which is how every live
         // label reached the host as a black rectangle. Relying on "the token is
         // null" is what let that ship, so the rule is structural now.
-        var lineApplies = !IsTextLabel(request.Kind) && request.StrokeColour is not null;
+        bool lineApplies = !IsTextLabel(request.Kind) && request.StrokeColour is not null;
 
         return new OfficeShapeStyle(
             FillVisible: fillApplies && request.FillColour is not null,
@@ -117,7 +122,11 @@ public static class OfficeStyleMapper
             // the text-bearing kinds are exactly the ones a caller is most likely
             // to ask this of, and a null request colour must stay null rather than
             // be turned into black here.
-            TextRgb: request.TextColour is { } textColour ? ToOfficeRgb(textColour) : null);
+            TextRgb: request.TextColour is { } textColour ? ToOfficeRgb(textColour) : null,
+            // The dash travels with the stroke: a shape with no visible line
+            // has no dash to write, so the mapper reports Solid rather than
+            // carrying a dash the host would never draw.
+            StrokeDash: lineApplies ? request.StrokeDash : GanttStrokeDash.Solid);
     }
 
     /// <summary>
@@ -147,10 +156,10 @@ public static class OfficeStyleMapper
     {
         ArgumentNullException.ThrowIfNull(colour);
 
-        var argb = colour.ARGB;
-        var red = (int)((argb >> 16) & 0xFF);
-        var green = (int)((argb >> 8) & 0xFF);
-        var blue = (int)(argb & 0xFF);
+        uint argb = colour.ARGB;
+        int red = (int)((argb >> 16) & 0xFF);
+        int green = (int)((argb >> 8) & 0xFF);
+        int blue = (int)(argb & 0xFF);
 
         return (blue * 65536) + (green * 256) + red;
     }
@@ -172,7 +181,7 @@ public static class OfficeStyleMapper
     {
         ArgumentNullException.ThrowIfNull(colour);
 
-        var alpha = (colour.ARGB >> 24) & 0xFF;
+        uint alpha = (colour.ARGB >> 24) & 0xFF;
         return 1f - (alpha / 255f);
     }
 

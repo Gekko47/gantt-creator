@@ -132,7 +132,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        var original = read();
+        bool original = read();
         if (!original)
         {
             return; // Already off: nothing to suppress or restore.
@@ -168,7 +168,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        var current = GetStatusBarText();
+        object? current = GetStatusBarText();
         if (string.Equals(current as string, text, StringComparison.Ordinal))
         {
             return;
@@ -216,7 +216,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        var selection = GetSelection();
+        object? selection = GetSelection();
         if (selection is null)
         {
             return;
@@ -282,7 +282,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
 
         // Reverse order: the last setting changed is the first one put back, which
         // matches the COM ownership rule of releasing in reverse acquisition order.
-        for (var index = _restores.Count - 1; index >= 0; index--)
+        for (int index = _restores.Count - 1; index >= 0; index--)
         {
             Restore(_restores[index], "an Excel application setting");
         }
@@ -310,9 +310,50 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
 #pragma warning restore CA1031
             finally
             {
+                // R5.20 D4: the scope OWNS the reference it read from
+                // Application.Selection, so it must give it back. Dropping the field was a
+                // leaked COM chain per pass: the proxy stayed alive, Excel's Quit() then
+                // returned without terminating the process, and the office gate had to
+                // force a kill for nearly every test body. Released after the restore,
+                // while the proxy is still what Select() was called on.
+                ReleaseSelectionProxy(_selection);
                 _selection = null;
                 _selectionCaptured = false;
             }
+        }
+    }
+
+    /// <summary>
+    /// Releases the COM reference the scope took when it read the selection.
+    /// </summary>
+    /// <param name="selection">The captured <c>Application.Selection</c> value.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Ownership.</b> Reading <c>Application.Selection</c> hands the caller a new interface
+    /// pointer to the host's object; the scope is the owner of that reference and must release
+    /// it, exactly as it does for the settings it captures. Leaving it to the garbage collector
+    /// is what kept Excel alive past <c>Quit()</c> and made the office gate force a kill on
+    /// almost every test body (R5.20, the D4 gap).
+    /// </para>
+    /// <para>
+    /// A value that is not a COM proxy — the plain object a test seam supplies — has nothing to
+    /// release, and <see cref="Marshal.ReleaseComObject(object)"/>
+    /// says so by throwing <see cref="ArgumentException"/>. That one case is swallowed on
+    /// purpose: a release must never escape a <c>finally</c> into Excel, and there is no state to
+    /// repair when the argument was never a proxy.
+    /// </para>
+    /// </remarks>
+    internal virtual void ReleaseSelectionProxy(object selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+
+        try
+        {
+            _ = Marshal.ReleaseComObject(selection);
+        }
+        catch (ArgumentException)
+        {
+            // Not a COM object: a test-seam value. Nothing to give back.
         }
     }
 

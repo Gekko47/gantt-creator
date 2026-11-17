@@ -108,19 +108,21 @@ public sealed class NoSheetActivationTests
     }
 
     /// <summary>
-    /// D2: no production file creates or deletes a worksheet.
+    /// D2: no production file outside the initialiser and the explicit recovery
+    /// command creates or deletes a worksheet.
     /// </summary>
     /// <remarks>
-    /// The add-in owns exactly one helper sheet, <c>_GanttCreatorConfig</c>, and it
-    /// is created by the initialiser alone. A refresh that added or removed a sheet
-    /// would change the user's workbook structure as a side effect of pressing
-    /// Refresh, and a "cleanup" that deleted an unowned sheet would take the user's
-    /// own data with it. This is the row the test-strategy rule "no extra worksheet
-    /// creation" refers to, asserted structurally across every refresh path rather
-    /// than per adapter.
+    /// The add-in owns exactly one helper sheet, <c>_GanttCreatorConfig</c>, and a
+    /// single visible Gantt sheet. The initialiser creates them on a first run; the
+    /// R5.17 recovery adapter recreates a missing one only when the user presses Fix
+    /// and confirms the adoption. A refresh that added or removed a sheet would
+    /// change the user's workbook structure as a side effect of pressing Refresh,
+    /// and a "cleanup" that deleted an unowned sheet would take the user's own data
+    /// with it. The recovery path is an explicit command, not a refresh, so it is
+    /// the one deliberate exception.
     /// </remarks>
     [Fact]
-    public void Only_the_initialiser_creates_a_worksheet()
+    public void Only_the_initialiser_or_recovery_creates_a_worksheet()
     {
         var repositoryRoot = FindRepositoryRoot();
         var offenders = new List<string>();
@@ -131,7 +133,9 @@ public sealed class NoSheetActivationTests
             foreach (var file in Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
             {
                 var relative = Path.GetRelativePath(repositoryRoot, file).Replace('\\', '/');
-                if (relative == "src/GanttCreator.Office/ExcelWorkbookInitialiser.cs")
+                if (relative is
+                    "src/GanttCreator.Office/ExcelWorkbookInitialiser.cs"
+                    or "src/GanttCreator.Office/ExcelWorkbookRecovery.cs")
                 {
                     continue;
                 }
@@ -145,7 +149,7 @@ public sealed class NoSheetActivationTests
 
         Assert.True(
             offenders.Count == 0,
-            "Only ExcelWorkbookInitialiser may create or delete a worksheet, but these call "
+            "Only ExcelWorkbookInitialiser and ExcelWorkbookRecovery may create or delete a worksheet, but these call "
             + "Worksheets.Add or Worksheets.Delete: " + string.Join(", ", offenders));
     }
 

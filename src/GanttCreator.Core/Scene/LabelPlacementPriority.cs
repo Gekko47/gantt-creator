@@ -47,7 +47,8 @@ public static class LabelPlacementPriority
             GanttEntityType.CriticalMilestone => 0,
             GanttEntityType.AsPlannedMilestone
                 or GanttEntityType.AsBuiltMilestone
-                or GanttEntityType.BaselineMilestone => 1,
+                or GanttEntityType.BaselineMilestone
+                or GanttEntityType.CustomMilestone => 1,
             GanttEntityType.DelayEvent => 2,
             GanttEntityType.AsBuiltActivity => 3,
             GanttEntityType.AsPlannedActivity => 4,

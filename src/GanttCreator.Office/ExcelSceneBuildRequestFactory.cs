@@ -35,7 +35,7 @@ namespace GanttCreator.Office;
 /// four values and asserts the exact request produced.
 /// </para>
 /// </remarks>
-public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : ISceneBuildRequestFactory
+public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : ISceneBuildRequestFactory
 {
     /// <summary>
     /// The columns the live panel measures, in panel order.
@@ -62,8 +62,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <para>
     /// <b>Why every visible column, not a chosen few.</b> Entity guide section 3
     /// requires the panel's right edge to touch the plot's left edge without overlap
-    /// or gap, and <see cref="PlotGeometryResolver"/> places the plot at
-    /// <c>textPanelWidthPt + chrome</c>. Measuring only the label columns would
+    /// or gap, and <see cref="PlotGeometryResolver"/> places the plot at the measured
+    /// panel right edge plus the anchor inset. Measuring only the label columns would
     /// therefore draw the plot on top of the still-visible <c>Start</c>,
     /// <c>Finish</c>, and <c>Duration</c> columns. The measured width is the table's
     /// real visible width, so it is derived from
@@ -79,6 +79,52 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// </remarks>
     private static IReadOnlyList<string> MeasuredColumnsCore =>
         [.. GanttTableSchema.Default.Columns.Where(column => !column.IsHidden).Select(column => column.Name)];
+
+    /// <summary>
+    /// The columns the live panel measures for one configuration: the schema's visible
+    /// columns MINUS the ones the user has hidden from the ribbon.
+    /// </summary>
+    /// <param name="settings">The workbook's configuration settings.</param>
+    /// <returns>The columns to measure, in schema order.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the schema's set alone is not enough (reported from the host 2026-11-14).</b>
+    /// <see cref="MeasuredColumnsCore"/> excludes the ENGINE columns, whose visibility the
+    /// schema owns. A column the user hides from the <c>Columns</c> dropdown is still in that
+    /// set, and Excel reports a hidden column's <c>Range.Width</c> as <c>0</c>, which
+    /// <see cref="PanelCellGrid"/> correctly refuses as a non-positive width — so hiding any
+    /// column turned every Refresh into "The worksheet columns could not be measured."
+    /// </para>
+    /// <para>
+    /// The panel is a measurement of what the sheet SHOWS, so the user's choice is part of
+    /// its input: excluding a hidden column also moves the plot left by that column's width,
+    /// which is what makes the chart close up beside the table instead of leaving a gap
+    /// where the hidden column used to be.
+    /// </para>
+    /// <para>
+    /// A stored list that does not parse falls back to the schema's set rather than refusing:
+    /// <see cref="GanttColumnVisibility.Parse"/> refuses a malformed value so a hidden column
+    /// is never silently un-hidden, but that refusal belongs to the dropdown that wrote it,
+    /// not to a render that only needs a width.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> MeasuredColumnsFor(IReadOnlyDictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        ColumnVisibilityOutcome stored = GanttColumnVisibility.Parse(
+            settings.TryGetValue(GanttColumnVisibility.SettingKey, out string? raw) ? raw : null);
+
+        // Hidden is null precisely when the parse refused, so this one fallback covers both
+        // the absent key and a malformed one: nothing hidden, measure the schema's set.
+        IReadOnlySet<string> hidden = stored.Hidden ?? new HashSet<string>(StringComparer.Ordinal);
+
+        // ADR-0065 D6: ONE visible-column authority. The live measurement and the future
+        // export composition both read this helper, so a hidden column cannot be measured
+        // by one half of the product and exported by the other. An empty result is the
+        // chart-only state, not a refusal.
+        return GanttColumnVisibility.VisibleColumns(hidden);
+    }
 
     /// <summary>The setting key naming the size preset.</summary>
     private const string _sizePresetKey = "SizePreset";
@@ -151,22 +197,24 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         IReadOnlyList<GanttEvent> events,
         IReadOnlyDictionary<string, string> settings,
         GanttStyleRegistry registry,
-        PanelCellGrid grid)
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics)
     {
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(grid);
+        ArgumentNullException.ThrowIfNull(themedMetrics);
 
         // The range is derived from the events themselves, not from a stored date
         // range, so a refreshed chart always covers what it actually draws. A stored
         // range would be a second source of truth that survives the data changing.
-        if (!TryResolveDateRange(events, settings, out DateOnly plotStart, out DateOnly plotFinish, out SceneBuildRequestRefusal? rangeRefusal, out var rangeMessage))
+        if (!TryResolveDateRange(events, settings, out DateOnly plotStart, out DateOnly plotFinish, out SceneBuildRequestRefusal? rangeRefusal, out string? rangeMessage))
         {
             return SceneBuildRequestOutcome.Refused(rangeRefusal!.Value, rangeMessage!);
         }
 
-        if (!TryResolvePreset(settings, out SizePreset? preset, out SceneBuildRequestRefusal? presetRefusal, out var presetMessage))
+        if (!TryResolvePreset(settings, out SizePreset? preset, out SceneBuildRequestRefusal? presetRefusal, out string? presetMessage))
         {
             return SceneBuildRequestOutcome.Refused(presetRefusal!.Value, presetMessage!);
         }
@@ -181,11 +229,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
 
         PanelCellGrid measuredGrid = grid;
 
-        // The grid's own total, not a re-sum of its columns. Re-deriving it here
-        // would be a second computation of a figure the grid already publishes, and
-        // the two could disagree on what "the panel width" means.
-        var textPanelWidthPt = measuredGrid.TotalWidthPt;
-        var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
+        // The grid's own RIGHT EDGE, not a re-sum of its columns and not the summed
+        // width. The table starts at a measured origin (column B since R5.18k), so the
+        // right edge is `origin + widths`: passing the widths alone placed the plot one
+        // origin to the left of the table's right edge, i.e. inside the table's LAST
+        // column (live report 2026-11-14, "the chart plots well into column F"). The
+        // grid publishes both this edge and the panel's left edge, and the frame is
+        // drawn on the same pair, so the plot and the frame cannot disagree.
+        double panelRightPt = measuredGrid.PanelRightPt;
+        double chrome = themedMetrics.GetValueOrDefault(
+            _outerPaddingToken, GanttCatalogues.MetricDefault(_outerPaddingToken));
 
         // ADR-0031 D1/D2: the chart's frame margin is per side. Top and bottom are
         // the measured padding rows, so the chart's outer edge lands on a row
@@ -203,7 +256,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // body is now two rows, and ADR-0031 D2's contract is that the chart frame
         // closes at the bottom of that whole strip. Reading the padding row alone
         // would close the frame 0.25pt too high, inside the anchor row.
-        var padding = new ChartPaddingPt(
+        ChartPaddingPt padding = new ChartPaddingPt(
             LeftPt: 0,
             TopPt: measuredGrid.TopPaddingHeightPt,
             RightPt: chrome,
@@ -228,8 +281,19 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // schedule because A4 landscape is 29 rows tall. The WIDTH budget is
         // untouched, so the plot still refuses a panel too wide to leave a readable
         // plot (R4.7H D4).
-        var topPt = measuredGrid.OriginTopPt;
-        var heightPt = measuredGrid.TotalRowHeightPt;
+        double topPt = measuredGrid.OriginTopPt;
+        double heightPt = measuredGrid.TotalRowHeightPt;
+
+        // ADR-0050: an empty table has no measured body, so the plot takes ONE managed
+        // row's height from the themed token — the same figure the row-height normaliser
+        // writes to a body row, and the same one the lane metrics now use. Without it the
+        // plot height was zero, PlotGeometryResolver refused, and the empty chart could
+        // not be composed at all.
+        if (heightPt <= 0)
+        {
+            heightPt = themedMetrics.GetValueOrDefault(
+                _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken));
+        }
 
         // R5.2: the plot margin, resolved once from the Margin/MarginCm settings and
         // subtracted TWICE from the width budget (owner ruling) so a visible, usable
@@ -238,21 +302,32 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // the page, leaving the margin as breathing room on that side without opening a
         // gap between the table and the plot. The margin never touches the measured text
         // panel, so it cannot resize a user column (R4.7H D3).
-        var marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
-        var widthChromePt = marginPt * 2;
+        double marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
+        double widthChromePt = marginPt * 2;
 
         // The single production call to the plot authority. PlotGeometryResolver owns
         // the subtraction and the bounds; this type supplies the measurements and
         // consumes the result.
         PlotGeometryOutcome geometry = PlotGeometryResolver.TryResolve(
             preset,
-            textPanelWidthPt,
+            panelRightPt,
 
-            // ADR-0031 D2: no left chrome. The plot begins exactly where the data
-            // table ends, so the two read as one object. The RIGHT chrome carries the
-            // R5.2 margin (twice) plus the frame's own outer padding, so the plot's
-            // right edge sits inside the page with the margin as breathing room.
-            leftChromePt: 0,
+            // ADR-0031 D2 put the plot flush against the table's right edge, and a 1pt
+            // inset was rejected then as visibly off the edge. That ruling assumed the
+            // table's right edge is where the engine columns end, but they are HIDDEN and
+            // a hidden column has zero width, so the anchor column's left edge and the
+            // table's visible right edge are one coordinate. Excel then anchors every
+            // chart shape in the FIRST of those zero-width columns, which is why the plot
+            // read as starting in column G and its left border vanished inside the table's
+            // own 1pt border (owner report 2026-11-15).
+            //
+            // The plot therefore starts a measured inset INSIDE the anchor column
+            // (GanttSheetLayout.LivePlotOriginInsetPt: 2pt, above the 1pt host threshold
+            // measured by scripts/probe-plot-origin.ps1). It is passed as LEFT CHROME
+            // because that is what it is — width budget the plot gives up so its origin is
+            // anchored in a visible column and its edge is drawable. The RIGHT chrome is
+            // unchanged: the R5.2 margin (twice) plus the frame's own outer padding.
+            leftChromePt: GanttSheetLayout.LivePlotOriginInsetPt,
             rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,
@@ -265,11 +340,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // exists to prevent.
         LaneMetricsResolution lanes = LaneMetricsResolver.Resolve(
             measuredGrid,
-            lanePaddingTopPt: GanttCatalogues.MetricDefault(_lanePaddingTopToken),
-            lanePaddingBottomPt: GanttCatalogues.MetricDefault(_lanePaddingBottomToken),
-            stackGapPt: GanttCatalogues.MetricDefault(_stackGapToken),
-            splitterHeightPt: GanttCatalogues.MetricDefault(_splitterHeightToken),
-            spacerHeightPt: GanttCatalogues.MetricDefault(_spacerHeightToken));
+            lanePaddingTopPt: themedMetrics.GetValueOrDefault(
+                _lanePaddingTopToken, GanttCatalogues.MetricDefault(_lanePaddingTopToken)),
+            lanePaddingBottomPt: themedMetrics.GetValueOrDefault(
+                _lanePaddingBottomToken, GanttCatalogues.MetricDefault(_lanePaddingBottomToken)),
+            stackGapPt: themedMetrics.GetValueOrDefault(
+                _stackGapToken, GanttCatalogues.MetricDefault(_stackGapToken)),
+            splitterHeightPt: themedMetrics.GetValueOrDefault(
+                _splitterHeightToken, GanttCatalogues.MetricDefault(_splitterHeightToken)),
+            spacerHeightPt: themedMetrics.GetValueOrDefault(
+                _spacerHeightToken, GanttCatalogues.MetricDefault(_spacerHeightToken)),
+
+            // ADR-0050: a freshly initialised table has no body rows to measure, so the
+            // lane height comes from the token the row-height normaliser writes to every
+            // managed row. Without it the resolver refused NoRows and the empty chart
+            // could never be composed.
+            emptyBodyRowHeightPt: themedMetrics.GetValueOrDefault(
+                _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken)));
         if (lanes.Metrics is not { } laneMetrics)
         {
             return SceneBuildRequestOutcome.Refused(
@@ -300,7 +387,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 settings,
                 padding,
                 metrics,
-                laneMetrics);
+                laneMetrics,
+                themedMetrics);
 
             return SceneBuildRequestOutcome.Ok(request);
         }
@@ -327,14 +415,15 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         IReadOnlyDictionary<string, string> settings,
         ChartPaddingPt padding,
         ITextMetrics metrics,
-        LaneLayoutMetrics laneMetrics) =>
+        LaneLayoutMetrics laneMetrics,
+        IReadOnlyDictionary<string, double> themedMetrics) =>
         new()
         {
             Events = events,
             Registry = registry,
             Metrics = metrics,
             LaneMetrics = laneMetrics,
-            FrameTheme = FrameTheme(),
+            FrameTheme = FrameTheme(settings, themedMetrics),
             Preset = preset,
             Grid = measuredGrid,
             PlotBounds = geometry.Geometry!.PlotBounds,
@@ -351,6 +440,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // request that supplies one, so this cannot drift into drawing a replica
             // over the user's rows.
             Profile = SceneCompositionProfile.LiveExcel,
+            AllowEmptyEvents = true,
             Panel = null,
 
             PlotStart = plotStart,
@@ -362,9 +452,12 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             AlternateBanding = ReadBool(settings, "AlternateBanding", fallback: true),
             ShowMinorGrid = ReadBool(settings, "ShowMinorGrid", fallback: true),
             ShowMajorGrid = ReadBool(settings, "ShowMajorGrid", fallback: true),
-            YearBandHeightPt = GanttCatalogues.MetricDefault(_yearBandToken),
-            PeriodBandHeightPt = GanttCatalogues.MetricDefault(_periodBandToken),
-            TitleBandHeightPt = GanttCatalogues.MetricDefault(_titleBandToken),
+            YearBandHeightPt = themedMetrics.GetValueOrDefault(
+                _yearBandToken, GanttCatalogues.MetricDefault(_yearBandToken)),
+            PeriodBandHeightPt = themedMetrics.GetValueOrDefault(
+                _periodBandToken, GanttCatalogues.MetricDefault(_periodBandToken)),
+            TitleBandHeightPt = themedMetrics.GetValueOrDefault(
+                _titleBandToken, GanttCatalogues.MetricDefault(_titleBandToken)),
             ChartPadding = padding,
 
             // ADR-0032 D2: the date-label text style. `SceneBuilder` skips the WHOLE
@@ -410,14 +503,22 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // padding rows are read here.
             ChartAnchorRowHeightPt = measuredGrid.AnchorRowHeightPt,
 
-            MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
-            GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
-            MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
-            MilestoneSizePt = GanttCatalogues.MetricDefault(_milestoneSizeToken),
-            DelineatorLinePt = GanttCatalogues.MetricDefault(_delineatorLineToken),
-            DelineatorStackGapPt = GanttCatalogues.MetricDefault(_stackGapToken),
-            LabelGapPt = GanttCatalogues.MetricDefault(_labelGapToken),
-            RowHeightPt = GanttCatalogues.MetricDefault(_rowHeightToken),
+            MinimumHeaderLabelWidthPt = themedMetrics.GetValueOrDefault(
+                _minHeaderLabelWidthToken, GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken)),
+            GridLinePt = themedMetrics.GetValueOrDefault(
+                _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken)),
+            MajorBoundaryPt = themedMetrics.GetValueOrDefault(
+                _majorBoundaryToken, GanttCatalogues.MetricDefault(_majorBoundaryToken)),
+            MilestoneSizePt = themedMetrics.GetValueOrDefault(
+                _milestoneSizeToken, GanttCatalogues.MetricDefault(_milestoneSizeToken)),
+            DelineatorLinePt = themedMetrics.GetValueOrDefault(
+                _delineatorLineToken, GanttCatalogues.MetricDefault(_delineatorLineToken)),
+            DelineatorStackGapPt = themedMetrics.GetValueOrDefault(
+                _stackGapToken, GanttCatalogues.MetricDefault(_stackGapToken)),
+            LabelGapPt = themedMetrics.GetValueOrDefault(
+                _labelGapToken, GanttCatalogues.MetricDefault(_labelGapToken)),
+            RowHeightPt = themedMetrics.GetValueOrDefault(
+                _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken)),
         };
 
     /// <summary>
@@ -450,21 +551,91 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// member.
     /// </summary>
     /// <remarks>
-    /// A single, neutral theme. The style-token resolution that will make these
-    /// user-configurable is R5.6a's work; what matters here is that the scene builder
-    /// refuses a null member rather than defaulting one, so a missing theme is a
-    /// typed refusal at composition time instead of an unstyled chart.
+    /// <para>
+    /// The colours come from the workbook's chart-chrome settings, so the chart's
+    /// frame, bands, grid, and headers are the user's to change (R5.6a). The
+    /// widths come from the themed grid metrics, so the "Grid line width" and
+    /// "Major boundary width" controls reach the render: they previously named
+    /// metrics that nothing consumed, because the widths were literals here.
+    /// </para>
+    /// <para>
+    /// A malformed stored colour falls back to the approved token value rather
+    /// than throwing: the reader refuses a malformed colour before the scene is
+    /// built, so this path is only reached by a caller that bypassed the
+    /// reader, and an unstyled chart is worse than the approved default. The
+    /// scene builder still refuses a null member rather than defaulting one, so
+    /// a missing theme is a typed refusal at composition time instead of an
+    /// unstyled chart.
+    /// </para>
     /// </remarks>
+    /// <param name="settings">The workbook's settings map.</param>
+    /// <param name="themedMetrics">The workbook's themed metric values.</param>
     /// <returns>The frame theme.</returns>
-    private static FrameBandsTheme FrameTheme() =>
-        new(
-            Background: new SceneStyle("Background", fillColour: ColourHex.Parse("#FFFFFF")),
-            AlternateBand: new SceneStyle("AlternateBand", fillColour: ColourHex.Parse("#F5F5F5")),
-            MinorGrid: new SceneStyle("MinorGrid", strokeColour: ColourHex.Parse("#E0E0E0"), outlineWidthPt: 0.5),
-            MajorGrid: new SceneStyle("MajorGrid", strokeColour: ColourHex.Parse("#BFBFBF"), outlineWidthPt: 1),
-            YearHeader: new SceneStyle("YearHeader", fillColour: ColourHex.Parse("#D9D9D9"), textColour: ColourHex.Parse("#000000"), fontSizePt: 10, bold: true),
-            PeriodHeader: new SceneStyle("PeriodHeader", fillColour: ColourHex.Parse("#E6E6E6"), textColour: ColourHex.Parse("#000000"), fontSizePt: 9),
-            Title: new SceneStyle("Title", textColour: ColourHex.Parse("#000000"), fontSizePt: 12, bold: true));
+    private static FrameBandsTheme FrameTheme(
+        IReadOnlyDictionary<string, string> settings,
+        IReadOnlyDictionary<string, double> themedMetrics)
+    {
+        double minorGridWidth = themedMetrics.GetValueOrDefault(
+            _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken));
+        double majorGridWidth = themedMetrics.GetValueOrDefault(
+            _majorBoundaryToken, GanttCatalogues.MetricDefault(_majorBoundaryToken));
+
+        return new(
+            Background: new SceneStyle(
+                "Background",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.Background)),
+            AlternateBand: new SceneStyle(
+                "AlternateBand",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.AlternateBand)),
+            MinorGrid: new SceneStyle(
+                "MinorGrid",
+                strokeColour: ChromeColour(settings, GanttChartChromeRole.MinorGrid),
+                outlineWidthPt: minorGridWidth),
+            MajorGrid: new SceneStyle(
+                "MajorGrid",
+                strokeColour: ChromeColour(settings, GanttChartChromeRole.MajorGrid),
+                outlineWidthPt: majorGridWidth),
+            YearHeader: new SceneStyle(
+                "YearHeader",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.YearHeader),
+                textColour: ColourHex.Parse("#000000"),
+                fontSizePt: 10,
+                bold: true),
+            PeriodHeader: new SceneStyle(
+                "PeriodHeader",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.PeriodHeader),
+                textColour: ColourHex.Parse("#000000"),
+                fontSizePt: 9),
+            Title: new SceneStyle(
+                "Title",
+                textColour: ColourHex.Parse("#000000"),
+                fontSizePt: 12,
+                bold: true));
+    }
+
+    /// <summary>
+    /// Reads one chart-chrome colour from the workbook's settings, falling back
+    /// to the approved token value when the key is absent or malformed.
+    /// </summary>
+    /// <param name="settings">The workbook's settings map.</param>
+    /// <param name="role">The chrome role.</param>
+    /// <returns>The resolved colour.</returns>
+    private static ColourHex ChromeColour(
+        IReadOnlyDictionary<string, string> settings,
+        GanttChartChromeRole role)
+    {
+        string key = GanttChartChrome.SettingKeyFor(role);
+#pragma warning disable IDE0046 // The short-circuit is the point: the value is only read when the key is present.
+        if (settings.TryGetValue(key, out string? stored)
+            && ColourHex.TryParse(stored, out ColourHex? parsed)
+            && parsed is not null)
+        {
+            return parsed;
+        }
+#pragma warning restore IDE0046
+
+        return ColourHex.Parse(GanttChartChrome.DefaultHexFor(role));
+    }
 
     /// <summary>
     /// The columns this factory measures, for the caller to pass to
@@ -473,11 +644,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     public static IReadOnlyList<string> MeasuredColumns => MeasuredColumnsCore;
 
     /// <summary>
+    /// The caller's current day, as an injectable seam.
+    /// </summary>
+    /// <returns>The host's current date.</returns>
+    /// <remarks>
+    /// Core never reads a clock, so the factory supplies the day that
+    /// <see cref="PlotRangeResolver"/> anchors its empty-table fallback to. It is virtual
+    /// so a contract test can pin the default plot range without depending on the
+    /// machine's date, which would otherwise fail once a year.
+    /// </remarks>
+    internal virtual DateOnly Today() => DateOnly.FromDateTime(DateTime.Today);
+
+    /// <summary>
     /// Resolves the inclusive plot range from the per-end modes (R5.1): each end
     /// is automatic (derived from the events, padded) or explicit (the
     /// user-supplied date). The extent is then snapped outward to whole months.
     /// </summary>
-    private static bool TryResolveDateRange(
+    private bool TryResolveDateRange(
         IReadOnlyList<GanttEvent> events,
         IReadOnlyDictionary<string, string> settings,
         out DateOnly plotStart,
@@ -490,16 +673,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        var padding = (int)ReadDouble(settings, _rangePaddingKey, 0, fallback: _defaultRangePaddingDays);
+        int padding = (int)ReadDouble(settings, _rangePaddingKey, 0, fallback: _defaultRangePaddingDays);
         if (padding < 0)
         {
             padding = 0;
         }
 
-        var startModeText = ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange);
-        var finishModeText = ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange);
-        var startDateText = ReadString(settings, _plotStartDateKey);
-        var finishDateText = ReadString(settings, _plotFinishDateKey);
+        string startModeText = ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange);
+        string finishModeText = ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange);
+        string? startDateText = ReadString(settings, _plotStartDateKey);
+        string? finishDateText = ReadString(settings, _plotFinishDateKey);
 
         PlotRangeOutcome range = PlotRangeResolver.TryResolve(
             events,
@@ -507,7 +690,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             finishModeText,
             startDateText,
             finishDateText,
-            padding);
+            padding,
+            today: Today());
         if (!range.Succeeded)
         {
             refusal = MapRangeRefusal(range.Refusal!.Value);
@@ -618,8 +802,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// </summary>
     private static string FailingPlotRangeMode(IReadOnlyDictionary<string, string> settings)
     {
-        var startModeText = ReadString(settings, _plotStartModeKey);
-        var finishModeText = ReadString(settings, _plotFinishModeKey);
+        string? startModeText = ReadString(settings, _plotStartModeKey);
+        string? finishModeText = ReadString(settings, _plotFinishModeKey);
         return (startModeText, finishModeText) switch
         {
             (string start, _) when !Enum.TryParse<PlotRangeMode>(start, out _) => start,
@@ -641,7 +825,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        var key = ReadString(settings, _sizePresetKey) ?? SizePresets.Default.Key;
+        string key = ReadString(settings, _sizePresetKey) ?? SizePresets.Default.Key;
         preset = SizePresets.ByKey(key);
         if (preset is not null)
         {
@@ -669,7 +853,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         scale = GanttTimeScale.Month;
         periodFormat = GanttPeriodLabelFormat.MMM;
 
-        var scaleText = ReadString(settings, "TimeScale");
+        string? scaleText = ReadString(settings, "TimeScale");
 
         // IDE0046 would fold these two into one condition, and it is right that it
         // can: `A is not null && !B` is `A is null || B`. It is left unfolded because
@@ -681,7 +865,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             return false;
         }
 
-        var formatText = ReadString(settings, "PeriodLabelFormat");
+        string? formatText = ReadString(settings, "PeriodLabelFormat");
         if (formatText is not null && !GanttChartSettings.TryParsePeriodLabelFormat(formatText, out periodFormat))
         {
             return false;
@@ -701,7 +885,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // lookup always missed and every chart fell back to DdMMyyyy — the approved
         // setting was unreachable in production while its test injected the key
         // directly and passed.
-        var text = ReadString(settings, _dateFormatKey);
+        string? text = ReadString(settings, _dateFormatKey);
 
         // Same reason as TryParseScale: the short-circuit is the point.
 #pragma warning disable IDE0046
@@ -724,23 +908,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             : "The plot area could not be resolved: " + outcome.Refusal + ".";
 
     private static string? ReadString(IReadOnlyDictionary<string, string> settings, string key) =>
-        settings.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+        settings.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 
     private static double ReadDouble(
         IReadOnlyDictionary<string, string> settings,
         string key,
         double minimum,
         double fallback) =>
-        settings.TryGetValue(key, out var raw)
-        && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        settings.TryGetValue(key, out string? raw)
+        && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
         && double.IsFinite(parsed)
         && parsed >= minimum
             ? parsed
             : fallback;
 
     private static bool ReadBool(IReadOnlyDictionary<string, string> settings, string key, bool fallback) =>
-        settings.TryGetValue(key, out var raw)
-        && bool.TryParse(raw, out var parsed)
+        settings.TryGetValue(key, out string? raw)
+        && bool.TryParse(raw, out bool parsed)
             ? parsed
             : fallback;
 

@@ -38,7 +38,7 @@ public sealed class WidthOnlyMetrics(ITextWidthMeasurer measurer) : ITextMetrics
     /// <inheritdoc />
     public bool TryMeasure(string text, out TextMeasurement? measurement)
     {
-        if (_measurer.TryMeasure(text, out var widthPt))
+        if (_measurer.TryMeasure(text, out double widthPt))
         {
             measurement = new TextMeasurement(widthPt, 0);
             return true;
@@ -75,6 +75,9 @@ public static class FrameBandsBuilder
 {
     private const string _titleOverflowCode = "TitleOverflow";
     private const string _periodLabelsSuppressedCode = "AllPeriodLabelsSuppressed";
+
+    /// <summary>The warning code raised when the frame had to be shortened at the top.</summary>
+    private const string _frameClampedToSheetCode = "FrameClampedToSheet";
 
     /// <summary>Attempts to build the frame and time bands.</summary>
     /// <param name="request">The typed frame/band request.</param>
@@ -172,12 +175,40 @@ public static class FrameBandsBuilder
         // margin-width away from it. Export passes ChartPaddingPt.Uniform and is
         // unaffected.
         ChartPaddingPt padding = request.Padding;
-        RectD chartBounds = new(
+        RectD rawChartBounds = new(
             unionBounds.X - padding.LeftPt,
             unionBounds.Y - padding.TopPt,
             unionBounds.Width + padding.LeftPt + padding.RightPt,
             unionBounds.Height + padding.TopPt + padding.BottomPt
         );
+
+        // The live chart's coordinates are the sheet's own (ADR-0047), so the
+        // CONTENT must be on the sheet: a band above row 1 cannot be drawn at
+        // all, and Excel would silently clamp it - moving the band down over
+        // the row it belongs to. A build that cannot be drawn where the model
+        // says is refused, not misplaced.
+        if (request.SheetCoordinates && unionBounds.Y < 0d)
+        {
+            return Refused(FrameBandsRefusal.ContentAboveSheet);
+        }
+
+        // The FRAME's own top margin may reach above the sheet, and is then
+        // clamped. Excel clamps a shape whose top is negative to the top of the
+        // sheet, and a clamped top with an unchanged height moves the BOTTOM
+        // down: the frame would then end lower than the geometry says, and the
+        // chart's background and right edge would sit below the row they
+        // belong to. Clamping the top here and taking the difference off the
+        // HEIGHT keeps the bottom exactly where it was - the frame shortens
+        // towards its top instead of growing downwards - so what is drawn is
+        // what the scene says.
+        double topClampPt = request.SheetCoordinates ? Math.Max(0d, -rawChartBounds.Y) : 0d;
+        RectD chartBounds = topClampPt > 0d
+            ? new RectD(
+                rawChartBounds.X,
+                rawChartBounds.Y + topClampPt,
+                rawChartBounds.Width,
+                rawChartBounds.Height - topClampPt)
+            : rawChartBounds;
         ChartFrameGeometry geometry = new(chartBounds, contentBounds, titleBounds, yearBounds, periodBounds);
 
         // ADR-0037 D1: the vertical extent every PLOT-SPANNING shape shares --
@@ -232,6 +263,15 @@ public static class FrameBandsBuilder
             new SceneRect("chart:background", SceneOwnerId.Chart, ZLayer.Background, chartBounds, request.Theme.Background),
         ];
         List<SceneWarning> warnings = [];
+        if (topClampPt > 0d)
+        {
+            warnings.Add(
+                new SceneWarning(
+                    SceneOwnerId.Chart,
+                    _frameClampedToSheetCode,
+                    "The chart frame started above the top of the sheet, so it was shortened at the top to keep its bottom edge where it belongs."));
+        }
+
         AddBands(primitives, request, sequence, plotSpanBounds);
         AddHeaders(primitives, request, sequence, geometry);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
@@ -257,7 +297,7 @@ public static class FrameBandsBuilder
             return;
         }
 
-        for (var index = 1; index < sequence.Periods.Count; index += 2)
+        for (int index = 1; index < sequence.Periods.Count; index += 2)
         {
             BandInterval period = sequence.Periods[index];
             primitives.Add(
@@ -314,14 +354,15 @@ public static class FrameBandsBuilder
         BandSequence sequence,
         ChartFrameGeometry geometry)
     {
-        for (var index = 0; index < sequence.Years.Count; index++)
+        for (int index = 0; index < sequence.Years.Count; index++)
         {
             BandInterval year = sequence.Years[index];
-            var id = $"chart:year:{year.Start.Year}";
+            string id = $"chart:year:{year.Start.Year}";
             RectD bounds = new(year.Left, geometry.YearBounds.Y, year.Width, geometry.YearBounds.Height);
             primitives.Add(
                 new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
             );
+            AddHeaderBorder(primitives, request, id, bounds);
             if (year.ShowLabel)
             {
                 primitives.Add(
@@ -345,10 +386,10 @@ public static class FrameBandsBuilder
             }
         }
 
-        for (var index = 0; index < sequence.Periods.Count; index++)
+        for (int index = 0; index < sequence.Periods.Count; index++)
         {
             BandInterval period = sequence.Periods[index];
-            var id = $"chart:period:{period.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+            string id = $"chart:period:{period.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
             RectD bounds = new(
                 period.Left,
                 geometry.PeriodBounds.Y,
@@ -356,6 +397,7 @@ public static class FrameBandsBuilder
                 geometry.PeriodBounds.Height
             );
             primitives.Add(new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.PeriodHeader));
+            AddHeaderBorder(primitives, request, id, bounds);
             if (period.ShowLabel)
             {
                 primitives.Add(
@@ -373,6 +415,42 @@ public static class FrameBandsBuilder
         }
     }
 
+    /// <summary>
+    /// Draws the 1pt border around one header band, so each year and each period is a
+    /// visibly separate label cell.
+    /// </summary>
+    /// <param name="primitives">The primitive list to append to.</param>
+    /// <param name="request">The frame/band request.</param>
+    /// <param name="id">The band rect's identifier; each border line appends its own suffix.</param>
+    /// <param name="bounds">The band cell's rectangle.</param>
+    /// <remarks>
+    /// The label cells are boxes, not just fill (owner ruling 2026-11-15). Two adjacent
+    /// month labels on a neutral fill ran together, while the table's own header row beside
+    /// them is a grid of cells. The border takes the MAJOR weight and colour - the same
+    /// line the table's outside edge takes - so a label separator is visibly stronger than
+    /// the plot's minor grid: the header reads as a heading and the plot as its body.
+    /// </remarks>
+    private static void AddHeaderBorder(
+        List<ScenePrimitive> primitives,
+        FrameBandsRequest request,
+        string id,
+        RectD bounds)
+    {
+        SceneStyle style = request.Theme.MajorGrid;
+        primitives.Add(
+            new SceneLine($"{id}:border:top", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Right, bounds.Top), style)
+        );
+        primitives.Add(
+            new SceneLine($"{id}:border:bottom", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Bottom), new PointD(bounds.Right, bounds.Bottom), style)
+        );
+        primitives.Add(
+            new SceneLine($"{id}:border:left", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Left, bounds.Bottom), style)
+        );
+        primitives.Add(
+            new SceneLine($"{id}:border:right", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Right, bounds.Top), new PointD(bounds.Right, bounds.Bottom), style)
+        );
+    }
+
     private static void AddTitle(
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings,
@@ -386,8 +464,8 @@ public static class FrameBandsBuilder
             return;
         }
 
-        var text = request.ChartTitle;
-        if (textMeasurer.TryMeasure(text, out var width) && width > title.Width)
+        string text = request.ChartTitle;
+        if (textMeasurer.TryMeasure(text, out double width) && width > title.Width)
         {
             warnings.Add(new SceneWarning(SceneOwnerId.Chart, _titleOverflowCode, "Chart title was truncated with an ellipsis."));
             text = Ellipsize(text, title.Width, textMeasurer);
@@ -416,7 +494,7 @@ public static class FrameBandsBuilder
         {
             if (period.Right < request.PlotBounds.Right - GeometryMath.Epsilon)
             {
-                var major = request.ShowMajorGrid && period.Finish.Month == 12;
+                bool major = request.ShowMajorGrid && period.Finish.Month == 12;
                 if (request.ShowMinorGrid || major)
                 {
                     AddGridLine(lines, period.Right, major);
@@ -424,22 +502,85 @@ public static class FrameBandsBuilder
             }
         }
 
+        // On the LIVE sheet a stroke is drawn INSIDE the rectangle it closes. The plot's
+        // left edge is the table's right edge, and the panel's last cell fill covers
+        // everything to the left of it, so a line centred on the boundary lost its left
+        // half to the cell and read as no line at all (live report 2026-11-15: "still no
+        // separating line between the table and the chart"). The two edge lines therefore
+        // move inwards by half their own stroke. The export compositions are unaffected:
+        // nothing there abuts the plot, so their geometry stays exactly as specified.
+        //
+        // The edges take the MAJOR weight (owner ruling 2026-11-15, second pass): every
+        // BORDER on the sheet is one weight - the table's lines, the year and period cells,
+        // this plot's rectangle, and the frame - while the interior grid between periods
+        // stays minor. The first pass made these minor to stop them reading as a second
+        // frame, but that left the plot's border visibly lighter than the table beside it.
+        double halfStroke = request.SheetCoordinates
+            ? (request.Theme.MajorGrid.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
+            : 0d;
+
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
         {
-            var key = line.Key.ToString("R", CultureInfo.InvariantCulture);
+            string key = line.Key.ToString("R", CultureInfo.InvariantCulture);
+            bool isEdge = line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right;
+            double x = line.Key;
+            if (isEdge && halfStroke > 0d)
+            {
+                x = line.Key == request.PlotBounds.Left ? x + halfStroke : x - halfStroke;
+            }
+
+            // The two EDGE lines close the plot, so they belong to the frame's layer, not
+            // the grid's. The period band is a FILLED rect at Frame (80) that begins
+            // exactly on the plot's left edge, so a Grid-layer (20) edge line is painted
+            // over inside the header row and the table-to-plot boundary disappears
+            // (reported 2026-11-14, when the plot was moved onto the column edge). The
+            // interior lines stay at Grid: they sit between bands, never over them.
             primitives.Add(
                 new SceneLine(
-                    line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right
-                        ? $"chart:grid:edge:{key}"
-                        : $"chart:grid:{key}",
+                    isEdge ? $"chart:grid:edge:{key}" : $"chart:grid:{key}",
                     SceneOwnerId.Chart,
-                    ZLayer.Grid,
-                    new PointD(line.Key, plotSpan.Y),
-                    new PointD(line.Key, plotSpan.Bottom),
-                    line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid
+                    isEdge ? ZLayer.Frame : ZLayer.Grid,
+                    new PointD(x, plotSpan.Y),
+                    new PointD(x, plotSpan.Bottom),
+                    line.Value || isEdge ? request.Theme.MajorGrid : request.Theme.MinorGrid
                 )
             );
         }
+
+        // The plot's BOTTOM border, drawn inside the last body row (owner report
+        // 2026-11-15: "there is an edge line at the bottom and left of the plot which is
+        // not plotting"). The closing line below the plot terminates the band overhang and
+        // lives in the 0.25pt anchor row; it is not the plot's own bottom edge. This line is,
+        // and it sits inside the plot so its anchor is a populated row.
+        if (request.SheetCoordinates)
+        {
+            primitives.Add(
+                new SceneLine(
+                    "chart:plot:bottom",
+                    SceneOwnerId.Chart,
+                    ZLayer.Frame,
+                    new PointD(request.PlotBounds.Left, request.PlotBounds.Bottom - halfStroke),
+                    new PointD(request.PlotBounds.Right, request.PlotBounds.Bottom - halfStroke),
+                    request.Theme.MajorGrid
+                )
+            );
+        }
+
+        // The plot's TOP edge - the period band's own bottom - completes the rectangle.
+        // The band above it is a filled rect and the body below is the user's cells, so
+        // without this line the labels and the first lane share an edge with nothing
+        // between them (owner report 2026-11-15: the plot's border was a backwards L).
+        // Same weight as the other three sides and as every other border on the sheet.
+        primitives.Add(
+            new SceneLine(
+                "chart:plot:top",
+                SceneOwnerId.Chart,
+                ZLayer.Frame,
+                new PointD(request.PlotBounds.Left, request.PlotBounds.Top + halfStroke),
+                new PointD(request.PlotBounds.Right, request.PlotBounds.Top + halfStroke),
+                request.Theme.MajorGrid
+            )
+        );
     }
 
     /// <summary>
@@ -475,7 +616,7 @@ public static class FrameBandsBuilder
             return;
         }
 
-        var closingPt = PlotSpanGeometry.ClosingLineBottomPt(
+        double closingPt = PlotSpanGeometry.ClosingLineBottomPt(
             request.PlotBounds.Bottom,
             request.ChartAnchorRowHeightPt,
             request.MajorBoundaryPt);
@@ -487,6 +628,10 @@ public static class FrameBandsBuilder
                 ZLayer.Frame,
                 new PointD(request.PlotBounds.Left, closingPt),
                 new PointD(request.PlotBounds.Right, closingPt),
+
+                // The plot's bottom BORDER, and therefore the same weight as the other three
+                // sides (owner ruling 2026-11-15). Its other job - terminating the band
+                // overhang - is unaffected by changing the weight.
                 request.Theme.MajorGrid
             )
         );
@@ -494,7 +639,7 @@ public static class FrameBandsBuilder
 
     private static void AddGridLine(Dictionary<double, bool> lines, double x, bool major)
     {
-        if (lines.TryGetValue(x, out var existingMajor))
+        if (lines.TryGetValue(x, out bool existingMajor))
         {
             lines[x] = existingMajor || major;
         }
@@ -506,14 +651,48 @@ public static class FrameBandsBuilder
 
     private static void AddOuterFrame(List<ScenePrimitive> primitives, FrameBandsRequest request, RectD bounds)
     {
+        // ADR-0048: a LIVE chart's border encloses the visible data table as well as
+        // the plot, so the top and bottom rules run from the table's first column to
+        // the plot's last and a vertical rule closes the rectangle at the table's
+        // start. The union takes the chart's own top and bottom (the chart's margins)
+        // and the table's left, so the frame is ONE rectangle rather than a step.
+        //
+        // Only the BORDER uses the union. The background, the bands, the grid and
+        // the closing line keep the plot's own rectangle: a background over the
+        // table would paint the user's own cells.
+        //
+        // The export compositions draw their own panel, so they pass no data-panel
+        // rectangle and keep the border exactly where it was.
+        RectD outline = request.DataPanelBounds is { } dataPanel
+            ? Union(bounds, dataPanel)
+            : bounds;
+
         SceneStyle style = request.Theme.MajorGrid;
+
+        // On the LIVE sheet the frame's left edge sits on the sheet's own left edge (the
+        // leading gutter is its left margin, ADR-0059), so half of a stroke centred there
+        // fell outside the worksheet and the border read as three sides (live report
+        // 2026-11-15: "partial border around the chart ... extend it to wrap around the
+        // entire chart area"). The same rule the plot's edge lines now follow applies to
+        // all four: a live stroke is drawn INSIDE the rectangle it closes. Each centre
+        // line therefore moves inwards by half its own width, while its EXTENT still
+        // spans the whole outline -- so the corners stay closed and overlap, instead of
+        // each side stopping half a stroke short and notching the corner.
+        double half = request.SheetCoordinates
+            ? (style.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
+            : 0d;
+        double top = outline.Top + half;
+        double bottom = outline.Bottom - half;
+        double left = outline.Left + half;
+        double right = outline.Right - half;
+
         primitives.Add(
             new SceneLine(
                 "chart:frame:top",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Left, bounds.Top),
-                new PointD(bounds.Right, bounds.Top),
+                new PointD(outline.Left, top),
+                new PointD(outline.Right, top),
                 style
             )
         );
@@ -522,8 +701,8 @@ public static class FrameBandsBuilder
                 "chart:frame:bottom",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Left, bounds.Bottom),
-                new PointD(bounds.Right, bounds.Bottom),
+                new PointD(outline.Left, bottom),
+                new PointD(outline.Right, bottom),
                 style
             )
         );
@@ -532,8 +711,8 @@ public static class FrameBandsBuilder
                 "chart:frame:left",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Left, bounds.Top),
-                new PointD(bounds.Left, bounds.Bottom),
+                new PointD(left, outline.Top),
+                new PointD(left, outline.Bottom),
                 style
             )
         );
@@ -542,8 +721,8 @@ public static class FrameBandsBuilder
                 "chart:frame:right",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Right, bounds.Top),
-                new PointD(bounds.Right, bounds.Bottom),
+                new PointD(right, outline.Top),
+                new PointD(right, outline.Bottom),
                 style
             )
         );
@@ -601,16 +780,16 @@ public static class FrameBandsBuilder
     /// labels truncate by one implementation and one marker.
     /// </summary>
     private static string Ellipsize(string text, double availableWidth, ITextWidthMeasurer measurer) =>
-        measurer.TryMeasure(text, out var width) && width <= availableWidth
+        measurer.TryMeasure(text, out double width) && width <= availableWidth
             ? text
             : LabelText.Ellipsize(text, availableWidth, new WidthOnlyMetrics(measurer));
 
     private static RectD Union(params RectD[] rectangles)
     {
-        var left = rectangles.Min(rectangle => rectangle.Left);
-        var top = rectangles.Min(rectangle => rectangle.Top);
-        var right = rectangles.Max(rectangle => rectangle.Right);
-        var bottom = rectangles.Max(rectangle => rectangle.Bottom);
+        double left = rectangles.Min(rectangle => rectangle.Left);
+        double top = rectangles.Min(rectangle => rectangle.Top);
+        double right = rectangles.Max(rectangle => rectangle.Right);
+        double bottom = rectangles.Max(rectangle => rectangle.Bottom);
         return new RectD(left, top, right - left, bottom - top);
     }
 
@@ -699,7 +878,7 @@ public static class PlotSpanGeometry
         ArgumentOutOfRangeException.ThrowIfNegative(anchorRowHeightPt);
         ArgumentOutOfRangeException.ThrowIfNegative(majorBoundaryPt);
 
-        var extensionPt = BottomExtensionPt(anchorRowHeightPt, majorBoundaryPt);
+        double extensionPt = BottomExtensionPt(anchorRowHeightPt, majorBoundaryPt);
         return extensionPt == 0
             ? plot
             : new RectD(plot.X, plot.Y, plot.Width, plot.Height + extensionPt);

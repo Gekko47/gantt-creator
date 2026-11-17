@@ -1,10 +1,15 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Threading;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
+
+// Ambiguous with System.Range, which the implicit usings bring in.
+using ExcelRange = Microsoft.Office.Interop.Excel.Range;
 
 namespace GanttCreator.Office.IntegrationTests;
 
@@ -60,12 +65,38 @@ internal class OfficeFixture : IAsyncLifetime
     private readonly Dictionary<int, long> _ownedProcessStartTicks = [];
 
     /// <summary>
+    /// The production bound on how long the owned process gets to exit on its own
+    /// after <c>Quit()</c> and a GC pass.
+    /// </summary>
+    private const int DefaultGracefulExitSeconds = 10;
+
+    /// <summary>
+    /// Environment variable naming an alternate graceful-exit bound, in seconds.
+    /// Diagnostic only: it exists so one run can discriminate a slow host shutdown
+    /// (the process exits shortly after the 10 s production bound) from a proxy
+    /// chain that never releases (it survives any bound). It is never a fix and
+    /// must not be set in a shipping gate.
+    /// </summary>
+    internal const string GracefulExitSecondsVariable = "GANTTCREATOR_GRACEFUL_EXIT_SECONDS";
+
+    /// <summary>
     /// How long the owned process gets to exit on its own after <c>Quit()</c> and
     /// a GC pass. The production bound is 10 s; a process that needs the full
     /// window is the unreleased-COM-proxy signal, not normal Excel lag. Virtual
-    /// so the escalation test can shorten it instead of spending 10 s.
+    /// so the escalation test can shorten it instead of spending 10 s. The
+    /// diagnostic environment override in
+    /// <see cref="GracefulExitSecondsVariable"/> lets a single run widen the
+    /// bound without a code edit, which is how a leak is told apart from a slow
+    /// host shutdown.
     /// </summary>
-    internal virtual TimeSpan GracefulExitTimeout => TimeSpan.FromSeconds(10);
+    internal virtual TimeSpan GracefulExitTimeout =>
+        int.TryParse(
+            Environment.GetEnvironmentVariable(GracefulExitSecondsVariable),
+            NumberStyles.Integer,
+            CultureInfo.InvariantCulture,
+            out int configuredSeconds) && configuredSeconds > 0
+            ? TimeSpan.FromSeconds(configuredSeconds)
+            : TimeSpan.FromSeconds(DefaultGracefulExitSeconds);
 
     /// <summary>
     /// How long the owned process gets to disappear after the forced kill. A kill
@@ -169,6 +200,19 @@ internal class OfficeFixture : IAsyncLifetime
     public int ForcedKillCount { get; private set; }
 
     /// <summary>
+    /// Milliseconds the most recent escalation spent waiting for a graceful exit
+    /// before it issued the kill.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostics only, and specifically the discriminator this harness was
+    /// missing: a value at the configured bound means the process hit the
+    /// deadline, so a run with a widened bound distinguishes a slow host shutdown
+    /// (the kill disappears) from a proxy chain that never releases (the kill
+    /// stays).
+    /// </remarks>
+    public long LastGracefulExitElapsedMs { get; private set; }
+
+    /// <summary>
     /// Whether this fixture's escalation count should be excluded from the leak
     /// signal. Set only by a test that forces a kill deliberately, never by a
     /// test that simply leaked.
@@ -223,7 +267,7 @@ internal class OfficeFixture : IAsyncLifetime
             // The test identity is captured when the fixture is CONSTRUCTED -- see the
             // _testName remarks for why it cannot be resolved at report time.
             string record = System.Text.Json.JsonSerializer.Serialize(
-                new ForcedKillRecord(_testName, ForcedKillCount));
+                new ForcedKillRecord(_testName, ForcedKillCount, LastGracefulExitElapsedMs));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -238,7 +282,8 @@ internal class OfficeFixture : IAsyncLifetime
     /// </summary>
     /// <param name="Test">The test body's name, or <see langword="null"/> when it could not be resolved.</param>
     /// <param name="Count">How many forced kills this teardown escalated to.</param>
-    private sealed record ForcedKillRecord(string? Test, int Count);
+    /// <param name="GracefulExitMs">How long the graceful poll ran before the kill was issued.</param>
+    private sealed record ForcedKillRecord(string? Test, int Count, long GracefulExitMs);
 
     /// <summary>
     /// Names the test method that is tearing this fixture down.
@@ -379,17 +424,193 @@ internal class OfficeFixture : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// Switches the ADR-0055 chart protection OFF for <paramref name="workbook"/>, so a live test
+    /// that drives the adapters directly is not raced by the add-in it has loaded.
+    /// </summary>
+    /// <param name="workbook">The initialised workbook the test is about to drive.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists.</b> Every live test that calls <see cref="RegisterXll"/> loads the real
+    /// add-in into the same Excel instance, and the add-in's scheduler coalesces an automatic
+    /// refresh on the test's own cell writes. Since ADR-0055 that refresh arms and PROTECTS the
+    /// sheet, so the test's next direct-adapter write is refused <c>TargetProtected</c> — measured:
+    /// <c>AddRowIntegrationTests</c> loses its second insert to exactly that, and the failure set
+    /// moved between three consecutive gate runs. The product is behaving; the test is racing it.
+    /// </para>
+    /// <para>
+    /// This uses the switch that already exists for the purpose (<c>ProtectGanttSheet</c>, schema
+    /// 22) rather than a test-only hook in the add-in: with it FALSE,
+    /// <see cref="GanttCreator.Office.WorksheetProtectionArming.Arm"/> releases anything it armed
+    /// and returns, so the add-in neither locks nor protects. Tests that are ABOUT protection must
+    /// not call this — <c>ProtectionArmingIntegrationTests</c> drives the ports without loading the
+    /// pack, and the refusal tests protect their sheet themselves.
+    /// </para>
+    /// <para>
+    /// The row and the value column are resolved through the schema's own header names, never by a
+    /// fixed offset, so drift in the VeryHidden sheet's layout fails here instead of silently
+    /// writing a neighbouring setting.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// The workbook has no configuration sheet, the settings table no longer matches the schema's
+    /// header row, or the setting has no row.
+    /// </exception>
+    public static void DisableChartProtection(Workbook workbook)
+    {
+        ArgumentNullException.ThrowIfNull(workbook);
+
+        const string SettingKey = "ProtectGanttSheet";
+
+        // Positive control on the key: a catalogue rename must fail here rather than write a value
+        // nothing reads.
+        if (GanttCatalogues.SettingDefault(SettingKey) is null)
+        {
+            throw new InvalidOperationException(
+                $"'{SettingKey}' is not a catalogue setting any more; update this fixture.");
+        }
+
+        using ComScope scope = new ComScope();
+
+        Sheets sheets = scope.Track(workbook.Sheets);
+        if (sheets[GanttWorkbookContract.ConfigSheetName] is not Worksheet config)
+        {
+            throw new InvalidOperationException(
+                $"The workbook has no '{GanttWorkbookContract.ConfigSheetName}' worksheet; run Initialise first.");
+        }
+
+        _ = scope.Track(config);
+        ListObjects tables = scope.Track(config.ListObjects);
+        ListObject settings = scope.Track(tables[GanttCatalogues.SettingsTableName]);
+        ListColumns columns = scope.Track(settings.ListColumns);
+
+        // By header name, never by offset: the VeryHidden sheet's layout is schema, so a drifted
+        // column must fail loudly instead of writing a neighbouring setting.
+        if (columns.Count != GanttCatalogues.SettingsHeaders.Length)
+        {
+            throw new InvalidOperationException(
+                $"'{GanttCatalogues.SettingsTableName}' has {columns.Count} columns; the schema declares "
+                    + $"{GanttCatalogues.SettingsHeaders.Length}.");
+        }
+
+        for (int index = 1; index <= columns.Count; index++)
+        {
+            ListColumn column = scope.Track(columns[index]);
+            string header = Convert.ToString(column.Name, CultureInfo.InvariantCulture) ?? string.Empty;
+            if (!string.Equals(header, GanttCatalogues.SettingsHeaders[index - 1], StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"'{GanttCatalogues.SettingsTableName}' column {index} is '{header}'; the schema declares "
+                        + $"'{GanttCatalogues.SettingsHeaders[index - 1]}'.");
+            }
+        }
+
+        ExcelRange body = scope.Track(settings.DataBodyRange);
+        if (body.Value2 is not object[,] cells)
+        {
+            throw new InvalidOperationException(
+                $"'{GanttCatalogues.SettingsTableName}' has no readable body.");
+        }
+
+        int firstRow = cells.GetLowerBound(0);
+        int firstColumn = cells.GetLowerBound(1);
+        for (int row = firstRow; row <= cells.GetUpperBound(0); row++)
+        {
+            string key = Convert.ToString(cells[row, firstColumn], CultureInfo.InvariantCulture) ?? string.Empty;
+            if (!string.Equals(key, SettingKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // The value column is the schema's second header, verified above, so this is an
+            // anchored offset rather than a guess.
+            ExcelRange valueCell = scope.Track(body.Cells[row - firstRow + 1, firstColumn + 1]);
+            valueCell.Value2 = "FALSE";
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"'{GanttCatalogues.SettingsTableName}' has no '{SettingKey}' row.");
+    }
+
+    /// <summary>
+    /// How long the fixture waits for <c>new Application()</c> to return before
+    /// treating the launch as hung. Excel opens in a couple of seconds on a
+    /// healthy host; anything longer means a modal dialog, add-in load, or
+    /// orphaned COM state is blocking the call. Virtual so tests can override.
+    /// </summary>
+    internal virtual TimeSpan ExcelLaunchTimeout => TimeSpan.FromSeconds(30);
+
     /// <inheritdoc />
     public Task InitializeAsync()
     {
         // Snapshot existing Excel processes so we can identify the one
-        // this fixture creates.
+        // this fixture creates, and so the launch watchdog can reap any
+        // new Excel processes if new Application() hangs.
         var before = Process.GetProcessesByName("EXCEL")
             .Select(p => p.Id)
             .ToHashSet();
 
-        var app = new Application();
-        _excel = app;
+        bool launchCompleted = false;
+        Application? app = null;
+
+        var cts = new CancellationTokenSource();
+        var watchdog = Task.Delay(ExcelLaunchTimeout, cts.Token);
+        var watchdogTask = watchdog.ContinueWith(_ =>
+        {
+            // If new Application() has not returned by the deadline, reap any
+            // Excel processes that appeared after the snapshot. Removing the
+            // COM server causes the blocking COM call to fail fast instead of
+            // hanging indefinitely.
+            if (!cts.IsCancellationRequested && !launchCompleted)
+            {
+                var after = Process.GetProcessesByName("EXCEL")
+                    .Select(p => p.Id)
+                    .Where(id => !before.Contains(id))
+                    .ToList();
+                foreach (var id in after)
+                {
+                    try
+                    {
+                        Process.GetProcessById(id).Kill();
+                    }
+#pragma warning disable CA1031
+                    catch
+#pragma warning restore CA1031
+                    {
+                        // Best-effort: the process may have exited already.
+                    }
+                }
+            }
+        }, TaskScheduler.Default);
+
+        try
+        {
+            // new Application() is a synchronous COM call with no cancellation.
+            // It blocks the calling thread until Excel's COM server finishes
+            // startup. On a healthy host this takes a couple of seconds; if
+            // Excel shows an invisible startup dialog, hangs on an add-in, or
+            // is wedged from a previous crash, it can block indefinitely. The
+            // watchdog above reaps new Excel processes after the timeout,
+            // which causes the COM call to fail fast instead of hanging.
+            app = new Application();
+            launchCompleted = true;
+#pragma warning disable CA1849
+            cts.Cancel();
+#pragma warning restore CA1849
+            _excel = app;
+        }
+        catch
+        {
+#pragma warning disable CA1849
+            cts.Cancel();
+#pragma warning restore CA1849
+            throw;
+        }
+        finally
+        {
+            cts.Dispose();
+        }
 
         // Configure Excel properties in a guarded path that can clean up
         // if any setter throws.
@@ -852,6 +1073,7 @@ internal class OfficeFixture : IAsyncLifetime
     /// <returns><see langword="true"/> when the process is gone by the end.</returns>
     private async Task<bool> EnsureOwnedProcessExitedAsync(int processId)
     {
+        var gracefulWait = Stopwatch.StartNew();
         if (await PollForProcessExitAsync(processId, GracefulExitTimeout).ConfigureAwait(true))
         {
             return true;
@@ -859,6 +1081,7 @@ internal class OfficeFixture : IAsyncLifetime
 
         if (KillOwnedProcess(processId))
         {
+            LastGracefulExitElapsedMs = gracefulWait.ElapsedMilliseconds;
             ForcedKillCount++;
         }
 

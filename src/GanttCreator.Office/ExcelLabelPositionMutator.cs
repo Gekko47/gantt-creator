@@ -78,10 +78,10 @@ public class ExcelLabelPositionMutator(
         }
 
         ListRows rows = GetListRows(table);
-        var bodyIndex = ResolveActiveBodyIndex(table, rows);
+        int bodyIndex = ResolveActiveBodyIndex(table, rows);
         return bodyIndex == 0
             ? LabelPositionMutationOutcome.Refused(LabelPositionMutationRefusalReason.SelectionOutsideTable)
-            : !TryReadBody(table, out List<object?[]>? body, out var columnMap)
+            : !TryReadBody(table, out List<object?[]>? body, out int[]? columnMap)
                 || body is null || columnMap is null
                 ? LabelPositionMutationOutcome.Refused(LabelPositionMutationRefusalReason.TableMissing)
                 : ApplySetLabelPosition(table, body, columnMap, bodyIndex, position);
@@ -105,7 +105,7 @@ public class ExcelLabelPositionMutator(
         int bodyIndex,
         GanttLabelPosition? position)
     {
-        var selectedIndex = bodyIndex - 1;
+        int selectedIndex = bodyIndex - 1;
         if (selectedIndex < 0 || selectedIndex >= body.Count)
         {
             return LabelPositionMutationOutcome.Refused(
@@ -120,7 +120,7 @@ public class ExcelLabelPositionMutator(
                 LabelPositionMutationRefusalReason.SelectionUnknown, bodyIndex);
         }
 
-        var typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
+        string typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
         if (!EntityTypeCatalog.TryParse(typeText, out GanttEntityType type))
         {
             return LabelPositionMutationOutcome.Refused(
@@ -129,7 +129,13 @@ public class ExcelLabelPositionMutator(
 
         GanttStyleRegistry? registry = null;
         string? styleKey = null;
-        if (type == GanttEntityType.CustomActivity)
+
+        // R5.6a: the catalogue's RequiresStyleKey flag is the single authority
+        // for which types resolve from the style registry (Custom Activity and
+        // Custom Milestone), so a Custom Milestone row validates against its
+        // row style exactly like a Custom Activity does.
+        EntityTypeDefinition? definition = EntityTypeCatalog.GetDefinition(type);
+        if (definition is { RequiresStyleKey: true })
         {
             styleKey = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "StyleKey");
             ConfigReadOutcome catalogue = ReadCatalogue();
@@ -140,15 +146,22 @@ public class ExcelLabelPositionMutator(
             }
 
             registry = catalogue.Styles;
-            if (registry is null || !registry.TryGet(styleKey, out _))
-            {
-                return LabelPositionMutationOutcome.Refused(
-                    LabelPositionMutationRefusalReason.StyleUnknown, bodyIndex);
-            }
         }
 
-        if (position.HasValue
-            && !EntityTypeCatalog.IsLabelPositionAllowed(type, position.Value, styleKey, registry))
+        // R5.6d: the vocabulary is the row's style when the registry knows it
+        // and the type's CODE-OWNED default style otherwise - the same preset
+        // the scene falls back to when it renders the row. A row whose style
+        // has not been chosen yet, or whose style was deleted, still renders
+        // with that default, so it still offers the labels that default
+        // permits; refusing it left the description-label dropdown disabled
+        // on a row that was perfectly renderable. The vocabulary is never
+        // empty for a known type - the registry rejects a style that permits
+        // no position, and every catalogue type defines at least one - so a
+        // position outside it is the ordinary not-permitted refusal.
+        IReadOnlyList<GanttLabelPosition> allowed =
+            EntityTypeCatalog.GetAllowedLabelPositions(type, styleKey, registry);
+
+        if (position.HasValue && !allowed.Contains(position.Value))
         {
             return LabelPositionMutationOutcome.Refused(
                 LabelPositionMutationRefusalReason.PositionNotAllowedForType, bodyIndex);
@@ -173,8 +186,8 @@ public class ExcelLabelPositionMutator(
         worksheet = null;
         table = null;
 
-        var sheetCount = GetSheetCount(sheets);
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = GetSheetCount(sheets);
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Worksheet candidate)
             {
@@ -182,14 +195,11 @@ public class ExcelLabelPositionMutator(
             }
 
             ListObjects listObjects = candidate.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 ListObject located = GetTableAt(listObjects, tableIndex);
-                if (string.Equals(
-                    located.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(located.Name))
                 {
                     worksheet = candidate;
                     table = located;
@@ -209,20 +219,20 @@ public class ExcelLabelPositionMutator(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -285,10 +295,10 @@ public class ExcelLabelPositionMutator(
         }
 
         Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyOffset = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
+        int tableFirstRow = GetRangeRow(tableRange);
+        int activeRow = GetRangeRow(activeCell);
+        int bodyOffset = activeRow - tableFirstRow;
+        int rowCount = GetListRowCount(rows);
 
         return bodyOffset < 1 || bodyOffset > rowCount ? 0 : bodyOffset;
     }
@@ -309,7 +319,7 @@ public class ExcelLabelPositionMutator(
     {
         try
         {
-            var tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
+            int tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
             ListRow row = GetListRowAt(GetListRows(table), rowIndex + 1);
             Excel.Range cell = GetCellAt(GetListRowRange(row), tableIndex);
             SetRangeValues(cell, value);

@@ -1,0 +1,1766 @@
+using System.Globalization;
+using GanttCreator.Core;
+using Excel = Microsoft.Office.Interop.Excel;
+
+namespace GanttCreator.Office;
+
+/// <summary>
+/// Live recovery adapter for the visible <c>tblGanttData</c> table.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The adapter is split into a read-only <see cref="Inspect"/> and a mutating
+/// <see cref="Recover"/>. The inspection carries the pure Core plans, so the
+/// command can confirm before any host write. Recovery only fills blank header
+/// cells, creates a missing table over the contract header row, or applies a
+/// provable column repair; anything ambiguous refuses with no mutation.
+/// </para>
+/// <para>
+/// COM ownership follows the repository rule: every proxy is held in a local
+/// and used without chained member expressions. The parameterised COM
+/// properties are exposed as <c>internal virtual</c> seams for contract tests.
+/// </para>
+/// </remarks>
+public class ExcelWorkbookRecovery(
+    object? application,
+    IGanttTableReader? tableReader = null,
+    IWorksheetProtectionGuard? protectionGuard = null,
+    IApplicationStateScope? stateScope = null,
+    IConfigCatalogueWriter? catalogueWriter = null,
+    Action<string>? trace = null,
+    ExcelConfigSheetInspector? configSheetInspector = null,
+    IConfigCatalogueReader? catalogueReader = null,
+    IColumnVisibilityPort? columnVisibilityPort = null) : IWorkbookRecovery
+{
+    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly IGanttTableReader _tableReader = tableReader ?? new ExcelGanttTableReader(application);
+    private readonly IWorksheetProtectionGuard _protectionGuard =
+        protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+    private readonly IApplicationStateScope? _stateScope = stateScope;
+    private readonly IConfigCatalogueWriter _catalogueWriter =
+        catalogueWriter ?? new ExcelConfigCatalogueWriter(application);
+    private readonly Action<string>? _trace = trace;
+    private readonly ExcelConfigSheetInspector _configSheets =
+        configSheetInspector ?? new ExcelConfigSheetInspector();
+
+    /// <summary>The four border indices that form a table's outside edge.</summary>
+    private static readonly Excel.XlBordersIndex[] _outsideBorderEdges =
+    [
+        Excel.XlBordersIndex.xlEdgeTop,
+        Excel.XlBordersIndex.xlEdgeBottom,
+        Excel.XlBordersIndex.xlEdgeLeft,
+        Excel.XlBordersIndex.xlEdgeRight,
+    ];
+
+    /// <summary>
+    /// Reads the persisted settings, so a repair can re-apply the user's column
+    /// visibility after recreating a sheet (R5.18h).
+    /// </summary>
+    private readonly IConfigCatalogueReader _catalogueReader =
+        catalogueReader ?? new ExcelConfigCatalogueReader(application);
+
+    /// <summary>Applies the stored column visibility to the live table (R5.18h).</summary>
+    private readonly IColumnVisibilityPort _columnVisibilityPort =
+        columnVisibilityPort ?? new ExcelColumnVisibilityPort(application);
+
+    /// <inheritdoc />
+    public WorkbookRecoveryInspection Inspect()
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        ConfigSheetLocation configSheet = _configSheets.Locate(sheets);
+        if (RefusalForConfigState(configSheet.State) is { } configRefusal)
+        {
+            return Refused(configRefusal);
+        }
+
+        bool configurationNeedsRename = configSheet.NeedsRename;
+        bool configurationMissing = configSheet.State == ConfigSheetState.Missing;
+        bool configurationPresent =
+            configSheet.State is ConfigSheetState.Present or ConfigSheetState.Renamed;
+
+        GanttTableReadOutcome read = _tableReader.Read();
+        if (read.Succeeded)
+        {
+            if (read.ConfigurationPresent && !configurationNeedsRename)
+            {
+                return new WorkbookRecoveryInspection(
+                    TableReadable: true,
+                    TablePresent: true,
+                    ConfigurationPresent: true,
+                    NeedsRecovery: false,
+                    TargetSheetName: null,
+                    BodyRowCount: 0,
+                    HeaderPlan: null,
+                    StructurePlan: null,
+                    RequiresConfirmation: false,
+                    ConfirmationMessage: null,
+                    Refusal: null);
+            }
+
+            string? tableSheet = null;
+            if (TryFindTable(sheets, out Excel.Worksheet? gantt, out _) && gantt is not null)
+            {
+                tableSheet = GetSheetName(gantt);
+            }
+
+            return new WorkbookRecoveryInspection(
+                TableReadable: true,
+                TablePresent: true,
+                configurationPresent,
+                NeedsRecovery: true,
+                TargetSheetName: tableSheet,
+                BodyRowCount: 0,
+                HeaderPlan: null,
+                StructurePlan: null,
+                RequiresConfirmation: false,
+                ConfirmationMessage: null,
+                Refusal: null)
+            {
+                NeedsConfigurationRecovery = configurationMissing,
+                NeedsConfigurationRename = configurationNeedsRename,
+            };
+        }
+
+        return read.Refusal switch
+        {
+            GanttTableReadRefusalReason.NoActiveWorkbook =>
+                Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook),
+            GanttTableReadRefusalReason.DateSystemUnsupported =>
+                Refused(WorkbookRecoveryRefusalReason.DateSystemUnsupported),
+            GanttTableReadRefusalReason.TableUnreadable =>
+                InspectStructureRepair(
+                    sheets,
+                    configurationPresent,
+                    configurationMissing,
+                    configurationNeedsRename),
+            GanttTableReadRefusalReason.TableMissing =>
+                InspectRebuild(
+                    sheets,
+                    configurationPresent,
+                    configurationMissing,
+                    configurationNeedsRename),
+            null => InspectRebuild(
+                sheets,
+                configurationPresent,
+                configurationMissing,
+                configurationNeedsRename),
+            _ => InspectRebuild(
+                sheets,
+                configurationPresent,
+                configurationMissing,
+                configurationNeedsRename),
+        };
+    }
+
+    private WorkbookRecoveryInspection InspectStructureRepair(
+        Excel.Sheets sheets,
+        bool configurationPresent,
+        bool configurationMissing,
+        bool configurationNeedsRename)
+    {
+        if (!TryFindTable(sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
+            || worksheet is null
+            || table is null)
+        {
+            return Refused(WorkbookRecoveryRefusalReason.TargetMissing, configurationPresent);
+        }
+
+        Excel.ListColumns columns = GetTableColumns(table);
+        int count = GetColumnCount(columns);
+        List<string> columnHeaders = new(count);
+        for (int index = 1; index <= count; index++)
+        {
+            columnHeaders.Add(GetColumnName(GetColumnAt(columns, index)));
+        }
+
+        GanttTableStructureRepairPlan plan = GanttTableStructureRepair.Plan(columnHeaders);
+        bool canRepair = plan.Succeeded;
+        return new WorkbookRecoveryInspection(
+            TableReadable: false,
+            TablePresent: true,
+            configurationPresent,
+            NeedsRecovery: canRepair,
+            GetSheetName(worksheet),
+            BodyRowCount: 0,
+            HeaderPlan: null,
+            plan,
+            RequiresConfirmation: false,
+            ConfirmationMessage: null,
+            canRepair ? null : WorkbookRecoveryRefusalReason.TableStructureRefused)
+        {
+            NeedsConfigurationRecovery = configurationMissing,
+            NeedsConfigurationRename = configurationNeedsRename,
+        };
+    }
+
+    private WorkbookRecoveryInspection InspectRebuild(
+        Excel.Sheets sheets,
+        bool configurationPresent,
+        bool configurationMissing,
+        bool configurationNeedsRename)
+    {
+        List<Excel.Worksheet> labelled = FindLabelledSheets(sheets);
+        if (labelled.Count == 0)
+        {
+            return !configurationPresent
+                ? Refused(WorkbookRecoveryRefusalReason.TargetMissing)
+                : new WorkbookRecoveryInspection(
+                    TableReadable: false,
+                    TablePresent: false,
+                    ConfigurationPresent: true,
+                    NeedsRecovery: true,
+                    TargetSheetName: null,
+                    BodyRowCount: 0,
+                    HeaderPlan: null,
+                    StructurePlan: null,
+                    RequiresConfirmation: true,
+                    ConfirmationMessage:
+                        "The Gantt worksheet is missing. Fix can create a new empty one from the stored configuration. Your schedule rows are not restored. Continue?",
+                    Refusal: null)
+                {
+                    NeedsGanttSheet = true,
+                    NeedsConfigurationRename = configurationNeedsRename,
+                };
+        }
+
+        if (labelled.Count > 1)
+        {
+            return Refused(WorkbookRecoveryRefusalReason.TargetAmbiguous, configurationPresent);
+        }
+
+        Excel.Worksheet target = labelled[0];
+        Excel.ListObject? foreignTable = GetSingleTable(target);
+        if (foreignTable is not null)
+        {
+            GanttTableHeaderAlignmentPlan? identity = BuildHeaderPlan(target);
+            bool provesGanttChart =
+                identity is { Outcome: GanttTableHeaderAlignmentOutcome.Aligned }
+                && HasPlotAnchor(target);
+            return provesGanttChart
+                ? new WorkbookRecoveryInspection(
+                    TableReadable: false,
+                    TablePresent: true,
+                    configurationPresent,
+                    NeedsRecovery: true,
+                    GetSheetName(target),
+                    BodyRowCount: 0,
+                    HeaderPlan: null,
+                    StructurePlan: null,
+                    RequiresConfirmation: false,
+                    ConfirmationMessage: null,
+                    Refusal: null)
+                {
+                    NeedsConfigurationRecovery = configurationMissing,
+                    NeedsConfigurationRename = configurationNeedsRename,
+                    NeedsTableRename = true,
+                    TargetTableName = GetTableName(foreignTable),
+                }
+                : Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable, configurationPresent);
+        }
+
+        if (HasAnyTable(target))
+        {
+            return Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable, configurationPresent);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(target);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected,
+                configurationPresent);
+        }
+
+        GanttTableHeaderAlignmentPlan? headerPlan = BuildHeaderPlan(target);
+        if (headerPlan is null || !headerPlan.Succeeded)
+        {
+            return new WorkbookRecoveryInspection(
+                TableReadable: false,
+                TablePresent: false,
+                configurationPresent,
+                NeedsRecovery: false,
+                GetSheetName(target),
+                BodyRowCount: 0,
+                headerPlan,
+                StructurePlan: null,
+                RequiresConfirmation: false,
+                ConfirmationMessage: null,
+                WorkbookRecoveryRefusalReason.HeaderMisaligned);
+        }
+
+        int bodyRowCount = CountBodyRows(target);
+        bool confirm = bodyRowCount > 0;
+        string? message = confirm
+            ? string.Create(
+                CultureInfo.InvariantCulture,
+                $"Fix will rebuild tblGanttData on '{target.Name}' and adopt {bodyRowCount} existing row(s). Continue?")
+            : null;
+
+        return new WorkbookRecoveryInspection(
+            TableReadable: false,
+            TablePresent: false,
+            configurationPresent,
+            NeedsRecovery: true,
+            GetSheetName(target),
+            bodyRowCount,
+            headerPlan,
+            StructurePlan: null,
+            confirm,
+            message,
+            Refusal: null)
+        {
+            NeedsConfigurationRecovery = configurationMissing,
+            NeedsConfigurationRename = configurationNeedsRename,
+        };
+    }
+
+    /// <inheritdoc />
+    public WorkbookRecoveryOutcome Recover(WorkbookRecoveryInspection inspection, bool confirmed)
+    {
+        ArgumentNullException.ThrowIfNull(inspection);
+
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookRecoveryOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected);
+        }
+
+        if (inspection.Refusal is { } refusal)
+        {
+            return WorkbookRecoveryOutcome.Refused(refusal);
+        }
+
+        if (!inspection.NeedsRecovery)
+        {
+            return WorkbookRecoveryOutcome.NoChange();
+        }
+
+        if (inspection.RequiresConfirmation && !confirmed)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.ConfirmationDeclined);
+        }
+
+        using IApplicationStateScope scope = _stateScope ?? NullApplicationStateScope.Instance;
+        scope.SuppressScreenUpdating();
+        scope.SuppressEvents();
+        scope.SuppressAlerts();
+        scope.CaptureSelection();
+
+        bool configurationCreated = false;
+        bool configurationRenamed = false;
+        if (inspection.NeedsConfigurationRename || inspection.NeedsConfigurationRecovery)
+        {
+            WorkbookRecoveryRefusalReason? configRefusal = inspection.NeedsConfigurationRename
+                ? RenameConfigurationSheet()
+                : CreateConfigurationSheet(inspection);
+            if (configRefusal is not null)
+            {
+                return WorkbookRecoveryOutcome.Refused(configRefusal.Value);
+            }
+
+            configurationCreated = inspection.NeedsConfigurationRecovery;
+            configurationRenamed = inspection.NeedsConfigurationRename;
+        }
+
+        if (inspection.NeedsGanttSheet)
+        {
+            return ApplyCreateGanttSheet() with
+            {
+                ConfigurationCreated = configurationCreated,
+                ConfigurationRenamed = configurationRenamed,
+            };
+        }
+
+        if (inspection.NeedsTableRename)
+        {
+            return ApplyTableRename(inspection) with
+            {
+                ConfigurationCreated = configurationCreated,
+                ConfigurationRenamed = configurationRenamed,
+            };
+        }
+
+        if (inspection.TableReadable && inspection.StructurePlan is null)
+        {
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: false,
+                TableStructureRepaired: false,
+                AdoptedRowCount: 0,
+                Refusal: null)
+            {
+                ConfigurationCreated = configurationCreated,
+                ConfigurationRenamed = configurationRenamed,
+            };
+        }
+
+        WorkbookRecoveryOutcome outcome = inspection.StructurePlan is { } structure
+            ? ApplyStructureRepair(structure)
+            : ApplyRebuild(inspection);
+        if (outcome.Refusal is not null && configurationCreated)
+        {
+            DeleteCreatedConfigurationSheet();
+        }
+
+        return outcome with
+        {
+            ConfigurationCreated = configurationCreated,
+            ConfigurationRenamed = configurationRenamed,
+        };
+    }
+
+    private WorkbookRecoveryOutcome ApplyRebuild(WorkbookRecoveryInspection inspection)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        if (!TryFindSheetByName(sheets, inspection.TargetSheetName, out Excel.Worksheet? target) || target is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(target);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookRecoveryOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected);
+        }
+
+        GanttTableHeaderAlignmentPlan headerPlan =
+            inspection.HeaderPlan
+            ?? new GanttTableHeaderAlignmentPlan(GanttTableHeaderAlignmentOutcome.Aligned, []);
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        string?[] previousHeaders = ReadHeaderValues(target);
+
+        Excel.ListObject? created = null;
+        try
+        {
+            foreach (int index in headerPlan.CellsToWrite)
+            {
+                SetHeaderValue(target, index + 1, schema[index].Name);
+            }
+
+            Excel.Range range = GetTableRange(
+                target,
+                GanttSheetLayout.HeaderRowIndex,
+                inspection.BodyRowCount,
+                schema.Count);
+            created = AddTable(target, range);
+            PresentTable(created);
+            ApplyColumnPresentation(created);
+
+            GanttTableReadOutcome verify = _tableReader.Read();
+            if (!verify.Succeeded)
+            {
+                RollBackRebuild(target, created, previousHeaders);
+                return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.VerificationFailed);
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery rebuilt table={GanttTableSchema.TableName} sheet={target.Name} adopted={inspection.BodyRowCount}"));
+
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: true,
+                TableStructureRepaired: false,
+                inspection.BodyRowCount,
+                Refusal: null);
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery rebuild refused " + exception.Message);
+            RollBackRebuild(target, created, previousHeaders);
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TableCreateFailed);
+        }
+    }
+
+    private WorkbookRecoveryOutcome ApplyStructureRepair(GanttTableStructureRepairPlan plan)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        if (!TryFindTable(sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
+            || worksheet is null
+            || table is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookRecoveryOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected);
+        }
+
+        Excel.ListColumns columns = GetTableColumns(table);
+        int originalCount = GetColumnCount(columns);
+        string[] originalNames = new string[originalCount];
+        for (int index = 0; index < originalCount; index++)
+        {
+            originalNames[index] = GetColumnName(GetColumnAt(columns, index + 1));
+        }
+
+        List<int> insertedPositions = [];
+        try
+        {
+            foreach (GanttTableColumnRepair repair in plan.Repairs)
+            {
+                if (repair.Kind == GanttTableColumnRepairKind.Rename)
+                {
+                    Excel.ListColumn column = GetColumnAt(columns, repair.SchemaIndex + 1);
+                    SetColumnName(column, repair.Name);
+                }
+                else
+                {
+                    Excel.ListColumn added = AddColumnAt(columns, repair.SchemaIndex + 1);
+                    SetColumnName(added, repair.Name);
+                    insertedPositions.Add(repair.SchemaIndex + 1);
+                }
+            }
+
+            GanttTableReadOutcome verify = _tableReader.Read();
+            if (!verify.Succeeded)
+            {
+                RollBackStructureRepair(columns, originalNames, insertedPositions);
+                return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.VerificationFailed);
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery repaired table structure sheet={worksheet.Name} changes={plan.Repairs.Count}"));
+
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: false,
+                TableStructureRepaired: true,
+                AdoptedRowCount: 0,
+                Refusal: null);
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery structure refused " + exception.Message);
+            RollBackStructureRepair(columns, originalNames, insertedPositions);
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.HeaderWriteFailed);
+        }
+    }
+
+    private WorkbookRecoveryOutcome ApplyTableRename(WorkbookRecoveryInspection inspection)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null || string.IsNullOrWhiteSpace(inspection.TargetSheetName))
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        if (!TryFindSheetByName(sheets, inspection.TargetSheetName, out Excel.Worksheet? target)
+            || target is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetMissing);
+        }
+
+        Excel.ListObjects objects = target.ListObjects;
+        if (GetTableCount(objects) != 1)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable);
+        }
+
+        Excel.ListObject table = GetTableAt(objects, 1);
+        string previousName = GetTableName(table);
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(target);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookRecoveryOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected);
+        }
+
+        try
+        {
+            SetTableName(table, GanttTableSchema.TableName);
+            SetShowAutoFilter(table, false);
+            if (!_tableReader.Read().Succeeded)
+            {
+                SetTableName(table, previousName);
+                return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.VerificationFailed);
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery renamed table={previousName} to={GanttTableSchema.TableName} sheet={GetSheetName(target)}"));
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: false,
+                TableStructureRepaired: false,
+                AdoptedRowCount: 0,
+                Refusal: null)
+            {
+                TableRenamed = true,
+            };
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery table rename refused " + exception.Message);
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TableRenameFailed);
+        }
+    }
+
+    private WorkbookRecoveryOutcome ApplyCreateGanttSheet()
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookRecoveryOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected);
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        Excel.Worksheet? created = null;
+        try
+        {
+            created = AddSheetAfter(sheets, null);
+            SetSheetName(created, GanttWorkbookContract.GanttSheetLabel);
+
+            IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+            for (int index = 0; index < schema.Count; index++)
+            {
+                SetHeaderValue(created, index + 1, schema[index].Name);
+            }
+
+            Excel.Range range = GetTableRange(created, GanttSheetLayout.HeaderRowIndex, 0, schema.Count);
+            Excel.ListObject table = AddTable(created, range);
+            PresentTable(table);
+            ApplyColumnPresentation(table);
+
+            // A freshly rebuilt sheet must match a freshly initialised one, including the
+            // owner's column-width default (2026-11-17). It is applied here, in the
+            // creation path only, so a Repair over an existing table never undoes a
+            // user's own column resize.
+            ApplyDefaultColumnWidths(table);
+
+            GanttTableReadOutcome verify = _tableReader.Read();
+            if (!verify.Succeeded)
+            {
+                DeleteSheet(created);
+                return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.VerificationFailed);
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery created Gantt sheet={created.Name}"));
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: true,
+                TableStructureRepaired: false,
+                AdoptedRowCount: 0,
+                Refusal: null)
+            {
+                GanttSheetCreated = true,
+            };
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery Gantt sheet create refused " + exception.Message);
+            if (created is not null)
+            {
+                DeleteSheet(created);
+            }
+
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.GanttSheetCreateFailed);
+        }
+    }
+
+    private void DeleteSheet(Excel.Worksheet sheet)
+    {
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return;
+        }
+
+        bool original = application.DisplayAlerts;
+        try
+        {
+            application.DisplayAlerts = false;
+            sheet.Delete();
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort rollback; the original refusal is the reported outcome.
+        }
+        finally
+        {
+            application.DisplayAlerts = original;
+        }
+    }
+
+    private WorkbookRecoveryRefusalReason? CreateConfigurationSheet(
+        WorkbookRecoveryInspection inspection)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return WorkbookRecoveryRefusalReason.NoActiveWorkbook;
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        if (FindConfigurationSheet(sheets) is not null)
+        {
+            return null;
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return protection == ProtectionGuardOutcome.NoActiveWorkbook
+                ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                : WorkbookRecoveryRefusalReason.TargetProtected;
+        }
+
+        Excel.Worksheet? anchor = null;
+        if (!string.IsNullOrWhiteSpace(inspection.TargetSheetName))
+        {
+            _ = TryFindSheetByName(sheets, inspection.TargetSheetName, out anchor);
+        }
+
+        Excel.Worksheet? created = null;
+        try
+        {
+            created = AddSheetAfter(sheets, anchor);
+            SetSheetName(created, GanttWorkbookContract.ConfigSheetName);
+            SetSheetVisibility(created, Excel.XlSheetVisibility.xlSheetVeryHidden);
+
+            ConfigWriteOutcome write = _catalogueWriter.Write();
+            if (!write.Succeeded)
+            {
+                DeleteCreatedConfigurationSheet();
+                return WorkbookRecoveryRefusalReason.ConfigurationWriteFailed;
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery created configuration sheet={created.Name}"));
+            return null;
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery configuration create refused " + exception.Message);
+            if (created is not null)
+            {
+                DeleteCreatedConfigurationSheet();
+            }
+
+            return WorkbookRecoveryRefusalReason.ConfigurationCreateFailed;
+        }
+    }
+
+    private WorkbookRecoveryRefusalReason? RenameConfigurationSheet()
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return WorkbookRecoveryRefusalReason.NoActiveWorkbook;
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        ConfigSheetLocation location = _configSheets.Locate(sheets);
+        if (!location.NeedsRename
+            || string.IsNullOrWhiteSpace(location.SheetName)
+            || !TryFindSheetByName(sheets, location.SheetName, out Excel.Worksheet? sheet)
+            || sheet is null)
+        {
+            return WorkbookRecoveryRefusalReason.ConfigurationRenameFailed;
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(sheet);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return protection == ProtectionGuardOutcome.NoActiveWorkbook
+                ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                : WorkbookRecoveryRefusalReason.TargetProtected;
+        }
+
+        string previousName = location.SheetName;
+        try
+        {
+            SetSheetName(sheet, GanttWorkbookContract.ConfigSheetName);
+            SetSheetVisibility(sheet, Excel.XlSheetVisibility.xlSheetVeryHidden);
+
+            ConfigWriteOutcome write = _catalogueWriter.Write();
+            if (!write.Succeeded)
+            {
+                RestoreSheetName(sheet, previousName);
+                return WorkbookRecoveryRefusalReason.ConfigurationWriteFailed;
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery renamed configuration sheet={previousName}"));
+            return null;
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery configuration rename refused " + exception.Message);
+            RestoreSheetName(sheet, previousName);
+            return WorkbookRecoveryRefusalReason.ConfigurationRenameFailed;
+        }
+    }
+
+    private void RestoreSheetName(Excel.Worksheet sheet, string name)
+    {
+        try
+        {
+            SetSheetName(sheet, name);
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort name restore; the typed refusal is the reported outcome.
+        }
+    }
+
+    private static WorkbookRecoveryRefusalReason? RefusalForConfigState(ConfigSheetState state) =>
+        state switch
+        {
+            ConfigSheetState.Present => null,
+            ConfigSheetState.Missing => null,
+            ConfigSheetState.Renamed => null,
+            ConfigSheetState.NameCollision => WorkbookRecoveryRefusalReason.ConfigurationNameCollision,
+            ConfigSheetState.Ambiguous => WorkbookRecoveryRefusalReason.ConfigurationAmbiguous,
+            ConfigSheetState.AmbiguousCandidate =>
+                WorkbookRecoveryRefusalReason.ConfigurationCandidateAmbiguous,
+            ConfigSheetState.Unrecognised => WorkbookRecoveryRefusalReason.ConfigurationUnrecognised,
+            _ => null,
+        };
+
+    private void DeleteCreatedConfigurationSheet()
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return;
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        Excel.Worksheet? config = FindConfigurationSheet(sheets);
+        if (config is null)
+        {
+            return;
+        }
+
+        bool original = application.DisplayAlerts;
+        try
+        {
+            application.DisplayAlerts = false;
+            if (config.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden)
+            {
+                config.Visible = Excel.XlSheetVisibility.xlSheetHidden;
+            }
+
+            config.Delete();
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort rollback; the original refusal is the reported outcome.
+        }
+        finally
+        {
+            application.DisplayAlerts = original;
+        }
+    }
+
+    private Excel.Worksheet? FindConfigurationSheet(Excel.Sheets sheets)
+    {
+        int count = GetSheetCount(sheets);
+        for (int index = 1; index <= count; index++)
+        {
+            if (GetSheetAt(sheets, index) is Excel.Worksheet worksheet
+                && GanttWorkbookContract.IsConfigSheetName(GetSheetName(worksheet)))
+            {
+                return worksheet;
+            }
+        }
+
+        return null;
+    }
+
+    private void RollBackRebuild(
+        Excel.Worksheet target,
+        Excel.ListObject? created,
+        string?[] previousHeaders)
+    {
+        try
+        {
+            if (created is not null)
+            {
+                DeleteTable(created);
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort rollback; the original refusal is the reported outcome.
+        }
+
+        try
+        {
+            for (int index = 0; index < previousHeaders.Length; index++)
+            {
+                SetHeaderValueOrBlank(target, index + 1, previousHeaders[index]);
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort rollback.
+        }
+    }
+
+    private void RollBackStructureRepair(
+        Excel.ListColumns columns,
+        string[] originalNames,
+        List<int> insertedPositions)
+    {
+        try
+        {
+            for (int index = 0; index < originalNames.Length && index + 1 <= GetColumnCount(columns); index++)
+            {
+                Excel.ListColumn column = GetColumnAt(columns, index + 1);
+                if (!string.Equals(GetColumnName(column), originalNames[index], StringComparison.Ordinal))
+                {
+                    SetColumnName(column, originalNames[index]);
+                }
+            }
+
+            for (int index = insertedPositions.Count - 1; index >= 0; index--)
+            {
+                int position = insertedPositions[index];
+                if (position <= GetColumnCount(columns))
+                {
+                    DeleteColumn(GetColumnAt(columns, position));
+                }
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort rollback.
+        }
+    }
+
+    private static WorkbookRecoveryInspection Refused(
+        WorkbookRecoveryRefusalReason refusal,
+        bool configurationPresent = false) =>
+        new(
+            TableReadable: false,
+            TablePresent: false,
+            configurationPresent,
+            NeedsRecovery: false,
+            TargetSheetName: null,
+            BodyRowCount: 0,
+            HeaderPlan: null,
+            StructurePlan: null,
+            RequiresConfirmation: false,
+            ConfirmationMessage: null,
+            refusal);
+
+    private GanttTableHeaderAlignmentPlan? BuildHeaderPlan(Excel.Worksheet target)
+    {
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        string?[] values = new string?[schema.Count];
+        for (int index = 0; index < schema.Count; index++)
+        {
+            object? value = GetHeaderValue(target, index + 1);
+            values[index] = value is null ? null : Convert.ToString(value, CultureInfo.InvariantCulture);
+        }
+
+        return GanttTableHeaderAlignment.Plan(values);
+    }
+
+    private string?[] ReadHeaderValues(Excel.Worksheet target)
+    {
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        string?[] values = new string?[schema.Count];
+        for (int index = 0; index < schema.Count; index++)
+        {
+            object? value = GetHeaderValue(target, index + 1);
+            values[index] = value is null ? null : Convert.ToString(value, CultureInfo.InvariantCulture);
+        }
+
+        return values;
+    }
+
+    private int CountBodyRows(Excel.Worksheet target)
+    {
+        int firstBodyRow = GanttSheetLayout.HeaderRowIndex + 1;
+        int lastUsedRow = GetUsedRangeLastRow(target);
+        if (lastUsedRow < firstBodyRow)
+        {
+            return 0;
+        }
+
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        Excel.Range body = GetRange(target, firstBodyRow, 1, lastUsedRow, schema.Count);
+        List<object?[]> rows = ExcelValue2Matrix.ReadRows(GetRangeValues(body));
+        int count = rows.Count;
+        while (count > 0 && rows[count - 1].All(IsBlank))
+        {
+            count--;
+        }
+
+        return count;
+    }
+
+    private static bool IsBlank(object? value) =>
+        value is null || (value is string text && string.IsNullOrWhiteSpace(text));
+
+    private List<Excel.Worksheet> FindLabelledSheets(Excel.Sheets sheets)
+    {
+        List<Excel.Worksheet> labelled = [];
+        int count = GetSheetCount(sheets);
+        for (int index = 1; index <= count; index++)
+        {
+            if (GetSheetAt(sheets, index) is Excel.Worksheet worksheet
+                && GanttWorkbookContract.IsGanttSheetLabel(GetSheetName(worksheet)))
+            {
+                labelled.Add(worksheet);
+            }
+        }
+
+        return labelled;
+    }
+
+    private bool TryFindSheetByName(
+        Excel.Sheets sheets,
+        string? name,
+        out Excel.Worksheet? worksheet)
+    {
+        worksheet = null;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        int count = GetSheetCount(sheets);
+        for (int index = 1; index <= count; index++)
+        {
+            if (GetSheetAt(sheets, index) is Excel.Worksheet candidate
+                && string.Equals(GetSheetName(candidate), name, StringComparison.OrdinalIgnoreCase))
+            {
+                worksheet = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryFindTable(
+        Excel.Sheets sheets,
+        out Excel.Worksheet? worksheet,
+        out Excel.ListObject? table)
+    {
+        worksheet = null;
+        table = null;
+        int sheetCount = GetSheetCount(sheets);
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        {
+            if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
+            {
+                continue;
+            }
+
+            Excel.ListObjects objects = candidate.ListObjects;
+            int objectCount = GetTableCount(objects);
+            for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
+            {
+                Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
+                if (GanttChartContract.IsDataTableName(GetTableName(candidateTable)))
+                {
+                    worksheet = candidate;
+                    table = candidateTable;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool HasAnyTable(Excel.Worksheet worksheet)
+    {
+        Excel.ListObjects objects = worksheet.ListObjects;
+        return GetTableCount(objects) > 0;
+    }
+
+    private Excel.ListObject? GetSingleTable(Excel.Worksheet worksheet)
+    {
+        Excel.ListObjects objects = worksheet.ListObjects;
+        return GetTableCount(objects) == 1 ? GetTableAt(objects, 1) : null;
+    }
+
+    private bool HasPlotAnchor(Excel.Worksheet target)
+    {
+        Excel.Names names = target.Names;
+        int count = GetNameCount(names);
+        for (int index = 1; index <= count; index++)
+        {
+            if (GanttWorkbookContract.IsPlotAnchorName(GetNameText(GetNameAt(names, index))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Makes the table carry the neutral built-in style, writing only when it differs.
+    /// </summary>
+    /// <param name="table">The rebuilt or repaired table.</param>
+    private void EnsureTableStyle(Excel.ListObject table)
+    {
+        string? liveStyle = ReadTableStyleName(table);
+        if (!string.Equals(liveStyle, GanttTableAppearance.TableStyleName, StringComparison.Ordinal))
+        {
+            SetTableStyle(table, GanttTableAppearance.TableStyleName);
+        }
+    }
+
+    private void PresentTable(Excel.ListObject table)
+    {
+        SetTableName(table, GanttTableSchema.TableName);
+        SetShowAutoFilter(table, false);
+        SetShowTableStyleRowStripes(table, false);
+        SetShowTableStyleColumnStripes(table, false);
+    }
+
+    /// <summary>
+    /// Gives a rebuilt table the same leading gutter width a freshly initialised one gets
+    /// (ADR-0059, R5.18k).
+    /// </summary>
+    /// <param name="table">The rebuilt Gantt data table.</param>
+    /// <remarks>
+    /// The mirror of the initialiser's pass, and for the same reason the theme and the
+    /// date format are mirrored: a repair produces a fresh set of cells, and a repair that
+    /// left the gutter at Excel's default width would hand the user a chart whose frame
+    /// starts 48 points to the left of the table instead of one padding row.
+    /// </remarks>
+    private void SetLeadingGutterWidth(Excel.ListObject table)
+    {
+        if (table.Parent is not Excel.Worksheet worksheet
+            || FindColumnByIndex(worksheet, GanttSheetLayout.LeadingGutterColumnIndex) is not { } column)
+        {
+            return;
+        }
+
+        if (ReadColumnWidthCharacters(column) is not { } characters
+            || ReadColumnWidthPoints(column) is not { } points)
+        {
+            return;
+        }
+
+        if (ExcelWorkbookInitialiser.CorrectedColumnWidthCharacters(
+                characters,
+                points,
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt")) is { } corrected)
+        {
+            SetColumnWidthCharacters(column, corrected);
+        }
+    }
+
+    /// <summary>Returns a worksheet column by index. Test seam over the <c>Columns</c> indexer.</summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="columnIndex">The one-based column index.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? FindColumnByIndex(Excel.Worksheet worksheet, int columnIndex)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[columnIndex];
+    }
+
+    /// <summary>Reads a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in characters, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthCharacters(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.ColumnWidth is double width ? width : null;
+    }
+
+    /// <summary>Reads a column's measured width in points. Test seam over <c>Width</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in points, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthPoints(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.Width is double width ? width : null;
+    }
+
+    /// <summary>Writes a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <param name="width">The width in characters.</param>
+    internal virtual void SetColumnWidthCharacters(Excel.Range column, double width)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        column.ColumnWidth = width;
+    }
+
+    /// <summary>
+    /// Re-applies the user's stored column visibility on top of the schema's (R5.18h).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The schema pass below deliberately leaves every user-visible column's hidden flag
+    /// alone, because that flag is the dropdown's choice. A repair that recreates the
+    /// worksheet therefore starts with all five columns visible while
+    /// <see cref="GanttColumnVisibility.SettingKey"/> still records what the user chose,
+    /// and this is the step that puts the two back together.
+    /// </para>
+    /// <para>
+    /// <b>Best-effort, deliberately.</b> A settings table that cannot be read, a value
+    /// that does not parse, and a refused apply all leave the schema's presentation in
+    /// place: a repair that refused over a decoration would leave the user with no table
+    /// at all. The refusals are traced rather than silent, so the reason survives in the
+    /// log instead of being guessed at later.
+    /// </para>
+    /// </remarks>
+    internal void ApplyStoredColumnVisibility()
+    {
+        ConfigReadOutcome outcome = _catalogueReader.Read();
+        if (!outcome.Succeeded)
+        {
+            _trace?.Invoke(
+                $"Recovery: the settings could not be read ({outcome.Refusal}); "
+                + "the schema presentation stands.");
+            return;
+        }
+
+        // An absent or blank key is the default "nothing hidden", which is already the
+        // schema's state: applying it would be a round trip that changes nothing.
+        if (!outcome.Settings.TryGetValue(GanttColumnVisibility.SettingKey, out string? stored)
+            || string.IsNullOrWhiteSpace(stored))
+        {
+            return;
+        }
+
+        ColumnVisibilityOutcome parsed = GanttColumnVisibility.Parse(stored);
+        if (!parsed.Succeeded)
+        {
+            _trace?.Invoke(
+                $"Recovery: the stored {GanttColumnVisibility.SettingKey} value '{stored}' did not "
+                + $"parse ({parsed.Refusal}); the schema presentation stands.");
+            return;
+        }
+
+        ColumnVisibilityPortOutcome applied = _columnVisibilityPort.Apply(parsed.Hidden!);
+        if (!applied.Succeeded)
+        {
+            _trace?.Invoke(
+                $"Recovery: the stored column visibility could not be applied "
+                + $"({applied.Refusal}).");
+        }
+    }
+
+    private void ApplyColumnPresentation(Excel.ListObject table)
+    {
+        SetLeadingGutterWidth(table);
+
+        // The host's own table style is the BASE the theme's cell formatting sits on. A
+        // hide/show of a table column re-applies that style, so a neutral built-in one is
+        // what keeps the table's lines stable when the user toggles a column (owner
+        // ruling 2026-11-14). Read first: a repair of a converged table writes nothing.
+        EnsureTableStyle(table);
+
+        // R5.18h: the loop below forces only the engine columns' visibility, so the
+        // user's stored choice has to be applied separately or a rebuilt sheet would
+        // show every column.
+        ApplyStoredColumnVisibility();
+
+        Excel.ListColumns columns = GetTableColumns(table);
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (int index = 1; index <= schema.Count; index++)
+        {
+            Excel.ListColumn column = GetColumnAt(columns, index);
+            Excel.Range columnRange = GetColumnRange(column);
+            SetColumnLocked(columnRange, schema[index - 1].IsLocked);
+            Excel.Range entireColumn = GetEntireColumn(columnRange);
+
+            // Only an ENGINE column's visibility is the schema's (R5.18h). A visible
+            // column's hidden flag is the user's choice from the ribbon's column
+            // dropdown, stored in `HiddenColumns`, so a repair does not clobber it.
+            bool wanted = schema[index - 1].IsHidden;
+            if (GanttColumnVisibility.SchemaOwnsVisibility(schema[index - 1])
+                && ReadHiddenFlag(entireColumn) != wanted)
+            {
+                SetColumnHidden(entireColumn, wanted);
+            }
+
+            // A repaired or rebuilt table is a fresh set of cells, so the date columns
+            // are formatted here as well as on Initialise: otherwise a repair hands the
+            // user a General-formatted Start that shows its serial number.
+            if (GanttTableSchema.IsDateColumn(schema[index - 1].Name))
+            {
+                ApplyDateColumnFormat(entireColumn);
+            }
+
+            // The theme presentation is mirrored here for the same reason: a repair that
+            // produced a table without the theme would leave the user with a chart whose
+            // panel no longer matches its own export.
+            ApplyBodyFont(entireColumn);
+            ApplyVerticalCentre(entireColumn);
+            ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
+        }
+
+        // The header row is locked for EVERY column (R5.18k follow-up). The per-column write
+        // above covers the header cell too, and an authoring column is unlocked, so a rebuilt
+        // table came back with an unlocked `Type` header directly above the body: a user could
+        // then rename a schema column, which breaks the name-keyed column map every adapter
+        // builds. Locking it here is what makes a repair restore the classification, not just
+        // the visible part of it.
+        Excel.Range? headerRow = table.HeaderRowRange;
+        if (headerRow is not null)
+        {
+            SetColumnLocked(headerRow, true);
+        }
+
+        ApplyHeaderFormat(table);
+        ApplyBorderColour(table);
+    }
+
+    /// <summary>Bounded width corrections; the characters-to-points relation is affine.</summary>
+    private const int _widthCorrectionPasses = 2;
+
+    /// <summary>
+    /// Gives every visible column the initialise default width on a rebuilt sheet.
+    /// </summary>
+    /// <param name="table">The newly created table.</param>
+    /// <remarks>
+    /// Read-before-write and bounded at two measured corrections, the same conversion the
+    /// initialiser and the gutter use. A column the stored visibility choice hides is
+    /// skipped so the rebuild preserves the user's layout as well as the default.
+    /// </remarks>
+    private void ApplyDefaultColumnWidths(Excel.ListObject table)
+    {
+        double targetPt = GanttTableAppearance.DefaultVisibleColumnWidthPt;
+        Excel.ListColumns columns = GetTableColumns(table);
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (int index = 1; index <= schema.Count; index++)
+        {
+            if (schema[index - 1].IsHidden)
+            {
+                continue;
+            }
+
+            Excel.ListColumn column = GetColumnAt(columns, index);
+            Excel.Range entireColumn = GetEntireColumn(GetColumnRange(column));
+            if (ReadHiddenFlag(entireColumn))
+            {
+                continue;
+            }
+
+            for (int pass = 0; pass < _widthCorrectionPasses; pass++)
+            {
+                if (ReadColumnWidthCharacters(entireColumn) is not { } characters
+                    || ReadColumnWidthPoints(entireColumn) is not { } points
+                    || ExcelWorkbookInitialiser.CorrectedColumnWidthCharacters(
+                        characters, points, targetPt) is not { } corrected)
+                {
+                    break;
+                }
+
+                SetColumnWidthCharacters(entireColumn, corrected);
+            }
+        }
+    }
+
+    /// <summary>Applies the theme's header fill and header type to the table's header row.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// The header's fill, type and text colour are the chart theme's; Excel's table style
+    /// keeps every border it draws inside the table (owner ruling 2026-11-13).
+    /// </remarks>
+    internal virtual void ApplyHeaderFormat(Excel.ListObject table)
+    {
+        Excel.Range header = table.HeaderRowRange;
+        Excel.Font font = header.Font;
+        ApplyHeaderType(font);
+
+        // The fill's pair, written with it: the recovery mirror must produce the same
+        // readable header the initialiser does, or a rebuilt workbook shows an invisible
+        // header (live evidence 2026-11-14).
+        font.Color = GanttTableAppearance.HeaderTextColour.ARGB;
+        Excel.Interior interior = header.Interior;
+        interior.Color = GanttTableAppearance.HeaderFill.ARGB;
+    }
+
+    /// <summary>Writes the theme's header type onto a header row's font.</summary>
+    /// <param name="font">The header row's font.</param>
+    /// <remarks>
+    /// The bold flag is written rather than left alone: Excel's table style bolds a header
+    /// row, and the ruling (2026-11-14) is that the header matches the chart's regular,
+    /// 9pt period band. The initialiser writes through this same seam, so a repaired
+    /// workbook and a freshly initialised one cannot disagree about the header's type.
+    /// </remarks>
+    internal virtual void ApplyHeaderType(Excel.Font font)
+    {
+        font.Name = GanttTableAppearance.FontFamily;
+        font.Size = GanttTableAppearance.HeaderFontSizePt;
+        font.Bold = GanttTableAppearance.HeaderIsBold;
+    }
+
+    /// <summary>
+    /// Recolours every border of the table and gives its outside edge the frame's weight.
+    /// </summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// <c>Borders.Color</c> sets the colour of every border the range contains and leaves each
+    /// border's line style and weight alone: the table style owns the interior grid, the theme
+    /// owns the colour. The outside edge is the one exception (owner ruling 2026-11-14): it
+    /// takes the chart frame's weight, so the two boundaries meet at the same 1pt.
+    /// </remarks>
+    internal virtual void ApplyBorderColour(Excel.ListObject table)
+    {
+        Excel.Range range = table.Range;
+        Excel.Borders borders = range.Borders;
+        borders.Color = GanttTableAppearance.BorderColour.ARGB;
+        foreach (Excel.XlBordersIndex edge in _outsideBorderEdges)
+        {
+            // Excel's cell-border weights are a closed set, not a point width: xlThin is
+            // the 1pt weight, which is the frame token's default (MajorBoundaryPt).
+            SetBorderWeight(borders, edge, Excel.XlBorderWeight.xlThin);
+        }
+    }
+
+    /// <summary>Writes one border's weight.</summary>
+    /// <param name="borders">The table range's border collection.</param>
+    /// <param name="edge">Which border to write.</param>
+    /// <param name="weight">The weight to write.</param>
+    /// <remarks>
+    /// <c>Borders.Item</c> is an indexed COM property, so it is a documented seam: expression
+    /// trees cannot contain it (CS0855) and the contract tests substitute this member. The one
+    /// proxy is held in a local rather than chained.
+    /// </remarks>
+    internal virtual void SetBorderWeight(
+        Excel.Borders borders,
+        Excel.XlBordersIndex edge,
+        Excel.XlBorderWeight weight)
+    {
+        Excel.Border border = borders[edge];
+        border.Weight = weight;
+    }
+
+    /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// One proxy held locally rather than chained through <c>range.Font.Name</c>, per the COM
+    /// rule; a chained set would also leak an un-released <c>Font</c> proxy per column.
+    /// </remarks>
+    private void ApplyBodyFont(Excel.Range entireColumn) => SetFont(
+        entireColumn,
+        GanttTableAppearance.FontFamily,
+        GanttTableAppearance.BodyFontSizePt);
+
+    /// <summary>Middle-aligns a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    private void ApplyVerticalCentre(Excel.Range entireColumn) =>
+        SetVerticalAlignment(entireColumn, Excel.XlVAlign.xlVAlignCenter);
+
+    /// <summary>Applies the column's horizontal alignment to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <param name="alignment">The column's alignment, from the Core appearance authority.</param>
+    private void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
+        SetHorizontalAlignment(
+            entireColumn,
+            alignment == GanttCellAlignment.Centre
+                ? Excel.XlHAlign.xlHAlignCenter
+                : Excel.XlHAlign.xlHAlignLeft);
+
+    /// <summary>
+    /// Writes the date format onto a date column's whole worksheet column, unless it
+    /// already carries it.
+    /// </summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// The whole column rather than the table body, for the reason the initialiser
+    /// states: the empty cells and the rows that do not exist yet are the ones that
+    /// otherwise keep General and render a stored date as its serial number. The
+    /// read-before-write keeps a repair from dirtying a sheet that already matches.
+    /// <para>
+    /// The pattern is <c>dd-mmm-yy</c> (<see cref="GanttDateDisplayFormat.DdMMMyy"/>), the
+    /// same one the initialiser writes (owner ruling 2026-11-14). A repair and a fresh
+    /// Initialise must not disagree about the format of the same column.
+    /// </para>
+    /// </remarks>
+    private void ApplyDateColumnFormat(Excel.Range entireColumn)
+    {
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
+        if (string.Equals(ReadNumberFormat(entireColumn), pattern, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SetNumberFormat(entireColumn, pattern);
+    }
+
+    private static bool ReadHiddenFlag(Excel.Range range) => range.Hidden switch
+    {
+        bool flag => flag,
+        null => false,
+        _ => bool.TryParse(
+            Convert.ToString(range.Hidden, CultureInfo.InvariantCulture),
+            out bool parsed) && parsed,
+    };
+
+    // ---- Test seams ----
+
+    internal virtual int GetSheetCount(Excel.Sheets sheets) => sheets.Count;
+
+    internal virtual object GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+
+    internal virtual string GetSheetName(Excel.Worksheet worksheet) => worksheet.Name;
+
+    internal virtual int GetNameCount(Excel.Names names) => names.Count;
+
+    internal virtual Excel.Name GetNameAt(Excel.Names names, int index) => names.Item(index);
+
+    internal virtual string GetNameText(Excel.Name name) => name.Name;
+
+    internal virtual int GetTableCount(Excel.ListObjects objects) => objects.Count;
+
+    internal virtual Excel.ListObject GetTableAt(Excel.ListObjects objects, int index) => objects[index];
+
+    internal virtual string GetTableName(Excel.ListObject table) => table.Name;
+
+    internal virtual void SetTableName(Excel.ListObject table, string name) => table.Name = name;
+
+    internal virtual void SetShowAutoFilter(Excel.ListObject table, bool value) => table.ShowAutoFilter = value;
+
+    /// <summary>Reads the table's own Excel table-style name.</summary>
+    /// <param name="table">The table to read.</param>
+    /// <returns>The style's name, or <see langword="null"/> when the host reports none.</returns>
+    /// <remarks>
+    /// <c>ListObject.TableStyle</c> is <c>object</c>-typed and reports either a
+    /// <c>TableStyle</c> proxy or the name it was assigned by. The proxy's <c>Name</c> is
+    /// read through a local rather than chained, per the COM ownership rule.
+    /// </remarks>
+    internal virtual string? ReadTableStyleName(Excel.ListObject table)
+    {
+        object style = table.TableStyle;
+        return style switch
+        {
+            Excel.TableStyle named => named.Name,
+            string text => text,
+            _ => null,
+        };
+    }
+
+    /// <summary>Assigns a built-in table style by name.</summary>
+    /// <param name="table">The table to style.</param>
+    /// <param name="styleName">The built-in style's name.</param>
+    internal virtual void SetTableStyle(Excel.ListObject table, string styleName) =>
+        table.TableStyle = styleName;
+
+    internal virtual void SetShowTableStyleRowStripes(Excel.ListObject table, bool value) =>
+        table.ShowTableStyleRowStripes = value;
+
+    internal virtual void SetShowTableStyleColumnStripes(Excel.ListObject table, bool value) =>
+        table.ShowTableStyleColumnStripes = value;
+
+    internal virtual Excel.ListColumns GetTableColumns(Excel.ListObject table) => table.ListColumns;
+
+    internal virtual int GetColumnCount(Excel.ListColumns columns) => columns.Count;
+
+    internal virtual Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => columns[index];
+
+    internal virtual Excel.ListColumn AddColumnAt(Excel.ListColumns columns, int position) =>
+        columns.Add(position);
+
+    internal virtual string GetColumnName(Excel.ListColumn column) => column.Name;
+
+    internal virtual void SetColumnName(Excel.ListColumn column, string name) => column.Name = name;
+
+    internal virtual Excel.Range GetColumnRange(Excel.ListColumn column) => column.Range;
+
+    internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+
+    /// <summary>Writes the body font onto a range, holding the <c>Font</c> proxy locally.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="family">The font family.</param>
+    /// <param name="sizePt">The size in points.</param>
+    internal virtual void SetFont(Excel.Range range, string family, double sizePt)
+    {
+        Excel.Font font = range.Font;
+        font.Name = family;
+        font.Size = sizePt;
+    }
+
+    /// <summary>Writes vertical alignment onto a range.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="alignment">The alignment.</param>
+    internal virtual void SetVerticalAlignment(Excel.Range range, Excel.XlVAlign alignment) =>
+        range.VerticalAlignment = alignment;
+
+    /// <summary>Writes horizontal alignment onto a range.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="alignment">The alignment.</param>
+    internal virtual void SetHorizontalAlignment(Excel.Range range, Excel.XlHAlign alignment) =>
+        range.HorizontalAlignment = alignment;
+
+    internal virtual string? ReadNumberFormat(Excel.Range range) =>
+        range.NumberFormat is string format ? format : null;
+
+    internal virtual void SetNumberFormat(Excel.Range range, string pattern) =>
+        range.NumberFormat = pattern;
+
+    internal virtual void SetColumnLocked(Excel.Range range, bool value) => range.Locked = value;
+
+    internal virtual void SetColumnHidden(Excel.Range range, bool value) => range.Hidden = value;
+
+    internal virtual object? GetHeaderValue(Excel.Worksheet target, int columnIndex) =>
+        target.Cells[GanttSheetLayout.HeaderRowIndex, HeaderColumn(columnIndex)].Value2;
+
+    internal virtual void SetHeaderValue(Excel.Worksheet target, int columnIndex, string? value) =>
+        target.Cells[GanttSheetLayout.HeaderRowIndex, HeaderColumn(columnIndex)].Value2 = value;
+
+    /// <summary>
+    /// Maps a one-based schema position to the worksheet column it occupies.
+    /// </summary>
+    /// <param name="columnIndex">The one-based schema position.</param>
+    /// <returns>The one-based worksheet column.</returns>
+    /// <remarks>
+    /// The table starts at <see cref="GanttSheetLayout.TableOriginColumnIndex"/>, so
+    /// column 1 of the schema is column B, not column A. Writing the schema position
+    /// directly is what a repair would do to a sheet laid out under the current
+    /// contract, and it would land every header one column left of its own table.
+    /// </remarks>
+    private static int HeaderColumn(int columnIndex) =>
+        GanttSheetLayout.TableOriginColumnIndex + columnIndex - 1;
+
+    private void SetHeaderValueOrBlank(Excel.Worksheet target, int columnIndex, string? value)
+    {
+        object? current = GetHeaderValue(target, columnIndex);
+        if (!string.Equals(
+                Convert.ToString(current, CultureInfo.InvariantCulture),
+                value,
+                StringComparison.Ordinal))
+        {
+            SetHeaderValue(target, columnIndex, value);
+        }
+    }
+
+    internal virtual int GetUsedRangeLastRow(Excel.Worksheet target)
+    {
+        Excel.Range used = target.UsedRange;
+        return used.Row + used.Rows.Count - 1;
+    }
+
+    internal virtual Excel.Range GetRange(
+        Excel.Worksheet target,
+        int firstRow,
+        int firstColumn,
+        int lastRow,
+        int lastColumn) =>
+        target.Range[target.Cells[firstRow, firstColumn], target.Cells[lastRow, lastColumn]];
+
+    internal virtual object? GetRangeValues(Excel.Range range) => range.Value2;
+
+    internal virtual Excel.Range GetTableRange(
+        Excel.Worksheet target,
+        int headerRow,
+        int bodyRowCount,
+        int columnCount) =>
+        target.Range[
+            target.Cells[headerRow, GanttSheetLayout.TableOriginColumnIndex],
+            target.Cells[headerRow + bodyRowCount, HeaderColumn(columnCount)]];
+
+    internal virtual Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
+    {
+        Excel.ListObjects objects = target.ListObjects;
+        return objects.Add(
+            Excel.XlListObjectSourceType.xlSrcRange,
+            range,
+            Type.Missing,
+            Excel.XlYesNoGuess.xlYes,
+            Type.Missing);
+    }
+
+    internal virtual void DeleteTable(Excel.ListObject table)
+    {
+        if (_application is not null)
+        {
+            bool original = _application.DisplayAlerts;
+            try
+            {
+                _application.DisplayAlerts = false;
+                table.Delete();
+            }
+            finally
+            {
+                _application.DisplayAlerts = original;
+            }
+        }
+        else
+        {
+            table.Delete();
+        }
+    }
+
+    internal virtual void DeleteColumn(Excel.ListColumn column) => column.Delete();
+
+    internal virtual Excel.Worksheet AddSheetAfter(Excel.Sheets sheets, Excel.Worksheet? after) =>
+        after is null ? (Excel.Worksheet)sheets.Add() : (Excel.Worksheet)sheets.Add(After: after);
+
+    internal virtual void SetSheetName(Excel.Worksheet sheet, string name) => sheet.Name = name;
+
+    internal virtual void SetSheetVisibility(Excel.Worksheet sheet, Excel.XlSheetVisibility visibility) =>
+        sheet.Visible = visibility;
+}

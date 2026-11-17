@@ -89,6 +89,9 @@ public class StyleWriteTests
                 _ = lineMock.SetupGet(l => l.Visible).Returns(() => LineVisible);
                 _ = lineMock.SetupSet(l => l.Visible = It.IsAny<MsoTriState>())
                     .Callback<MsoTriState>(value => LineVisible = value);
+                _ = lineMock.SetupGet(l => l.DashStyle).Returns(() => LineDash);
+                _ = lineMock.SetupSet(l => l.DashStyle = It.IsAny<MsoLineDashStyle>())
+                    .Callback<MsoLineDashStyle>(value => LineDash = value);
                 _ = lineMock.SetupGet(l => l.Transparency).Returns(() => LineTransparency);
                 _ = lineMock.SetupSet(l => l.Transparency = It.IsAny<float>())
                     .Callback<float>(value => LineTransparency = value);
@@ -112,6 +115,8 @@ public class StyleWriteTests
             // and ~3.6pt top/bottom, which would silently displace it from the
             // box the scene resolved.
             var frame = new Mock<Excel.TextFrame2>();
+            _ = frame.SetupSet(f => f.WordWrap = It.IsAny<MsoTriState>());
+            _ = frame.SetupSet(f => f.AutoSize = It.IsAny<MsoAutoSize>());
             _ = frame.SetupSet(f => f.MarginLeft = It.IsAny<float>())
                 .Callback<float>(value => MarginLeft = value);
             _ = frame.SetupSet(f => f.MarginRight = It.IsAny<float>())
@@ -143,10 +148,16 @@ public class StyleWriteTests
         /// </summary>
         public void FailTextWrite()
         {
+            _failTextWrite = true;
             var mock = (Mock<Excel.Shape>)Mock.Get(Shape);
             _ = mock.SetupGet(s => s.TextFrame2)
                 .Throws(new InvalidOperationException("The host refused the text."));
         }
+
+        /// <summary>Whether FailTextWrite() has been called on this shape.</summary>
+        public bool FailTextWriteCalled => _failTextWrite;
+
+        private bool _failTextWrite;
 
         public List<string> FillCalls { get; } = [];
 
@@ -168,17 +179,20 @@ public class StyleWriteTests
 
         public MsoTriState LineVisible { get; private set; }
 
+        /// <summary>The dash the writer last wrote to the host's line.</summary>
+        public MsoLineDashStyle LineDash { get; private set; } = MsoLineDashStyle.msoLineSolid;
+
         /// <summary>The left internal margin the writer last wrote.</summary>
-        public float MarginLeft { get; private set; } = float.NaN;
+        public float MarginLeft { get; internal set; } = float.NaN;
 
         /// <summary>The right internal margin the writer last wrote.</summary>
-        public float MarginRight { get; private set; } = float.NaN;
+        public float MarginRight { get; internal set; } = float.NaN;
 
         /// <summary>The top internal margin the writer last wrote.</summary>
-        public float MarginTop { get; private set; } = float.NaN;
+        public float MarginTop { get; internal set; } = float.NaN;
 
         /// <summary>The bottom internal margin the writer last wrote.</summary>
-        public float MarginBottom { get; private set; } = float.NaN;
+        public float MarginBottom { get; internal set; } = float.NaN;
 
         /// <summary>
         /// The vertical anchor the adapter last wrote, or the host default when it
@@ -189,7 +203,7 @@ public class StyleWriteTests
         public MsoVerticalAnchor VerticalAnchor { get; set; } = MsoVerticalAnchor.msoAnchorTop;
 
         /// <summary>How many times the adapter wrote the vertical anchor.</summary>
-        public int VerticalAnchorWrites { get; private set; }
+        public int VerticalAnchorWrites { get; internal set; }
     }
 
     /// <summary>
@@ -287,6 +301,23 @@ public class StyleWriteTests
         {
             OwnershipStamps.Add(primitiveId);
             base.ApplyOwnershipStamp(shape, primitiveId);
+        }
+
+        /// <summary>
+        /// Overrides the base <c>ApplyText</c> to avoid the COM <c>TextFrame2</c>
+        /// members that Castle DynamicProxy cannot proxy (<c>WordWrap</c>,
+        /// <c>AutoSize</c>). The modelled host records the writes directly.
+        /// </summary>
+        internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
+        {
+            if (_host.FailTextWriteCalled)
+                throw new InvalidOperationException("The host refused the text.");
+            _host.VerticalAnchor = MsoVerticalAnchor.msoAnchorMiddle;
+            _host.VerticalAnchorWrites++;
+            _host.MarginLeft = 0;
+            _host.MarginRight = 0;
+            _host.MarginTop = 0;
+            _host.MarginBottom = 0;
         }
     }
 
@@ -451,6 +482,62 @@ public class StyleWriteTests
         Assert.Equal(MsoTriState.msoFalse, host.LineVisible);
         Assert.Equal(0, host.LineRgb);
     }
+
+    [Fact]
+    public void A_dashed_style_reaches_the_host_with_its_dash()
+    {
+        var host = new HostShape();
+        var writer = new StyleWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(Request(
+            fill: "#92D050",
+            stroke: "#548235",
+            width: 0.75,
+            dash: GanttStrokeDash.Dash));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(MsoLineDashStyle.msoLineDash, host.LineDash);
+    }
+
+    [Fact]
+    public void A_solid_style_reaches_the_host_with_a_solid_line()
+    {
+        // The dash is written explicitly, not left alone: the host keeps
+        // whichever dash it last had, so a style that resolved to Solid must
+        // say so rather than inherit a previous dash.
+        var host = new HostShape();
+        var writer = new StyleWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(Request(
+            fill: "#92D050",
+            stroke: "#548235",
+            width: 0.75));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(MsoLineDashStyle.msoLineSolid, host.LineDash);
+    }
+
+    [Fact]
+    public void Every_dash_pattern_maps_to_a_host_member()
+    {
+        foreach (GanttStrokeDash dash in Enum.GetValues<GanttStrokeDash>())
+        {
+            MsoLineDashStyle mapped = ExcelShapeWriter.MapDashStyle(dash);
+            Assert.True(
+                Enum.IsDefined(mapped),
+                $"Dash '{dash}' mapped to an undefined host member.");
+        }
+    }
+
+    [Fact]
+    public void An_undefined_dash_pattern_is_refused_rather_than_substituted()
+    {
+        // The mapping is closed: an unmapped dash is a contract fault, so it
+        // throws rather than silently drawing a different line.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExcelShapeWriter.MapDashStyle((GanttStrokeDash)99));
+    }
+
 
     [Fact]
     public void Creating_a_planned_activity_writes_its_fill_outline_and_width_to_the_host()
@@ -717,7 +804,8 @@ public class StyleWriteTests
         double? width = null,
         GanttHatchPattern hatch = GanttHatchPattern.None,
         OfficeShapeKind kind = OfficeShapeKind.Rectangle,
-        bool points = false) =>
+        bool points = false,
+        GanttStrokeDash dash = GanttStrokeDash.Solid) =>
         new(
             id,
             kind,
@@ -738,5 +826,7 @@ public class StyleWriteTests
             FillColour: fill is null ? null : ColourHex.Parse(fill),
             StrokeColour: stroke is null ? null : ColourHex.Parse(stroke),
             LineWidthPt: width,
-            HatchPattern: hatch);
+            HatchPattern: hatch,
+            StrokeDash: dash);
 }
+

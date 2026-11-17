@@ -35,7 +35,7 @@ public sealed class SplitterBuilderTests
             null);
 
     private static SplitterRequest Request(
-        GanttLabelPosition position = GanttLabelPosition.DataPanelLeft,
+        GanttLabelPosition position = GanttLabelPosition.PlotCentre,
         double panelLeft = 0,
         double borderWidthPt = 1) =>
         new(Splitter(), _style, _borderStyle, _lane, panelLeft, _plot, borderWidthPt, _labelStyle, _metrics, position);
@@ -115,10 +115,10 @@ public sealed class SplitterBuilderTests
     [Fact]
     public void A_label_position_with_no_room_is_suppressed_rather_than_emitted_zero_width()
     {
-        // A scene with no data panel gives `DataPanelLeft` nowhere to sit: the band
-        // starts at the plot's own left edge, so the available width is exactly zero.
-        // A zero-width text box is an invisible primitive a renderer must still place
-        // and reconciliation must track forever, so it is suppressed instead.
+        // With no data panel the band starts at the plot's own left edge, so the
+        // panel-side half of `Both` has exactly zero width to sit in. A zero-width text
+        // box is an invisible primitive a renderer must still place and reconciliation
+        // must track forever, so it is suppressed and only the plot-centre label remains.
         SplitterCreationOutcome outcome = SplitterBuilder.TryBuild(
             new SplitterRequest(
                 Splitter(),
@@ -130,16 +130,37 @@ public sealed class SplitterBuilderTests
                 1,
                 _labelStyle,
                 _metrics,
-                GanttLabelPosition.DataPanelLeft));
+                GanttLabelPosition.Both));
 
         Assert.True(outcome.Succeeded, "Splitter build refused: " + outcome.Refusal);
-        Assert.Empty(outcome.Result!.Primitives.OfType<SceneText>());
-        // The band and its borders still render; only the label is suppressed.
-        Assert.Equal(3, outcome.Result.Primitives.Count);
+        _ = Assert.Single(outcome.Result!.Primitives.OfType<SceneText>());
+    }
+
+    /// <summary>
+    /// `DataPanelLeft` is no longer a splitter capability (R5.18l, D4), and the builder
+    /// refuses it rather than drawing the band and silently dropping the label.
+    /// </summary>
+    [Fact]
+    public void A_direct_left_alignment_is_refused_because_the_splitter_no_longer_offers_it()
+    {
+        SplitterCreationOutcome outcome = SplitterBuilder.TryBuild(
+            new SplitterRequest(
+                Splitter(),
+                _style,
+                _borderStyle,
+                _lane,
+                0,
+                _plot,
+                1,
+                _labelStyle,
+                _metrics,
+                GanttLabelPosition.DataPanelLeft));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SplitterRefusal.UnsupportedLabelPosition, outcome.Refusal);
     }
 
     [Theory]
-    [InlineData(GanttLabelPosition.DataPanelLeft, 1)]
     [InlineData(GanttLabelPosition.PlotCentre, 1)]
     [InlineData(GanttLabelPosition.Both, 2)]
     [InlineData(GanttLabelPosition.None, 0)]
@@ -147,8 +168,8 @@ public sealed class SplitterBuilderTests
         GanttLabelPosition position,
         int expected)
     {
-        // §10 names exactly these four positions, and `Both` "deliberately creates
-        // two scene text entities with stable role-derived IDs".
+        // §10 names exactly these three positions since R5.18l, and `Both` "deliberately
+        // creates two scene text entities with stable role-derived IDs".
         SplitterResult result = Build(Request(position));
 
         Assert.Equal(expected, result.Primitives.OfType<SceneText>().Count());

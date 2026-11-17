@@ -36,6 +36,23 @@ public class AddRowCommandTests
 
             Selected.Add(bodyIndex);
         }
+
+        /// <summary>
+        /// Records a cell selection. Add Row selects the whole new row, so no command in
+        /// this file reaches this member; it exists because the port serves the
+        /// relocation commands too.
+        /// </summary>
+        /// <param name="bodyIndex">The one-based body-row index.</param>
+        public void SelectBodyCell(int bodyIndex)
+        {
+            Calls++;
+            if (Throws)
+            {
+                throw new InvalidOperationException("selection refused");
+            }
+
+            Selected.Add(bodyIndex);
+        }
     }
 
     private static RecordingSelector NoopSelector() => new();
@@ -222,6 +239,7 @@ public class AddRowCommandTests
     [InlineData(GanttRowInsertRefusalReason.NoActiveWorkbook, "open workbook")]
     [InlineData(GanttRowInsertRefusalReason.TableMissing, "tblGanttData")]
     [InlineData(GanttRowInsertRefusalReason.TargetProtected, "protected")]
+    [InlineData(GanttRowInsertRefusalReason.CriticalIntervalRequiresParent, "activity")]
     [InlineData(GanttRowInsertRefusalReason.TypeOptionsUnavailable, "Type dropdown")]
     public void Refusal_surfaces_exactly_one_actionable_message(
         GanttRowInsertRefusalReason refusal,

@@ -102,7 +102,7 @@ public static class RowHeightNormaliser
             // from an out-of-range cast, and guessing "managed" for it would write a
             // height the caller never chose -- a wrong row height is exactly the
             // misalignment normalisation exists to prevent.
-            var target = row.Kind switch
+            double target = row.Kind switch
             {
                 MeasuredRowKind.Splitter => splitterHeightPt,
                 MeasuredRowKind.Spacer => spacerHeightPt,

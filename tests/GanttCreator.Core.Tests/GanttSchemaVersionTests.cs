@@ -56,7 +56,42 @@ public class GanttSchemaVersionTests
         // DateLabelPosition column (the per-row date-label selector). The capability is
         // derived from the existing EntityDateMode metadata, so no catalogue row or hash
         // changes -- only the column.
-        Assert.Equal(15, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v17 is ADR-0043: the live chart title moves from a cell
+        // placeholder in the reserved row (written by Initialise) to an owned
+        // textbox shape created by Refresh. WriteTitleRow, RollBackTitleRow,
+        // and GetTitleRange are removed; the reserved row no longer carries
+        // title text. A version-16 workbook's stored catalogue hash no longer
+        // matches because the initialiser no longer writes title text. No
+        // migration (ADR-0029 D6); Initialise is the remedy.
+        // Schema v18 is R5.6a: the two style-key types (Custom Activity,
+        // Custom Milestone) carry a code-owned default style key and a matching
+        // built-in preset, so a row whose user-created style was deleted
+        // resolves to a renderable style instead of refusing the scene. Their
+        // allowed label positions become the span and milestone sets, and the
+        // built-in presets' default label position becomes Auto. The catalogue
+        // hash moves with the type and style rows. No migration (ADR-0029 D6);
+        // Initialise is the remedy.
+        // Schema v19 is R5.6a: the tblGanttStyles column schema gains the
+        // StrokeDash column (the style's line dash pattern). The column is
+        // appended at the end of the row, so every existing column index is
+        // unchanged. No migration (ADR-0029 D6); Initialise is the remedy.
+        // 22 adds `ProtectGanttSheet` (ADR-0055).
+        // 23 reorders tblGanttData to lead with the visible columns and moves the
+        // table to column B so column A can hold the spacer gutter (R5.18k).
+        // 24 adds `HiddenColumns` to tblGanttSettings so the R5.18h column-
+        // visibility choice survives reopening the workbook. A blank value means
+        // nothing is hidden; a value that does not parse is refused, never
+        // defaulted. No migration (ADR-0029 D6); Initialise is the remedy.
+        // 25 adds `AutoRefreshEnabled` to tblGanttSettings so the R5.20 switch
+        // survives reopening the workbook. It is read fail-open (absent or
+        // unreadable means enabled), and the config table's anchor moves from
+        // A99 to A100 to keep the blank row between the tables.
+        // 26 adds the user-authored `Activity ID` column directly after Type
+        // (R5.21, ADR-0064). It is visible and editable, is measured into the data
+        // panel, and moves the plot anchor from column S to column T because the
+        // anchor is the origin plus the column count. No migration (ADR-0029 D6);
+        // Initialise is the remedy.
+        Assert.Equal(26, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

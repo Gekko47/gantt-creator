@@ -235,6 +235,12 @@ public class GanttConfigCatalogueTests
         Assert.Equal(22, GanttCatalogues.Colours.Count);
 
     [Fact]
+    public void Warning_fill_property_is_the_catalogued_warning_token() =>
+        Assert.Equal(
+            GanttCatalogues.Colours.Single(token => token.Name == "WarningFill").HexValue,
+            GanttCatalogues.WarningFill.ToString());
+
+    [Fact]
     public void CriticalLinePt_is_absent_from_the_catalogue()
     {
         // ADR-0027 D4 retires the token. A leftover entry would keep materialising
@@ -292,8 +298,8 @@ public class GanttConfigCatalogueTests
         Assert.Equal(6, GanttCatalogues.Typography.Count);
 
     [Fact]
-    public void TypeRows_contains_exactly_the_16_catalogue_entries() =>
-        Assert.Equal(16, GanttCatalogues.TypeRows.Count);
+    public void TypeRows_contains_exactly_the_17_catalogue_entries() =>
+        Assert.Equal(17, GanttCatalogues.TypeRows.Count);
 
     [Fact]
     public void StylePresets_contains_one_row_per_non_empty_DefaultStyleKey()
@@ -302,16 +308,63 @@ public class GanttConfigCatalogueTests
             .Where(entry => entry.DefaultStyleKey.Length > 0)
             .Select(entry => entry.DefaultStyleKey)
             .ToArray();
-        Assert.Equal(15, expected.Length);
+        Assert.Equal(17, expected.Length);
         Assert.Equal(
             expected,
             GanttCatalogues.StylePresets.Select(preset => preset.StyleKey).ToArray());
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_19_approved_keys()
+    public void Every_chart_chrome_colour_default_equals_its_approved_token_value()
     {
-        Assert.Equal(19, GanttCatalogues.Settings.Count);
+        // The single-authority pin for R5.6a's chart-chrome colours. The
+        // setting's default and the colour token's value are two places the
+        // same colour could be written; this test fails the moment they
+        // disagree, so a token edited without its setting (or the reverse)
+        // cannot ship.
+        foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+        {
+            string key = GanttChartChrome.SettingKeyFor(role);
+            GanttSettingDefinition setting = GanttCatalogues.Settings.Single(
+                candidate => candidate.Key == key);
+
+            Assert.Equal(
+                GanttChartChrome.DefaultHexFor(role),
+                setting.DefaultValue);
+            Assert.Equal(
+                GanttChartChrome.DefaultHexFor(role),
+                GanttCatalogues.Colours
+                    .Single(token => token.Name == GanttChartChrome.TokenNameFor(role))
+                    .HexValue);
+        }
+    }
+
+    [Fact]
+    public void Every_chart_chrome_colour_key_is_a_distinct_setting()
+    {
+        // Two roles sharing a key would make one colour unreachable and let
+        // an edit to one silently rewrite the other.
+        var keys = GanttChartChrome.Roles
+            .Select(GanttChartChrome.SettingKeyFor)
+            .ToArray();
+
+        Assert.Equal(keys.Length, keys.Distinct(StringComparer.Ordinal).Count());
+        foreach (string key in keys)
+        {
+            Assert.Contains(GanttCatalogues.Settings, setting => setting.Key == key);
+            Assert.True(GanttChartChrome.IsColourSettingKey(key));
+        }
+    }
+
+    [Fact]
+    public void Settings_contains_exactly_the_28_approved_keys()
+    {
+        // R5.6a added the six chart-chrome colour keys (schema version 20),
+        // taking 19 to 25. ADR-0055 added ProtectGanttSheet (schema version
+        // 22), taking 25 to 26. R5.18h added HiddenColumns (schema version 24),
+        // taking 26 to 27. R5.20 added AutoRefreshEnabled (schema version 25),
+        // taking 27 to 28.
+        Assert.Equal(28, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -339,6 +392,15 @@ public class GanttConfigCatalogueTests
         "RangePaddingDays",
         "Margin",
         "MarginCm",
+        "ChartBackgroundColour",
+        "AlternateBandColour",
+        "MinorGridColour",
+        "MajorGridColour",
+        "YearHeaderColour",
+        "PeriodHeaderColour",
+        "ProtectGanttSheet",
+        "HiddenColumns",
+        "AutoRefreshEnabled",
     ];
 
     [Fact]
@@ -497,7 +559,7 @@ public class GanttConfigCatalogueTests
     public void Style_presets_project_label_and_colour_capabilities_from_the_type_catalogue()
     {
         GanttStylePreset splitter = GanttCatalogues.GetPreset("Splitter");
-        Assert.Equal(GanttLabelPosition.DataPanelLeft, splitter.DefaultLabelPosition);
+        Assert.Equal(GanttLabelPosition.PlotCentre, splitter.DefaultLabelPosition);
         Assert.Equal(EntityColourCapability.Fill, splitter.ColourCapability);
 
         GanttStylePreset spacer = GanttCatalogues.GetPreset("Spacer");
@@ -850,12 +912,98 @@ public class GanttConfigCatalogueTests
     /// <c>schema|{CurrentSchemaVersion}</c> seed. A version-14 workbook
     /// carries the older hash and is reported as a mismatch; the remedy is
     /// Initialise (ADR-0029 D6, no migration).
+    /// <b>Advanced to 16 by R5.6a</b>: the type catalogue gains
+    /// <c>CustomMilestone</c> (named custom milestone; the row must supply a
+    /// <c>StyleKey</c>). The catalogue contents move through the type rows;
+    /// the hash moves with them. A version-15 workbook carries the older hash
+    /// and is reported as a mismatch; the remedy is Initialise (ADR-0029 D6,
+    /// no migration).
+    /// <para>
+    /// <b>Advanced to 18 by R5.6a</b>: the two style-key types
+    /// (<c>CustomActivity</c>, <c>CustomMilestone</c>) carry a code-owned
+    /// default style key and a matching built-in preset, so a row whose
+    /// user-created style was deleted resolves to a renderable style instead
+    /// of refusing the scene. Their allowed label positions become the span
+    /// and milestone sets, and the built-in presets' default label position
+    /// becomes <c>Auto</c>. The catalogue contents move through both the type
+    /// rows and the style rows; the hash moves with them. A version-17
+    /// workbook carries the older hash and is reported as a mismatch; the
+    /// remedy is Initialise (ADR-0029 D6, no migration).
+    /// <para>
+    /// <b>Advanced to 19 by R5.6a</b>: the style catalogue gains the
+    /// <c>StrokeDash</c> column (the style's line dash pattern). The column
+    /// is appended at the end of the row, so every existing column index is
+    /// unchanged, and the built-in presets all carry <c>Solid</c>. The
+    /// catalogue contents move through the style rows; the hash moves with
+    /// them. A version-18 workbook carries the older hash and is reported as
+    /// a mismatch; the remedy is Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
+    /// <b>Advanced to 22 by ADR-0055</b>: <c>tblGanttSettings</c> gains the
+    /// <c>ProtectGanttSheet</c> key and the schema seed line moves from 21 to
+    /// 22, so both halves of the hashed text change. A version-21 workbook
+    /// carries the older hash and is reported as a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
+    /// <b>Advanced to 25 by R5.20</b>: <c>tblGanttSettings</c> gains the
+    /// <c>AutoRefreshEnabled</c> key (<c>TRUE</c> by default, so every workbook
+    /// keeps the behaviour it had) and the schema seed line moves from 24 to 25,
+    /// so both halves of the hashed text change. The config table's anchor moves
+    /// from A99 to A100 to keep the required blank row between the two tables,
+    /// which the anchor invariant test enforces but the hash does not cover. A
+    /// version-24 workbook reports <c>CatalogueHashMismatch</c>; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
+    /// <b>Advanced to 24 by R5.18h</b>: <c>tblGanttSettings</c> gains the
+    /// <c>HiddenColumns</c> key (blank by default, meaning nothing is hidden)
+    /// and the schema seed line moves from 23 to 24, so both halves of the
+    /// hashed text change again. The config table's anchor also moves from
+    /// A98 to A99 to keep the required blank row, which the anchor invariant
+    /// test enforces but the hash does not cover. A version-23 workbook
+    /// carries the older hash and is reported as a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
+    /// <b>Advanced to 26 by R5.21 (ADR-0064)</b>: <c>tblGanttData</c> gains the
+    /// required, user-authored <c>Activity ID</c> column directly after
+    /// <c>Type</c>, and the schema seed line moves from 25 to 26. No catalogue
+    /// row, style, or setting changes, so the settings table's extent and the
+    /// config anchor do not move; the hash moves through the seed alone. A
+    /// version-25 workbook carries the older hash and is reported as a mismatch;
+    /// the remedy is Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
+    /// <b>Moved at schema 24 by the header-type ruling (ADR-0060)</b>: the
+    /// <c>HeaderFontSizePt</c> typography value becomes <c>9</c>, so the live
+    /// table's header row and the chart's period band are one heading (owner
+    /// ruling 2026-11-14). No column, row, or setting contract changes, so
+    /// <c>CurrentSchemaVersion</c> does NOT move — only the typography line of
+    /// the hashed text does. That makes this the first pin advance driven by a
+    /// catalogue VALUE rather than a schema shape, and it is recorded here
+    /// because the guard exists to make exactly this kind of change visible. A
+    /// workbook written before it reports <c>CatalogueHashMismatch</c>, which
+    /// the Repair command auto-classifies; the full remedy is Initialise
+    /// (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "256ff7da4852d4f1933c0e3e08aba48ad8cdb7578f780987096d396762c4b0c7";
+        "ddd3434dc1648cc96c9f81b303a8ddc01b3ce938c11405033d6c79b45ce57285";
 
+    /// <remarks>
+    /// Asserted with the full hash in the failure message rather than through
+    /// <c>Assert.Equal</c>, whose string-diff output truncates at 48 characters
+    /// and leaves the reader unable to copy the new value. The comparison is
+    /// still ordinal and exact.
+    /// </remarks>
     [Fact]
-    public void The_first_release_catalogue_hash_is_pinned() =>
-        Assert.Equal(PinnedFirstReleaseHash, GanttCatalogues.ComputeCatalogueHash());
+    public void The_first_release_catalogue_hash_is_pinned()
+    {
+        string actual = GanttCatalogues.ComputeCatalogueHash();
+        Assert.True(
+            string.Equals(actual, PinnedFirstReleaseHash, StringComparison.Ordinal),
+            "The catalogue hash is now " + actual + " — update PinnedFirstReleaseHash only with the "
+                + "schema ADR that moved it.");
+    }
 }

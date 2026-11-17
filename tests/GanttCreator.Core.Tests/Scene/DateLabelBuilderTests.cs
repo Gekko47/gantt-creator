@@ -41,6 +41,33 @@ public sealed class DateLabelBuilderTests
     }
 
     [Fact]
+    public void A_date_label_box_is_inset_one_point_from_its_row_at_each_edge()
+    {
+        // The bar is 12pt tall and the row metrics are 10pt, so the box is centred on
+        // the bar at 100 + (12 - 8) / 2 = 102 and is 8pt tall, not the whole 10pt row.
+        // The height comes from LabelPlanner.BoxHeightFor, so a date box and a
+        // description box on the same row cannot disagree.
+        SceneText start = Build().Result!.Primitives[0];
+
+        Assert.Equal(102.0, start.TextBounds.Top);
+        Assert.Equal(8.0, start.TextBounds.Height);
+    }
+
+    [Fact]
+    public void A_clipped_date_labels_fallback_box_carries_the_same_inset()
+    {
+        // The never-suppress fallback (a clipped bar) computes its own box rather than
+        // going through the planner, so it needs the same height authority. Without
+        // this pin the fallback would keep the full-row box and reintroduce the shared
+        // edge on exactly the rows that sit against a plot edge.
+        DateLabelResult result = Build(
+            visible: new RectD(200.0, 100.0, 12.0, 12.0),
+            full: new RectD(200.0, 100.0, 40.0, 12.0)).Result!;
+
+        Assert.All(result.Primitives, label => Assert.Equal(8.0, label.TextBounds.Height));
+    }
+
+    [Fact]
     public void The_dates_render_in_the_approved_invariant_format()
     {
         CultureInfo original = CultureInfo.CurrentCulture;
@@ -377,6 +404,75 @@ public sealed class DateLabelBuilderTests
         Assert.Equal(
             [DateLabelBuilder.StartRole, DateLabelBuilder.FinishRole],
             result.Suppressed);
+    }
+
+    [Fact]
+    public void The_off_plot_fallback_centres_the_date_box_on_the_visible_bar_and_anchors_each_side_by_the_gap()
+    {
+        // The plot is only as wide as the sliver of the clipped bar, so the planner
+        // has no free space on either side and §23's never-suppress rule falls
+        // through to the fallback box in the chart's outer padding.
+        RectD visible = new(100, 100, 40, 12);
+        var metrics = new LabelMetrics(
+            new RectD(100, 100, 40, 12),
+            new RectD(40, 60, 200, 100),
+            3.0,
+            18.0);
+
+        DateLabelResult result = DateLabelBuilder.TryBuild(
+            Request(visible: visible, full: new RectD(60, 100, 80, 12)) with
+            {
+                Metrics = metrics,
+                TextMetrics = new FakeTextMetrics(_ => 4.0, 10.0),
+            }).Result!;
+
+        // The never-suppress rule emits both dates, and neither box was moved to
+        // the other side, so there is nothing to warn about.
+        Assert.Empty(result.Suppressed);
+        Assert.Empty(result.Warnings);
+
+        SceneText start = result.Primitives[0];
+        SceneText finish = result.Primitives[1];
+
+        // One worksheet row less the 1pt inset at each edge, centred on the bar.
+        Assert.Equal(98.0, start.TextBounds.Top);
+        Assert.Equal(16.0, start.TextBounds.Height);
+        Assert.Equal(98.0, finish.TextBounds.Top);
+
+        // Start ends one gap left of the bar and finish starts one gap right of
+        // it. A 10-character date is 40pt wide at 4pt per character.
+        Assert.Equal(57.0, start.TextBounds.Left);
+        Assert.Equal(97.0, start.TextBounds.Right);
+        Assert.Equal(143.0, finish.TextBounds.Left);
+        Assert.Equal(183.0, finish.TextBounds.Right);
+
+        Assert.Equal(GanttTextAlignment.Right, start.Alignment);
+        Assert.Equal(GanttTextAlignment.Left, finish.Alignment);
+    }
+
+    [Fact]
+    public void The_off_plot_fallback_centres_an_inside_date_box_on_the_visible_bar()
+    {
+        // An explicit Inside position reaches the same fallback when the date is
+        // wider than the sliver it would sit in: the box is centred on the visible
+        // bar, and §22's centred alignment follows the placement.
+        RectD visible = new(100, 100, 40, 12);
+        var metrics = new LabelMetrics(
+            new RectD(100, 100, 40, 12),
+            new RectD(40, 60, 200, 100),
+            3.0,
+            18.0);
+
+        DateLabelResult result = DateLabelBuilder.TryBuild(
+            Request(visible: visible, full: new RectD(60, 100, 80, 12), showFinish: false) with
+            {
+                Metrics = metrics,
+                StartPosition = GanttLabelPosition.Inside,
+            }).Result!;
+
+        SceneText start = Assert.Single(result.Primitives);
+        Assert.Equal(70.0, start.TextBounds.Left);
+        Assert.Equal(GanttTextAlignment.Centre, start.Alignment);
     }
 
     [Fact]

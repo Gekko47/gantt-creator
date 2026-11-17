@@ -27,11 +27,21 @@ public class GanttRowInserterTests
             _ => Graph.HostRefusal.None,
         };
 
-    private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
+    /// <summary>
+    /// The Type-options port, telling the truth by default and refusing through a
+    /// thrown exception when asked.
+    /// </summary>
+    /// <remarks>
+    /// The throwing mode is what pins the live defect: the host refused
+    /// <c>Validation.Add</c> with 0x800A03EC, and the exception escaped
+    /// <c>Insert</c> after the row had been written.
+    /// </remarks>
+    private sealed class StubTypeOptionsMaterialiser(bool throws = false) : ITypeOptionsMaterialiser
     {
         public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
 
-        public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
+        public TypeOptionsMaterialiseOutcome EnsureCurrent() =>
+            throws ? throw RefusedComException() : TypeOptionsMaterialiseOutcome.Ok();
     }
 
     /// <summary>
@@ -85,8 +95,13 @@ public class GanttRowInserterTests
             double headerHeightPt,
             double reservedRowHeightPt,
             double paddingRowHeightPt,
-            double anchorRowHeightPt)
+            double anchorRowHeightPt,
+            IReadOnlyList<string?>? typeTexts = null)
         {
+            // The inserter does not supply Type texts -- it has an inserted row, not a
+            // table read -- so the parameter is accepted and ignored here, exactly as the
+            // adapter treats a null list.
+            _ = typeTexts;
             PaddingRowHeightPt = paddingRowHeightPt;
             AnchorRowHeightPt = anchorRowHeightPt;
             if (ThrowsComException)
@@ -110,11 +125,22 @@ public class GanttRowInserterTests
     {
         public List<IReadOnlyList<GanttEvent>> Applied { get; } = [];
 
-        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+        /// <summary>
+        /// Whether each apply forced the write. The insert path must always force it: a row
+        /// inserted inside a group inherits the child outline LEVEL from the row above, which is
+        /// not proof it is inside the group's span (measured live 2026-11-09).
+        /// </summary>
+        public List<bool> Forced { get; } = [];
+
+        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false)
         {
             Applied.Add(events);
+            Forced.Add(forceRegroup);
             return OutlineGroupOutcome.Ok(events.Count, 0);
         }
+
+        public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction) =>
+            OutlineCollapseOutcome.Ok(0);
     }
 
     private sealed class TestableInserter(
@@ -145,9 +171,10 @@ public class GanttRowInserterTests
         Func<Excel.ListObject, Excel.Range?> dataBodyRangeAt,
         ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
         IRowHeightNormalisationPort? rowHeightNormaliser = null,
-        IOutlineGroupPort? outlineGroups = null)
-        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser, outlineGroups)
-    {
+        IOutlineGroupPort? outlineGroups = null,
+        Action<string>? trace = null)
+        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser, outlineGroups, trace)
+{
         private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt = sheetAt;
         private readonly Func<Excel.ListObjects, int, Excel.ListObject> _tableAt = tableAt;
         private readonly Func<Excel.ListColumns, int, Excel.ListColumn> _columnAt = columnAt;
@@ -236,6 +263,60 @@ public class GanttRowInserterTests
         internal override Excel.ListRow GetListRowAt(Excel.ListRows rows, int index) =>
             _listRowAt(rows, index);
 
+        /// <summary>
+        /// How many times the theme's cell-border colour was re-asserted over the table after
+        /// a row was written.
+        /// </summary>
+        /// <remarks>
+        /// The defect this repair answers is host-only — Excel drops the shared Start|Finish
+        /// rule when the table is extended and both cells carry the report's fill — so a
+        /// contract test can assert that the repair is reached and where, never what the host
+        /// paints. The painted half is proven by
+        /// <c>TableGridBorderIntegrationTests.Every_boundary_survives_the_reports_fill_followed_by_an_add</c>
+        /// and by <c>scripts/probe-insert-border-inheritance.ps1</c> phase G3.
+        /// </remarks>
+        public int BorderColourWrites { get; private set; }
+
+        /// <summary>Whether the host refuses the border-colour write, so its guard has a case.</summary>
+        public bool ThrowsOnBorderColour { get; set; }
+
+        /// <summary>
+        /// How many times the new row's cell fill was cleared after the values were written.
+        /// </summary>
+        /// <remarks>
+        /// A visible cell fill is copied with the row's format, so a row added under an
+        /// invalid activity arrives carrying the report's pastel colour. Measured on
+        /// Excel 16.0 (<c>scripts/probe-insert-border-inheritance.ps1</c>, phase B); the live
+        /// half of this assertion is
+        /// <c>AddRowIntegrationTests.An_appended_row_does_not_clone_the_error_fill_of_the_row_above</c>.
+        /// </remarks>
+        public int RowFillClears { get; private set; }
+
+        /// <summary>Whether the host refuses the fill clear, so its guard has a case.</summary>
+        public bool ThrowsOnRowFillClear { get; set; }
+
+        internal override void ClearRowFill(Excel.Range rowRange)
+        {
+            if (ThrowsOnRowFillClear)
+            {
+                throw RefusedComException();
+            }
+
+            RowFillClears++;
+            _callOrder.Add("ClearRowFill");
+        }
+
+        internal override void EnsureTableBorderColour(Excel.ListObject table)
+        {
+            if (ThrowsOnBorderColour)
+            {
+                throw RefusedComException();
+            }
+
+            BorderColourWrites++;
+            _callOrder.Add("EnsureTableBorderColour");
+        }
+
         /// <summary>Whether the simulated host reserved the row. Defaults to success.</summary>
         internal bool PaddingRowReservedByHost { get; set; } = true;
     }
@@ -304,6 +385,12 @@ public class GanttRowInserterTests
         /// </summary>
         public List<string> CallOrder { get; } = [];
 
+        /// <summary>
+        /// The technical records the adapter traced, so the refusal path of the border-colour
+        /// repair can be asserted rather than merely tolerated.
+        /// </summary>
+        public List<string> Traces { get; } = [];
+
         /// <summary>Every row height the adapter wrote, as (range, points).</summary>
         public List<(Excel.Range Range, double HeightPt)> RowHeightsWritten { get; } = [];
 
@@ -323,6 +410,16 @@ public class GanttRowInserterTests
 
         /// <summary>How many times the adapter read the table body.</summary>
         public int DataBodyValueReads { get; private set; }
+
+        /// <summary>
+        /// The PRE-insert body, returned by the first body read when set (R5.16).
+        /// The parent decision reads before the insert; the regroup reads the
+        /// post-insert <see cref="BodyMatrix"/> afterwards.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
+        public object?[,]? PreInsertBodyMatrix { get; set; }
+
+        private bool _preInsertBodyConsumed;
 
         /// <summary>The stub normaliser handed to every built inserter unless a test passes its
         /// own, so the reserved rows can be asserted without driving real COM.
@@ -418,6 +515,12 @@ public class GanttRowInserterTests
                 if (range == DataBodyRange.Object)
                 {
                     DataBodyValueReads++;
+                    if (PreInsertBodyMatrix is not null && !_preInsertBodyConsumed)
+                    {
+                        _preInsertBodyConsumed = true;
+                        return PreInsertBodyMatrix;
+                    }
+
                     return BodyMatrix;
                 }
 
@@ -483,7 +586,8 @@ public class GanttRowInserterTests
             },
             typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser(),
             rowHeightNormaliser ?? RowHeightNormaliser,
-            outlineGroups);
+            outlineGroups,
+            Traces.Add);
     }
 
     [Fact]
@@ -532,6 +636,193 @@ public class GanttRowInserterTests
         // writer coalesces a null cell value to string.Empty, so "blank" is an
         // empty string here, not null.
         Assert.Equal(string.Empty, matrix[0, Of("SiblingOrder")]);
+    }
+
+    /// <summary>
+    /// Every successful Add re-asserts the theme's cell-border colour over the table, and it
+    /// does so AFTER the insert that damaged the grid.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measured defect (2026-11-16, <c>scripts/probe-insert-border-inheritance.ps1</c>
+    /// phases B and G): a body row carrying the validation report's pastel fill on BOTH
+    /// <c>Start</c> and <c>Finish</c> loses the shared rule between them when the next Add
+    /// extends the table — the only pair of adjacent cells the report fills, which is why
+    /// the report names exactly that boundary and no other. Phase G3 measures the repair:
+    /// re-writing <c>GanttTableAppearance.BorderColour</c> over the table range brings every
+    /// boundary back on every row, and phase G4 shows it survives the following Add.
+    /// </para>
+    /// <para>
+    /// <b>The order is the assertion.</b> The insert is what creates the loss, so a repair
+    /// written before it would be undone by the same extension it is meant to answer.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_successful_add_re_asserts_the_tables_border_colour_after_the_insert()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, inserter.BorderColourWrites);
+
+        int addRow = graph.CallOrder.IndexOf("AddRow");
+        int repair = graph.CallOrder.IndexOf("EnsureTableBorderColour");
+        Assert.True(
+            addRow >= 0 && repair > addRow,
+            "The repair must follow the row creation. Observed order: " + string.Join(", ", graph.CallOrder));
+    }
+
+    /// <summary>
+    /// A refused row creation never reaches the border-colour repair.
+    /// </summary>
+    /// <remarks>
+    /// This is the positive test for the repair's placement after <c>WriteRow</c>: the row is
+    /// not on the sheet, so there is nothing to repair and the command must not pay for a
+    /// second host call on a failure path.
+    /// </remarks>
+    [Fact]
+    public void A_refused_row_creation_does_not_re_assert_the_border_colour()
+    {
+        var graph = new Graph { Refusal = Graph.HostRefusal.AddRow };
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.RowWriteRefused, outcome.Refusal);
+        Assert.Equal(0, inserter.BorderColourWrites);
+    }
+
+    /// <summary>
+    /// A host refusal of the border-colour write is traced and does not fail an insert that
+    /// already landed.
+    /// </summary>
+    /// <remarks>
+    /// The repair is cosmetic: the row exists and its values are written, so reporting the
+    /// command as failed would be a claim the user can disprove by looking at the sheet
+    /// (ADR-0008 D4). It is traced rather than swallowed, because a worksheet that keeps
+    /// losing the grid after an Add needs the refusal named in the rolling log.
+    /// </remarks>
+    [Fact]
+    public void A_refused_border_colour_write_is_traced_and_the_add_still_succeeds()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+        inserter.ThrowsOnBorderColour = true;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, inserter.BorderColourWrites);
+        Assert.Contains(
+            graph.Traces,
+            line => line.Contains("gantt.add.border-colour refused", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Every successful Add clears the new row's inherited diagnostic fill, after creating it.
+    /// </summary>
+    /// <remarks>
+    /// A visible cell fill is part of the row's format, and the row an Add creates is
+    /// formatted from an existing row: measured on Excel 16.0
+    /// (<c>scripts/probe-insert-border-inheritance.ps1</c>, phase B) the appended row came out
+    /// carrying the previous row's pastel <c>Start</c>/<c>Finish</c> colour even with
+    /// <c>xlFormatFromRightOrBelow</c>. The owner's report was a milestone whose <c>Finish</c>
+    /// cell — a column a milestone does not use — stayed pink. The clear must follow the row's
+    /// creation, because before it there is nothing to clear.
+    /// </remarks>
+    [Fact]
+    public void A_successful_add_clears_the_new_rows_inherited_fill_after_the_insert()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedMilestone,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, inserter.RowFillClears);
+
+        int addRow = graph.CallOrder.IndexOf("AddRow");
+        int clear = graph.CallOrder.IndexOf("ClearRowFill");
+        Assert.True(
+            addRow >= 0 && clear > addRow,
+            "The fill clear must follow the row creation. Observed order: " + string.Join(", ", graph.CallOrder));
+    }
+
+    /// <summary>
+    /// A refused fill clear is traced and does not fail an insert that already landed.
+    /// </summary>
+    /// <remarks>
+    /// The clear is cosmetic: the row and its values are already on the sheet, so reporting the
+    /// command as failed would contradict what the user can see (ADR-0008 D4). It is traced
+    /// rather than swallowed, because a row that keeps a stale colour needs the refusal named.
+    /// </remarks>
+    [Fact]
+    public void A_refused_row_fill_clear_is_traced_and_the_add_still_succeeds()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object);
+        inserter.ThrowsOnRowFillClear = true;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedMilestone,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, inserter.RowFillClears);
+        Assert.Contains(
+            graph.Traces,
+            line => line.Contains("gantt.add.fill-clear refused", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A host refusal while re-materialising the Type options is a typed refusal, not
+    /// an escape.
+    /// </summary>
+    /// <remarks>
+    /// The live report behind this test: operation <c>GC-20261110-175027-358-01</c>,
+    /// <c>btnAddActivity</c> on 2026-11-10, with
+    /// <c>ExcelTypeOptionsMaterialiser.ApplyColumnValidation</c> throwing 0x800A03EC out
+    /// of <c>Validation.Add</c>. The exception left <c>Insert</c> AFTER the row was
+    /// written, so the Ribbon showed the generic "Excel could not complete the
+    /// operation" dialog while a dateless scaffold row stayed on the sheet and the next
+    /// refresh reported two validation errors against it. Every other COM call in that
+    /// method is guarded; this one was missed.
+    /// </remarks>
+    [Fact]
+    public void A_host_refusal_while_materialising_the_type_options_returns_a_typed_refusal()
+    {
+        var graph = new Graph();
+        var guard = NotProtected();
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+
+        GanttRowInsertOutcome outcome = graph
+            .Build(guard.Object, new StubTypeOptionsMaterialiser(throws: true))
+            .Insert(GanttEntityType.AsPlannedActivity, () => id);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.TypeOptionsUnavailable, outcome.Refusal);
     }
 
     /// <summary>
@@ -746,8 +1037,15 @@ public class GanttRowInserterTests
         Assert.Equal(1, outcome.BodyIndex);
         Assert.Equal(0, graph.AddRowCalls);
         var matrix = Assert.IsType<object[,]>(graph.WrittenValue);
-        Assert.Equal(id.Value, matrix[0, 0]);
-        Assert.Equal("As-Planned Activity", matrix[0, 3]);
+
+        // Positions come from the schema, not from literals: R5.18k reordered the
+        // columns, and a written index here would pin the order instead of the write.
+        Assert.Equal(
+            id.Value,
+            matrix[0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Id")]);
+        Assert.Equal(
+            "As-Planned Activity",
+            matrix[0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Type")]);
         Assert.Equal(0, graph.ClearRangeCalls);
     }
 
@@ -796,6 +1094,7 @@ public class GanttRowInserterTests
     [InlineData(true, 3, 3)]   // middle body row
     [InlineData(true, 4, 0)]   // LAST body row appends rather than inserting below itself
     [InlineData(false, 2, 0)]  // active cell outside the table: append
+    [InlineData(true, 6, 0)]   // table still active, but the cell is PAST the last body row
     public void An_in_table_active_cell_inserts_below_it_and_an_outside_one_appends(
         bool tableActive,
         int activeRow,
@@ -1267,6 +1566,53 @@ public class GanttRowInserterTests
         Assert.DoesNotContain("rows.Add(position)", source, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// An inserted row takes its format from BELOW, so it can never clone the error fill
+    /// of the row above it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reported defect.</b> Adding an activity at the bottom of the table painted
+    /// a pastel-red block on the blank rows below the last activity, and each further add
+    /// put one more red row below the previous one. No add-in code writes there: the
+    /// insert asked Excel to copy the format of the row above, which is the last body row,
+    /// and that row carries the pastel-red <c>Start</c>/<c>Finish</c> fills of the
+    /// validation report. Excel copies cell interiors with the format, so the clone is
+    /// exactly two columns wide and lands exactly one row lower each time.
+    /// </para>
+    /// <para>
+    /// <b>Why a source assertion.</b> <see cref="ExcelGanttRowInserter.InsertWorksheetRow"/>
+    /// is a substituted seam in every behavioural test in this file, because
+    /// <c>Worksheet.Rows[row]</c> is a parameterised COM property that Moq cannot set up.
+    /// The copy origin therefore cannot be observed through the seam, so the assertion is
+    /// made against the adapter's source — the same technique
+    /// <see cref="The_position_is_resolved_from_the_active_cell_rather_than_hard_coded"/>
+    /// already uses for the branch structure.
+    /// </para>
+    /// <para>
+    /// <b>Why the value matters.</b> <c>XlInsertFormatOrigin.xlFormatFromRightOrBelow</c>
+    /// is 1 and <c>xlFormatFromLeftOrAbove</c> is 0; the constant used to read -4142,
+    /// which is not a member of that enumeration, so Excel ignored it and fell back to
+    /// the default (from above). The live-Office assertion of the same behaviour is
+    /// <c>An_appended_row_does_not_clone_the_error_fill_of_the_row_above</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void An_inserted_row_takes_its_format_from_below_so_it_cannot_clone_the_highlight_above()
+    {
+        string source = File.ReadAllText(LocateInserterSource());
+
+        Assert.Contains("_excelFormatFromRightOrBelow = 1", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "Insert(_excelShiftDown, _excelFormatFromRightOrBelow)",
+            source,
+            StringComparison.Ordinal);
+
+        // The default origin is 0 (xlFormatFromLeftOrAbove) and is not requested.
+        Assert.DoesNotContain("_excelFormatFromLeftOrAbove", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Insert(_excelShiftDown, 0)", source, StringComparison.Ordinal);
+    }
+
     private static string LocateInserterSource()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -1358,6 +1704,79 @@ public class GanttRowInserterTests
         graph.Workbook.VerifyGet(w => w.Sheets, Times.Never);
     }
 
+    /// <summary>
+    /// A workbook-level "not protected" answer does not clear the sheet the table is on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The refusal no existing test reached.</b> Every other test in this file sets
+    /// only <c>Query()</c>, and a protected answer there refuses before the workbook is
+    /// even opened — so the target-sheet check that runs AFTER the table is found had
+    /// never fired in a test. The two are not the same question: <c>Query()</c> answers
+    /// for the workbook, while the table lives on one sheet, and a user can protect that
+    /// one sheet (or the whole structure) without the workbook-level query objecting.
+    /// </para>
+    /// <para>
+    /// The assertions are ordered as the product's guarantee: the refusal names the
+    /// right reason, and NOTHING was written — no row added, no cell value set. A test
+    /// that only checked the refusal would pass even if the insert had already landed.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(ProtectionGuardOutcome.SheetProtected, GanttRowInsertRefusalReason.TargetProtected)]
+    [InlineData(ProtectionGuardOutcome.WorkbookStructureProtected, GanttRowInsertRefusalReason.TargetProtected)]
+    [InlineData(ProtectionGuardOutcome.NoActiveWorkbook, GanttRowInsertRefusalReason.NoActiveWorkbook)]
+    public void Insert_refuses_a_protected_target_even_when_the_workbook_query_is_clear(
+        ProtectionGuardOutcome targetOutcome,
+        GanttRowInsertRefusalReason expected)
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        _ = guard.Setup(g => g.QueryTarget(It.IsAny<object?>())).Returns(targetOutcome);
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(expected, outcome.Refusal);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Null(graph.WrittenValue);
+        guard.Verify(g => g.QueryTarget(It.IsAny<object?>()), Times.Once);
+    }
+
+    /// <summary>
+    /// An application with no active workbook refuses before touching the sheet.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the protection story. The guard's answer is
+    /// <c>NotProtected</c>, so the refusal comes from the adapter's own workbook check —
+    /// the arm the existing tests could not reach because the fixture always supplied a
+    /// workbook. Nothing may be read from the sheet either: the assertion on
+    /// <c>AddRowCalls</c> and the written value is what distinguishes "refused" from
+    /// "refused after writing".
+    /// </remarks>
+    [Fact]
+    public void Insert_returns_no_active_workbook_when_the_host_reports_none()
+    {
+        var graph = new Graph();
+        // The interop assembly declares ActiveWorkbook non-nullable; "no workbook" is
+        // the host's own answer at shutdown and at start-up, so the null is deliberate.
+        _ = graph.Application.SetupGet(a => a.ActiveWorkbook).Returns((Excel.Workbook)null!);
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.NoActiveWorkbook, outcome.Refusal);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Null(graph.WrittenValue);
+    }
+
     [Fact]
     public void Insert_returns_table_missing_when_no_table_is_found()
     {
@@ -1365,6 +1784,45 @@ public class GanttRowInserterTests
         _ = graph.ListObjects.SetupGet(l => l.Count).Returns(0);
         var guard = new Mock<IWorksheetProtectionGuard>();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.TableMissing, outcome.Refusal);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Null(graph.WrittenValue);
+    }
+
+    /// <summary>
+    /// A table missing a required header refuses rather than writing into a guessed cell.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The column map is built by NAME, so a table a user has hand-edited — one column
+    /// renamed, or a schema column deleted — has no cell the adapter can honestly write
+    /// to. Guessing by position would put the row's <c>Type</c> into whatever column
+    /// happens to sit third, which is a silent data corruption rather than a refusal.
+    /// </para>
+    /// <para>
+    /// The reason is <see cref="GanttRowInsertRefusalReason.TableMissing"/> because from
+    /// the adapter's point of view there is no usable table: the table it needs is
+    /// defined by its headers, not by its name. The assertions also prove nothing was
+    /// written, which is the part a refusal-only test would miss.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Insert_returns_table_missing_when_a_required_column_is_absent()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        // Rename one schema column so the header-name map cannot resolve it.
+        int typeIndex = Array.FindIndex(graph.Columns, column => column.Object.Name == "Type");
+        Assert.True(typeIndex >= 0, "the fixture no longer has a Type column");
+        _ = graph.Columns[typeIndex].SetupGet(column => column.Name).Returns("NotATypeColumn");
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
             GanttEntityType.AsPlannedActivity,
@@ -1403,14 +1861,22 @@ public class GanttRowInserterTests
         var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
         var third = GanttRowId.Parse("G-00000000000000000000000000000005");
 
-        // The active cell is a child of `parent`, and the row that ends
-        // up below the new row is another child of `parent`. The new row
-        // already carries its Id so the regroup's projection can parse it.
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            (childAbove.Value, "As-Planned Activity", parent.Value),
-            (newRow.Value, "As-Planned Activity", null),
-            (childBelow.Value, "As-Planned Activity", parent.Value),
-            (third.Value, "As-Planned Activity", null)));
+        // The active cell is a child of `parent`, and the row below it is
+        // another child. The parent row is present in the PRE-insert body so
+        // the candidate can be validated; the post-insert body is what the
+        // regroup reads. This fixture previously omitted the parent, which the
+        // old positional rule never needed.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (childAbove.Value, "As-Planned Activity", parent.Value),
+                (newRow.Value, "As-Planned Activity", null),
+                (childBelow.Value, "As-Planned Activity", parent.Value),
+                (third.Value, "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                (childAbove.Value, "As-Planned Activity", parent.Value),
+                (childBelow.Value, "As-Planned Activity", parent.Value),
+                (parent.Value, "As-Planned Activity", null),
+                (third.Value, "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1440,11 +1906,16 @@ public class GanttRowInserterTests
 
         // The active cell is a top-level parent; the row that ends up below
         // the new row is its first child. The new row lands between them.
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            (parent.Value, "As-Planned Activity", null),
-            (newRow.Value, "As-Planned Activity", null),
-            (firstChild.Value, "As-Planned Activity", parent.Value),
-            (third.Value, "As-Planned Activity", null)));
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (newRow.Value, "As-Planned Activity", null),
+                (firstChild.Value, "As-Planned Activity", parent.Value),
+                (third.Value, "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (firstChild.Value, "As-Planned Activity", parent.Value),
+                (third.Value, "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1470,11 +1941,16 @@ public class GanttRowInserterTests
 
         // The active cell is a top-level leaf; the row that ends up below the
         // new row is an unrelated top-level row. Neither neighbour groups.
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            (leaf.Value, "As-Planned Activity", null),
-            (newRow.Value, "As-Planned Activity", null),
-            (unrelated.Value, "As-Planned Activity", null),
-            (third.Value, "As-Planned Activity", null)));
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (leaf.Value, "As-Planned Activity", null),
+                (newRow.Value, "As-Planned Activity", null),
+                (unrelated.Value, "As-Planned Activity", null),
+                (third.Value, "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                (leaf.Value, "As-Planned Activity", null),
+                (unrelated.Value, "As-Planned Activity", null),
+                (third.Value, "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1521,15 +1997,120 @@ public class GanttRowInserterTests
     }
 
     [Fact]
-    public void A_refused_positional_insert_with_an_outline_writer_never_reads_or_regroups()
+    public void A_critical_interval_attaches_to_the_nearest_eligible_parent()
+    {
+        var milestone = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var activity = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var spacer = GanttRowId.Parse("G-00000000000000000000000000000003");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
+
+        // The active cell is a milestone; the nearest eligible parent is the
+        // activity below it. The interval is placed after that parent's child
+        // run, so it lands after the activity rather than at the click point.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (milestone.Value, "As-Planned Milestone", null),
+                (activity.Value, "As-Planned Activity", null),
+                (newRow.Value, "Critical Interval", null),
+                (spacer.Value, "Spacer", null)),
+            GroupBodyMatrix(
+                (milestone.Value, "As-Planned Milestone", null),
+                (activity.Value, "As-Planned Activity", null),
+                (spacer.Value, "Spacer", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.CriticalInterval,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(activity.Value, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void A_critical_interval_without_an_eligible_parent_refuses_before_mutating()
+    {
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
+
+        // A table of leaves and structural rows has no parent, so the insert is
+        // refused before any row is acquired or written.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000001", "As-Planned Milestone", null),
+                (newRow.Value, "Critical Interval", null),
+                ("G-00000000000000000000000000000002", "Spacer", null),
+                ("G-00000000000000000000000000000003", "Splitter", null)),
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000001", "As-Planned Milestone", null),
+                ("G-00000000000000000000000000000002", "Spacer", null),
+                ("G-00000000000000000000000000000003", "Splitter", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.CriticalInterval,
+            () => newRow);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.CriticalIntervalRequiresParent, outcome.Refusal);
+        Assert.Null(graph.WrittenValue);
+        Assert.Empty(graph.ListRowAtCalls);
+    }
+
+    [Fact]
+    public void A_spacer_inside_a_group_is_appended_at_the_end_instead_of_splitting_the_run()
+    {
+        var parent = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var child = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000003");
+
+        // The active cell is the group's parent and the row below is its child,
+        // so R5.13 would make the new row a child. A spacer may never be one,
+        // so it is appended at the end instead of splitting the child run.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (child.Value, "As-Planned Activity", parent.Value),
+                (newRow.Value, "Spacer", null)),
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (child.Value, "As-Planned Activity", parent.Value)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.Spacer,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(string.Empty, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void A_refused_positional_insert_with_an_outline_writer_never_writes_or_regroups()
     {
         var newRow = GanttRowId.Parse("G-00000000000000000000000000000001");
 
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            ("G-00000000000000000000000000000002", "As-Planned Activity", null),
-            (newRow.Value, "As-Planned Activity", null),
-            ("G-00000000000000000000000000000003", "As-Planned Activity", null),
-            ("G-00000000000000000000000000000004", "As-Planned Activity", null)));
+        // R5.16: the parent decision reads the PRE-insert body once, before the
+        // worksheet mutation. What the refusal must still guarantee is that it
+        // writes nothing, acquires no list row, and regroups nothing.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000002", "As-Planned Activity", null),
+                (newRow.Value, "As-Planned Activity", null),
+                ("G-00000000000000000000000000000003", "As-Planned Activity", null),
+                ("G-00000000000000000000000000000004", "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000002", "As-Planned Activity", null),
+                ("G-00000000000000000000000000000003", "As-Planned Activity", null),
+                ("G-00000000000000000000000000000004", "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1540,12 +2121,12 @@ public class GanttRowInserterTests
             GanttEntityType.AsPlannedActivity,
             () => newRow);
 
-        // The worksheet-row insert was refused, so the positional branch
-        // refuses before any read, write, or outline rebuild -- the R5.13
-        // safety invariant holds even when an outline writer is attached.
+        // The worksheet-row insert was refused, so the positional branch writes
+        // nothing, acquires no row, and rebuilds no outline. The single body
+        // read is the parent decision R5.16 added before the insert.
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttRowInsertRefusalReason.RowInsertRefused, outcome.Refusal);
-        Assert.Equal(0, graph.DataBodyValueReads);
+        Assert.Equal(1, graph.DataBodyValueReads);
         Assert.Empty(graph.ListRowAtCalls);
         Assert.Null(graph.WrittenValue);
         Assert.Empty(outlineGroups.Applied);
@@ -1559,7 +2140,7 @@ public class GanttRowInserterTests
     /// up below it, and the third row -- supplied by the caller.
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
-    private static Graph GroupAwareGraph(object?[,] body)
+    private static Graph GroupAwareGraph(object?[,] body, object?[,]? preInsertBody = null)
     {
         var graph = new Graph();
         _ = graph.Table.SetupGet(t => t.Active).Returns(true);
@@ -1567,6 +2148,7 @@ public class GanttRowInserterTests
         _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
         _ = graph.TableRows.SetupGet(r => r.Count).Returns(4);
         graph.BodyMatrix = body;
+        graph.PreInsertBodyMatrix = preInsertBody;
         return graph;
     }
 

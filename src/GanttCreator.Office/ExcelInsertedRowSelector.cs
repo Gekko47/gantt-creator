@@ -1,4 +1,5 @@
 using GanttCreator.Core;
+using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
@@ -41,7 +42,14 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelector
 {
-    private readonly Excel.Workbook? _workbook = CaptureWorkbook(application);
+    private readonly Workbook? _workbook = CaptureWorkbook(application);
+
+    /// <summary>
+    /// The application object, held only to read the ACTIVE CELL's column when a cell is
+    /// selected. Nothing else here reads the application: the workbook is captured so a
+    /// handler that activates another workbook cannot redirect the selection.
+    /// </summary>
+    private readonly Application? _application = application as Application;
 
     /// <summary>
     /// Captures the currently active workbook, degrading to "no selection change"
@@ -54,9 +62,9 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// degrade to "no selection change" rather than escape the command and
     /// prevent the insert the user asked for.
     /// </remarks>
-    private static Excel.Workbook? CaptureWorkbook(object? application)
+    private static Workbook? CaptureWorkbook(object? application)
     {
-        var excel = application as Excel.Application;
+        Application? excel = application as Application;
 
         // CA1031: a best-effort read whose only failure mode is "the cursor stays
         // put" must not propagate into Excel.
@@ -76,7 +84,7 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// <inheritdoc />
     public void SelectBodyRow(int bodyIndex)
     {
-        Excel.Workbook? workbook = _workbook;
+        Workbook? workbook = _workbook;
         if (workbook is null)
         {
             return;
@@ -96,7 +104,7 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
 #pragma warning disable CA1031
         try
         {
-            SelectBodyRowCore(workbook, bodyIndex);
+            SelectRowCore(workbook, bodyIndex, worksheetColumn: null);
         }
         catch
         {
@@ -106,35 +114,64 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
 #pragma warning restore CA1031
     }
 
-    /// <summary>
-    /// Walks the workbook to the Gantt table and selects one body row.
-    /// </summary>
-    /// <param name="workbook">The workbook captured before the insert.</param>
-    /// <param name="bodyIndex">The one-based body-row index to select.</param>
-    /// <remarks>
-    /// Split out of <see cref="SelectBodyRow"/> so a single best-effort guard
-    /// covers the sheet, table, and row lookups as well as <c>Activate</c> and
-    /// <c>Select</c>. Every proxy is held in a local and used without chained
-    /// member expressions.
-    /// </remarks>
-    private void SelectBodyRowCore(Excel.Workbook workbook, int bodyIndex)
+    /// <inheritdoc />
+    public void SelectBodyCell(int bodyIndex)
     {
-        Excel.Sheets sheets = workbook.Sheets;
-        var count = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= count; sheetIndex++)
+        Workbook? workbook = _workbook;
+        if (workbook is null)
         {
-            var sheet = GetSheetAt(sheets, sheetIndex);
-            if (sheet is not Excel.Worksheet worksheet)
+            return;
+        }
+
+        // Best-effort for the same reason as SelectBodyRow: the row has already moved,
+        // and a refused activation or selection must degrade to "the cursor stays
+        // where the host left it" rather than surface a failed command that in fact
+        // succeeded. CA1031: these are selection changes whose only failure mode is
+        // the cursor not moving.
+#pragma warning disable CA1031
+        try
+        {
+            SelectRowCore(workbook, bodyIndex, ReadActiveColumn());
+        }
+        catch
+        {
+            // Intentionally empty: the row moved either way; only the cursor stays put.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Walks the workbook to the Gantt table and selects one body row, or one cell of it.
+    /// </summary>
+    /// <param name="workbook">The workbook captured before the insert or move.</param>
+    /// <param name="bodyIndex">The one-based body-row index to select.</param>
+    /// <param name="worksheetColumn">
+    /// The worksheet column whose cell is selected, or <see langword="null"/> to select
+    /// the row's full width.
+    /// </param>
+    /// <remarks>
+    /// Split out of the public members so a single best-effort guard covers the sheet,
+    /// table, and row lookups as well as <c>Activate</c> and <c>Select</c>. Every proxy
+    /// is held in a local and used without chained member expressions.
+    /// </remarks>
+    private void SelectRowCore(Workbook workbook, int bodyIndex, int? worksheetColumn)
+    {
+        Sheets sheets = workbook.Sheets;
+        int count = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= count; sheetIndex++)
+        {
+            object sheet = GetSheetAt(sheets, sheetIndex);
+            if (sheet is not Worksheet worksheet)
             {
                 continue;
             }
 
-            Excel.ListObjects listObjects = worksheet.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            ListObjects listObjects = worksheet.ListObjects;
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
-                Excel.ListObject table = GetTableAt(listObjects, tableIndex);
-                if (!string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                ListObject table = GetTableAt(listObjects, tableIndex);
+                if (!GanttChartContract.IsDataTableName(table.Name))
                 {
                     continue;
                 }
@@ -149,15 +186,25 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
                 // through that name. It is Excel-owned and shared, reached from the
                 // captured workbook, so it is not force-released - see the class
                 // remarks.
-                Excel.ListRows listRows = GetListRows(table);
-                Excel.ListRow targetRow = GetListRowAt(listRows, bodyIndex);
+                ListRows listRows = GetListRows(table);
+                ListRow targetRow = GetListRowAt(listRows, bodyIndex);
+
+                Excel.Range rowRange = GetRowRange(targetRow);
+
+                // A supplied column selects ONE CELL of the row rather than its full
+                // width. The address is built from the worksheet, not an offset into the
+                // row range, so a column outside the table still selects the cell the
+                // user was working in -- which is where they expect the cursor to be
+                // after the row moved.
+                Excel.Range target = worksheetColumn is { } column
+                    ? GetCell(worksheet, GetRangeRow(rowRange), column)
+                    : rowRange;
 
                 // Range.Select only works on the active sheet, so the Gantt
                 // worksheet is activated first. A refused activation or selection
                 // degrades to no selection change for the reason the enclosing
                 // guard records.
                 worksheet.Activate();
-                Excel.Range target = GetRowRange(targetRow);
                 target.Select();
                 return;
             }
@@ -168,27 +215,63 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// <param name="sheets">The workbook sheet collection.</param>
     /// <param name="index">The one-based sheet index.</param>
     /// <returns>The sheet object.</returns>
-    internal virtual object GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+    internal virtual object GetSheetAt(Sheets sheets, int index) => sheets[index];
 
     /// <summary>Returns the list object at the one-based index.</summary>
     /// <param name="listObjects">The worksheet list-object collection.</param>
     /// <param name="index">The one-based list-object index.</param>
     /// <returns>The list object.</returns>
-    internal virtual Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => listObjects[index];
+    internal virtual ListObject GetTableAt(ListObjects listObjects, int index) => listObjects[index];
 
     /// <summary>Returns the table's list rows.</summary>
     /// <param name="table">The Gantt table.</param>
     /// <returns>The list-row collection.</returns>
-    internal virtual Excel.ListRows GetListRows(Excel.ListObject table) => table.ListRows;
+    internal virtual ListRows GetListRows(ListObject table) => table.ListRows;
 
     /// <summary>Returns the one-based body row of the table.</summary>
     /// <param name="rows">The table's list rows.</param>
     /// <param name="bodyIndex">The one-based body-row index.</param>
     /// <returns>The list row.</returns>
-    internal virtual Excel.ListRow GetListRowAt(Excel.ListRows rows, int bodyIndex) => rows[bodyIndex];
+    internal virtual ListRow GetListRowAt(ListRows rows, int bodyIndex) => rows[bodyIndex];
 
     /// <summary>Returns the range spanning a list row.</summary>
     /// <param name="row">The list row.</param>
     /// <returns>The row's range.</returns>
-    internal virtual Excel.Range GetRowRange(Excel.ListRow row) => row.Range;
+    internal virtual Excel.Range GetRowRange(ListRow row) => row.Range;
+
+    /// <summary>Returns the worksheet row of a range. Test seam over the COM property.</summary>
+    /// <param name="range">The range.</param>
+    /// <returns>The one-based worksheet row.</returns>
+    internal virtual int GetRangeRow(Excel.Range range) => range.Row;
+
+    /// <summary>Returns one cell of a worksheet. Test seam over the COM indexer.</summary>
+    /// <param name="worksheet">The worksheet.</param>
+    /// <param name="worksheetRow">The one-based worksheet row.</param>
+    /// <param name="worksheetColumn">The one-based worksheet column.</param>
+    /// <returns>The cell's range.</returns>
+    internal virtual Excel.Range GetCell(Worksheet worksheet, int worksheetRow, int worksheetColumn)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        Excel.Range cells = worksheet.Cells;
+        return cells[worksheetRow, worksheetColumn];
+    }
+
+    /// <summary>
+    /// Reads the active cell's worksheet column, or <see langword="null"/> when the host
+    /// reports no active cell.
+    /// </summary>
+    /// <returns>The one-based column, or <see langword="null"/>.</returns>
+    /// <remarks>
+    /// Read at selection time, not captured before the mutation: a row relocation writes
+    /// cells and never moves the active cell, so this value is still the user's column.
+    /// A host that reports nothing falls back to selecting the row's full width, which is
+    /// the behaviour this port had before cell selection existed.
+    /// </remarks>
+    internal virtual int? ReadActiveColumn()
+    {
+        Application? application = _application;
+        Excel.Range? activeCell = application?.ActiveCell;
+        return activeCell?.Column;
+    }
 }

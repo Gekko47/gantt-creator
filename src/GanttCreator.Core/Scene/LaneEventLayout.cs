@@ -181,7 +181,7 @@ public static class LaneEventLayout
             // one up: an authoring UI may place a child above its parent, so a child
             // is not guaranteed to precede the owner it depends on.
             Dictionary<GanttRowId, int> effectiveById = [];
-            var ownIndex = 0;
+            int ownIndex = 0;
             foreach (LaneEventInput input in laneEvents)
             {
                 if (input.IsProjected)
@@ -201,7 +201,7 @@ public static class LaneEventLayout
                 }
 
                 if (input.RenderLaneOwner is { } projectedOwner
-                    && effectiveById.TryGetValue(projectedOwner.Id, out var ownerEffective))
+                    && effectiveById.TryGetValue(projectedOwner.Id, out int ownerEffective))
                 {
                     effectiveById[input.Event.Id] = ownerEffective;
                 }
@@ -221,7 +221,7 @@ public static class LaneEventLayout
                 {
                     effective = supplied;
                 }
-                else if (effectiveById.TryGetValue(@event.Id, out var derived))
+                else if (effectiveById.TryGetValue(@event.Id, out int derived))
                 {
                     effective = derived;
                 }

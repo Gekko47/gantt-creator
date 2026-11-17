@@ -41,7 +41,7 @@ public class GanttDateDisplayFormatTests
         Assert.Equal(14, GanttCatalogues.Settings.ToList().FindIndex(s => s.Key == "DateDisplayFormat"));
         Assert.Equal(
             ["SizePreset", "RangePaddingDays", "Margin", "MarginCm"],
-            GanttCatalogues.Settings.Skip(15).Select(s => s.Key).ToArray());
+            GanttCatalogues.Settings.Skip(15).Take(4).Select(s => s.Key).ToArray());
     }
 
     [Theory]
@@ -134,5 +134,27 @@ public class GanttDateDisplayFormatTests
 
         Assert.Throws<ArgumentOutOfRangeException>(
             () => GanttDateFormatting.Format(new DateOnly(2026, 9, 5), undefined));
+    }
+
+    [Theory]
+    [InlineData(GanttDateDisplayFormat.DdMMyyyy, "dd/mm/yyyy")]
+    [InlineData(GanttDateDisplayFormat.DdMMMyy, "dd-mmm-yy")]
+    public void The_worksheet_pattern_is_the_host_format_code_for_the_member(
+        GanttDateDisplayFormat format,
+        string expected)
+    {
+        // Two authorities, deliberately: the scene text is .NET-formatted so it is
+        // byte-identical on every host, while a worksheet cell carries the host's own
+        // format code, which is what makes a stored serial render as a date.
+        Assert.Equal(expected, GanttDateFormatting.WorksheetPatternFor(format));
+    }
+
+    [Fact]
+    public void An_undefined_format_has_no_worksheet_pattern()
+    {
+        // Positive test for the second guard: a value outside the closed set must throw
+        // rather than hand the writer a pattern for a format nobody approved.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => GanttDateFormatting.WorksheetPatternFor((GanttDateDisplayFormat)99));
     }
 }

@@ -177,6 +177,14 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:gateText | Should -Match 'BASELINE'
         }
 
+        It 'reads the Stryker report from the reports subdirectory' {
+            # dotnet-stryker 5.0.0 writes <output>/reports/mutation-report.json;
+            # the gate must judge that path, not <output>/mutation-report.json
+            # (the defect this regression test exists to catch).
+            $expected = [regex]::Escape(("Join-Path " + '$outputDir' + " 'reports' 'mutation-report.json'"))
+            $script:gateText | Should -Match $expected
+        }
+
         It 'installs the tool rather than referencing it from a csproj' {
             $script:gateText | Should -Match 'dotnet tool install'
         }
@@ -374,6 +382,361 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             } finally {
                 Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
             }
+        }
+
+        It 'passes when the changed Core set is explicitly empty, and states that as the reason' {
+            # W15 follow-up. verify.ps1 forwards an explicitly empty array when the
+            # branch changed no Core file. That used to be indistinguishable from
+            # "no scope supplied", so the judge fell back to the whole report and
+            # failed on pre-existing Safe Mode compile errors from untouched files
+            # (measured 2026-11-12: 1,219 compile-error mutants, 5,592 ignored).
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-empty-' + [guid]::NewGuid().ToString('N') + '.json')
+            Write-MutationReport -Path $path -Mutants @(
+                @{ Status = 'CompileError' }, @{ Status = 'CompileError' }
+            )
+            try {
+                $out = @(Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 -InScopeFiles @() 6>&1)
+                $result = @($out | Where-Object { $_.PSObject.Properties['Mode'] })[0]
+                $result | Should -Not -BeNullOrEmpty
+                $result.Mode | Should -Be 'changed-code'
+                $result.InScopeTotal | Should -Be 0
+                ($out -join "`n") | Should -Match 'changed Core set is empty'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'POSITIVE: an absent scope still judges the whole report' {
+            # Control for the test above: the SAME report judged without
+            # -InScopeFiles is a whole-project judgement, and zero scorable
+            # mutants there is a failure. Without this control, treating "empty"
+            # as "pass" could be achieved by ignoring the scope entirely.
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-noscope-' + [guid]::NewGuid().ToString('N') + '.json')
+            Write-MutationReport -Path $path -Mutants @(
+                @{ Status = 'CompileError' }, @{ Status = 'CompileError' }
+            )
+            try {
+                { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 } |
+                    Should -Throw '*could be scored*'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'changed-code scope and run visibility' {
+        BeforeAll {
+            . $script:gatePath
+        }
+
+        It 'skips Stryker entirely when the changed Core set is empty (W15 follow-up)' {
+            # A base equal to HEAD makes the changed-Core diff empty by
+            # construction, so the gate must answer without invoking Stryker.
+            # Measured before this branch existed: the run took 113 s, created
+            # 6,811 mutants, and scored none of them.
+            $head = (& git -C $script:repoRoot rev-parse HEAD).Trim()
+            $outFile = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-skip-' + [guid]::NewGuid().ToString('N') + '.txt')
+            try {
+                $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                    '-NoProfile', '-File', $script:gatePath, '-Since', $head
+                ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $outFile
+                $proc.ExitCode | Should -Be 0
+                (Get-Content -LiteralPath $outFile -Raw) | Should -Match 'Skipping Stryker'
+            } finally {
+                Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'refuses a changed set so large that --since means the whole project' {
+            # Measured 2026-11-01: a long-lived branch's diff against origin/main
+            # selected 67 Core files, so --since mutated the whole project for
+            # ~43 minutes. The guard must refuse that scope explicitly.
+            $files = @(1..31 | ForEach-Object { "src/GanttCreator.Core/File$_.cs" })
+            { Assert-ChangedCodeScope -ChangedFiles $files -MaxChangedFiles 30 } |
+                Should -Throw '*mutate the whole project*'
+        }
+
+        It 'accepts a plausibly small changed set' {
+            $files = @(1..5 | ForEach-Object { "src/GanttCreator.Core/File$_.cs" })
+            { Assert-ChangedCodeScope -ChangedFiles $files -MaxChangedFiles 30 } |
+                Should -Not -Throw
+        }
+
+        It 'checks the changed-code scope before invoking Stryker' {
+            $scopeIndex = $script:gateText.IndexOf('Assert-ChangedCodeScope -ChangedFiles', [System.StringComparison]::Ordinal)
+            $runIndex = $script:gateText.IndexOf('& dotnet-stryker @arguments', [System.StringComparison]::Ordinal)
+            $scopeIndex | Should -BeGreaterThan -1
+            $runIndex | Should -BeGreaterThan -1
+            $scopeIndex | Should -BeLessThan $runIndex
+        }
+
+        It 'streams the Stryker run instead of buffering it until exit' {
+            # A buffered-until-exit pipeline shows nothing for a whole-Core run
+            # (measured: 43 minutes), which reads as a hung gate.
+            $script:gateText | Should -Match 'ForEach-Object \{ Write-Host \$_'
+        }
+
+        It 'POSITIVE: a buffered-only invocation is not detected as streaming' {
+            $buffered = '$output = & dotnet-stryker @arguments 2>&1'
+            $buffered | Should -Not -Match 'ForEach-Object \{ Write-Host \$_'
+        }
+
+        It 'POSITIVE: a streaming invocation is detected' {
+            $streaming = '$output = & dotnet-stryker @arguments 2>&1 | ForEach-Object { Write-Host $_; $_ }'
+            $streaming | Should -Match 'ForEach-Object \{ Write-Host \$_'
+        }
+    }
+
+    Context 'test-project set' {
+        BeforeAll {
+            . $script:gatePath
+            $script:defaultProjects = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit @())
+        }
+
+        It 'defaults to Core.Tests alone, because per-mutant cost is the constraint' {
+            # Measured 2026-11-01: adding Office.ContractTests and AddIn.Tests
+            # left one file's 403 mutants unfinished after 49 minutes, against
+            # 6,687 mutants in 43 minutes for the whole of Core on Core.Tests
+            # alone -- about 19x per mutant. The widened set must stay opt-in.
+            $script:defaultProjects.Count | Should -Be 1
+            ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.Core\.Tests'
+            ($script:defaultProjects -join ';') | Should -Not -Match 'Office\.ContractTests'
+            ($script:defaultProjects -join ';') | Should -Not -Match 'AddIn\.Tests'
+        }
+
+        It 'POSITIVE: the widened set is reachable by an explicit override' {
+            # The measured-but-expensive configuration must remain runnable on
+            # purpose, or the cost finding could never be re-checked.
+            $widened = @(
+                'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'
+                'tests\GanttCreator.Office.ContractTests\GanttCreator.Office.ContractTests.csproj'
+                'tests\GanttCreator.AddIn.Tests\GanttCreator.AddIn.Tests.csproj'
+            )
+            $resolved = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit $widened)
+            $resolved.Count | Should -Be 3
+            ($resolved -join ';') | Should -Match 'Office\.ContractTests'
+            ($resolved -join ';') | Should -Match 'AddIn\.Tests'
+        }
+
+        It 'honours an explicit override verbatim' {
+            $explicit = @('tests\One\One.csproj', 'tests\Two\Two.csproj')
+            $resolved = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit $explicit)
+            $resolved.Count | Should -Be 2
+            $resolved[0] | Should -Be 'tests\One\One.csproj'
+            $resolved[1] | Should -Be 'tests\Two\Two.csproj'
+        }
+
+        It 'POSITIVE: an override naming the live-host suite is returned unfiltered' {
+            # The override path must not silently re-apply the defaults, or a
+            # deliberate run could not include a project the defaults exclude.
+            $explicit = @('tests\GanttCreator.Office.IntegrationTests\GanttCreator.Office.IntegrationTests.csproj')
+            $resolved = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit $explicit)
+            ($resolved -join ';') | Should -Match 'IntegrationTests'
+        }
+
+        It 'passes each resolved project to Stryker as its own --test-project' {
+            $script:gateText | Should -Match "\`$arguments \+= @\('--test-project', \`$testProject\)"
+        }
+    }
+
+    Context 'working-directory context (test discovery follows it, not --test-project)' {
+        BeforeAll {
+            . $script:gatePath
+        }
+
+        It 'POSITIVE: refuses a project directory that holds a solution file' {
+            # Measured on dotnet-stryker 5.0.0, 2026-11-01, same --project and
+            # same single --test-project: from the repository root Stryker
+            # reported "Number of tests found: 3470" with IsSolutionContext
+            # True; from src/GanttCreator.Core it reported 1823 with
+            # IsSolutionContext False. 1823 is Core.Tests exactly. The 3,470
+            # run pulled the live-Excel suite into the initial run and one
+            # failure there voided the coverage map, so the report came back
+            # with zero mutants.
+            $withSolution = Join-Path $TestDrive 'with-solution'
+            New-Item -ItemType Directory -Path $withSolution -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $withSolution 'GanttCreator.slnx') -Value '<Solution />'
+
+            { Assert-ProjectDirectoryContext -ProjectDirectory $withSolution } |
+                Should -Throw -ExpectedMessage '*solution-wide*'
+        }
+
+        It 'POSITIVE: refuses a .sln as well as a .slnx' {
+            $withSolution = Join-Path $TestDrive 'with-classic-solution'
+            New-Item -ItemType Directory -Path $withSolution -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $withSolution 'Legacy.sln') -Value ''
+
+            { Assert-ProjectDirectoryContext -ProjectDirectory $withSolution } |
+                Should -Throw -ExpectedMessage '*solution-wide*'
+        }
+
+        It 'accepts a project directory with no solution file' {
+            $bare = Join-Path $TestDrive 'bare-project'
+            New-Item -ItemType Directory -Path $bare -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $bare 'GanttCreator.Core.csproj') -Value '<Project />'
+
+            { Assert-ProjectDirectoryContext -ProjectDirectory $bare } | Should -Not -Throw
+        }
+
+        It 'accepts the real Core project directory, so the guard cannot block the gate' {
+            { Assert-ProjectDirectoryContext -ProjectDirectory (Join-Path $script:repoRoot 'src\GanttCreator.Core') } |
+                Should -Not -Throw
+        }
+
+        It 'checks the project directory before invoking Stryker' {
+            $guardIndex = $script:gateText.IndexOf('Assert-ProjectDirectoryContext -ProjectDirectory', [StringComparison]::Ordinal)
+            $runIndex = $script:gateText.IndexOf('& dotnet-stryker @arguments', [StringComparison]::Ordinal)
+            $guardIndex | Should -BeGreaterThan 0
+            $runIndex | Should -BeGreaterThan 0
+            $guardIndex | Should -BeLessThan $runIndex
+        }
+    }
+
+    Context 'diff-base resolution (Stryker does not understand a revspec)' {
+        BeforeAll {
+            . $script:gatePath
+        }
+
+        It 'POSITIVE: refuses a diff base that does not resolve to a commit' {
+            # Measured on the installed 5.0.0, 2026-11-02: --since:HEAD~40 gave
+            # "No branch or tag or commit found with given target HEAD~40" and
+            # Stryker then mutated the WHOLE project (6,687 mutants) while the
+            # gate still read the report as a changed-code score. Refusing up
+            # front is the only fail-closed behaviour available.
+            { Resolve-DiffBase -Since 'no-such-ref-4c1f' -RepoRoot $script:repoRoot } |
+                Should -Throw -ExpectedMessage '*Cannot resolve -Since*'
+        }
+
+        It 'resolves a branch name to a commit SHA' {
+            $resolved = Resolve-DiffBase -Since 'HEAD' -RepoRoot $script:repoRoot
+            $resolved | Should -Match '^[0-9a-f]{40}$'
+        }
+
+        It 'resolves a revspec, which Stryker itself rejects' {
+            # The regression this guard exists for: a valid git revspec that
+            # Stryker cannot use must become a SHA before the run, not after.
+            $resolved = Resolve-DiffBase -Since 'HEAD~1' -RepoRoot $script:repoRoot
+            $resolved | Should -Match '^[0-9a-f]{40}$'
+        }
+
+        It 'resolves the diff base before invoking Stryker' {
+            $resolveIndex = $script:gateText.IndexOf('$Since = Resolve-DiffBase', [StringComparison]::Ordinal)
+            $runIndex = $script:gateText.IndexOf('& dotnet-stryker @arguments', [StringComparison]::Ordinal)
+            $resolveIndex | Should -BeGreaterThan 0
+            $resolveIndex | Should -BeLessThan $runIndex
+        }
+
+        It 'lets verify.ps1 forward a nearer diff base, defaulting to the integration branch' {
+            # On a long-lived branch the origin/main diff exceeds the scope guard,
+            # so step 15 can never run unless the base is overridable. The default
+            # must stay origin/main so CI keeps judging the integration branch.
+            $script:verifyText | Should -Match "\`$MutationSince = 'origin/main'"
+            $script:verifyText | Should -Match 'mutation-gate\.ps1 -Since \$MutationSince'
+        }
+    }
+
+    Context 'changed-file judging (the silent pass measured 2026-11-11)' {
+        # The report is project-wide even on a changed-code run. On 2026-11-11 the
+        # changed file was GanttChartContract.cs, whose own entry held zero
+        # mutants (two delegations to string.Equals have nothing to mutate),
+        # while the report carried 1,219 CompileError mutants from untouched
+        # files. The old judge read the whole report, found no scored mutants,
+        # and reported PASS - the same branch would also have passed a changed
+        # file whose mutants all failed to compile. These tests pin the
+        # distinction and the refusal that replaces it.
+        BeforeAll {
+            . $script:gatePath
+
+            $script:changedRelative = 'src/GanttCreator.Core/Fixture.cs'
+            $script:changedFull = [System.IO.Path]::GetFullPath(
+                (Join-Path $script:repoRoot $script:changedRelative))
+
+            # A scriptblock, not a function: PSScriptAnalyzer requires a
+            # New-* function to support ShouldProcess because the verb says it
+            # changes state, and a test fixture that writes one temp file does not
+            # need that ceremony - the gate caught the helper and this is the
+            # smallest honest answer to it.
+            $script:newReportFixture = {
+                param([hashtable]$Files)
+
+                $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-scope-' + [guid]::NewGuid().ToString('N') + '.json')
+                Set-Content -LiteralPath $path -Value (@{ Files = $Files } | ConvertTo-Json -Depth 10)
+                return $path
+            }
+
+            function Invoke-ScopedJudge {
+                param([hashtable]$Files)
+
+                $path = & $script:newReportFixture -Files $Files
+                try {
+                    return Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 `
+                        -RepoRoot $script:repoRoot -InScopeFiles @($script:changedRelative)
+                } finally {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'passes when the changed file holds no mutable code, and states that as the reason' {
+            # The measured 2026-11-11 case: our file contributes nothing, and
+            # unrelated CompileError noise must not be read as a failure either.
+            $verdict = Invoke-ScopedJudge -Files @{
+                $script:changedFull = @{ Mutants = @() }
+                'C:\noise\Untouched.cs' = @{ Mutants = @(@{ Status = 'CompileError' }, @{ Status = 'CompileError' }) }
+            }
+
+            $verdict.InScopeTotal | Should -Be 0
+            $verdict.ScorePercent | Should -Be 0
+        }
+
+        It 'POSITIVE: fails when the changed file has mutants that none could score' {
+            # The silent pass this context exists for: mutants present, all
+            # CompileError, zero scored. It must be a failure, not a pass.
+            {
+                Invoke-ScopedJudge -Files @{
+                    $script:changedFull = @{ Mutants = @(@{ Status = 'CompileError' }, @{ Status = 'CompileError' }) }
+                }
+            } | Should -Throw '*could be scored*'
+        }
+
+        It 'POSITIVE: fails when the report names none of the changed files' {
+            {
+                Invoke-ScopedJudge -Files @{
+                    'C:\noise\Untouched.cs' = @{ Mutants = @(@{ Status = 'Killed' }) }
+                }
+            } | Should -Throw '*names none of the changed*'
+        }
+
+        It 'judges the changed file rather than the whole report total' {
+            # 100% inside the changed file while the report holds 40 survivors
+            # elsewhere: a whole-report read would fail this run for code the
+            # change never touched.
+            $verdict = Invoke-ScopedJudge -Files @{
+                $script:changedFull = @{ Mutants = @(
+                    @{ Status = 'Killed' }, @{ Status = 'Killed' }, @{ Status = 'Killed' }
+                ) }
+                'C:\noise\Untouched.cs' = @{ Mutants = @(
+                    @{ Status = 'Survived' }, @{ Status = 'Survived' }, @{ Status = 'Survived' }
+                ) }
+            }
+
+            $verdict.InScopeTotal | Should -Be 3
+            $verdict.ScorePercent | Should -Be 100
+            $verdict.Total | Should -Be 6
+        }
+
+        It 'POSITIVE: still fails a changed file that scores below the threshold' {
+            {
+                Invoke-ScopedJudge -Files @{
+                    $script:changedFull = @{ Mutants = @(
+                        @{ Status = 'Killed' }, @{ Status = 'Survived' }, @{ Status = 'Survived' }
+                    ) }
+                }
+            } | Should -Throw '*below the*'
+        }
+
+        It 'passes the changed files to the judge on a changed-code run' {
+            $script:gateText | Should -Match 'InScopeFiles\s*=\s*@\(\$changed\)'
         }
     }
 }

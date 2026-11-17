@@ -25,7 +25,7 @@ namespace GanttCreator.Core;
 public static class EntityTypeCatalog
 {
     /// <summary>The number of types in the catalogue.</summary>
-    public const int TypeCount = 16;
+    public const int TypeCount = 17;
 
     private static readonly IReadOnlySet<GanttLabelPosition> _spanLabelPositions =
         new HashSet<GanttLabelPosition>(
@@ -57,16 +57,24 @@ public static class EntityTypeCatalog
             GanttLabelPosition.None,
         ]);
 
+    /// <summary>
+    /// The positions a <see cref="GanttEntityType.Splitter"/> may carry (R5.18l, D4).
+    /// </summary>
+    /// <remarks>
+    /// <b>No <see cref="GanttLabelPosition.DataPanelLeft"/>.</b> The splitter is the one
+    /// entity whose label is a section heading over the plot, and a heading tucked into
+    /// the data panel's left edge reads as a cell value rather than as a band over the
+    /// chart — measured against the live sheet, the two are not the same statement. The
+    /// position stays in the enum because the builder still emits the panel-side label for
+    /// <see cref="GanttLabelPosition.Both"/>, which is the supported way to have both.
+    /// </remarks>
     private static readonly IReadOnlySet<GanttLabelPosition> _splitterLabelPositions =
         new HashSet<GanttLabelPosition>(
         [
-            GanttLabelPosition.DataPanelLeft,
             GanttLabelPosition.PlotCentre,
             GanttLabelPosition.Both,
             GanttLabelPosition.None,
         ]);
-
-    private static readonly IReadOnlySet<GanttLabelPosition> _noLabelPositions = new HashSet<GanttLabelPosition>();
 
     /// <summary>Returns a single-element position set for types that permit exactly one position.</summary>
     private static HashSet<GanttLabelPosition> OnlyLabelPositions(GanttLabelPosition position) =>
@@ -174,10 +182,10 @@ public static class EntityTypeCatalog
             "Custom Activity",
             EntityKind.Span,
             EntityDateMode.StartFinish,
-            string.Empty,
+            "CustomActivity",
             EntityColourCapability.StyleDefined,
             requiresStyleKey: true,
-            _noLabelPositions),
+            _spanLabelPositions),
         new(
             GanttEntityType.AsBuiltMilestone,
             "As-Built Milestone",
@@ -215,13 +223,22 @@ public static class EntityTypeCatalog
             requiresStyleKey: false,
             _milestoneLabelPositions),
         new(
+            GanttEntityType.CustomMilestone,
+            "Custom Milestone",
+            EntityKind.Milestone,
+            EntityDateMode.StartOnly,
+            "CustomMilestone",
+            EntityColourCapability.StyleDefined,
+            requiresStyleKey: true,
+            _milestoneLabelPositions),
+        new(
             GanttEntityType.Delineator,
             "Delineator",
             EntityKind.Delineator,
             EntityDateMode.StartOnly,
             "DefaultDelineator",
             EntityColourCapability.Stroke,
-            requiresStyleKey: false,
+            requiresStyleKey: true,
             _delineatorLabelPositions),
     ];
 
@@ -248,7 +265,7 @@ public static class EntityTypeCatalog
             return null;
         }
 
-        var trimmed = displayName.Trim();
+        string trimmed = displayName.Trim();
 
         return trimmed.Length == 0
             ? null
@@ -318,12 +335,13 @@ public static class EntityTypeCatalog
 
     /// <summary>
     /// Returns the allowed label positions for a type in stable ribbon display
-    /// order (R5.5 D1 projection). <see cref="GanttEntityType.CustomActivity"/>
-    /// resolves from <paramref name="styleRegistry"/> via its
-    /// <c>StyleKey</c>; every other type reads its catalogue definition.
+    /// order (R5.5 D1 projection). A style-key type (Custom Activity, Custom
+    /// Milestone — the catalogue's <c>RequiresStyleKey</c> authority) resolves
+    /// from <paramref name="styleRegistry"/> via its <c>StyleKey</c>; every
+    /// other type reads its catalogue definition.
     /// </summary>
     /// <param name="type">The entity type.</param>
-    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleKey">The row's style key (style-key types only).</param>
     /// <param name="styleRegistry">The named-style capabilities, or null.</param>
     /// <returns>The allowed positions in display order; empty when unknown.</returns>
     public static IReadOnlyList<GanttLabelPosition> GetAllowedLabelPositions(
@@ -331,38 +349,83 @@ public static class EntityTypeCatalog
         string? styleKey = null,
         GanttStyleRegistry? styleRegistry = null)
     {
-        IReadOnlySet<GanttLabelPosition> allowed;
-        if (type == GanttEntityType.CustomActivity)
-        {
-            if (styleRegistry is null
-                || !styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
-                || style is null
-                || style.AllowedLabelPositions is null)
-            {
-                return [];
-            }
-
-            allowed = style.AllowedLabelPositions;
-        }
-        else if (GetDefinition(type) is not { } definition)
+        if (GetDefinition(type) is not { } definition)
         {
             return [];
+        }
+
+        IReadOnlySet<GanttLabelPosition> allowed;
+        if (definition.RequiresStyleKey)
+        {
+            // R5.6a: both style-key types resolve from their row style. The
+            // catalogue set is only a placeholder for them (_noLabelPositions
+            // on Custom Milestone), never the authority.
+            //
+            // R5.6d: a row whose style the registry does not know - because the
+            // user has not chosen one yet, or because the style they chose was
+            // deleted - falls back to the type's CODE-OWNED default style, the
+            // same preset the scene falls back to when it renders the row. The
+            // row renders with that style, so the ribbon must offer the label
+            // positions that style permits; returning an empty set left the
+            // description-label dropdown disabled on a row that was perfectly
+            // renderable.
+            allowed = ResolveStyleKeyLabelPositions(definition, styleKey, styleRegistry);
         }
         else
         {
             allowed = definition.AllowedLabelPositions;
         }
 
+        if (type == GanttEntityType.Delineator)
+        {
+            // A1: the corner set is the floor for a delineator. A custom style
+            // may narrow within the corners but never offer span positions
+            // (Left, Right, Inside) that the corner-label builder cannot render.
+            allowed = allowed.Intersect(definition.AllowedLabelPositions).ToHashSet();
+        }
+
         return [.. _displayOrder.Where(allowed.Contains)];
     }
 
     /// <summary>
+    /// Resolves the permitted label positions of a style-key type.
+    /// </summary>
+    /// <remarks>
+    /// R5.6d: a row whose style the registry does not know - because the user
+    /// has not chosen one yet, or because the style they chose was deleted -
+    /// falls back to the type's CODE-OWNED default style, the same preset the
+    /// scene falls back to when it renders the row. The row renders with that
+    /// style, so the ribbon must offer the label positions that style
+    /// permits; returning an empty set left the description-label dropdown
+    /// disabled on a row that was perfectly renderable.
+    /// </remarks>
+    /// <param name="definition">The type's catalogue definition.</param>
+    /// <param name="styleKey">The row's style key.</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null.</param>
+    /// <returns>The permitted positions for the resolved style.</returns>
+    private static IReadOnlySet<GanttLabelPosition> ResolveStyleKeyLabelPositions(
+        EntityTypeDefinition definition,
+        string? styleKey,
+        GanttStyleRegistry? styleRegistry)
+    {
+        if (styleRegistry is not null
+            && styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
+            && style?.AllowedLabelPositions is { } registryAllowed)
+        {
+            return registryAllowed;
+        }
+
+        _ = GanttCatalogues.TryGetPreset(definition.DefaultStyleKey, out GanttStylePreset? fallbackPreset);
+        return fallbackPreset?.AllowedLabelPositions ?? definition.AllowedLabelPositions;
+    }
+
+    /// <summary>
     /// Returns whether a label position is allowed for a type (R5.5 D1 guard).
-    /// <see cref="GanttEntityType.CustomActivity"/> delegates to its style.
+    /// A style-key type delegates to its row style.
     /// </summary>
     /// <param name="type">The entity type.</param>
     /// <param name="position">The candidate position.</param>
-    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleKey">The row's style key (style-key types only).</param>
     /// <param name="styleRegistry">The named-style capabilities, or null.</param>
     public static bool IsLabelPositionAllowed(
         GanttEntityType type,
@@ -401,23 +464,25 @@ public static class EntityTypeCatalog
 
     /// <summary>
     /// The ribbon item identifier that clears the row's
-    /// <c>DateLabelPosition</c> cell (blank), resolving to
-    /// <c>Auto</c> per R5.14 D3. It is the absence of a value,
-    /// not a catalogue choice, so it never appears in
+    /// <c>DateLabelPosition</c> cell (blank), resolving to the type
+    /// default — <c>None</c> since the 2026-11-13 ruling, the same as a
+    /// stored <c>Auto</c>. It is the absence of a value, not a catalogue
+    /// choice, so it never appears in
     /// <see cref="GetAllowedDateLabelPositions"/>.
     /// </summary>
     public const string DefaultDateLabelSelectionId = "Default";
 
     /// <summary>
-    /// Display order for ribbon date-label options: <c>Auto</c>
-    /// first, then the single-date choices in date order, then
-    /// the no-label choice. Every element is derived from the
-    /// row type's <see cref="EntityDateMode"/> — never a second
-    /// authority.
+    /// Display order for ribbon date-label options: <c>Auto</c> (the
+    /// clear/"Default" item) first, then <c>Both</c>, then the
+    /// single-date choices in date order, then the no-label choice.
+    /// Every element is derived from the row type's
+    /// <see cref="EntityDateMode"/> — never a second authority.
     /// </summary>
     private static readonly GanttDateLabelPosition[] _dateLabelDisplayOrder =
     [
         GanttDateLabelPosition.Auto,
+        GanttDateLabelPosition.Both,
         GanttDateLabelPosition.Start,
         GanttDateLabelPosition.Finish,
         GanttDateLabelPosition.None,
@@ -446,10 +511,12 @@ public static class EntityTypeCatalog
     /// type's <see cref="EntityDateMode"/>: a dateless type names
     /// none (the control is disabled), a <c>StartOnly</c> type names
     /// <c>Auto</c>, <c>Start</c>, and <c>None</c>, and a span names
-    /// all four. The delineator is the exception (owner ruling
-    /// 2026-10-14): its date label is positionable, not selectable
-    /// per date — it reads Start only, so <see
-    /// cref="GetAllowedDateLabelPlacements"/> projects its set
+    /// all five. <c>Finish</c> and <c>Both</c> are excluded for a
+    /// <c>StartOnly</c> type, which reads no finish date (owner
+    /// ruling 2026-11-13 added <c>Both</c>). The delineator is the
+    /// exception (owner ruling 2026-10-14): its date label is
+    /// positionable, not selectable per date — it reads Start only, so
+    /// <see cref="GetAllowedDateLabelPlacements"/> projects its set
     /// instead and the which-date set no longer applies to it.
     /// </summary>
     /// <param name="type">The entity type.</param>
@@ -468,7 +535,8 @@ public static class EntityTypeCatalog
             {
                 EntityDateMode.None => [],
                 EntityDateMode.StartOnly
-                    => [.. _dateLabelDisplayOrder.Where(p => p != GanttDateLabelPosition.Finish)],
+                    => [.. _dateLabelDisplayOrder.Where(
+                        p => p is not (GanttDateLabelPosition.Finish or GanttDateLabelPosition.Both))],
                 EntityDateMode.StartFinish => [.. _dateLabelDisplayOrder],
                 // An out-of-range date mode is a catalogue corruption; the
                 // safe default is to treat the type as dateless (no options).

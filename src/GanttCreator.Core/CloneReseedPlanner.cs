@@ -128,7 +128,7 @@ public static class CloneReseedPlanner
         Dictionary<GanttRowId, int> occurrences = [];
         foreach (GanttRowId id in rows)
         {
-            _ = occurrences.TryGetValue(id, out var count);
+            _ = occurrences.TryGetValue(id, out int count);
             occurrences[id] = count + 1;
         }
 
@@ -202,7 +202,7 @@ public static class CloneReseedPlanner
     /// </remarks>
     private static bool NextUniqueId(Func<GanttRowId> factory, HashSet<GanttRowId> used, out GanttRowId? id)
     {
-        for (var attempt = 0; attempt < MaxIdGenerationAttempts; attempt++)
+        for (int attempt = 0; attempt < MaxIdGenerationAttempts; attempt++)
         {
             GanttRowId candidate = factory();
             if (used.Add(candidate))

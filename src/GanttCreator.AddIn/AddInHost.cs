@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using ExcelDna.Integration;
 using GanttCreator.Core;
@@ -23,10 +24,14 @@ namespace GanttCreator.AddIn;
 /// contract-testable outside Excel (work item R1.6).
 /// </param>
 /// <exception cref="ArgumentNullException">A source is <see langword="null"/>.</exception>
+[SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable",
+    Justification = "AddInHost is an Excel-DNA IExcelAddIn entry point, not a disposable type. " +
+    "Deterministic teardown runs through AutoClose, which disposes the owned rolling log " +
+    "instead of implementing IDisposable.")]
 public sealed class AddInHost(
     Func<AddInIdentity> identitySource,
     Func<IRollingLog> logSource,
-    Func<IExcelApplicationAdapter>? applicationAdapterSource = null) : IExcelAddIn
+    Func<IExcelApplicationAdapter?>? applicationAdapterSource = null) : IExcelAddIn
 {
     private readonly Func<AddInIdentity> _identitySource =
         identitySource ?? throw new ArgumentNullException(nameof(identitySource));
@@ -36,8 +41,10 @@ public sealed class AddInHost(
 
     // Defaults to the production ExcelDnaUtil.Application probe; injectable
     // so the AutoClose teardown order is contract-testable outside Excel
-    // (work item R1.6).
-    private readonly Func<IExcelApplicationAdapter> _applicationAdapterSource =
+    // (work item R1.6). A source may return null, meaning "the host has not
+    // exposed an application yet"; RibbonStateService.Activate re-probes for it
+    // later rather than being handed an adapter that can never see one.
+    private readonly Func<IExcelApplicationAdapter?> _applicationAdapterSource =
         applicationAdapterSource ?? DefaultApplicationAdapterSource;
 
     private IRollingLog? _log;
@@ -71,10 +78,10 @@ public sealed class AddInHost(
         // 12-character suffix can never match the Redactor's long-hex
         // pattern; the timestamp prefix keeps separately generated tokens
         // distinct even within one second boundary.
-        var filled = 0;
+        int filled = 0;
         while (filled < token.Length)
         {
-            var value = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 16);
+            int value = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 16);
             token[filled++] = value < 10 ? (char)('0' + value) : (char)('g' + (value - 10));
         }
         return string.Create(
@@ -134,12 +141,16 @@ public sealed class AddInHost(
 
         // Arm the Ribbon state service in a separate guarded step so that
         // this runs even when log creation, LogOpen, or SetLog failed above.
-        // ExcelDnaUtil.Application returns null outside a live Excel host, so
-        // the adapter reports "not determinable" (which keeps the previous
-        // value) instead of throwing; the state service never writes a log
-        // record, so the one-record contract above holds. Any failure from
-        // ExcelDnaUtil.Application or RibbonStateService is swallowed here so
-        // it never escapes AutoOpen.
+        // The default source yields no adapter when Excel-DNA has not exposed
+        // an application yet; the service then reports "not determinable"
+        // (which keeps the previous value) and retries on the next Activate.
+        // Note that ExcelDnaUtil.Application is NOT null merely because the
+        // process is not an Excel add-in host: it resolves the running Excel
+        // instance, so it is also non-null in a test process started while
+        // Excel happens to be open. Nothing here may depend on that difference.
+        // The state service never writes a log record, so the one-record
+        // contract above holds. Any failure from ExcelDnaUtil.Application or
+        // RibbonStateService is swallowed here so it never escapes AutoOpen.
         try
         {
             RibbonStateService.Instance.SetApplicationAdapter(
@@ -153,6 +164,10 @@ public sealed class AddInHost(
                 new ExcelConfigCatalogueWriter(ExcelDnaUtil.Application, log: _log));
             RibbonStateService.Instance.SetCatalogueReader(
                 new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
+            // R5.18h: the column dropdown applies its choice to the live table through
+            // this port, so the ribbon and the repair paths write the same columns.
+            RibbonStateService.Instance.SetColumnVisibilityPort(
+                new ExcelColumnVisibilityPort(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetTableReader(
                 new ExcelGanttTableReader(ExcelDnaUtil.Application));
             // R5.5 ruling 6: the standalone selection identifier feeds the
@@ -171,6 +186,41 @@ public sealed class AddInHost(
         {
             // Intentionally empty: state-service arming degrades silently.
         }
+
+        // ExcelDnaUtil.Application may be null during AutoOpen (before Excel-DNA
+        // has fully initialized) but becomes available once the XLL is loaded.
+        // Queue Activate() on the main STA thread so the auto-refresh scheduler
+        // can subscribe to sheet changes even when the ribbon onLoad callback
+        // does not fire (for example, when Excel is started invisible). The
+        // ribbon onLoad also calls Activate(), so this is a belt-and-suspenders
+        // fallback.
+#pragma warning disable CA1031
+        try
+        {
+            ExcelAsyncUtil.QueueAsMacro(() =>
+            {
+                try
+                {
+                    if (ExcelDnaUtil.Application is not null)
+                    {
+                        RibbonStateService.Instance.Activate();
+                    }
+                }
+                catch
+                {
+                    // A failure inside the queued callback must not escape.
+                }
+            });
+        }
+        catch
+        {
+            // QueueAsMacro ITSELF throws outside a live Excel host (the unit-test
+            // harness has no host), and AutoOpen must never surface that. In a real
+            // session the ribbon onLoad calls Activate() regardless, so nothing is
+            // lost by degrading here.
+        }
+#pragma warning restore CA1031
+
     }
 
     /// <summary>
@@ -194,6 +244,7 @@ public sealed class AddInHost(
         // Reset never throws by contract (every detach failure is guarded
         // inside the subscription itself); this guard is defence in depth so
         // a failure here cannot skip steps 2-5.
+
         try
         {
             RibbonStateService.Reset();
@@ -276,7 +327,7 @@ public sealed class AddInHost(
     /// </summary>
     internal static void LogOpenRecord(IRollingLog log, AddInIdentity identity)
     {
-        for (var attempt = 0; attempt < 2; attempt++)
+        for (int attempt = 0; attempt < 2; attempt++)
         {
             try
             {
@@ -294,14 +345,22 @@ public sealed class AddInHost(
     }
 
     /// <summary>
-    /// The production application-adapter source: the Excel application
-    /// object supplied by the Excel-DNA host. Outside a live Excel host the
-    /// probe returns null, so the adapter reports "not determinable" and
-    /// subscribes no events.
+    /// The production application-adapter source: an adapter over the Excel
+    /// application object supplied by the Excel-DNA host.
     /// </summary>
-    /// <returns>The live application adapter for this Excel session.</returns>
-    private static IExcelApplicationAdapter DefaultApplicationAdapterSource() =>
-        new ExcelApplicationAdapter(ExcelDnaUtil.Application);
+    /// <remarks>
+    /// Returns null rather than an adapter built over a null application when
+    /// Excel-DNA has not exposed the application yet. That null is what lets
+    /// <see cref="RibbonStateService.Activate"/> tell "nothing injected yet" from
+    /// "injected", and adopt the application once the ribbon <c>onLoad</c> or the
+    /// queued fallback runs.
+    /// </remarks>
+    /// <returns>The live application adapter, or null when the host supplied none.</returns>
+    private static IExcelApplicationAdapter? DefaultApplicationAdapterSource()
+    {
+        object? application = ExcelDnaUtil.Application;
+        return application is null ? null : new ExcelApplicationAdapter(application);
+    }
 
     private static AddInIdentity DefaultIdentitySource()
     {
@@ -310,8 +369,8 @@ public sealed class AddInHost(
         // A probe failure yields "unknown" for that field so the open
         // record still reports the remaining identifiers; it must never
         // propagate into AutoOpen.
-        var excelVersion = "unknown";
-        var xllFileName = "unknown";
+        string excelVersion = "unknown";
+        string xllFileName = "unknown";
 #pragma warning disable CA1031
         try
         {

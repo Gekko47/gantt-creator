@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using GanttCreator.Core;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -14,9 +15,23 @@ public class ExcelGanttRowInserter(
     IWorksheetProtectionGuard? protectionGuard = null,
     ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
     IRowHeightNormalisationPort? rowHeightNormaliser = null,
-    IOutlineGroupPort? outlineGroups = null) : IGanttRowInserter
+    IOutlineGroupPort? outlineGroups = null,
+    Action<string>? trace = null) : IGanttRowInserter
 {
     private readonly Excel.Application? _application = application as Excel.Application;
+
+    /// <summary>
+    /// Optional diagnostic sink for the group-aware parent decision and the regroup that follows
+    /// it, or <see langword="null"/> for no trace.
+    /// </summary>
+    /// <remarks>
+    /// Both lines exist because the decision and its consequence are one row apart in time but
+    /// several components apart in code: the inserter chooses a <c>ParentId</c>, writes it, then
+    /// the outline adapter rebuilds groups from a fresh read. A user report that "the new activity
+    /// is not in the group" cannot distinguish "the parent was never assigned" from "the parent was
+    /// assigned and the planner still dropped it", and the second is invisible in the sheet.
+    /// </remarks>
+    private readonly Action<string>? _trace = trace;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
     private readonly ITypeOptionsMaterialiser _typeOptionsMaterialiser =
@@ -79,7 +94,7 @@ public class ExcelGanttRowInserter(
 
         Excel.Sheets sheets = workbook.Sheets;
         if (!TryFindTable(sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table) || worksheet is null || table is null
-            || !TryBuildColumnMap(table, out var columnMap) || columnMap is null)
+            || !TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
         {
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TableMissing);
         }
@@ -114,10 +129,37 @@ public class ExcelGanttRowInserter(
         Excel.ListRow? newRow = null;
         Excel.Range rowRange;
 
+        // Hoisted out of the insert block so the regroup can report WHICH body row it inserted:
+        // the plan's refusal list is a set of row numbers, and without this the log cannot say
+        // whether the new row was refused or some unrelated row was.
+        int? insertedBodyRow = null;
+
         // Only the APPEND branch can lose the padding row, because only it depends on
         // the insert below the table having succeeded. A positional insert shifts the
         // sheet by itself, so its padding row is displaced by definition.
-        var paddingRowReserved = true;
+        bool paddingRowReserved = true;
+
+        // R5.16: resolve the new row's parent BEFORE any worksheet mutation, so a
+        // Critical Interval with no eligible parent refuses without touching the
+        // sheet. The decision reads the body only when there is something to
+        // decide (see DecideParent), which keeps the append and no-outline paths
+        // read-free.
+        int? position = reusableRow is null
+            ? GetInsertionPosition(application!, table, rows)
+            : null;
+        ParentDecision parentDecision = DecideParent(type, table, position, columnMap);
+        if (parentDecision.Refused)
+        {
+            return GanttRowInsertOutcome.Refused(
+                GanttRowInsertRefusalReason.CriticalIntervalRequiresParent);
+        }
+
+        position = parentDecision.Position;
+        if (parentDecision.ParentId is not null)
+        {
+            values = WithParentId(values, parentDecision.ParentId);
+        }
+
         if (reusableRow is not null)
         {
             // An initialised table whose body is empty can still own one blank row
@@ -128,7 +170,7 @@ public class ExcelGanttRowInserter(
         }
         else
         {
-            var position = GetInsertionPosition(application!, table, rows);
+            insertedBodyRow = position;
 
             // BOTH branches insert a genuine WORKSHEET row, because
             // ListRows.Add(position) does NOT shift the sheet. Measured
@@ -148,14 +190,14 @@ public class ExcelGanttRowInserter(
             //
             // This corrects ADR-0035 D3, which asserted the positional branch
             // "already inserts a real worksheet row". It does not.
-            var insideTable = position is not null;
+            bool insideTable = position is not null;
 
             // Inside the table for a positional insert, so the ListObject absorbs the
             // row. One past the table's last row for an append, so the padding row is
             // displaced rather than consumed -- Q4 measured that a row inserted below
             // the table does NOT auto-expand it, which is why the append branch still
             // follows its insert with ListRows.Add().
-            var inserted = insideTable
+            bool inserted = insideTable
                 ? InsertWorksheetRow(
                     table,
                     GetRangeRow(GetTableRange(table)) + position!.Value)
@@ -185,9 +227,10 @@ public class ExcelGanttRowInserter(
 
                 rowRange = GetRowRange(newRow);
 
-                // The height is already right by Excel's format inheritance, but that is a
-                // host behaviour rather than a stated invariant. Writing the token makes it
-                // this add-in's decision.
+                // The height is NOT right by Excel's format inheritance: the insert copies
+                // from the row BELOW (xlFormatFromRightOrBelow), so an appended row inherits
+                // the 6pt reserved row's height. Writing the token is therefore load-bearing
+                // here, not merely this add-in taking ownership of a host behaviour.
                 SetRowHeight(rowRange, GanttCatalogues.MetricDefault("GanttRowHeightPt"));
             }
             catch (System.Runtime.InteropServices.COMException ex)
@@ -204,23 +247,9 @@ public class ExcelGanttRowInserter(
                 return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
             }
 
-            // R5.13: a positional insert lands BELOW the active cell. When that
-            // puts the new row inside a group's contiguous child run, make it a
-            // child of that group's parent so the run stays contiguous and the
-            // outline planner can still represent the group. The append branch
-            // (position null) and the header row (position 1) stay top-level.
-            //
-            // This runs only with an outline writer -- without one there is no
-            // grouping to preserve, so the row is the plain top-level append the
-            // contract pins. It runs only AFTER the row-creation seams succeeded:
-            // a refused positional insert returned above, so a refusal never
-            // reads the user's existing rows (ADR-0008 D4). The neighbours are
-            // read as one bulk body read, never through GetListRowAt, so the
-            // insert's own row-acquisition seam call count is unchanged.
-            if (_outlineGroups is not null && position.HasValue && position.Value > 1)
-            {
-                values = ApplyGroupAwareParent(values, table, position.Value, columnMap);
-            }
+            // R5.16: the parent (if any) was resolved BEFORE the insert by
+            // DecideParent and is already written into `values`. Nothing here
+            // reads the user's rows after the row-creation seams.
         }
 
         try
@@ -242,15 +271,87 @@ public class ExcelGanttRowInserter(
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
         }
 
+        // A NEW ROW INHERITS THE PREVIOUS ROW'S DIAGNOSTIC FILL.
+        //
+        // Measured on Excel 16.0 (scripts/probe-insert-border-inheritance.ps1, phase B): the
+        // row an Add creates comes out carrying the pastel Start/Finish fill of the row it
+        // was formatted from, even with xlFormatFromRightOrBelow. Clearing the fill here is
+        // what stops that inheritance at the source: the validation report then paints
+        // exactly the findings it reads, and a row that a Type does not date (a milestone's
+        // Finish) is never born pink. Without it the fill is invisible to the highlighter's
+        // tracker - it never wrote it - so nothing could ever clear it.
+        //
+        // One COM call on the new row only, and only after the values are written. A host
+        // refusal is cosmetic and is traced rather than thrown (ADR-0008 D4).
+        try
+        {
+            ClearRowFill(rowRange);
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _trace?.Invoke(
+                "gantt.add.fill-clear refused: the new row may keep the previous row's diagnostic fill. "
+                + ex.Message);
+        }
+
+
+        // The table's EXTENSION is what loses the one rule the validation report paints
+        // over. Measured on Excel 16.0 by scripts/probe-insert-border-inheritance.ps1
+        // (phases B and G): with the report's pastel fill on BOTH cells of a body row, the
+        // next Add leaves that row's shared Start|Finish rule reading xlNone through
+        // Borders AND DisplayFormat, while every other boundary on the same row keeps its
+        // rule - so the pair reads as one continuous fill and the report looks like "the
+        // Start/Finish divider is missing on the rows that were added". Those two cells
+        // are the only adjacent pair the report fills, which is why only that boundary was
+        // ever reported, and why a LineStyle-only assertion on the unfilled table passes.
+        //
+        // The repair is the write Initialise already makes, re-asserted after the insert:
+        // phase G3 reads every boundary back as continuous on every row, and G4 shows the
+        // repair survives the next Add. COLOUR ONLY - the outside weights are untouched by
+        // the defect, and Border.Weight is a closed set this pass must not second-guess.
+        //
+        // A host refusal here is cosmetic and must not fail an insert that already landed:
+        // it is traced, not thrown (ADR-0008 D4).
+        try
+        {
+            EnsureTableBorderColour(table);
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _trace?.Invoke(
+                "gantt.add.border-colour refused: the table's cell-border colour was not re-asserted. "
+                + ex.Message);
+        }
+
         // R5.13: rebuild the native outline from the post-insert table so the
         // -/+ controls reflect the new row's parent immediately, mirroring the
         // parent/child mutator's Finish. A regroup refusal degrades to the
         // pre-D12 behaviour -- the insert stands and the next Refresh rebuilds
         // the outline -- rather than failing work that already landed.
-        RegroupOutline(table, columnMap);
+        RegroupOutline(table, columnMap, insertedBodyRow);
 
-        TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.EnsureCurrent();
-        if (!typeOptions.Succeeded)
+        // The materialiser is COM work too: it re-applies the Type column's list
+        // validation when the name or the rule has gone stale, and the host refuses
+        // `Validation.Add` on some workbooks with 0x800A03EC. This call was the last
+        // unguarded COM entry in this method, and a live workbook proved what that
+        // costs: the exception escaped into the Ribbon callback AFTER the row was
+        // written, so the user got the generic "Excel could not complete the
+        // operation" dialog, a scaffold row with no dates, and a refresh that
+        // reported two validation errors against it. A host refusal here is now the
+        // typed `TypeOptionsUnavailable`, and it takes the rollback below -- which is
+        // what this block always intended to do.
+        bool typeOptionsSucceeded;
+        try
+        {
+            typeOptionsSucceeded = _typeOptionsMaterialiser.EnsureCurrent().Succeeded;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _ = ex;
+            typeOptionsSucceeded = false;
+        }
+
+        if (!typeOptionsSucceeded)
         {
             if (newRow is not null)
             {
@@ -339,10 +440,10 @@ public class ExcelGanttRowInserter(
         }
 
         Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyIndex = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
+        int tableFirstRow = GetRangeRow(tableRange);
+        int activeRow = GetRangeRow(activeCell);
+        int bodyIndex = activeRow - tableFirstRow;
+        int rowCount = GetListRowCount(rows);
 
         // Outside the body in either direction: not a position the user can name.
         if (bodyIndex < 0 || bodyIndex > rowCount)
@@ -362,10 +463,21 @@ public class ExcelGanttRowInserter(
 
     // Excel's own values, carried as named constants rather than PIA enums: the
     // interop assembly Office compiles against does not expose XlInsertionShift or
-    // XlFormatFrom, and these are the exact values a live probe drove Rows.Insert
-    // with successfully.
-    private const int _excelShiftDown = -4121;              // xlShiftDown
-    private const int _excelFormatFromLeftOrAbove = -4142; // xlFormatFromLeftOrAbove
+    // XlInsertFormatOrigin, and these are the exact values a live probe drove
+    // Rows.Insert with successfully.
+    private const int _excelShiftDown = -4121; // xlShiftDown
+
+    // 1 = XlInsertFormatOrigin.xlFormatFromRightOrBelow, NOT the default 0
+    // (xlFormatFromLeftOrAbove). The default copies the format of the row ABOVE into
+    // the inserted row, and the row above an appended activity is the last body row,
+    // which carries the pastel-red Start/Finish fills of the validation report. Excel
+    // copies cell interiors with the format, so every add cloned that pink into the
+    // row it created -- exactly one row lower than the previous clone, which is the
+    // reported "a warning fill appears one row below the entity, and the next add puts
+    // another one below that" trail. This constant previously read -4142, which is not
+    // a member of XlInsertFormatOrigin at all; Excel ignored it, fell back to the
+    // default, and cloned the fill. Measured 2026-11-09 against Excel 16.0.
+    private const int _excelFormatFromRightOrBelow = 1;
 
     /// <summary>
     /// Inserts one real worksheet row directly below the table, so the reserved
@@ -414,7 +526,7 @@ public class ExcelGanttRowInserter(
         // One past the table's last row. Reading it through the range rather than
         // assuming the layout keeps this correct if the table ever adopts at a
         // different row.
-        var lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
+        int lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
         return InsertWorksheetRow(table, lastRow + 1);
     }
 
@@ -459,7 +571,7 @@ public class ExcelGanttRowInserter(
                 return false;
             }
 
-            rows[worksheetRow].Insert(_excelShiftDown, _excelFormatFromLeftOrAbove);
+            rows[worksheetRow].Insert(_excelShiftDown, _excelFormatFromRightOrBelow);
             return true;
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException or ArgumentException)
@@ -481,7 +593,7 @@ public class ExcelGanttRowInserter(
     {
         Excel.Range tableRange = GetTableRange(table);
         Excel.Range tableRows = GetRangeRows(tableRange);
-        var rowCount = GetRangeRowCount(tableRows);
+        int rowCount = GetRangeRowCount(tableRows);
         if (rowCount <= 1)
         {
             return null;
@@ -503,8 +615,8 @@ public class ExcelGanttRowInserter(
     {
         worksheet = null;
         table = null;
-        var sheetCount = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
@@ -512,11 +624,11 @@ public class ExcelGanttRowInserter(
             }
 
             Excel.ListObjects listObjects = candidate.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 Excel.ListObject candidateTable = GetTableAt(listObjects, tableIndex);
-                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(candidateTable.Name))
                 {
                     worksheet = candidate;
                     table = candidateTable;
@@ -532,20 +644,20 @@ public class ExcelGanttRowInserter(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         Excel.ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             Excel.ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -565,75 +677,259 @@ public class ExcelGanttRowInserter(
     }
 
     /// <summary>
-    /// Applies group-aware parenting to a positional insert (R5.13).
-    /// A positional insert lands BELOW the active cell, so once the
-    /// worksheet-row insert has shifted the rows the active cell sits
-    /// at the one-based body position <c>position - 1</c> and the row
-    /// that ends up below the new row at <c>position + 1</c>. When
-    /// the new row lands inside a group's contiguous child run it
-    /// becomes a child of that group's parent; when it lands between
-    /// a top-level parent and its first child it becomes that
-    /// parent's first child; every other position -- including the
-    /// header row (position 1) and the append (position
-    /// <see langword="null"/>) -- stays top-level, matching the host's
-    /// own outline-insert behaviour.
+    /// The parent decision for one insert (R5.16): the parent to write, the
+    /// position to land at (null means append), and whether the insert must be
+    /// refused before it mutates the sheet.
+    /// </summary>
+    private readonly record struct ParentDecision(
+        GanttRowId? ParentId,
+        int? Position,
+        bool Refused);
+
+    /// <summary>
+    /// Resolves the new row's parent BEFORE the worksheet insert (R5.16).
     /// </summary>
     /// <remarks>
-    /// The two neighbours are read as ONE bulk body read
-    /// (<see cref="GetDataBodyRange"/>/<see cref="GetRangeValue2"/>),
-    /// never through <see cref="GetListRowAt"/>: that seam is the
-    /// insert's own row-acquisition step, whose call count and order
-    /// the contract pins. Reusing <see cref="ReadBody"/> also matches
-    /// the projection authority the regroup that follows consumes.
+    /// <para>Four outcomes, in order:</para>
+    /// <list type="number">
+    /// <item><description>
+    /// A Critical Interval attaches to the nearest eligible parent — searched
+    /// upward from the selection first, then downward — and lands after that
+    /// parent's last child. No eligible parent anywhere refuses the insert.
+    /// </description></item>
+    /// <item><description>
+    /// Every other type keeps the R5.13 neighbour rule: inside a contiguous
+    /// child run it joins that group; between a parent and its first child it
+    /// becomes that parent's first child.
+    /// </description></item>
+    /// <item><description>
+    /// The candidate parent is validated through
+    /// <see cref="AddChildPlanner.Evaluate"/>. A rejection — or a type that may
+    /// never be a child, such as a spacer or splitter — appends the row at the
+    /// end of the table instead, so a child run is never split.
+    /// </description></item>
+    /// <item><description>
+    /// Nothing to decide (an append, a header insert, or no outline writer)
+    /// returns without reading the body at all.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// This is the one place the insert reads before mutating. R5.16 records
+    /// that exception, and the R5.13 "never reads" pin is amended to "never
+    /// writes or regroups".
+    /// </para>
     /// </remarks>
-    /// <param name="values">The scaffold row, in schema-column order.</param>
-    /// <param name="table">The Gantt data table, post-insert.</param>
-    /// <param name="position">The one-based body position the new row lands at.</param>
+    /// <param name="type">The type the new row will have.</param>
+    /// <param name="table">The Gantt data table, pre-insert.</param>
+    /// <param name="position">The one-based body position the row would land at, or null for an append.</param>
     /// <param name="columnMap">The schema-column to table-column index map.</param>
-    /// <returns>The scaffold, with its <c>ParentId</c> set when the new row joins a group.</returns>
-    private IReadOnlyList<object?> ApplyGroupAwareParent(
-        IReadOnlyList<object?> values,
+    /// <returns>The decision.</returns>
+    private ParentDecision DecideParent(
+        GanttEntityType type,
         Excel.ListObject table,
-        int position,
+        int? position,
         int[] columnMap)
     {
-        // The active cell is at 0-based body position position - 2 and the
-        // row that ends up below the new row at 0-based position. Both must
-        // be in range; position 1 (header selected) has no active data cell
-        // above the new row, so it stays top-level.
-        List<object?[]> body = ReadBody(table);
-        if (position < 2 || position >= body.Count)
+        bool critical = type == GanttEntityType.CriticalInterval;
+        bool canJoinGroup = _outlineGroups is not null;
+
+        // Nothing to decide: leave the append, header, and no-outline paths
+        // exactly as they were, including their freedom from any body read.
+        if (!critical && (!canJoinGroup || position is null || position.Value < 2))
         {
-            return values;
+            return new ParentDecision(null, position, false);
         }
 
-        var activeRow = body[position - 2];
-        var belowRow = body[position];
+        List<object?[]> body = ReadBody(table);
+        if (body.Count == 0)
+        {
+            return new ParentDecision(null, position, critical);
+        }
+
+        Dictionary<string, int> childCounts = CountChildren(body, columnMap);
+
+        if (critical)
+        {
+            int anchor = position is null ? body.Count - 1 : position.Value - 2;
+            if (anchor < 0 || anchor >= body.Count)
+            {
+                return new ParentDecision(null, position, true);
+            }
+
+            int? parentIndex = FindNearestEligibleParent(body, columnMap, anchor, childCounts, out GanttRowId? parentId);
+            return parentIndex is null || parentId is null
+                ? new ParentDecision(null, position, true)
+                : new ParentDecision(
+                    parentId,
+                    PositionAfterChildren(body, columnMap, parentIndex.Value, parentId),
+                    false);
+        }
+
+        int activeIndex = position!.Value - 2;
+        if (activeIndex < 0 || activeIndex >= body.Count)
+        {
+            return new ParentDecision(null, position, false);
+        }
+
+        object?[] activeRow = body[activeIndex];
+        object?[]? belowRow = position.Value < body.Count ? body[position.Value - 1] : null;
 
         GanttRowId? activeId = TryParseId(activeRow, columnMap);
         GanttRowId? activeParentId = TryParseParentId(activeRow, columnMap);
-        GanttRowId? belowParentId = TryParseParentId(belowRow, columnMap);
+        GanttRowId? belowParentId = belowRow is null ? null : TryParseParentId(belowRow, columnMap);
 
-        // The active cell is a child of P and the row below is also a
-        // child of P: the new row lands inside P's contiguous child run,
-        // so it joins that run.
+        GanttRowId? candidate = null;
         if (activeParentId is not null && belowParentId == activeParentId)
         {
-            return WithParentId(values, activeParentId);
+            candidate = activeParentId;
         }
-
-        // The active cell is a top-level parent and the row below is
-        // its child: the new row lands between the parent and its first
-        // child, so it becomes that parent's first child.
-        if (activeParentId is null && activeId is not null && belowParentId == activeId)
+        else if (activeParentId is null && activeId is not null && belowParentId == activeId)
         {
-            return WithParentId(values, activeId);
+            candidate = activeId;
         }
 
-        // Every other position -- below a top-level leaf, below a group's
-        // last child, or between two different groups -- is top-level,
-        // matching the host's own outline-insert behaviour.
-        return values;
+        if (candidate is null)
+        {
+            return new ParentDecision(null, position, false);
+        }
+
+        int candidateIndex = -1;
+        for (int index = 0; index < body.Count; index++)
+        {
+            if (TryParseId(body[index], columnMap) == candidate)
+            {
+                candidateIndex = index;
+                break;
+            }
+        }
+
+        if (candidateIndex < 0
+            || !EntityTypeCatalog.TryParse(
+                ExcelGanttRowProjection.CellText(body[candidateIndex], columnMap, "Type"),
+                out GanttEntityType parentType))
+        {
+            return new ParentDecision(null, position, false);
+        }
+
+        object?[] parentRow = body[candidateIndex];
+        string parentKey = candidate.Value;
+        int existingChildren = childCounts.TryGetValue(parentKey, out int count) ? count : 0;
+        AddChildRefusalReason? refusal = AddChildPlanner.Evaluate(
+            parentType,
+            candidate,
+            TryParseParentId(parentRow, columnMap),
+            existingChildren,
+            type);
+
+        // A rejected candidate, or a type that may never be a child, appends at
+        // the end of the table: always a valid position, never splits a run.
+        return refusal is null
+            ? new ParentDecision(candidate, position, false)
+            : new ParentDecision(null, null, false);
+    }
+
+    /// <summary>Counts each row's children by the parent id text it names.</summary>
+    private static Dictionary<string, int> CountChildren(List<object?[]> body, int[] columnMap)
+    {
+        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        foreach (object?[] row in body)
+        {
+            GanttRowId? parentId = TryParseParentId(row, columnMap);
+            if (parentId is null)
+            {
+                continue;
+            }
+
+            string key = parentId.Value;
+            counts[key] = counts.TryGetValue(key, out int count) ? count + 1 : 1;
+        }
+
+        return counts;
+    }
+
+    /// <summary>
+    /// Finds the nearest row that can own a Critical Interval: upward from the
+    /// anchor first, then downward (R5.16).
+    /// </summary>
+    private static int? FindNearestEligibleParent(
+        List<object?[]> body,
+        int[] columnMap,
+        int anchor,
+        Dictionary<string, int> childCounts,
+        out GanttRowId? parentId)
+    {
+        parentId = null;
+        for (int index = anchor; index >= 0; index--)
+        {
+            if (TryEligibleParent(body[index], columnMap, childCounts, out parentId))
+            {
+                return index;
+            }
+        }
+
+        for (int index = anchor + 1; index < body.Count; index++)
+        {
+            if (TryEligibleParent(body[index], columnMap, childCounts, out parentId))
+            {
+                return index;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether one row can own a Critical Interval.</summary>
+    private static bool TryEligibleParent(
+        object?[] row,
+        int[] columnMap,
+        Dictionary<string, int> childCounts,
+        out GanttRowId? parentId)
+    {
+        parentId = null;
+        GanttRowId? rowId = TryParseId(row, columnMap);
+        if (rowId is null
+            || !EntityTypeCatalog.TryParse(
+                ExcelGanttRowProjection.CellText(row, columnMap, "Type"),
+                out GanttEntityType rowType))
+        {
+            return false;
+        }
+
+        int childCount = childCounts.TryGetValue(rowId.Value, out int count) ? count : 0;
+        if (AddChildPlanner.Evaluate(
+                rowType,
+                rowId,
+                TryParseParentId(row, columnMap),
+                childCount,
+                GanttEntityType.CriticalInterval) is not null)
+        {
+            return false;
+        }
+
+        parentId = rowId;
+        return true;
+    }
+
+    /// <summary>
+    /// The position immediately after a parent's last existing child, or null
+    /// when that is the end of the table (R5.16).
+    /// </summary>
+    private static int? PositionAfterChildren(
+        List<object?[]> body,
+        int[] columnMap,
+        int parentIndex,
+        GanttRowId parentId)
+    {
+        int lastIndex = parentIndex;
+        for (int index = 0; index < body.Count; index++)
+        {
+            if (TryParseParentId(body[index], columnMap) == parentId)
+            {
+                lastIndex = index;
+            }
+        }
+
+        return lastIndex == body.Count - 1 ? null : lastIndex + 2;
     }
 
     /// <summary>
@@ -688,8 +984,8 @@ public class ExcelGanttRowInserter(
         IReadOnlyList<object?> values,
         GanttRowId parentId)
     {
-        var mutable = new object?[values.Count];
-        for (var index = 0; index < values.Count; index++)
+        object?[] mutable = new object?[values.Count];
+        for (int index = 0; index < values.Count; index++)
         {
             mutable[index] = values[index];
         }
@@ -708,7 +1004,11 @@ public class ExcelGanttRowInserter(
     /// </summary>
     /// <param name="table">The Gantt data table, post-insert.</param>
     /// <param name="columnMap">The schema-column to table-column index map.</param>
-    private void RegroupOutline(Excel.ListObject table, int[] columnMap)
+    /// <param name="insertedBodyRow">
+    /// The one-based body row the new row occupies, or <see langword="null"/> when the insert
+    /// appended. Used only to report whether the new row is the one the plan refused.
+    /// </param>
+    private void RegroupOutline(Excel.ListObject table, int[] columnMap, int? insertedBodyRow)
     {
         if (_outlineGroups is null)
         {
@@ -716,13 +1016,46 @@ public class ExcelGanttRowInserter(
         }
 
         List<object?[]> body = ReadBody(table);
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out var _);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(
+            body,
+            columnMap,
+            out int? _,
+            out int? _);
         if (events is null)
         {
+            _trace?.Invoke("gantt.rowinsert regroup rows=" + body.Count + " projected=false");
             return;
         }
 
-        _ = _outlineGroups.Apply(events);
+        // Forced: Excel copies the outline LEVEL of the row above into a row inserted inside a
+        // group, so the new row already reports the child level while sitting outside the group's
+        // span. The level-based skip would decline to group it and the row would be left ungrouped
+        // in the sheet with no error - measured live 2026-11-09 (groups=0 while the plan had 2 and
+        // the new row was inside one).
+        OutlineGroupOutcome outcome = _outlineGroups.Apply(events, forceRegroup: true);
+
+        // The plan is ALSO logged, because the writer's counts cannot distinguish the two ways a
+        // regroup does nothing: an empty plan (nothing was grouped) and a plan whose groups the
+        // writer judged already grouped (nothing was written). `RowsUngrouped` on the OUTCOME
+        // counts rows the writer reset, not rows the planner refused, so it reads zero in both.
+        OutlineGroupPlan plan = OutlineGroupPlanner.Plan(events);
+        bool insertedGrouped = insertedBodyRow is { } row
+            && plan.Groups.Any(group => group.ChildRowNumbers.Contains(row));
+        bool insertedRefused = insertedBodyRow is { } refused
+            && plan.RowsToUngroup.Contains(refused);
+
+        _trace?.Invoke(
+            "gantt.rowinsert regroup rows=" + body.Count
+            + " events=" + events.Count
+            + " groups=" + outcome.GroupsApplied
+            + " ungrouped=" + outcome.RowsUngrouped
+            + " refusal=" + (outcome.Refusal?.ToString() ?? "none")
+            + " parents=" + events.Count(static @event => @event.ParentId is not null)
+            + " plan-groups=" + plan.Groups.Count
+            + " plan-ungroup=" + plan.RowsToUngroup.Count
+            + " inserted=" + (insertedBodyRow?.ToString(CultureInfo.InvariantCulture) ?? "none")
+            + " inserted-grouped=" + insertedGrouped
+            + " inserted-refused=" + insertedRefused);
     }
 
     /// <summary>
@@ -742,10 +1075,10 @@ public class ExcelGanttRowInserter(
         int[] columnMap)
     {
 #pragma warning disable CA1814 // Excel Range.Value2 requires a rectangular SAFEARRAY.
-        var matrix = new object[1, columnMap.Length];
-        for (var schemaIndex = 0; schemaIndex < values.Count; schemaIndex++)
+        object[,] matrix = new object[1, columnMap.Length];
+        for (int schemaIndex = 0; schemaIndex < values.Count; schemaIndex++)
         {
-            var tableIndex = columnMap[schemaIndex];
+            int tableIndex = columnMap[schemaIndex];
             if (tableIndex > 0)
             {
                 matrix[0, tableIndex - 1] = values[schemaIndex] ?? string.Empty;
@@ -778,7 +1111,7 @@ public class ExcelGanttRowInserter(
 
     internal virtual int GetRangeRowCount(Excel.Range rows)
     {
-        var count = rows.Count;
+        int count = rows.Count;
         return count;
     }
 
@@ -797,6 +1130,52 @@ public class ExcelGanttRowInserter(
     /// <param name="heightPt">The height to write, in points.</param>
     internal virtual void SetRowHeight(Excel.Range range, double heightPt) =>
         range.RowHeight = heightPt;
+
+    /// <summary>
+    /// Clears the diagnostic cell fill from a newly created row before the refresh paints it.
+    /// </summary>
+    /// <param name="rowRange">The new row's range, across every table column.</param>
+    /// <remarks>
+    /// A visible cell fill is copied with the row's format, so a new row can arrive already
+    /// carrying the validation report's pastel colour from the row it was formatted from. The
+    /// report's own reconcile can only clear addresses it wrote, so an inherited fill is
+    /// otherwise permanent — reported as a milestone whose <c>Finish</c> cell, a column a
+    /// milestone does not use, staying pink for the life of the workbook.
+    /// </remarks>
+    internal virtual void ClearRowFill(Excel.Range rowRange) =>
+        rowRange.Interior.Color = (int)Excel.XlColorIndex.xlColorIndexNone;
+
+
+    /// <summary>
+    /// Re-asserts the theme's cell-border colour across the whole table after a row insert.
+    /// </summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the same write as Initialise.</b> <c>Borders.Color</c> is already the single
+    /// authority for a cell border's colour (<see cref="GanttTableAppearance.BorderColour"/>),
+    /// and it is what Initialise and Repair apply. Re-asserting it here does not draw a
+    /// different grid — it restores the one the table style supplies after the host drops it.
+    /// </para>
+    /// <para>
+    /// <b>Why after the insert.</b> Measured on Excel 16.0
+    /// (<c>scripts/probe-insert-border-inheritance.ps1</c>): the loss happens when the table is
+    /// <em>extended</em>, and only for the pair of cells the validation report has filled. Both
+    /// facts matter — a fill with no following insert is harmless (phase D), and an insert with
+    /// no fill is harmless (phase A).
+    /// </para>
+    /// <para>
+    /// <b>Not sealed and virtual.</b> The two calls are real COM work on a
+    /// <c>ListObject</c> and a <c>Borders</c> collection, so contract tests substitute the whole
+    /// seam rather than a fake COM graph.
+    /// </para>
+    /// </remarks>
+    internal virtual void EnsureTableBorderColour(Excel.ListObject table)
+    {
+        Excel.Range range = GetTableRange(table);
+        Excel.Borders borders = range.Borders;
+        borders.Color = GanttTableAppearance.BorderColour.ARGB;
+    }
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
 

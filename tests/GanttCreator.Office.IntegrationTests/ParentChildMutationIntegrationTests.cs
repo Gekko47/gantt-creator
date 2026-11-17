@@ -49,6 +49,10 @@ public class ParentChildMutationIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+
+            // ADR-0055: the loaded pack's own automatic refresh would protect the sheet between
+            // this test's row writes and refuse the rest of the mutation.
+            OfficeFixture.DisableChartProtection(workbook);
             Excel.Worksheet sheet =
                 (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
@@ -134,6 +138,7 @@ public class ParentChildMutationIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
             Excel.Worksheet sheet =
                 (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];

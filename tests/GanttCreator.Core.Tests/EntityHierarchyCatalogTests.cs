@@ -118,6 +118,7 @@ public sealed class EntityHierarchyCatalogTests
     [InlineData(GanttEntityType.AsPlannedMilestone)]
     [InlineData(GanttEntityType.BaselineMilestone)]
     [InlineData(GanttEntityType.CriticalMilestone)]
+    [InlineData(GanttEntityType.CustomMilestone)]
     public void Milestones_may_be_children_but_never_own_them(GanttEntityType type)
     {
         Assert.True(EntityHierarchyCatalog.MayBeChild(type));
@@ -229,5 +230,26 @@ public sealed class EntityHierarchyCatalogTests
         Assert.Equal(first, second);
         Assert.Equal([.. first.Order()], first);
         Assert.NotSame(first, second);
+    }
+
+    /// <summary>
+    /// Every child-owning type is a span, and none of them is
+    /// <c>CriticalInterval</c>. That equivalence is what made the demote
+    /// planner's span guard dead code: any candidate that reached it had
+    /// already passed <see cref="EntityHierarchyCatalog.MayOwnChildren"/>, so a
+    /// second span test could not refuse anything. If a future catalogue change
+    /// gives a child-owning type a non-span date mode, this test fails and the
+    /// guard has to come back with it.
+    /// </summary>
+    [Fact]
+    public void Every_child_owning_type_is_a_span_apart_from_critical_interval()
+    {
+        foreach (GanttEntityType type in EntityHierarchyCatalog.TypesThatMayOwnChildren())
+        {
+            EntityTypeDefinition definition = EntityTypeCatalog.GetDefinition(type)!;
+
+            Assert.Equal(EntityDateMode.StartFinish, definition.DateMode);
+            Assert.NotEqual(GanttEntityType.CriticalInterval, type);
+        }
     }
 }

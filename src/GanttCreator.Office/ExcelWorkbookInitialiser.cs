@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
@@ -23,6 +24,14 @@ namespace GanttCreator.Office;
 /// </param>
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
 /// <param name="typeOptionsMaterialiser">The TypeOptions name and validation materialiser.</param>
+/// <param name="trace">
+/// Optional technical-record sink. When supplied, one <c>gantt.initialise steps</c>
+/// record splits the mutation sequence — header row, table, the 17-column presentation
+/// pass, configuration sheet plus catalogue write, plot anchor, and the TypeOptions
+/// validation — because "Initialise feels slow" cannot be answered by the refresh
+/// timings, which begin only after all of this has run. Absent in tests, where the
+/// timings are not a product behaviour.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -62,8 +71,28 @@ public class ExcelWorkbookInitialiser(
     object? application,
     IConfigCatalogueWriter? catalogueWriter = null,
     IWorksheetProtectionGuard? protectionGuard = null,
-    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : IWorkbookInitialiser
+    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
+    Action<string>? trace = null) : IWorkbookInitialiser
 {
+    /// <summary>
+    /// Optional technical-record sink. When supplied, one
+    /// <c>gantt.initialise steps</c> record splits the mutation sequence, which is the
+    /// half of "Initialise feels slow" the refresh timings cannot describe: the table,
+    /// the 17-column presentation pass and the catalogue write all happen here.
+    /// </summary>
+    private readonly Action<string>? _trace = trace;
+
+    private static double Ms(long ticks) => ticks * 1000d / Stopwatch.Frequency;
+
+    /// <summary>The four border indices that form a table's outside edge.</summary>
+    private static readonly XlBordersIndex[] _outsideBorderEdges =
+    [
+        XlBordersIndex.xlEdgeTop,
+        XlBordersIndex.xlEdgeBottom,
+        XlBordersIndex.xlEdgeLeft,
+        XlBordersIndex.xlEdgeRight,
+    ];
+
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
@@ -127,15 +156,15 @@ public class ExcelWorkbookInitialiser(
         // adopted only when it is pristine; a chart sheet or any cell/non-cell
         // user state causes a fresh sheet to be created. A chart sheet is not
         // an Excel.Worksheet, so the cast selects the create path for it.
-        var activeWorksheet = workbook.ActiveSheet as Worksheet;
-        var adopt = activeWorksheet is not null
+        Worksheet? activeWorksheet = workbook.ActiveSheet as Worksheet;
+        bool adopt = activeWorksheet is not null
             && IsPristy(activeWorksheet, workbook, application);
 
         // Read-only check 3: resolve the label against every other sheet
         // (OrdinalIgnoreCase, matching Excel's own case-insensitive sheet-name
         // uniqueness) before any mutation. On the adopt path the target's own
         // current name is excluded — it is about to be renamed.
-        var label = ResolveAvailableLabel(sheets, adopt ? activeWorksheet!.Name : null);
+        string label = ResolveAvailableLabel(sheets, adopt ? activeWorksheet!.Name : null);
 
         // Read-only check 4: verify worksheet and workbook-structure
         // protection before any mutation. On the create path, both the
@@ -206,26 +235,35 @@ public class ExcelWorkbookInitialiser(
             }
         }
 
-        var wroteTitle = false;
-        var wroteHeader = false;
-        var createdTable = false;
+        bool wroteHeader = false;
+        bool createdTable = false;
         ListObject? createdDataTable = null;
-        var createdConfigSheet = false;
-        var wrotePlotAnchor = false;
+        bool createdConfigSheet = false;
+        bool wrotePlotAnchor = false;
+
+        long stepStart = _trace is null ? 0L : Stopwatch.GetTimestamp();
+        long headerTicks = 0;
+        long tableTicks = 0;
+        long columnsTicks = 0;
+        long configTicks = 0;
+        long anchorTicks = 0;
+        long typeTicks = 0;
 
         try
         {
-            // The reserved row is written FIRST (ADR-0030 D4), so the title cell
-            // exists before the header range is resolved from row 2 and before the
-            // table is created from it. Writing rather than inserting is deliberate:
-            // the adopt path only runs on a pristine sheet, so row 1 is already empty
-            // and there is no structural mutation for a refusal to leave behind.
-            WriteTitleRow(
-                target,
-                GanttCatalogues.SettingDefault("ChartTitle") ?? GanttWorkbookContract.DefaultChartTitle);
-            wroteTitle = true;
+            // The engine columns are hidden BEFORE their names are written, so the header
+            // row never paints a schema name at a visible width before the presentation
+            // pass hides it (live report 2026-11-15: "i briefly see all the table headings
+            // before they are hidden").
+            HideSchemaHiddenColumns(target);
             WriteHeaderRow(target);
             wroteHeader = true;
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                headerTicks = now - stepStart;
+                stepStart = now;
+            }
 
             // The table is split into "add" and "present" so `createdTable` can be set
             // BETWEEN them. Everything after `ListObjects.Add` can throw -- the host
@@ -242,11 +280,31 @@ public class ExcelWorkbookInitialiser(
             createdDataTable = AddDataTable(target);
             createdTable = true;
             PresentDataTable(createdDataTable);
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                tableTicks = now - stepStart;
+                stepStart = now;
+            }
+
             ApplyColumnPresentation(createdDataTable);
+            ApplyLeadingGutterWidth(createdDataTable);
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                columnsTicks = now - stepStart;
+                stepStart = now;
+            }
 
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
             ConfigWriteOutcome catalogueOutcome = _catalogueWriter.Write();
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                configTicks = now - stepStart;
+                stepStart = now;
+            }
             if (!catalogueOutcome.Succeeded)
             {
                 RollBackForCatalogueRefusal(
@@ -254,7 +312,6 @@ public class ExcelWorkbookInitialiser(
                     sheets,
                     catalogueOutcome,
                     wroteHeader,
-                    wroteTitle,
                     createdTable,
                     createdConfigSheet,
                     createdDataTable);
@@ -265,17 +322,12 @@ public class ExcelWorkbookInitialiser(
                 // unpreservable catalogue, or a host write failure.
                 InitialiseRefusalReason reason = catalogueOutcome.Refusal switch
                 {
-                    ConfigWriteRefusalReason.NoActiveWorkbook
-                        => InitialiseRefusalReason.NoActiveWorkbook,
-                    ConfigWriteRefusalReason.TargetProtected
-                        => InitialiseRefusalReason.TargetProtected,
-                    ConfigWriteRefusalReason.ConfigSheetMissing
-                        => InitialiseRefusalReason.ConfigSheetExists,
-                    ConfigWriteRefusalReason.CataloguePreservationInvalid
-                        => InitialiseRefusalReason.CatalogueDrift,
-                    ConfigWriteRefusalReason.HostRejected
-                        => InitialiseRefusalReason.CatalogueWriteFailed,
-                    null => InitialiseRefusalReason.CatalogueWriteFailed,
+                    ConfigWriteRefusalReason.NoActiveWorkbook => InitialiseRefusalReason.NoActiveWorkbook,
+                    ConfigWriteRefusalReason.TargetProtected => InitialiseRefusalReason.TargetProtected,
+                    ConfigWriteRefusalReason.ConfigSheetMissing => InitialiseRefusalReason.ConfigSheetExists,
+                    ConfigWriteRefusalReason.CataloguePreservationInvalid => InitialiseRefusalReason.CatalogueDrift,
+                    ConfigWriteRefusalReason.HostRejected or null => InitialiseRefusalReason.CatalogueWriteFailed,
+                    ConfigWriteRefusalReason.ThemeValidationFailed => InitialiseRefusalReason.CatalogueWriteFailed,
                     _ => InitialiseRefusalReason.CatalogueWriteFailed,
                 };
                 return WorkbookInitialiseOutcome.Refused(reason);
@@ -283,14 +335,24 @@ public class ExcelWorkbookInitialiser(
 
             WritePlotAnchorName(target);
             wrotePlotAnchor = true;
+            if (_trace is not null)
+            {
+                long now = Stopwatch.GetTimestamp();
+                anchorTicks = now - stepStart;
+                stepStart = now;
+            }
+
             TypeOptionsMaterialiseOutcome typeOptionsOutcome = _typeOptionsMaterialiser.Materialise();
+            if (_trace is not null)
+            {
+                typeTicks = Stopwatch.GetTimestamp() - stepStart;
+            }
             if (!typeOptionsOutcome.Succeeded)
             {
                 RollBackPlotAnchorName(target);
                 RollBackConfigurationSheet(sheets);
                 RollBackDataTable(target, createdDataTable);
                 RollBackHeaderRow(target);
-                RollBackTitleRow(target);
                 return typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.NoActiveWorkbook
                     ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook)
                     : typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.TargetProtected
@@ -320,13 +382,19 @@ public class ExcelWorkbookInitialiser(
                 RollBackHeaderRow(target);
             }
 
-            if (wroteTitle)
-            {
-                RollBackTitleRow(target);
-            }
-
             throw;
         }
+
+        // Last, and outside the try: the sheet is complete, so the window's own gridlines
+        // come off only once there is a chart for them to be under, and a refused
+        // Initialise leaves the user's view exactly as it was.
+        HideGridlines(application);
+
+        _trace?.Invoke(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.initialise steps header={Ms(headerTicks):F1} table={Ms(tableTicks):F1}"
+            + $" columns={Ms(columnsTicks):F1} config={Ms(configTicks):F1}"
+            + $" anchor={Ms(anchorTicks):F1} types={Ms(typeTicks):F1}"));
 
         return adopt
             ? WorkbookInitialiseOutcome.Adopted(label)
@@ -343,7 +411,6 @@ public class ExcelWorkbookInitialiser(
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="catalogueOutcome">The refusing catalogue outcome (for parity, not surfaced).</param>
     /// <param name="wroteHeader">Whether the header row was written.</param>
-    /// <param name="wroteTitle">Whether the reserved title row was written.</param>
     /// <param name="createdTable">Whether the data table was created.</param>
     /// <param name="createdConfigSheet">Whether the configuration sheet was created.</param>
     /// <param name="createdDataTable">
@@ -355,7 +422,6 @@ public class ExcelWorkbookInitialiser(
         Sheets sheets,
         ConfigWriteOutcome catalogueOutcome,
         bool wroteHeader,
-        bool wroteTitle,
         bool createdTable,
         bool createdConfigSheet,
         ListObject? createdDataTable)
@@ -376,11 +442,6 @@ public class ExcelWorkbookInitialiser(
         if (wroteHeader)
         {
             RollBackHeaderRow(target);
-        }
-
-        if (wroteTitle)
-        {
-            RollBackTitleRow(target);
         }
     }
 
@@ -440,23 +501,20 @@ public class ExcelWorkbookInitialiser(
     /// <returns><see langword="true"/> when the table name is already taken on any worksheet.</returns>
     private bool AnyWorksheetContainsTable(Sheets sheets)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             // Only worksheets carry ListObjects; chart sheets are skipped
             // because the cast to Excel.Worksheet fails for them.
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet)
             {
                 ListObjects listObjects = worksheet.ListObjects;
-                var tableCount = listObjects.Count;
-                for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+                int tableCount = listObjects.Count;
+                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject table = GetTableAt(listObjects, tableIndex);
-                    if (string.Equals(
-                        table.Name,
-                        GanttTableSchema.TableName,
-                        StringComparison.OrdinalIgnoreCase))
+                    if (GanttChartContract.IsDataTableName(table.Name))
                     {
                         return true;
                     }
@@ -480,15 +538,15 @@ public class ExcelWorkbookInitialiser(
     /// <returns>The available, culture-invariant label.</returns>
     private string ResolveAvailableLabel(Sheets sheets, string? excludeSheetName)
     {
-        var baseLabel = GanttWorkbookContract.GanttSheetLabel;
+        string baseLabel = GanttWorkbookContract.GanttSheetLabel;
         if (!NameTakenByOtherSheet(sheets, baseLabel, excludeSheetName))
         {
             return baseLabel;
         }
 
-        for (var suffix = 2; ; suffix++)
+        for (int suffix = 2; ; suffix++)
         {
-            var candidate = string.Create(
+            string candidate = string.Create(
                 CultureInfo.InvariantCulture, $"{baseLabel} ({suffix})");
             if (!NameTakenByOtherSheet(sheets, candidate, excludeSheetName))
             {
@@ -510,16 +568,16 @@ public class ExcelWorkbookInitialiser(
     /// <returns><see langword="true"/> when the name is taken.</returns>
     private bool NameTakenByOtherSheet(Sheets sheets, string name, string? excludeSheetName)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             // Every sheet in the collection exposes Name, including chart
             // sheets (which are not Excel.Worksheet). Use the unsealed cast
             // chain via GetSheetAt to keep the seam consistent with the test
             // seam pattern, then widen to object only for Name access on
             // chart sheets that are not Excel.Worksheet.
-            var sheet = GetSheetAt(sheets, index);
-            var sheetName = sheet switch
+            object sheet = GetSheetAt(sheets, index);
+            string sheetName = sheet switch
             {
                 Worksheet worksheet => worksheet.Name,
                 _ => (string)sheet.GetType().InvokeMember(
@@ -571,7 +629,7 @@ public class ExcelWorkbookInitialiser(
         {
             return;
         }
-        var original = _application.DisplayAlerts;
+        bool original = _application.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -594,19 +652,49 @@ public class ExcelWorkbookInitialiser(
     /// created on <paramref name="target"/>. No-op when the name does not exist.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private static void RollBackPlotAnchorName(Worksheet target)
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is not <c>static</c> any more.</b> The name lookup is the
+    /// <c>Names.Item</c> parameterised property — the same COM shape as
+    /// <c>Sheets.Item</c> and <c>ListObjects.Item</c>, which this class already exposes
+    /// as <c>internal virtual</c> seams for exactly this reason. It was the one such
+    /// call in the rollback path that was made inline, so the TypeOptions rollback could
+    /// not be exercised at all: the refusing path threw a <see cref="NullReferenceException"/>
+    /// under a Moq proxy, which is neither the production outcome nor the one the
+    /// <c>COMException</c> catch models.
+    /// </para>
+    /// <para>
+    /// The lookup is also null-tolerant now. Excel throws for a name that does not exist
+    /// (caught below), but the documented contract is "no-op when the name does not
+    /// exist", and a null answer is that case rather than an exception.
+    /// </para>
+    /// </remarks>
+    private void RollBackPlotAnchorName(Worksheet target)
     {
         try
         {
             Names names = target.Names;
-            Name name = names.Item(
-                GanttWorkbookContract.PlotAnchorDefinedName);
-            name.Delete();
+            Name? name = FindName(names, GanttWorkbookContract.PlotAnchorDefinedName);
+            name?.Delete();
         }
         catch (System.Runtime.InteropServices.COMException)
         {
             // The defined name may not exist; nothing to roll back.
         }
+    }
+
+    /// <summary>
+    /// Returns the sheet-scoped defined name with the given text, or
+    /// <see langword="null"/> when the sheet carries none. Test seam over the COM
+    /// parameterised <c>Names.Item</c> property.
+    /// </summary>
+    /// <param name="names">The worksheet's sheet-scoped names.</param>
+    /// <param name="nameText">The defined name to resolve.</param>
+    /// <returns>The resolved name, or <see langword="null"/>.</returns>
+    internal virtual Name? FindName(Names names, string nameText)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        return names.Item(nameText);
     }
 
     /// <summary>
@@ -621,15 +709,15 @@ public class ExcelWorkbookInitialiser(
         {
             return;
         }
-        var original = _application.DisplayAlerts;
+        bool original = _application.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
-            var count = sheets.Count;
-            for (var index = 1; index <= count; index++)
+            int count = sheets.Count;
+            for (int index = 1; index <= count; index++)
             {
-                var sheet = GetSheetAt(sheets, index);
-                var sheetName = sheet switch
+                object sheet = GetSheetAt(sheets, index);
+                string sheetName = sheet switch
                 {
                     Worksheet worksheet => worksheet.Name,
                     _ => (string)sheet.GetType().InvokeMember(
@@ -640,10 +728,7 @@ public class ExcelWorkbookInitialiser(
                         null,
                         CultureInfo.InvariantCulture)!,
                 };
-                if (string.Equals(
-                    sheetName,
-                    GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttWorkbookContract.IsConfigSheetName(sheetName))
                 {
                     if (sheet is Worksheet configSheet)
                     {
@@ -698,7 +783,7 @@ public class ExcelWorkbookInitialiser(
         {
             return;
         }
-        var original = _application.DisplayAlerts;
+        bool original = _application.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -724,38 +809,6 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Clears the title cell written by <see cref="WriteTitleRow"/> in the reserved
-    /// row, so a refused Initialise leaves no add-in-authored content behind.
-    /// </summary>
-    /// <param name="target">The Gantt worksheet.</param>
-    /// <remarks>
-    /// <b>Clearing a cell, not deleting a row.</b> The reserved row was written into,
-    /// never structurally inserted, so there is no row to remove and no shifted table
-    /// to restore. That is the whole reason the layout is produced by writing rather
-    /// than by <c>Rows(1).Insert</c>: an inserted row would need a matching delete on
-    /// every refusal path, and a missed one would leave the sheet altered after a
-    /// command that reported no change.
-    /// </remarks>
-    private void RollBackTitleRow(Worksheet target)
-    {
-        // The whole SPAN is cleared, not just its top-left cell. Clearing one cell
-        // would leave a title behind if a write had partially succeeded across the
-        // range, and the rollback exists precisely for the case where the sheet was
-        // already touched (ADR-0032 D1).
-        try
-        {
-            Excel.Range titleRange = GetTitleRange(target);
-            titleRange.ClearContents();
-        }
-        catch (System.Runtime.InteropServices.COMException)
-        {
-            // Best-effort: a host that refuses the clear must not
-            // mask the original exception nor abort the remaining
-            // rollbacks.
-        }
-    }
-
-    /// <summary>
     /// Clears the header row content written by <see cref="WriteHeaderRow"/> on
     /// <paramref name="target"/> and unhides the columns it hid. Used to roll back
     /// the header row when a later mutation fails.
@@ -771,6 +824,12 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private void RollBackHeaderRow(Worksheet target)
     {
+        // First, and unconditionally: the engine columns are now hidden BEFORE the header
+        // is written, so a failure at that write or at the Add leaves no table for
+        // RestoreColumnVisibility to find. Unhiding the schema's hidden set here is what
+        // keeps the zero-mutation promise on that path too.
+        RestoreSchemaHiddenColumns(target);
+
         try
         {
             Excel.Range headerRange = GetHeaderRange(
@@ -814,8 +873,8 @@ public class ExcelWorkbookInitialiser(
         try
         {
             ListColumns listColumns = GetTableColumns(table);
-            var count = listColumns.Count;
-            for (var columnIndex = 1; columnIndex <= count; columnIndex++)
+            int count = listColumns.Count;
+            for (int columnIndex = 1; columnIndex <= count; columnIndex++)
             {
                 ListColumn column = GetColumnAt(listColumns, columnIndex);
                 Excel.Range columnRange = column.Range;
@@ -848,14 +907,11 @@ public class ExcelWorkbookInitialiser(
             // yields two RCWs for one host collection, which is exactly the chained
             // access the COM-ownership rule forbids.
             ListObjects listObjects = target.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var index = 1; index <= tableCount; index++)
+            int tableCount = listObjects.Count;
+            for (int index = 1; index <= tableCount; index++)
             {
                 ListObject table = GetTableAt(listObjects, index);
-                if (string.Equals(
-                    table.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(table.Name))
                 {
                     return table;
                 }
@@ -904,8 +960,8 @@ public class ExcelWorkbookInitialiser(
         // to it. The multidimensional form is the requirement, not a style
         // choice.
 #pragma warning disable CA1814
-        var values = new object[1, columns.Count];
-        for (var index = 0; index < columns.Count; index++)
+        object[,] values = new object[1, columns.Count];
+        for (int index = 0; index < columns.Count; index++)
         {
             values[0, index] = columns[index].Name;
         }
@@ -913,6 +969,91 @@ public class ExcelWorkbookInitialiser(
         Excel.Range headerRange = GetHeaderRange(target, columns.Count);
         headerRange.Value2 = values;
 #pragma warning restore CA1814
+    }
+
+    /// <summary>
+    /// Hides the schema's engine columns BEFORE the header row is written, so no engine
+    /// column name is ever painted at a visible width.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the order matters.</b> The header row carries every schema name, including
+    /// the engine columns, and <see cref="ApplyColumnPresentation"/> only hides them after
+    /// the table has been added and presented. Between the two, the host paints those
+    /// names at the sheet's default column width — a visible flash of the whole schema
+    /// (live report 2026-11-15: "i briefly see all the table headings before they are
+    /// hidden"). Hiding the columns first makes the header write invisible exactly where
+    /// it should be invisible; the presentation pass still owns the locked state and
+    /// every other column's visibility.
+    /// </para>
+    /// <para>
+    /// Read-before-write, like the presentation pass: a column the host already reports
+    /// hidden is not rewritten, so a converged sheet stays clean. The columns are
+    /// addressed by the same schema-index arithmetic the presentation pass uses, from
+    /// <see cref="GanttSheetLayout.TableOriginColumnIndex"/>, so the two cannot drift.
+    /// </para>
+    /// </remarks>
+    private void HideSchemaHiddenColumns(Worksheet target) => ApplySchemaHiddenState(target, hidden: true);
+
+    /// <summary>
+    /// Unhides the schema's engine columns, undoing <see cref="HideSchemaHiddenColumns"/>
+    /// on the rollback path.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    private void RestoreSchemaHiddenColumns(Worksheet target) => ApplySchemaHiddenState(target, hidden: false);
+
+    /// <summary>Writes <paramref name="hidden"/> onto every column the schema hides.</summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <param name="hidden">Whether the engine columns must be hidden.</param>
+    private void ApplySchemaHiddenState(Worksheet target, bool hidden)
+    {
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (int index = 0; index < schema.Count; index++)
+        {
+            if (!schema[index].IsHidden)
+            {
+                continue;
+            }
+
+            Excel.Range? column = GetWorksheetColumn(
+                target,
+                GanttSheetLayout.TableOriginColumnIndex + index);
+            if (column is null || ReadColumnHidden(column) == hidden)
+            {
+                continue;
+            }
+
+            column.Hidden = hidden;
+        }
+    }
+
+    /// <summary>
+    /// Turns the window's gridlines off, so the chart's own frame is the only ruling on
+    /// the sheet.
+    /// </summary>
+    /// <param name="application">The running Excel application.</param>
+    /// <remarks>
+    /// <para>
+    /// A WINDOW setting, not a workbook one: the chart is a composed surface, and empty
+    /// cells inside the frame would otherwise carry Excel's own grid through it. The
+    /// owner asked for it on Initialise (2026-11-15) because the frame is now one clean
+    /// border and the sheet's grid lines were the remaining ruling inside it.
+    /// </para>
+    /// <para>
+    /// Read first, so a window that already hides them is not rewritten, and a host that
+    /// reports no window is left alone rather than failed on. It runs only on the success
+    /// path, so a refused Initialise leaves the user's view untouched.
+    /// </para>
+    /// </remarks>
+    private void HideGridlines(Application application)
+    {
+        if (GetActiveWindow(application) is not { } window || !window.DisplayGridlines)
+        {
+            return;
+        }
+
+        window.DisplayGridlines = false;
     }
 
     /// <summary>
@@ -937,7 +1078,7 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private ListObject AddDataTable(Worksheet target)
     {
-        var columnCount = GanttTableSchema.Default.Columns.Count;
+        int columnCount = GanttTableSchema.Default.Columns.Count;
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
         ListObjects listObjects = target.ListObjects;
         return listObjects.Add(
@@ -960,6 +1101,136 @@ public class ExcelWorkbookInitialiser(
         table.ShowAutoFilter = false;
         table.ShowTableStyleRowStripes = false;
         table.ShowTableStyleColumnStripes = false;
+    }
+
+    /// <summary>
+    /// The tolerance within which a measured gutter width counts as already correct.
+    /// </summary>
+    /// <remarks>
+    /// Half a point: Excel stores a column width in characters and reports the width in
+    /// points, so a round trip through one unit and back is not exact. Half a point is
+    /// below what any border or grid line can show, so a column inside it needs no write
+    /// and the workbook stays clean.
+    /// </remarks>
+    private const double _gutterWidthTolerancePt = 0.5;
+
+    /// <summary>
+    /// How many measured corrections the gutter width may take.
+    /// </summary>
+    /// <remarks>
+    /// Two, because the characters-to-points relation is affine (a fixed cell padding
+    /// plus a per-character advance) and one ratio therefore cannot land on the target.
+    /// The second pass measures the width the first wrote and converges. A bound rather
+    /// than "until it converges" keeps a host that never reports the width it was given
+    /// from looping.
+    /// </remarks>
+    private const int _gutterCorrectionPasses = 2;
+
+    /// <summary>
+    /// Makes column A the chart's left margin by setting its width to the framing rows'
+    /// padding height (ADR-0059, R5.18k).
+    /// </summary>
+    /// <param name="table">The Gantt data table, whose worksheet owns the gutter column.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Two measured corrections, because the conversion is affine.</b> Excel expresses
+    /// a column width in CHARACTERS of the Normal font and reports it in POINTS, and the
+    /// relation is a fixed cell padding plus a per-character advance — not a ratio through
+    /// the origin. One ratio therefore cannot land on the target, and with a first column
+    /// near one character the residual is large: live report 2026-11-15 measured the
+    /// gutter at 12pt after a single correction that aimed at 6pt. Each pass re-measures
+    /// the width the previous pass wrote and corrects again; the second pass converges
+    /// because the affine term is unchanged between them. The passes are BOUNDED rather
+    /// than "until it converges", so a host that never reports the width it was given
+    /// cannot loop.
+    /// </para>
+    /// <para>
+    /// <b>The target is the chart's outer padding, not one of the padding rows.</b> The
+    /// gutter is the frame's LEFT margin, so it reads the same token the frame's top,
+    /// right and bottom margins read — <c>ChartOuterPaddingPt</c>, which ADR-0038 D4 keeps
+    /// equal to the anchor row plus the bottom padding row. It used to read the bottom
+    /// padding row alone, which left the left margin 0.25pt short before the affine
+    /// residual made it 6pt short.
+    /// </para>
+    /// <para>
+    /// <b>Zero writes on a correct sheet.</b> A column already at the target is not
+    /// rewritten, for the same reason the date format and the hidden flags are not: a
+    /// no-op pass must not mark the workbook dirty.
+    /// </para>
+    /// </remarks>
+    private void ApplyLeadingGutterWidth(ListObject table)
+    {
+        if (table.Parent is not Worksheet worksheet
+            || GetColumnRange(worksheet) is not { } column)
+        {
+            return;
+        }
+
+        double targetPt = LeadingGutterTargetPt;
+        for (int pass = 0; pass < _gutterCorrectionPasses; pass++)
+        {
+            if (ReadColumnWidthCharacters(column) is not { } characters
+                || characters <= 0
+                || ReadColumnWidthPoints(column) is not { } points
+                || points <= 0
+                || CorrectedColumnWidthCharacters(characters, points, targetPt) is not { } corrected)
+            {
+                return;
+            }
+
+            SetColumnWidthCharacters(column, corrected);
+        }
+    }
+
+    /// <summary>
+    /// The width the leading gutter column must measure, in points: the chart's own
+    /// outer padding, which is what the frame's other three margins measure.
+    /// </summary>
+    /// <remarks>
+    /// One authority for the four margins. The value is the <c>ChartOuterPaddingPt</c>
+    /// token rather than a literal, and rather than the bottom padding row's height alone,
+    /// so the gutter and the frame cannot disagree about how much margin the chart has.
+    /// </remarks>
+    internal static double LeadingGutterTargetPt =>
+        GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+
+    /// <summary>
+    /// Converts a column's current character width and measured point width into the
+    /// character width that lands on <paramref name="targetPt"/>.
+    /// </summary>
+    /// <param name="characters">The width the column carries, in Excel's character unit.</param>
+    /// <param name="points">That same width, as the host measured it, in points.</param>
+    /// <param name="targetPt">The width the gutter needs, in points.</param>
+    /// <returns>
+    /// The character width to write, or <see langword="null"/> when nothing should be
+    /// written.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is a pure function.</b> The ratio between the two units belongs to the
+    /// workbook's Normal font, so it must come from the sheet rather than a constant; the
+    /// arithmetic that applies it is the part a test can pin without a host, and it is
+    /// the part that would otherwise be wrong silently.
+    /// </para>
+    /// <para>
+    /// A width already inside <see cref="_gutterWidthTolerancePt"/> returns
+    /// <see langword="null"/> — the no-write path — and so does any input that is not a
+    /// usable pair of positive, finite numbers: a correction computed from an unusable
+    /// measurement would write a width nobody measured.
+    /// </para>
+    /// </remarks>
+    internal static double? CorrectedColumnWidthCharacters(double characters, double points, double targetPt)
+    {
+        // One expression, so the three reasons for "no write" cannot drift apart: an
+        // unusable pair, a target that is not a width, and a width already inside the
+        // tolerance are all the same answer to the caller.
+        bool usable = double.IsFinite(characters) && characters > 0
+            && double.IsFinite(points) && points > 0
+            && double.IsFinite(targetPt) && targetPt > 0;
+
+        return usable && Math.Abs(points - targetPt) > _gutterWidthTolerancePt
+            ? characters * targetPt / points
+            : null;
     }
 
     /// <summary>
@@ -995,11 +1266,53 @@ public class ExcelWorkbookInitialiser(
     {
         ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        for (var index = 1; index <= schema.Count; index++)
+
+        // The host's own table style is the BASE the theme's cell formatting sits on. A
+        // hide/show re-applies it, so a neutral built-in style is what keeps the table's
+        // lines stable when the user toggles a column (owner ruling 2026-11-14). Read
+        // first: a table already carrying the style is not rewritten, so a converged
+        // initialise still leaves the workbook clean.
+        string? liveStyle = ReadTableStyleName(table);
+        if (!string.Equals(liveStyle, GanttTableAppearance.TableStyleName, StringComparison.Ordinal))
+        {
+            SetTableStyle(table, GanttTableAppearance.TableStyleName);
+        }
+
+        // The theme's body font and vertical centring are the SAME for every column, so
+        // they are written once over the table's whole columns rather than once per
+        // column. Measured 2026-11-14 on the live host: the presentation pass cost
+        // 252.3 ms for 17 columns (~15 ms each) and was 55% of Initialise, while the
+        // columns' font and vertical alignment were being rewritten 17 times each with
+        // an identical value. Two writes replace thirty-four.
+        //
+        // The whole column is still the target - not the table's body range - so a row
+        // that does not exist yet already carries the theme instead of inheriting
+        // whatever Excel decides when the user types.
+        Excel.Range allColumns = GetEntireColumn(table.Range);
+        ApplyBodyFont(allColumns);
+        ApplyVerticalCentre(allColumns);
+
+        for (int index = 1; index <= schema.Count; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             Excel.Range columnRange = column.Range;
-            columnRange.Locked = schema[index - 1].IsLocked;
+
+            // The comparison looks at the BODY when the table has one, because the header
+            // cell is locked separately after the loop (see below). Reading the whole list
+            // column would report a MIXED range -- a locked header over an unlocked
+            // authoring body -- as null, which the adapter treats as drift, so the write
+            // would rerun on every Initialise and dirty the workbook for a sheet that is
+            // already in the intended state.
+            bool wantedLocked = schema[index - 1].IsLocked;
+            Excel.Range? columnBody = column.DataBodyRange;
+            bool? liveLocked = columnBody is null ? null : ReadLockedFlag(columnBody);
+            if (liveLocked is not { } current || current != wantedLocked)
+            {
+                // The whole column, so a row that does not exist yet already carries the
+                // class's own lock flag. The header cell is re-locked once below.
+                columnRange.Locked = wantedLocked;
+            }
+
             Excel.Range entireColumn = GetEntireColumn(columnRange);
 
             // `Range.Hidden` is declared `object` in this PIA (verified by reflection
@@ -1010,13 +1323,233 @@ public class ExcelWorkbookInitialiser(
             // for a sheet that is already in the intended state. The value is unwrapped
             // to a real `bool` first, so a column already carrying the schema's
             // visibility is left alone.
-            var wanted = schema[index - 1].IsHidden;
+            bool wanted = schema[index - 1].IsHidden;
             if (ReadHiddenFlag(entireColumn) != wanted)
             {
                 entireColumn.Hidden = wanted;
             }
+
+            // A date column left on General shows its serial number, so the format is
+            // part of the presentation contract, not an optional nicety.
+            if (GanttTableSchema.IsDateColumn(schema[index - 1].Name))
+            {
+                ApplyDateColumnFormat(entireColumn);
+            }
+
+            // Only this column's alignment varies (R5.18d); the font and the vertical
+            // centring are written once for the whole table above.
+            ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
+        }
+
+        // The visible columns take the owner-approved default width (R5.21 follow-up,
+        // 2026-11-17). Applied after the classification pass so the engine columns,
+        // which are now hidden, are skipped.
+        ApplyVisibleColumnWidths(columns, schema);
+
+        // The header row is locked for EVERY column (R5.18k follow-up). `ListColumn.Range`
+        // includes the header cell, so the per-column write above left the headers of the
+        // authoring columns unlocked -- and once the visible columns led the table, that
+        // put an unlocked `Type` header directly above a protected body. A user could then
+        // rename a schema column, which breaks the name-keyed column map every adapter
+        // builds. Written only when the host does not already report it locked, so a
+        // refresh does not dirty the workbook.
+        Excel.Range? headerRow = table.HeaderRowRange;
+        if (headerRow is not null && headerRow.Locked is not true)
+        {
+            headerRow.Locked = true;
+        }
+
+        // Table-wide, so they run once rather than per column.
+        ApplyHeaderFormat(table);
+        ApplyBorderColour(table);
+    }
+
+    /// <summary>
+    /// Sets every user-visible column to
+    /// <see cref="GanttTableAppearance.DefaultVisibleColumnWidthPt"/>, read-before-write
+    /// and bounded at two measured corrections.
+    /// </summary>
+    /// <param name="columns">The live table's columns.</param>
+    /// <param name="schema">The schema, in the table's column order.</param>
+    /// <remarks>
+    /// <para>
+    /// Excel expresses a column width in characters and reports it in points, and the
+    /// relation is affine, so one correction cannot land exactly on a point target. The
+    /// same two-pass bound the gutter uses is applied here, and a column already inside
+    /// the tolerance is left alone so a converged Initialise writes nothing.
+    /// </para>
+    /// <para>
+    /// Engine columns are skipped: their visibility is the schema's and they carry zero
+    /// width, so writing a width into one would either fail or store a value nobody sees.
+    /// </para>
+    /// </remarks>
+    internal virtual void ApplyVisibleColumnWidths(
+        ListColumns columns,
+        IReadOnlyList<GanttTableColumn> schema)
+    {
+        double targetPt = GanttTableAppearance.DefaultVisibleColumnWidthPt;
+        for (int index = 1; index <= schema.Count; index++)
+        {
+            if (schema[index - 1].IsHidden)
+            {
+                continue;
+            }
+
+            ListColumn column = GetColumnAt(columns, index);
+            Excel.Range entireColumn = GetEntireColumn(column.Range);
+            for (int pass = 0; pass < _gutterCorrectionPasses; pass++)
+            {
+                if (ReadColumnWidthCharacters(entireColumn) is not { } characters
+                    || ReadColumnWidthPoints(entireColumn) is not { } points
+                    || CorrectedColumnWidthCharacters(characters, points, targetPt) is not { } corrected)
+                {
+                    break;
+                }
+
+                SetColumnWidthCharacters(entireColumn, corrected);
+            }
         }
     }
+
+    /// <summary>Applies the theme's header fill, text colour and header type to the table's header row.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// <para>
+    /// The header's fill, type and text colour are the chart theme's; Excel's table style
+    /// keeps every border it draws inside the table (owner ruling 2026-11-13). Both proxies
+    /// are held locally rather than chained.
+    /// </para>
+    /// <para>
+    /// <b>The text colour is not optional.</b> Live evidence 2026-11-14: writing the white
+    /// <see cref="GanttTableAppearance.HeaderFill"/> without it left the table style's white
+    /// header font in place, so every schema name was present and invisible. The fill and
+    /// the text colour are written together, from the same authority.
+    /// </para>
+    /// </remarks>
+    internal virtual void ApplyHeaderFormat(ListObject table)
+    {
+        Excel.Range header = table.HeaderRowRange;
+        Font font = header.Font;
+        ApplyHeaderType(font);
+        font.Color = GanttTableAppearance.HeaderTextColour.ARGB;
+        Interior interior = header.Interior;
+        interior.Color = GanttTableAppearance.HeaderFill.ARGB;
+    }
+
+    /// <summary>Writes the theme's header type onto a header row's font.</summary>
+    /// <param name="font">The header row's font.</param>
+    /// <remarks>
+    /// The bold flag is written rather than left alone. Excel's table style bolds a header
+    /// row, so a regular header only exists if the adapter says so — and the ruling
+    /// (2026-11-14) is that the header matches the chart's period band, which is regular.
+    /// One seam, so the initialiser and the recovery cannot disagree about its type.
+    /// </remarks>
+    internal virtual void ApplyHeaderType(Font font)
+    {
+        font.Name = GanttTableAppearance.FontFamily;
+        font.Size = GanttTableAppearance.HeaderFontSizePt;
+        font.Bold = GanttTableAppearance.HeaderIsBold;
+    }
+
+    /// <summary>
+    /// Recolours every border of the table and gives its outside edge the frame's weight.
+    /// </summary>
+    /// <param name="table">The visible data table.</param>
+    /// <remarks>
+    /// <c>Borders.Color</c> writes the colour of every border the range contains and leaves
+    /// each border's line style and weight alone, which is the split the 2026-11-13 ruling
+    /// describes: the table style owns the cell grid, the theme owns the colour. The
+    /// 2026-11-14 ruling adds one exception — the table's <em>outside</em> edge takes the
+    /// chart frame's weight, so the two boundaries meet at the same 1pt instead of one
+    /// stepping down to the other. Only the four edge indices are written; the interior
+    /// lines keep whatever weight the table style gives them.
+    /// </remarks>
+    internal virtual void ApplyBorderColour(ListObject table)
+    {
+        Excel.Range range = table.Range;
+        Borders borders = range.Borders;
+        borders.Color = GanttTableAppearance.BorderColour.ARGB;
+        foreach (XlBordersIndex edge in _outsideBorderEdges)
+        {
+            // Excel's cell-border weights are a closed set, not a point width: xlThin is
+            // the 1pt weight, which is the frame token's default (MajorBoundaryPt).
+            SetBorderWeight(borders, edge, XlBorderWeight.xlThin);
+        }
+    }
+
+    /// <summary>Writes one border's weight.</summary>
+    /// <param name="borders">The table range's border collection.</param>
+    /// <param name="edge">Which border to write.</param>
+    /// <param name="weight">The weight to write.</param>
+    /// <remarks>
+    /// <c>Borders.Item</c> is an indexed COM property, so it is a documented seam like
+    /// <see cref="GetTableAt"/>: expression trees cannot contain it (CS0855) and the
+    /// contract tests substitute this member. The one proxy is held in a local rather than
+    /// chained, per the COM ownership rule.
+    /// </remarks>
+    internal virtual void SetBorderWeight(Borders borders, XlBordersIndex edge, XlBorderWeight weight)
+    {
+        Border border = borders[edge];
+        border.Weight = weight;
+    }
+
+    /// <summary>Reads the table's own Excel table-style name.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <returns>The style's name, or <see langword="null"/> when the host reports none.</returns>
+    /// <remarks>
+    /// <c>ListObject.TableStyle</c> is <c>object</c>-typed and reports either a
+    /// <c>TableStyle</c> proxy or the name it was assigned by. The proxy's <c>Name</c> is
+    /// read through a local rather than chained, per the COM ownership rule; the
+    /// comparison itself lives at the call site so this stays a seam.
+    /// </remarks>
+    internal virtual string? ReadTableStyleName(ListObject table)
+    {
+        object style = table.TableStyle;
+        return style switch
+        {
+            TableStyle named => named.Name,
+            string text => text,
+            _ => null,
+        };
+    }
+
+    /// <summary>Assigns a built-in table style by name.</summary>
+    /// <param name="table">The visible data table.</param>
+    /// <param name="styleName">The built-in style's name.</param>
+    internal virtual void SetTableStyle(ListObject table, string styleName) =>
+        table.TableStyle = styleName;
+
+    /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// One proxy is held locally rather than chained through <c>range.Font.Name</c>: the COM
+    /// rule in ADR-0011 is that no proxy expression is chained, and a chained set here would
+    /// also leak an un-released <c>Font</c> proxy on every column of every initialise.
+    /// </remarks>
+    internal virtual void ApplyBodyFont(Excel.Range entireColumn)
+    {
+        Font font = entireColumn.Font;
+        font.Name = GanttTableAppearance.FontFamily;
+        font.Size = GanttTableAppearance.BodyFontSizePt;
+    }
+
+    /// <summary>Middle-aligns a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// A table row is one worksheet row, so a top-aligned cell sits against the row above as
+    /// soon as that row grows — which is exactly what the row-height normaliser does on a
+    /// group expand. Middle is therefore the only alignment that stays correct.
+    /// </remarks>
+    internal virtual void ApplyVerticalCentre(Excel.Range entireColumn) =>
+        entireColumn.VerticalAlignment = XlVAlign.xlVAlignCenter;
+
+    /// <summary>Applies the column's horizontal alignment to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <param name="alignment">The column's alignment, from the Core appearance authority.</param>
+    internal virtual void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
+        entireColumn.HorizontalAlignment = alignment == GanttCellAlignment.Centre
+            ? XlHAlign.xlHAlignCenter
+            : XlHAlign.xlHAlignLeft;
 
     /// <summary>
     /// Reads <c>Range.Hidden</c> as a <see cref="bool"/>.
@@ -1044,6 +1577,70 @@ public class ExcelWorkbookInitialiser(
     };
 
     /// <summary>
+    /// Reads <c>Range.Locked</c>.
+    /// </summary>
+    /// <param name="range">The range to read.</param>
+    /// <returns>
+    /// The flag, or <see langword="null"/> when the host reports a mixed range (a locked
+    /// header over an unlocked body) or a value that is not a boolean.
+    /// </returns>
+    /// <remarks>
+    /// <c>Locked</c> is declared <see cref="object"/> in this PIA too, so it is unboxed
+    /// before comparison for the same reason <c>Hidden</c> is. <see langword="null"/>
+    /// deliberately differs from BOTH desired states: a mixed range is drift, and treating
+    /// it as "already correct" would report success over a range the adapter never fixed.
+    /// </remarks>
+    private static bool? ReadLockedFlag(Excel.Range range) => range.Locked switch
+    {
+        bool flag => flag,
+        null => null,
+        _ => bool.TryParse(
+            Convert.ToString(range.Locked, CultureInfo.InvariantCulture),
+            out bool parsed)
+            ? parsed
+            : null,
+    };
+
+    /// <summary>
+    /// Writes the date format onto a date column's whole worksheet column, unless it
+    /// already carries it.
+    /// </summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// <para>
+    /// The WHOLE column, not the table's body. A date typed into an empty cell, and a
+    /// date written into a row that does not exist yet, both need the format already
+    /// in place; formatting only the body leaves every future row on General, which is
+    /// exactly how a date reached the sheet as its serial number.
+    /// </para>
+    /// <para>
+    /// The read-before-write is the same discipline the hidden flag follows: rewriting
+    /// an unchanged format marks the workbook dirty for a sheet that is already in the
+    /// intended state. <c>NumberFormat</c> is <see cref="object"/>-typed in this PIA, so
+    /// a value that is not a string reads as "not the wanted format" and is written.
+    /// </para>
+    /// <para>
+    /// The pattern comes from the single Core authority
+    /// (<see cref="GanttDateFormatting.WorksheetPatternFor"/>) and is
+    /// <see cref="GanttDateDisplayFormat.DdMMMyy"/>, <c>dd-mmm-yy</c>, which is what the
+    /// column is styled with (owner ruling 2026-11-14). It was <c>dd/mm/yyyy</c>: the
+    /// adapter hardcoded the other approved member, so the columns were styled with a
+    /// pattern nobody had chosen. A workbook whose stored setting names another member is
+    /// the settings-driven presentation pass, not a second spelling of the pattern here.
+    /// </para>
+    /// </remarks>
+    private void ApplyDateColumnFormat(Excel.Range entireColumn)
+    {
+        string pattern = GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMMyy);
+        if (string.Equals(ReadNumberFormat(entireColumn), pattern, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SetNumberFormat(entireColumn, pattern);
+    }
+
+    /// <summary>
     /// Creates the configuration worksheet directly after the Gantt sheet,
     /// names it from the Core contract, and sets <c>xlSheetVeryHidden</c>.
     /// </summary>
@@ -1051,7 +1648,7 @@ public class ExcelWorkbookInitialiser(
     /// <param name="target">The Gantt worksheet the config sheet follows.</param>
     private static void CreateConfigurationSheet(Sheets sheets, Worksheet target)
     {
-        var config = (Worksheet)sheets.Add(After: target);
+        Worksheet config = (Worksheet)sheets.Add(After: target);
         config.Name = GanttWorkbookContract.ConfigSheetName;
         config.Visible = XlSheetVisibility.xlSheetVeryHidden;
     }
@@ -1080,27 +1677,6 @@ public class ExcelWorkbookInitialiser(
     /// literal, so the cell and the export composition cannot name different charts.
     /// </para>
     /// </remarks>
-    private void WriteTitleRow(Worksheet target, string chartTitle)
-    {
-        // ONE cell, above Description.
-        //
-        // This previously wrote to a 1-by-5 `Resize` range on the stated belief that
-        // "Excel resolves a range assignment to that range's top-left cell, so D2:H2
-        // receives the title in D2". That premise is FALSE: assigning `Value2` to a
-        // multi-cell range writes the value into EVERY cell, which is why the live
-        // sheet showed "Gantt Chart" once per visible column. The fix is not to reach
-        // into the range's one-based cell indexer - which ADR-0032 D1 forbids as
-        // hardcoded addressing - but to make the RANGE itself one cell wide, derived
-        // from `GanttSheetLayout` like every other piece of sheet geometry.
-        Excel.Range titleRange = GetTitleRange(target);
-        titleRange.Value2 = chartTitle;
-    }
-
-    /// <summary>
-    /// Writes the sheet-scoped plot-anchor defined name: the cell one column
-    /// right of the table's last column, on the header row.
-    /// </summary>
-    /// <param name="target">The Gantt worksheet.</param>
     private static void WritePlotAnchorName(Worksheet target)
     {
         Names names = target.Names;
@@ -1156,36 +1732,89 @@ public class ExcelWorkbookInitialiser(
     /// <param name="columnCount">The header column count.</param>
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
-        => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
+        => target.Cells[GanttSheetLayout.HeaderRowIndex, GanttSheetLayout.TableOriginColumnIndex]
+            .Resize[1, columnCount];
+
+    /// <summary>Returns the leading gutter column. Test seam over the <c>Columns</c> indexer.</summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? GetColumnRange(Worksheet worksheet)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[GanttSheetLayout.LeadingGutterColumnIndex];
+    }
+
+    /// <summary>Reads a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in characters, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthCharacters(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.ColumnWidth is double width ? width : null;
+    }
+
+    /// <summary>Reads a column's measured width in points. Test seam over <c>Width</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>The width in points, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual double? ReadColumnWidthPoints(Excel.Range column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        return column.Width is double width ? width : null;
+    }
+
+    /// <summary>Writes a column's width in Excel's character unit. Test seam over <c>ColumnWidth</c>.</summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <param name="width">The width in characters.</param>
+    internal virtual void SetColumnWidthCharacters(Excel.Range column, double width)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        column.ColumnWidth = width;
+    }
 
     /// <summary>
-    /// Returns the SINGLE cell holding the table title, in the reserved row directly
-    /// above the header and above the <c>Description</c> column. Test seam over the
-    /// COM parameterised <c>Range.Resize</c> property, mirroring
-    /// <see cref="GetHeaderRange"/>.
+    /// Returns one whole worksheet column by its one-based index. Test seam over the
+    /// <c>Columns</c> indexer, which the pre-header engine-column pass addresses before
+    /// the table exists.
     /// </summary>
-    /// <param name="target">The Gantt worksheet.</param>
-    /// <returns>The one-cell range for the title.</returns>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="columnIndex">The one-based worksheet column.</param>
+    /// <returns>The whole-column range, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Excel.Range? GetWorksheetColumn(Worksheet worksheet, int columnIndex)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+
+        return worksheet.Columns[columnIndex];
+    }
+
+    /// <summary>
+    /// Reads a whole column's <c>Hidden</c> flag as a real boolean.
+    /// </summary>
+    /// <param name="column">The whole-column range.</param>
+    /// <returns>Whether the host reports the column hidden; a non-boolean reads as visible.</returns>
     /// <remarks>
-    /// <para>
-    /// The span is <b>one cell</b>, and that is the fix rather than a detail. It was
-    /// five, so the title was assigned to D2:H2 and Excel wrote the value into every
-    /// one of those cells - the live sheet showed the title duplicated across the
-    /// table. A range assignment resolves to each cell in the range, not to the
-    /// range's top-left cell, which is what the previous comment here asserted.
-    /// </para>
-    /// <para>
-    /// The owner asked for the title directly above <c>Description</c>, the column the
-    /// table is read by. The row and the column both come from
-    /// <see cref="GanttSheetLayout"/>, so this seam cannot disagree with the layout
-    /// authority about where the title lives. A title wider than its column is a
-    /// merge or a left-aligned overflow, not a value written into each cell.
-    /// </para>
+    /// <c>Range.Hidden</c> is declared <see langword="object"/> in this interop assembly
+    /// (probed), so it is unwrapped rather than compared boxed. A host that reports
+    /// something other than a flag is treated as "not hidden", which makes the caller
+    /// write the state the schema wants instead of assuming it is already there.
     /// </remarks>
-    internal virtual Excel.Range GetTitleRange(Worksheet target) =>
-        target
-            .Cells[GanttSheetLayout.TitleRowIndex, GanttSheetLayout.TitleColumnIndex]
-            .Resize[1, GanttSheetLayout.TitleColumnSpan];
+    private static bool ReadColumnHidden(Excel.Range column) => column.Hidden is bool hidden && hidden;
+
+    /// <summary>
+    /// Returns the application's active window. Test seam over
+    /// <c>Application.ActiveWindow</c>, because the gridline switch is a window setting.
+    /// </summary>
+    /// <param name="application">The running Excel application.</param>
+    /// <returns>The active window, or <see langword="null"/> when the host reports none.</returns>
+    internal virtual Window? GetActiveWindow(Application application)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+
+        return application.ActiveWindow;
+    }
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM
@@ -1214,4 +1843,22 @@ public class ExcelWorkbookInitialiser(
     /// <param name="range">The column's range.</param>
     /// <returns>The entire worksheet column.</returns>
     internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+
+    /// <summary>
+    /// Reads <c>Range.NumberFormat</c>, which is <see cref="object"/>-typed in this PIA.
+    /// </summary>
+    /// <param name="range">The range to read.</param>
+    /// <returns>The format code, or <see langword="null"/> when the host did not report one.</returns>
+    /// <remarks>
+    /// A range whose cells carry different formats reports no single code, so null is
+    /// the honest answer and the caller writes rather than assuming the format matches.
+    /// </remarks>
+    internal virtual string? ReadNumberFormat(Excel.Range range) =>
+        range.NumberFormat is string format ? format : null;
+
+    /// <summary>Writes a format code onto a range.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="pattern">The host format code.</param>
+    internal virtual void SetNumberFormat(Excel.Range range, string pattern) =>
+        range.NumberFormat = pattern;
 }

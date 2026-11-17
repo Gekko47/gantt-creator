@@ -102,6 +102,39 @@ public class RefreshIdempotenceIntegrationTests(ITestOutputHelper output)
             Assert.Equal(ownedAfterFirst.Count, ownedAfterSecond.Count);
             Assert.Equal(boundsAfterFirst, boundsAfterSecond);
 
+            // Seed the same payload signature used by the scheduled refresh
+            // path. An unchanged scene must perform no shape operations on
+            // the real Excel host, including the z-order pass.
+            ShapeDeltaCache deltaCache = new();
+            deltaCache.Commit(desired);
+            ShapeReconcileOutcome unchanged = ShapeReconciler.Reconcile(
+                writer,
+                new ShapeReconcileRequest(desired)
+                {
+                    PreviousSnapshot = deltaCache.Snapshot,
+                });
+            Assert.True(unchanged.Succeeded, $"Unchanged delta reconcile refused: {unchanged.Refusal} / {unchanged.Failure}");
+            Assert.Equal(0, unchanged.CompletedCount);
+
+            // A single text payload change must update only its matching owned
+            // shape. This checks the signature-to-Excel-write boundary, not
+            // merely the pure planner's operation list.
+            const string labelId = "row-1:bar-label";
+            OfficeShapeRequest[] changedDesired = [.. desired.Select(request =>
+                request.PrimitiveId == labelId
+                    ? request with { Text = "Procurement updated" }
+                    : request)];
+            ShapeReconcileOutcome changed = ShapeReconciler.Reconcile(
+                writer,
+                new ShapeReconcileRequest(changedDesired)
+                {
+                    PreviousSnapshot = deltaCache.Snapshot,
+                });
+            Assert.True(changed.Succeeded, $"Changed delta reconcile refused: {changed.Refusal} / {changed.Failure}");
+            Assert.Equal(1, changed.CompletedCount);
+            Excel.Shape updatedLabel = (Excel.Shape)scope.Track(sheet.Shapes.Item(labelId));
+            Assert.Equal("Procurement updated", updatedLabel.TextFrame2.TextRange.Text);
+
             // No duplicates. ListOwned returns ordinal-sorted names, so a duplicate
             // would also show as a length mismatch; the explicit check names the
             // failure a user would actually see.

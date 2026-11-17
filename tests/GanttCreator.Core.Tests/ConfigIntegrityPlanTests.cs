@@ -14,6 +14,10 @@ public sealed class ConfigIntegrityPlanTests
     [InlineData(ConfigIntegrityFindingKind.SchemaVersionNewer, ConfigRepairClassification.Refuse)]
     [InlineData(ConfigIntegrityFindingKind.SecondHelperSheet, ConfigRepairClassification.Refuse)]
     [InlineData(ConfigIntegrityFindingKind.ScheduleDataOnConfig, ConfigRepairClassification.Refuse)]
+    [InlineData(ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet, ConfigRepairClassification.Refuse)]
+    [InlineData(ConfigIntegrityFindingKind.ExtraTableColumns, ConfigRepairClassification.Refuse)]
+    [InlineData(ConfigIntegrityFindingKind.TableOffContractOrigin, ConfigRepairClassification.Refuse)]
+    [InlineData(ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag, ConfigRepairClassification.Refuse)]
     [InlineData(ConfigIntegrityFindingKind.Unknown, ConfigRepairClassification.Refuse)]
     public void Classify_maps_each_damage_class(
         ConfigIntegrityFindingKind kind,
@@ -102,12 +106,94 @@ public sealed class ConfigIntegrityPlanTests
     [Fact]
     public void Build_rejects_null_findings()
     {
-        Assert.Throws<ArgumentNullException>(() => ConfigIntegrityPlan.Build(null!));
+        // The parameter name is asserted, not just the exception type. With the
+        // guard removed, `findings.OrderBy(...)` throws ArgumentNullException for
+        // "source" from the LINQ library, so a type-only assertion passes and the
+        // guard can be deleted without any test going red (measured: the
+        // `ThrowIfNull` statement mutant survived until this assertion existed).
+        ArgumentNullException thrown =
+            Assert.Throws<ArgumentNullException>(() => ConfigIntegrityPlan.Build(null!));
+
+        Assert.Equal("findings", thrown.ParamName);
     }
 
     [Fact]
     public void Classify_rejects_null_finding()
     {
         Assert.Throws<ArgumentNullException>(() => ConfigIntegrityPlan.Classify(null!));
+    }
+
+    [Fact]
+    public void Empty_is_a_plan_with_no_findings_in_any_classification()
+    {
+        // The plan a clean workbook produces. It must be empty per classification
+        // rather than merely empty overall, or "nothing to repair" and "nothing I
+        // could classify" would look the same to a caller.
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Empty();
+
+        Assert.Empty(plan.Findings);
+        Assert.Empty(plan.AutoRepairFindings);
+        Assert.Empty(plan.ConfirmRequiredFindings);
+        Assert.Empty(plan.RefusedFindings);
+        Assert.Empty(plan.QuarantinedFindings);
+    }
+
+    [Theory]
+    [InlineData(GanttCatalogues.TypesTableName, ConfigRepairClassification.AutoRepair)]
+    [InlineData(GanttCatalogues.MetricsTableName, ConfigRepairClassification.AutoRepair)]
+    [InlineData(GanttCatalogues.StylesTableName, ConfigRepairClassification.ConfirmRequired)]
+    public void Corrupt_catalogue_damage_is_classified_by_the_table_it_names(
+        string tableName,
+        ConfigRepairClassification expected)
+    {
+        // The code-owned catalogues can be rebuilt from Core, so they auto-repair;
+        // the styles table carries user rows, so rebuilding it needs confirmation.
+        var finding = new ConfigIntegrityFinding(
+            ConfigIntegrityFindingKind.CatalogueTableCorrupt,
+            "corrupt",
+            tableName);
+
+        Assert.Equal(expected, ConfigIntegrityPlan.Classify(finding));
+    }
+
+    [Fact]
+    public void Build_orders_equal_findings_by_table_then_row_then_detail()
+    {
+        // The tie-breaks are why two runs over the same damage produce the same
+        // Ribbon list. Ascending order and "a null row sorts last" are asserted
+        // together, because reversing either one changes the order without changing
+        // how many findings there are.
+        ConfigIntegrityFinding[] input =
+        [
+            new(ConfigIntegrityFindingKind.IdentityDamage, "z-detail", "tblB"),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "a-detail", "tblA"),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "row-5", "tblA", 5),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "row-2", "tblA", 2),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "no-row-z", "tblA"),
+        ];
+
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build(input);
+
+        Assert.Equal(
+            ["row-2", "row-5", "a-detail", "no-row-z", "z-detail"],
+            plan.Findings.Select(finding => finding.Detail));
+    }
+
+    [Fact]
+    public void Each_classification_property_returns_only_its_own_findings()
+    {
+        // These three properties are what the repairer and the Ribbon act on, so a
+        // filter returning the wrong subset would repair damage the analyst has not
+        // consented to. An empty plan exercises none of them; see
+        // Empty_is_a_plan_with_no_findings_in_any_classification.
+        ConfigIntegrityFinding auto = new(ConfigIntegrityFindingKind.WrongVisibility, "visibility");
+        ConfigIntegrityFinding confirm = new(ConfigIntegrityFindingKind.IdentityDamage, "identity");
+        ConfigIntegrityFinding refuse = new(ConfigIntegrityFindingKind.SecondHelperSheet, "helper");
+
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build([auto, confirm, refuse]);
+
+        Assert.Same(auto, Assert.Single(plan.AutoRepairFindings));
+        Assert.Same(confirm, Assert.Single(plan.ConfirmRequiredFindings));
+        Assert.Same(refuse, Assert.Single(plan.RefusedFindings));
     }
 }

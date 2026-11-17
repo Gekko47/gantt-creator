@@ -18,6 +18,13 @@ Describe 'verify-office.ps1' {
 if "%VERIFY_OFFICE_STUB_BEHAVIOR%"=="hang" (
   powershell -NoProfile -Command "Start-Sleep -Seconds 10"
 )
+rem A real run WRITES its trx. VERIFY_OFFICE_STUB_TRX names where, so a test can model
+rem "this run produced results" instead of pre-creating a stale file that the harness
+rem would then archive as if it came from this run.
+if defined VERIFY_OFFICE_STUB_TRX (
+  for %%I in ("%VERIFY_OFFICE_STUB_TRX%") do if not exist "%%~dpI" mkdir "%%~dpI"
+  echo ^<TestRun^>harness-fake^</TestRun^> > "%VERIFY_OFFICE_STUB_TRX%"
+)
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
 @'
@@ -219,6 +226,16 @@ exit /b 0
         $codeOnly | Should -Match 'exit 4'
     }
 
+    It 'pins the owner-approved leak ceiling at 38' {
+        # Raised 37 -> 38 by owner decision on 2026-11-12 to keep the R5.16b live
+        # reader/adapter body. Pinning the number turns the file's "do not raise it
+        # again without a measurement" instruction into a gate: a careless edit to
+        # the ceiling fails here instead of passing silently.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$MaxForcedKills = 38'
+    }
+
     It 'excludes a deliberate escalation from the leak signal' {
         # A test that forces a kill to prove the escalation path works must not
         # count against the ratchet, or the ceiling can never be reached.
@@ -338,9 +355,9 @@ exit /b 0
         It 'archives the per-run trx before the verdict (positive control)' {
             # dotnet test overwrites office.trx every run; without the archive
             # a failing run's results are destroyed by the next invocation.
+            # The stub WRITES the trx, because that is what a real run does - a
+            # pre-created file would be indistinguishable from a stale one.
             $trxSrc = Join-Path $script:harnessRoot 'tests\GanttCreator.Office.IntegrationTests\TestResults\office.trx'
-            New-Item -ItemType Directory -Path (Split-Path -Parent $trxSrc) -Force | Out-Null
-            Set-Content -LiteralPath $trxSrc -Value '<TestRun>harness-fake</TestRun>'
             $outFile = Join-Path $script:harnessRoot 'out.txt'
             $errFile = Join-Path $script:harnessRoot 'err.txt'
             $sep = [System.IO.Path]::PathSeparator
@@ -349,13 +366,44 @@ exit /b 0
                 '-DeadlineSeconds', '60'
             ) -NoNewWindow -Wait -PassThru `
                 -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
-                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; PATH = ($script:stubDir + $sep + $env:PATH) }
+                -Environment @{
+                    VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'
+                    VERIFY_OFFICE_STUB_TRX = $trxSrc
+                    PATH = ($script:stubDir + $sep + $env:PATH)
+                }
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 0
             $output | Should -Match 'Archived trx'
             $archives = @(Get-ChildItem -LiteralPath (Join-Path $script:harnessScripts '_artifacts\office-evidence') -Filter 'office-*.trx' -ErrorAction SilentlyContinue)
             $archives.Count | Should -Be 1
             Get-Content -LiteralPath $archives[0].FullName -Raw | Should -BeLike '*harness-fake*'
+        }
+
+        It 'refuses to archive a trx this run did not produce' {
+            # Measured 2026-11-09: a timed-out gate archived a trx dated four days
+            # earlier, and reading it produced a false diagnosis. A file left by a
+            # previous run must be named as absent, not presented as this run's.
+            $trxSrc = Join-Path $script:harnessRoot 'tests\GanttCreator.Office.IntegrationTests\TestResults\office.trx'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $trxSrc) -Force | Out-Null
+            Set-Content -LiteralPath $trxSrc -Value '<TestRun>stale-from-a-previous-run</TestRun>'
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{
+                    VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'
+                    PATH = ($script:stubDir + $sep + $env:PATH)
+                }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 0
+            $output | Should -Match 'no trx was produced by this run'
+            $output | Should -Not -Match 'Archived trx'
+            $archives = @(Get-ChildItem -LiteralPath (Join-Path $script:harnessScripts '_artifacts\office-evidence') -Filter 'office-*.trx' -ErrorAction SilentlyContinue)
+            $archives.Count | Should -Be 0
         }
 
         It 'invokes the trx archive on both verdict paths (timeout and normal)' {

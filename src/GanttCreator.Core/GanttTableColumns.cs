@@ -24,8 +24,9 @@ namespace GanttCreator.Core;
 public enum GanttColumnAccess
 {
     /// <summary>
-    /// User-visible and editable: <c>Type</c>, <c>Description</c>, <c>Start</c>,
-    /// <c>Finish</c>. Unlocked, so protecting the sheet still allows authoring.
+    /// User-visible and editable: <c>Type</c>, <c>Activity ID</c>,
+    /// <c>Description</c>, <c>Start</c>, <c>Finish</c>. Unlocked, so protecting the
+    /// sheet still allows authoring.
     /// </summary>
     Authoring = 0,
 
@@ -104,6 +105,53 @@ public sealed class GanttTableSchema
     public const string TableName = "tblGanttData";
 
     /// <summary>
+    /// The columns whose cells hold a calendar date.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Excel stores a date as a serial number, so a cell carrying the General format
+    /// shows the serial: a date the add-in writes reads back as <c>46051</c> rather
+    /// than as a date. The writer therefore formats the WHOLE worksheet column behind
+    /// each of these columns, not just the table's body, which is what covers the
+    /// empty cells in existing rows and the rows that do not exist yet.
+    /// </para>
+    /// <para>
+    /// The set is a schema fact rather than a name list held inside the Office
+    /// adapters, because the initialiser and the recovery must not disagree about
+    /// which columns the contract declares as dates. <see cref="IsDateColumn"/> is the
+    /// single lookup for both.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> DateColumnNames { get; } = ["Start", "Finish"];
+
+    /// <summary>
+    /// Returns whether a column's cells hold a calendar date.
+    /// </summary>
+    /// <param name="columnName">The exact header text. <see langword="null"/> and an empty name are not dates.</param>
+    /// <returns><see langword="true"/> for a name listed exactly in <see cref="DateColumnNames"/>.</returns>
+    /// <remarks>
+    /// The comparison is ordinal, like every other header lookup in this schema, so a
+    /// differently-cased header is not silently treated as the contract's column.
+    /// </remarks>
+    public static bool IsDateColumn(string? columnName)
+    {
+        if (string.IsNullOrEmpty(columnName))
+        {
+            return false;
+        }
+
+        foreach (string name in DateColumnNames)
+        {
+            if (string.Equals(name, columnName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Initialises a schema from ordered column descriptors.
     /// </summary>
     /// <param name="columns">The columns in header-row order.</param>
@@ -169,39 +217,58 @@ public sealed class GanttTableSchema
     }
 
     /// <summary>
-    /// The first-release schema: the required columns in contract order, followed
-    /// by the optional <c>SortOrder</c> column. R4.7A added <c>SiblingOrder</c>
+    /// The first-release schema: the visible columns in authoring order, followed
+    /// by the engine columns in contract order. R4.7A added <c>SiblingOrder</c>
     /// immediately after <c>ParentId</c> and advanced the schema version 3 → 4.
     /// R4.7C added <c>Duration</c> immediately after <c>Finish</c>, classified
     /// every column, and advanced 4 → 5. R5.14 added <c>DateLabelPosition</c>
-    /// immediately after <c>LabelPosition</c> and advanced 14 → 15.
+    /// immediately after <c>LabelPosition</c> and advanced 14 → 15. R5.18k led the
+    /// table with the visible columns and advanced 22 → 23. R5.21 added the
+    /// user-authored <c>Activity ID</c> immediately after <c>Type</c> and advanced
+    /// 25 → 26 (ADR-0064).
     /// </summary>
     /// <remarks>
-    /// The authoring columns are deliberately grouped in the middle of the
-    /// engine columns rather than leading the table: <c>Id</c>, <c>LaneId</c> and
-    /// <c>StackIndex</c> are hidden, so the first <em>visible</em> column the user
-    /// sees is <c>Type</c>. Moving them would have been a second, unrecorded
-    /// column-order change in the same schema bump.
-    ///
+    /// <para>
+    /// <b>The visible columns lead the table (R5.18k, owner-approved).</b> The
+    /// earlier remark argued they were "deliberately grouped in the middle" so that a
+    /// schema bump would not also be a column-order change. That reasoning is
+    /// reversed: the table starts at
+    /// <see cref="GanttSheetLayout.TableOriginColumnIndex"/> (column B), the leading
+    /// column is the add-in's spacer gutter and is NOT a table column at all, and the
+    /// engine columns follow the six the user reads and edits. A user who scrolls
+    /// right still finds them, hidden; a user who opens the table sees
+    /// <c>Type</c> first, which is the column the table is authored by.
+    /// </para>
+    /// <para>
+    /// <b><c>Activity ID</c> is the analyst's own reference, not the engine
+    /// identity (R5.21, ADR-0064).</b> It sits directly after <c>Type</c> so a row
+    /// reads as "what this is, what it is called elsewhere, what it says". It is
+    /// <c>Authoring</c> and optional in value while remaining a required column:
+    /// a blank cell is legal, and the engine <c>Id</c> stays hidden and locked
+    /// because <c>ParentId</c>, scene ownership and outline planning all key on it.
+    /// </para>
+    /// <para>
     /// <c>DateLabelPosition</c> is OPTIONAL (the <c>SortOrder</c> precedent):
     /// a workbook saved before R5.14 legitimately lacks the column, and a
     /// missing optional column reads as a blank cell (= Auto) rather than
     /// failing the table read. Keeping it required would strand every
     /// pre-R5.14 workbook behind a <c>TableMissing</c> refusal — the
     /// ribbon-state gate keys on that read, so the whole Gantt group would
-    /// grey on open. Initialise still materialises the column and advances
-    /// the stored schema version to 15 (ADR-0029 D6: no migration).
+    /// grey on open. Initialise still materialises the column (ADR-0029 D6: no
+    /// migration).
+    /// </para>
     /// </remarks>
     public static GanttTableSchema Default { get; } = new(
     [
-        new GanttTableColumn("Id", isRequired: true, GanttColumnAccess.EngineHidden),
-        new GanttTableColumn("LaneId", isRequired: true, GanttColumnAccess.EngineHidden),
-        new GanttTableColumn("StackIndex", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("Type", isRequired: true, GanttColumnAccess.Authoring),
+        new GanttTableColumn("Activity ID", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Description", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Start", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Finish", isRequired: true, GanttColumnAccess.Authoring),
         new GanttTableColumn("Duration", isRequired: true, GanttColumnAccess.ReadOnlyVisible),
+        new GanttTableColumn("Id", isRequired: true, GanttColumnAccess.EngineHidden),
+        new GanttTableColumn("LaneId", isRequired: true, GanttColumnAccess.EngineHidden),
+        new GanttTableColumn("StackIndex", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("ParentId", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("SiblingOrder", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("StyleKey", isRequired: true, GanttColumnAccess.EngineHidden),

@@ -4,8 +4,11 @@ public class GanttTableSchemaTests
 {
     private static readonly (string Name, bool IsRequired)[] s_columnContract =
     [
-        ("Id", true), ("LaneId", true), ("StackIndex", true), ("Type", true),
-        ("Description", true), ("Start", true), ("Finish", true), ("Duration", true),
+        // R5.18k: the visible columns lead, and the engine columns follow.
+        // R5.21 (ADR-0064) adds the user-authored Activity ID directly after Type.
+        ("Type", true), ("Activity ID", true), ("Description", true), ("Start", true),
+        ("Finish", true), ("Duration", true),
+        ("Id", true), ("LaneId", true), ("StackIndex", true),
         ("ParentId", true), ("SiblingOrder", true), ("StyleKey", true),
         ("LabelPosition", true), ("DateLabelPosition", false),
         ("FillColour", true), ("StrokeColour", true), ("Visible", true),
@@ -23,14 +26,18 @@ public class GanttTableSchemaTests
     {
         var columns = GanttTableSchema.Default.Columns;
 
-        // 15 required + two optional. R4.7A added SiblingOrder, taking
+        // 16 required + two optional. R4.7A added SiblingOrder, taking
         // the required count from 13 to 14; R4.7C added Duration, taking
-        // it to 15. R5.14 added DateLabelPosition as the second OPTIONAL
+        // it to 15; R5.21 added the required Activity ID, taking it to 16.
+        // R5.14 added DateLabelPosition as the second OPTIONAL
         // column (the SortOrder precedent): a workbook saved before
         // R5.14 legitimately lacks it, and a missing optional column
         // reads as a blank cell (= Auto) instead of failing the table
         // read, which would strand every pre-R5.14 workbook behind a
-        // TableMissing refusal.
+        // TableMissing refusal. R5.18k reordered the table — the visible
+        // columns first, the engine columns after — without adding or
+        // removing one, which is why the counts are unchanged and the
+        // sequence is not.
         Assert.Equal(s_columnContract.Length, columns.Count);
         for (var i = 0; i < s_columnContract.Length; i++)
         {
@@ -76,6 +83,7 @@ public class GanttTableSchemaTests
 
     [Theory]
     [InlineData("Type", GanttColumnAccess.Authoring)]
+    [InlineData("Activity ID", GanttColumnAccess.Authoring)]
     [InlineData("Description", GanttColumnAccess.Authoring)]
     [InlineData("Start", GanttColumnAccess.Authoring)]
     [InlineData("Finish", GanttColumnAccess.Authoring)]
@@ -164,6 +172,38 @@ public class GanttTableSchemaTests
     public void Schema_constructor_throws_for_a_null_column()
     {
         Assert.Throws<ArgumentNullException>(() => new GanttTableSchema([null!]));
+    }
+
+    [Fact]
+    public void The_date_columns_are_the_two_authoring_date_columns_in_the_schema()
+    {
+        // The initialiser and the recovery both format this set, so every name in it
+        // must be a real column: a typo would silently stop a date column being
+        // formatted, and a name that resolved to an engine column would format a column
+        // the user never sees.
+        Assert.Equal(2, GanttTableSchema.DateColumnNames.Count);
+        Assert.Equal("Start", GanttTableSchema.DateColumnNames[0]);
+        Assert.Equal("Finish", GanttTableSchema.DateColumnNames[1]);
+
+        foreach (string name in GanttTableSchema.DateColumnNames)
+        {
+            Assert.True(GanttTableSchema.Default.TryGetColumn(name, out GanttTableColumn? column));
+            Assert.Equal(GanttColumnAccess.Authoring, column!.Access);
+        }
+    }
+
+    [Fact]
+    public void Only_the_schema_named_date_columns_are_dates()
+    {
+        // Ordinal, like every other header lookup in this schema: a differently-cased
+        // header is not the contract's column, and a blank or absent name is no column
+        // at all. Both refusals are the positive case for the guard.
+        Assert.True(GanttTableSchema.IsDateColumn("Start"));
+        Assert.True(GanttTableSchema.IsDateColumn("Finish"));
+        Assert.False(GanttTableSchema.IsDateColumn("start"));
+        Assert.False(GanttTableSchema.IsDateColumn("Duration"));
+        Assert.False(GanttTableSchema.IsDateColumn(string.Empty));
+        Assert.False(GanttTableSchema.IsDateColumn(null));
     }
 
     private static GanttTableSchema Schema(params GanttTableColumn[] columns) => new(columns);

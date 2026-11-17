@@ -96,5 +96,6 @@ internal static class ReferenceSceneFixture
             row.FillColour,
             row.StrokeColour,
             null,
-            null);
+            null,
+            row.DateLabelPosition);
 }

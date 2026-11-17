@@ -1002,4 +1002,139 @@ public sealed class HierarchyMutationsTests
             [new SiblingOrderWrite(b, 0), new SiblingOrderWrite(a, 1)],
             plan.SiblingOrderWrites);
     }
+
+    /// <summary>
+    /// Mutation testing found the promote planner's `SelectionUnknown` and
+    /// `TypeCannotBeChild` arms unexecuted and its null-argument guards unpinned:
+    /// removing either guard left every test green.
+    /// </summary>
+    [Fact]
+    public void Promoting_a_row_that_is_not_in_the_table_is_refused()
+    {
+        GanttRowId present = NewId();
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent([Row(1, present)], NewId());
+
+        Assert.Equal(ParentChildRefusalReason.SelectionUnknown, plan.Refusal);
+    }
+
+    [Fact]
+    public void Promoting_a_type_that_can_never_be_a_child_is_refused()
+    {
+        GanttRowId splitter = NewId();
+        GanttRowId parent = NewId();
+
+        // A Splitter carrying a ParentId is a validation error, so the planner is
+        // the second line of defence and must refuse it by type rather than plan a
+        // promotion the later rules cannot express.
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(
+            [Row(1, parent), Row(2, splitter, GanttEntityType.Splitter, parent)],
+            splitter);
+
+        Assert.Equal(ParentChildRefusalReason.TypeCannotBeChild, plan.Refusal);
+    }
+
+    [Fact]
+    public void Promotion_refuses_a_null_row_list()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanPromoteToParent(null!, NewId()));
+
+        Assert.Equal("rows", thrown.ParamName);
+    }
+
+    [Fact]
+    public void Promotion_refuses_a_null_selection()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanPromoteToParent([Row(1, NewId())], null!));
+
+        Assert.Equal("selectedId", thrown.ParamName);
+    }
+
+    [Fact]
+    public void Demotion_refuses_a_null_selection()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanDemoteToChild([Row(1, NewId())], null!));
+
+        Assert.Equal("selectedId", thrown.ParamName);
+    }
+
+    [Fact]
+    public void Demoting_a_row_that_is_not_in_the_table_is_refused()
+    {
+        GanttRowId present = NewId();
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild([Row(1, present)], NewId());
+
+        Assert.Equal(ParentChildRefusalReason.SelectionUnknown, plan.Refusal);
+    }
+
+    [Fact]
+    public void Moving_refuses_a_null_row_list()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanMove(null!, NewId(), moveUp: true));
+
+        Assert.Equal("rows", thrown.ParamName);
+    }
+
+    /// <summary>
+    /// A duplicated identifier resolves to its FIRST row, mirroring the
+    /// validator's first-canonical rule. Mutation testing removed the `break`
+    /// that stops the lookup and every test still passed, because no test used a
+    /// duplicated id - the last occurrence would then have been planned instead.
+    /// </summary>
+    [Fact]
+    public void A_duplicated_selection_id_resolves_to_its_first_row()
+    {
+        GanttRowId duplicated = NewId();
+        GanttRowId other = NewId();
+
+        // Both row 1 and row 2 carry the duplicated id. First-wins selects row 1,
+        // which is already at the top of the body, so the plan is the boundary
+        // no-op. Last-wins would select row 2 and plan a swap.
+        List<GanttEvent> rows = [Row(1, duplicated), Row(2, duplicated), Row(3, other)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, duplicated, moveUp: true);
+
+        Assert.False(plan.MovesAnything);
+    }
+
+    [Fact]
+    public void A_child_at_the_body_start_refuses_to_move_up()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+
+        List<GanttEvent> rows = [Row(1, child, parentId: parent), Row(2, parent)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, child, moveUp: true);
+
+        Assert.False(plan.MovesAnything);
+    }
+
+    [Fact]
+    public void A_child_refuses_to_swap_with_a_row_of_another_parent()
+    {
+        GanttRowId firstParent = NewId();
+        GanttRowId secondParent = NewId();
+        GanttRowId firstChild = NewId();
+        GanttRowId secondChild = NewId();
+
+        List<GanttEvent> rows =
+        [
+            Row(1, firstParent),
+            Row(2, firstChild, parentId: firstParent),
+            Row(3, secondParent),
+            Row(4, secondChild, parentId: secondParent),
+        ];
+
+        // The row above the second child is a top-level row, not its sibling, so
+        // the child is at the top of its own run and the plan is a no-op.
+        MovePlan plan = HierarchyMutations.PlanMove(rows, secondChild, moveUp: true);
+
+        Assert.False(plan.MovesAnything);
+    }
 }

@@ -18,8 +18,11 @@
      11. publish AddIn (packed XLL)
      12. test (OfficeIntegration excluded)
      13. coverage threshold check
-     14. package vulnerability scan
-     15. mutation gate (changed Core code)
+     14. mutation gate (changed Core code)
+
+   The package vulnerability scan is NOT here (W15): it needs network access to
+   read NuGet advisories, and this gate must work offline. CI runs it through
+   scripts/scan-vulnerable-packages.ps1.
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -28,7 +31,13 @@
 [CmdletBinding()]
 param(
     [string]$Solution = 'GanttCreator.slnx',
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+    # The diff base the mutation step judges changed Core code against. The
+    # default is the integration branch, which is right for CI. On a long-lived
+    # branch the diff against that base exceeds the gate's 30-file scope guard,
+    # so the gate refuses to run at all and step 15 can never be exercised; this
+    # lets a branch-final run use a nearer base without weakening the default.
+    [string]$MutationSince = 'origin/main'
 )
 
 # Coverage thresholds from docs/04-TEST-STRATEGY.md.
@@ -65,9 +74,15 @@ function Invoke-Step {
     # step that runs only cmdlets (or returns early) cannot inherit a stale
     # exit code from the previous native command and report a false PASS.
     $global:LASTEXITCODE = 0
+    $stepOut = $null
     try {
-        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
+        # Console stays live; the report is written ONCE per step instead of once
+        # per output line (W15).
+        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Write-Host $_ }
         $sw.Stop()
+        if ($stepOut) {
+            Add-Content -LiteralPath $report -Value ($stepOut -join [Environment]::NewLine)
+        }
         $status = if ($LASTEXITCODE -eq 0) { 'PASS' } else { "FAIL (exit $LASTEXITCODE)" }
         $line = "  -> {0} in {1:N1}s" -f $status, $sw.Elapsed.TotalSeconds
         Write-Host $line
@@ -156,47 +171,41 @@ Invoke-Step 'publish AddIn (packed XLL)' {
 }
 
 Invoke-Step 'test (OfficeIntegration excluded)' {
+    # Collect into a directory that is EMPTY for this run. The coverage step
+    # merges every file it finds, and a file left by an earlier run adds
+    # covered lines the current tree no longer has - the merged number would
+    # then describe two different builds at once.
+    $coverageRoot = Join-Path $artifacts 'coverage'
+    if (Test-Path -LiteralPath $coverageRoot) {
+        Remove-Item -LiteralPath $coverageRoot -Recurse -Force
+    }
     dotnet test $Solution -c $Configuration --no-build --no-restore `
         --filter 'Category!=OfficeIntegration' `
-        --collect:'XPlat Code Coverage' --results-directory (Join-Path $artifacts 'coverage')
+        --collect:'XPlat Code Coverage' --results-directory $coverageRoot
 }
 
-# The coverage-threshold check is intentionally permissive at R0.x. The
-# thresholds in $coverageThresholds above are the production targets; this
-# step parses the measured coverage.cobertura.xml rates and prints them next
-# to each target, visibly flagging below-target entries as warnings. It does
-# not warn-and-fail. Enforcement is enabled in R3.x when Core has real
-# tests (docs/04-TEST-STRATEGY.md).
+# The thresholds in $coverageThresholds above are the production targets from
+# docs/04-TEST-STRATEGY.md. `dotnet test` writes one cobertura file per TEST
+# PROJECT and each file holds only the classes that project executed, so a
+# package appears in several files with partial rates and no single file may
+# be compared with a threshold (the Core.Tests file alone measured Core at
+# 0.28% line). scripts/coverage-report.ps1 merges them into this run's union -
+# generated compiler sources excluded - and this step prints the merged rate
+# next to each target, flagging below-target entries. Enforcement stays
+# deferred (docs/04-TEST-STRATEGY.md): a below-target row is a warning.
 Invoke-Step 'coverage threshold check' {
     $coverageRoot = Join-Path $artifacts 'coverage'
     if (-not (Test-Path -LiteralPath $coverageRoot)) {
-        Write-Host 'coverage root not present; skipping threshold check.'
-        return
+        # The test step always creates this directory. Its absence means the
+        # collector did not run, and a threshold check over nothing proves
+        # nothing - so this is a failure, not a silent skip.
+        throw "No coverage was collected at $coverageRoot. The test step's --collect:'XPlat Code Coverage' did not run."
     }
-    $coverageFiles = Get-ChildItem -Path $coverageRoot -Recurse -Filter 'coverage.cobertura.xml'
-    if (-not $coverageFiles) {
-        Write-Host 'no coverage.cobertura.xml found; skipping threshold check.'
-        return
-    }
-    # Parse the measured line/branch rates from the cobertura XML so each
-    # target is reported next to the real number. Cobertura stores rates as
-    # invariant-culture decimal fractions (0..1) on the <package> element;
-    # the test command writes one coverage file per test project, so a
-    # package can appear in several files and the best measured rate wins.
+    $packages = @(& (Join-Path $PSScriptRoot 'coverage-report.ps1') `
+            -ReportsRoot $coverageRoot `
+            -TargetDir (Join-Path $artifacts 'coverage-merged'))
     $measured = @{}
-    foreach ($file in $coverageFiles) {
-        [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
-        foreach ($pkg in $xml.coverage.packages.package) {
-            $name = [string]$pkg.name
-            if (-not $measured.ContainsKey($name)) {
-                $measured[$name] = @{ Line = 0.0; Branch = 0.0 }
-            }
-            $lineRate = [double]$pkg.'line-rate'
-            $branchRate = [double]$pkg.'branch-rate'
-            if ($lineRate -gt $measured[$name].Line)   { $measured[$name].Line = $lineRate }
-            if ($branchRate -gt $measured[$name].Branch) { $measured[$name].Branch = $branchRate }
-        }
-    }
+    foreach ($package in $packages) { $measured[$package.Package] = $package }
     foreach ($project in $coverageThresholds.Keys) {
         $expected = $coverageThresholds[$project]
         if ($expected.Line -eq 0) { continue }
@@ -206,21 +215,14 @@ Invoke-Step 'coverage threshold check' {
             Add-Content -LiteralPath $report -Value "  $line"
             continue
         }
-        $linePct = [math]::Round($measured[$project].Line * 100, 2)
-        $branchPct = [math]::Round($measured[$project].Branch * 100, 2)
+        $linePct = [math]::Round($measured[$project].LineRate * 100, 2)
+        $branchPct = [math]::Round($measured[$project].BranchRate * 100, 2)
         $flag = ''
         if ($linePct -lt $expected.Line -or $branchPct -lt $expected.Branch) { $flag = '  <-- below target (warning)' }
-        $line = "{0}: measured line {1}%, branch {2}% (target line >= {3}%, branch >= {4}%; enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md){5}" -f $project, $linePct, $branchPct, $expected.Line, $expected.Branch, $flag
+        $line = "{0}: merged line {1}%, branch {2}% (target line >= {3}%, branch >= {4}%; enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md){5}" -f $project, $linePct, $branchPct, $expected.Line, $expected.Branch, $flag
         Write-Host "  - $line"
         Add-Content -LiteralPath $report -Value "  $line"
     }
-}
-
-Invoke-Step 'package vulnerability scan' {
-    dotnet list $Solution package --vulnerable --include-transitive
-    # dotnet list does not set a non-zero exit on found vulnerabilities, so
-    # we cannot make this step a hard fail until the team approves an
-    # explicit vulnerability gate. For now this is informational.
 }
 
 # R3.13 (the R0.5 deferral). Changed-Core-code mutation score, judged against
@@ -232,11 +234,40 @@ Invoke-Step 'package vulnerability scan' {
 # the returned object. That is the L10 lesson applied twice: `-EnableExit` from
 # inside this Tee/ForEach pipeline reported false PASSes for the life of the
 # PSScriptAnalyzer gate.
-# DISABLED: Stryker (dotnet-stryker 5.0.0) repeatedly failed with CLI argument
-# errors and was not part of the approved verification path for this change.
-# The decision is pinned in the session memory store (see the R3.13 decision).
+# Re-enabled once the first full-Core baseline was archived
+# (scripts/_artifacts/mutation/reports/mutation-report.json; judged score
+# 76.22% against the pinned 80%; D5 - archived, not gated: the threshold
+# applies from the next Core change). Runs changed-code only via
+# --since origin/main so a local verify is not slowed by whole-Core mutation.
+# The gate script judges the Stryker exit code AFTER capturing its output and
+# returns a result object; this step decides pass/fail from it. That is the
+# L10 lesson applied twice: never report PASS from a non-throwing call or a
+# silent step body.
 Invoke-Step 'mutation gate (changed Core code)' {
-    Write-Host "  -> mutation gate (changed Core code) : PASS (disabled - pinned decision)"
+    $result = $null
+    $halted = $false
+    try {
+        # The base is passed explicitly so CI keeps judging against the
+        # integration branch while a long-lived branch can name a nearer one.
+        Write-Host "  -> mutation gate: diff base $MutationSince"
+        $result = & $scriptRoot\mutation-gate.ps1 -Since $MutationSince
+    } catch {
+        $halted = $true
+        Write-Host "  -> mutation gate (changed Core code): FAIL (mutation-gate.ps1 halted: $($_.Exception.Message))" -ForegroundColor Red
+    }
+    if (-not $halted) {
+        $scored = $result.Killed + $result.Survived + $result.Timeout
+        if ($scored -eq 0) {
+            Write-Host "  -> mutation gate (changed Core code): PASS (no scored changed-code mutants)"
+        } elseif ($result.ScorePercent -lt $result.Threshold) {
+            Write-Host "  -> mutation gate (changed Core code): FAIL (score $($result.ScorePercent)% below threshold $($result.Threshold)%)" -ForegroundColor Red
+            exit 1
+        } else {
+            Write-Host "  -> mutation gate (changed Core code): PASS ($($result.ScorePercent)% >= $($result.Threshold)%)"
+        }
+    } else {
+        exit 1
+    }
 }
 
 $end = Get-Date

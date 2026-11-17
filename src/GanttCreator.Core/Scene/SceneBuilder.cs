@@ -1,5 +1,12 @@
 namespace GanttCreator.Core.Scene;
 
+/// <summary>The scene warning code carried by an intentionally empty live chart.</summary>
+public static class SceneWarningCodes
+{
+    /// <summary>No row could be drawn, so the chart is empty by decision rather than by failure.</summary>
+    public const string EmptyChart = "chart:empty";
+}
+
 /// <summary>The reason a scene could not be built.</summary>
 public enum SceneBuilderRefusal
 {
@@ -23,6 +30,17 @@ public enum SceneBuilderRefusal
 
     /// <summary>The lane metrics or the resolved frame settings were refused.</summary>
     InvalidLayoutSettings = 6,
+
+    /// <summary>
+    /// The chart's content would be drawn above the top of the sheet.
+    /// </summary>
+    /// <remarks>
+    /// A live chart's coordinates are the sheet's own, so a band above row 1
+    /// cannot be drawn where the model says. Excel clamps it instead, which
+    /// moves the band down over the row it belongs to, so the build is refused
+    /// rather than silently misplaced (ADR-0047).
+    /// </remarks>
+    ChartAboveSheet = 11,
 
     /// <summary>One event's named style could not be resolved to a renderable style.</summary>
     UnresolvableStyle = 7,
@@ -76,6 +94,10 @@ public sealed record SceneBuildRequest
 {
     /// <summary>Gets the validated events to render, in any order.</summary>
     public IReadOnlyList<GanttEvent> Events { get; init; } = [];
+
+    /// <summary>Gets whether this request intentionally represents a valid empty chart.</summary>
+    /// <remarks>Defaults to false for exports and callers that require at least one scene entity.</remarks>
+    public bool AllowEmptyEvents { get; init; }
 
     /// <summary>Gets the named-style registry used to resolve each event's style.</summary>
     public GanttStyleRegistry Registry { get; init; } = GanttStyleRegistry.Empty;
@@ -351,7 +373,9 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.LiveProfileCarriesPanel);
         }
 
-        if (request.Events is null || request.Events.Count == 0 || request.Events.Any(@event => @event is null))
+        if (request.Events is null
+            || (!request.AllowEmptyEvents && request.Events.Count == 0)
+            || request.Events.Any(@event => @event is null))
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
@@ -425,7 +449,7 @@ public static class SceneBuilder
         // event". A Delineator renders a line and consumes no lane, so a scene of only
         // delineators is a real scene; refusing it reported a renderable chart as
         // having nothing to draw.
-        if (laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
+        if (!request.AllowEmptyEvents && laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
@@ -511,7 +535,7 @@ public static class SceneBuilder
             // Every type is listed explicitly, per the repo's exhaustive-switch
             // convention, so a type added later cannot silently take the 0 default.
             ResolvedEventStyle? heightSource = resolved;
-            var heightPt = @event.Type switch
+            double heightPt = @event.Type switch
             {
                 GanttEntityType.Splitter => laneMetrics.SplitterHeightPt,
                 GanttEntityType.Spacer => laneMetrics.SpacerHeightPt,
@@ -527,7 +551,8 @@ public static class SceneBuilder
                     or GanttEntityType.AsBuiltMilestone
                     or GanttEntityType.AsPlannedMilestone
                     or GanttEntityType.BaselineMilestone
-                    or GanttEntityType.CriticalMilestone => heightSource?.HeightPt ?? 0,
+                    or GanttEntityType.CriticalMilestone
+                    or GanttEntityType.CustomMilestone => heightSource?.HeightPt ?? 0,
 
                 // A Delineator never reaches this loop — §24 makes it a plot-global
                 // entity — so it is listed rather than defaulted, per the repo's
@@ -539,7 +564,7 @@ public static class SceneBuilder
                 _ => 0,
             };
 
-            styles[@event.Id] = new ResolvedEventStyle(style, heightPt);
+            styles[@event.Id] = new ResolvedEventStyle(style, heightPt, resolved?.MilestoneSizePt ?? 0);
             _ = laneOwnerByEntity.TryGetValue(@event.Id, out GanttEvent? laneOwner);
             laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
@@ -584,6 +609,19 @@ public static class SceneBuilder
         // its own.
         List<SceneWarning> warnings = [.. laneLayout.Warnings];
 
+        // An intentionally EMPTY live chart says why it is empty (owner ruling 2026-11-16).
+        // The orchestrator used to refuse this state outright, which turned "I added my first
+        // row and it has no dates yet" into a modal error on a sheet with no chart to protect.
+        // The empty scene is built instead and carries its reason, so the Warnings panel
+        // reports it rather than a dialog that has already gone.
+        if (laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
+        {
+            warnings.Add(new SceneWarning(
+                SceneOwnerId.Chart,
+                SceneWarningCodes.EmptyChart,
+                "No row could be drawn because every row has a blocking error. Enter the missing data and refresh."));
+        }
+
         // The critical overlay clips to the parent's post-plot-clip visible span, so
         // the map is filled over the span events before any overlay is built.
         Dictionary<GanttRowId, RectD> parentVisibleBounds = [];
@@ -600,7 +638,17 @@ public static class SceneBuilder
     /// <summary>One event's resolved scene style and its resolved height.</summary>
     /// <param name="Style">The resolved scene style.</param>
     /// <param name="HeightPt">The resolved activity height from the catalogue.</param>
-    private sealed record ResolvedEventStyle(SceneStyle Style, double HeightPt);
+    /// <param name="MilestoneSizePt">
+    /// The resolved milestone diamond size from the style, or zero when the
+    /// chart-wide metric applies.
+    /// </param>
+    /// <remarks>
+    /// The milestone size is the one size a <i>user-authored</i> style may
+    /// override: the chart-wide metric is the default, and a style the user
+    /// created may name its own diamond size. A built-in style always follows
+    /// the chart metric, so the chart knob stays live for it.
+    /// </remarks>
+    private sealed record ResolvedEventStyle(SceneStyle Style, double HeightPt, double MilestoneSizePt);
 
     private static void BuildSpans(
         LaneEventLayoutResult placements,
@@ -631,7 +679,7 @@ public static class SceneBuilder
             // Lane-relative to chart-relative, applied once per placement. The zero
             // width fallback below must use the same centre, or a parentless overlay
             // would clip against a band the bar never had.
-            var slotCentreY = placement.SlotCentreY + plotBounds.Top;
+            double slotCentreY = placement.SlotCentreY + plotBounds.Top;
             SpanBarCreationOutcome bar = SpanBarBuilder.TryBuild(
                 new SpanBarRequest(
                     @event,
@@ -735,19 +783,31 @@ public static class SceneBuilder
                 continue;
             }
 
+            // Every milestone type is drawn here, including the named custom
+            // milestone: a Custom Milestone row is a milestone row, so it must
+            // reach the same marker builder as the four built-in kinds. It was
+            // missing from this list, so a custom milestone rendered no
+            // diamond at all.
             if (@event.Type is not (GanttEntityType.AsPlannedMilestone
                 or GanttEntityType.AsBuiltMilestone
                 or GanttEntityType.BaselineMilestone
-                or GanttEntityType.CriticalMilestone))
+                or GanttEntityType.CriticalMilestone
+                or GanttEntityType.CustomMilestone))
             {
                 continue;
             }
+
+            // The diamond size: the style's own size when a user-authored
+            // style names one, and the chart-wide metric otherwise.
+            double milestoneSizePt = resolved.MilestoneSizePt > 0
+                ? resolved.MilestoneSizePt
+                : request.MilestoneSizePt;
 
             MilestoneMarkerCreationOutcome marker = MilestoneMarkerBuilder.TryBuild(
                 new MilestoneMarkerRequest(
                     @event,
                     resolved.Style,
-                    request.MilestoneSizePt,
+                    milestoneSizePt,
                     // The same single lane-relative to chart-relative conversion the
                     // span pass applies, so a marker and a bar on one row cannot
                     // disagree about where that row is.
@@ -782,6 +842,52 @@ public static class SceneBuilder
     }
 
 
+    /// <summary>
+    /// The visible data table's rectangle, in worksheet points (ADR-0048).
+    /// </summary>
+    /// <param name="grid">The measured data-panel grid.</param>
+    /// <returns>The table's rectangle, or <see langword="null"/> when there is no grid.</returns>
+    /// <remarks>
+    /// <para>
+    /// Every edge is MEASURED, so the border follows the table wherever it is.
+    /// The left edge is the panel's own origin - the same number the live title
+    /// textbox is placed at - so the border's vertical rule and the title's left
+    /// edge cannot disagree about where the table starts.
+    /// </para>
+    /// <para>
+    /// The top is the header row's top and the bottom is the last body row's
+    /// bottom, so the rectangle is the table itself rather than an approximation
+    /// of it. The chart's own top and bottom margins lie outside this rectangle,
+    /// and the border is drawn on the union, so those margins are preserved.
+    /// </para>
+    /// </remarks>
+    private static RectD? LiveDataPanelBounds(PanelCellGrid? grid)
+    {
+        if (grid is null)
+        {
+            return null;
+        }
+
+        // The frame's left edge is the GUTTER's outer edge - the chart's own 4pt left
+        // margin - so the frame encloses the same margin on all four sides (owner ruling
+        // 2026-11-16: "the left framing border has mistakenly been moved inward ... move it
+        // to the edge and reassert the 4pt frame border like the other three sides").
+        //
+        // It closed on the table's first column between 2026-11-15 and this ruling, because
+        // a stroke CENTRED on the worksheet's own left edge was clipped by the host and the
+        // left side read as missing. That cause is gone: on the live sheet every frame
+        // stroke is drawn inside the rectangle it closes (ADR-0061 D4), so the left rule
+        // sits half a stroke inside the gutter's outer edge and is wholly on the sheet.
+        // The right edge is the plotted panel's right edge, which is where the live plot
+        // starts.
+        double left = grid.PanelLeftPt;
+        double right = grid.PanelRightPt;
+        double top = grid.OriginTopPt - grid.HeaderHeightPt;
+        double bottom = grid.OriginTopPt + grid.RowHeightsPt.Sum();
+
+        return new RectD(left, top, right - left, bottom - top);
+    }
+
     private static SceneBuildOutcome BuildFramePanelAndScene(
         SceneBuildRequest request,
         TimeScale timeScale,
@@ -807,7 +913,7 @@ public static class SceneBuilder
         // Initialise, so a drawn title band is not merely redundant - it is drawn
         // over the year band and collides with it. The export profiles keep the band,
         // which is why this is a profile check rather than removing the entity.
-        var showTitle =
+        bool showTitle =
             request.Profile != SceneCompositionProfile.LiveExcel
             && !string.IsNullOrWhiteSpace(request.Title);
 
@@ -881,6 +987,15 @@ public static class SceneBuilder
         // accepted by RectD and would drag the content origin to the origin.
         RectD framePanelBounds = panelOutcome?.Result?.PanelBounds ?? plotBounds;
 
+        // ADR-0048: a LIVE chart's border must enclose the visible data table and
+        // the title that sits in its columns, not the plot alone. The live title
+        // is an owned textbox placed at the table's first column, so without this
+        // the border started at the plot and the chart read as two unrelated
+        // objects. The EXPORT compositions draw their own panel and are unaffected.
+        RectD? dataPanelBounds = request.Profile == SceneCompositionProfile.LiveExcel
+            ? LiveDataPanelBounds(request.Grid)
+            : null;
+
         FrameBandsCreationOutcome frame = FrameBandsBuilder.TryBuild(
             new FrameBandsRequest(
                 timeScale,
@@ -902,11 +1017,20 @@ public static class SceneBuilder
                 request.ShowMajorGrid,
                 request.PlotBandHeaderOverlapPt,
                 request.ChartAnchorRowHeightPt,
-                frameTheme),
+                frameTheme,
+                SheetCoordinates: request.Profile == SceneCompositionProfile.LiveExcel,
+                DataPanelBounds: dataPanelBounds),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
         {
-            return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            // The frame's own refusal is carried through when it is about the
+            // sheet, because "the chart would be drawn above row 1" is a
+            // different fault from "the layout settings were refused" and the
+            // two need different answers.
+            return Refused(
+                frame.Refusal == FrameBandsRefusal.ContentAboveSheet
+                    ? SceneBuilderRefusal.ChartAboveSheet
+                    : SceneBuilderRefusal.InvalidLayoutSettings);
         }
 
         primitives.AddRange(frameResult.Primitives);
@@ -1021,7 +1145,7 @@ public static class SceneBuilder
                 request.ChartAnchorRowHeightPt,
                 request.MajorBoundaryPt)
             : null;
-        var lineTopPt = PlotSpanGeometry.LiftTopIntoHeader(
+        double lineTopPt = PlotSpanGeometry.LiftTopIntoHeader(
             plotBounds,
             request.PlotBandHeaderOverlapPt).Y;
         // Grouping is by (date, resolved style), and the members inside a group are
@@ -1037,23 +1161,43 @@ public static class SceneBuilder
             .OrderBy(@event => @event.Id.Value, StringComparer.Ordinal)
             .GroupBy(@event => (@event.Start!.Value, delineatorStyles[@event.Id])))
         {
+            // D1/D4: the line width comes from the resolved named style's
+            // StandardOutlinePt when it is positive AND the style is
+            // user-authored (a custom style that sets its own width).
+            // Built-in styles follow the chart-wide DelineatorLinePt metric,
+            // so the built-in DefaultDelineator path is unchanged. Zero means
+            // "not set" on a user-authored style and falls back to the metric.
             DelineatorRequest[] requests =
             [
-                .. group.Select(@event => new DelineatorRequest(
-                    @event,
-                    delineatorStyles[@event.Id],
-                    request.DelineatorLinePt,
-                    plotBounds,
+                .. group.Select(@event =>
+                {
+                    bool styleIsBuiltIn = GanttCatalogues.TryGetPreset(
+                        delineatorStyles[@event.Id].StyleKey, out _);
+                    return new DelineatorRequest(
+                        @event,
+                        delineatorStyles[@event.Id],
+                        styleIsBuiltIn
+                            ? request.DelineatorLinePt
+                            : (delineatorStyles[@event.Id].OutlineWidthPt is { } resolvedWidth &&
+                              resolvedWidth > 0
+                                ? resolvedWidth
+                                : request.DelineatorLinePt),
+                        plotBounds,
                     chartBounds,
                     request.LabelGapPt,
                     request.Metrics!,
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
                     LineBottomPt: lineBottomPt,
                     LineTopPt: lineTopPt,
-                    LabelStyle: request.LabelStyle,
+                    LabelStyle: delineatorStyles[@event.Id].TextColour is { } delineatorTextColour
+                        && request.LabelStyle is { } labelStyle
+                        ? labelStyle.WithTextColour(delineatorTextColour)
+                        : request.LabelStyle,
                     DateFormat: request.DateFormat,
-                    ShowDateLabels: request.ShowDateLabels)),
-            ];
+                    ShowDateLabels: request.ShowDateLabels
+                    );
+                }
+            )];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(
                 new DelineatorGroupRequest(requests, request.DelineatorStackGapPt),
@@ -1223,17 +1367,30 @@ public static class SceneBuilder
             // placed inside a body, so it always takes the outside style. Passing
             // the inside style here would put a delay event's DelayText beside its
             // bar, where white-on-white is unreadable.
-            // R5.14 D3: the row's date-label choice selects which of the
-            // two date labels the scene plans. A blank cell (Auto) keeps
-            // both, which is the behaviour every existing row already
-            // produces, so the default scene is unchanged. D5 (second
-            // owner ruling 2026-10-14): None names no date labels at
-            // all, so both flags clear and the builder plans an empty
-            // set -- it succeeds with no primitives rather than
-            // refusing, so a None row emits no date-label warning.
-            var none = @event.DateLabelPosition == GanttDateLabelPosition.None;
-            var showStart = !none && @event.DateLabelPosition != GanttDateLabelPosition.Finish;
-            var showFinish = !none && @event.DateLabelPosition != GanttDateLabelPosition.Start;
+            // The row's date-label choice selects which of the two date labels
+            // the scene plans.
+            //
+            // R5.18m (owner ruling 2026-11-13): a blank cell and a stored `Auto`
+            // both resolve to the TYPE default, which is `None` for every
+            // date-bearing type -- a bar shows no dates until the user asks for
+            // them. `Auto` survives in the enum only so a workbook written when it
+            // meant "both labels" keeps parsing, and `Both` is now the explicit
+            // way to ask for both. None and the default clear both flags and the
+            // builder plans an empty set: it succeeds with no primitives rather
+            // than refusing, so such a row emits no date-label warning.
+            (bool showStart, bool showFinish) = @event.DateLabelPosition switch
+            {
+                GanttDateLabelPosition.Both => (true, true),
+                GanttDateLabelPosition.Start => (true, false),
+                GanttDateLabelPosition.Finish => (false, true),
+                GanttDateLabelPosition.None
+                or GanttDateLabelPosition.Auto
+                or null => (false, false),
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    @event.DateLabelPosition,
+                    "Undefined date-label choice."),
+            };
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
@@ -1288,12 +1445,12 @@ public static class SceneBuilder
     /// </remarks>
     private static RectD EnclosingBounds(IReadOnlyList<PointD> points)
     {
-        var left = points[0].X;
-        var top = points[0].Y;
-        var right = left;
-        var bottom = top;
+        double left = points[0].X;
+        double top = points[0].Y;
+        double right = left;
+        double bottom = top;
 
-        for (var i = 1; i < points.Count; i++)
+        for (int i = 1; i < points.Count; i++)
         {
             PointD point = points[i];
             left = Math.Min(left, point.X);
@@ -1317,9 +1474,9 @@ public static class SceneBuilder
         // `skipped` is tracked separately from `relevant`: when the *first* occupant
         // is filtered out there is nothing to copy yet, so a null `relevant` alone
         // would mean "keep everything" and silently return the unfiltered list.
-        var skipped = false;
+        bool skipped = false;
         List<LabelOccupant>? relevant = null;
-        for (var i = 0; i < occupants.Count; i++)
+        for (int i = 0; i < occupants.Count; i++)
         {
             LabelOccupant occupant = occupants[i];
             if (occupant.Bounds.Bottom <= band.Top + GeometryMath.Epsilon
@@ -1376,9 +1533,9 @@ public static class SceneBuilder
             return visible;
         }
 
-        var left = timeScale.PlotLeftPt
+        double left = timeScale.PlotLeftPt
             + ((start.DayNumber - timeScale.PlotStart.DayNumber) * timeScale.DayWidth);
-        var width = (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth;
+        double width = (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth;
 
         return new RectD(left, visible.Y, Math.Max(0, width), visible.Height);
     }
@@ -1394,6 +1551,7 @@ public static class SceneBuilder
                 @event.StyleKey,
                 @event.FillColour,
                 @event.StrokeColour,
+                null,
                 @event.LabelPosition,
                 out GanttResolvedStyle? style,
                 out _)
@@ -1406,25 +1564,116 @@ public static class SceneBuilder
         // The resolved height comes from the catalogue definition rather than the
         // style key alone: a capability-only definition has no formatting, and
         // using it would contribute a zero-height lane that silently hides content.
-        var hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
+        //
+        // When the registry carries no formatting definition for the resolved
+        // style key, the code-owned preset is the authority for that key's
+        // metrics. This is the case the resolver's own preset fallback produces
+        // (a style-key row whose user-created style was deleted), and reading
+        // the height from the registry alone would leave it at zero -- a
+        // degenerate bar that draws nothing and can be refused mid-refresh.
+        // The preset is the same token authority the workbook's own row was
+        // written from, so both sources agree.
+        bool hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
             && definition is { HasFormatting: true };
-        var heightPt = hasDefinition ? definition!.ActivityHeightPt : 0;
+        GanttStylePreset? preset = null;
+        if (!hasDefinition)
+        {
+            _ = GanttCatalogues.TryGetPreset(style.StyleKey, out preset);
+        }
 
-        // The hatch pattern and the standard outline width are resolved style
-        // tokens, not renderer choices: the guide requires a renderer's output to
-        // match the scene, so a hatch the scene drops can never be drawn. Both come
-        // from the same resolved definition as the height, and stay at their
-        // defaults for a capability-only definition that supplied no formatting.
+        // The bar height. A USER-AUTHORED style may set its own height, and
+        // that value is honoured when it is positive -- exactly as the
+        // milestone size honours a user style's own size below. A BUILT-IN
+        // style always follows the code-owned value its registry entry
+        // carries, so the built-in rows stay protected and nothing about
+        // them changes.
+        //
+        // A user style that names no height of its own carries a zero, which
+        // is the style contract's "not applicable to this entity kind"
+        // value: a style used by a milestone carries a zero bar height, and
+        // one used by an activity carries a zero milestone size. So the
+        // zero falls back to the height the row's OWN default style carries
+        // -- what the row would render at with no custom style at all. It
+        // is deliberately not a constant: a milestone's default style
+        // carries a zero bar height too, and a constant here would give
+        // every milestone a bar it does not have.
+        bool userAuthored = hasDefinition
+            && !GanttCatalogues.TryGetPreset(style.StyleKey, out _);
+        double heightPt = userAuthored
+            ? definition!.ActivityHeightPt > 0
+                ? definition.ActivityHeightPt
+                : DefaultHeightFor(@event.Type)
+            : hasDefinition
+                ? definition!.ActivityHeightPt
+                : preset?.ActivityHeightPt ?? 0;
+
+        // The hatch pattern, the standard outline width, and the stroke dash
+        // are resolved style tokens, not renderer choices: the guide requires a
+        // renderer's output to match the scene, so a hatch or a dash the scene
+        // drops can never be drawn. All three come from the same resolved
+        // definition as the height, and stay at their defaults for a
+        // capability-only definition that supplied no formatting.
+        // The milestone diamond size. The chart-wide MilestoneSizePt metric is
+        // the default, and a USER-AUTHORED style may override it with its own
+        // size; zero means "use the chart-wide size". A built-in style always
+        // follows the chart metric, so the chart knob stays live for it: the
+        // built-in rows carry the catalogue's token default, not a live
+        // value, so honouring them here would shadow the metric.
+        double milestoneSizePt = 0;
+        if (hasDefinition
+            && definition!.MilestoneSizePt > 0
+            && !GanttCatalogues.TryGetPreset(style.StyleKey, out _))
+        {
+            milestoneSizePt = definition.MilestoneSizePt;
+        }
+
         resolved = new ResolvedEventStyle(
             new SceneStyle(
                 style.StyleKey,
                 style.FillColour,
                 style.StrokeColour,
-                hasDefinition ? definition!.StandardOutlinePt : null,
-                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None,
-                textColour: style.TextColour),
-            heightPt);
+                hasDefinition ? definition!.StandardOutlinePt : preset?.StandardOutlinePt,
+                hasDefinition
+                    ? definition!.HatchPattern ?? GanttHatchPattern.None
+                    : preset?.HatchPattern ?? GanttHatchPattern.None,
+                textColour: style.TextColour,
+                strokeDash: hasDefinition
+                    ? definition!.StrokeDash ?? GanttStrokeDash.Solid
+                    : preset?.StrokeDash ?? GanttStrokeDash.Solid),
+            heightPt,
+            milestoneSizePt);
         return true;
+    }
+
+    /// <summary>
+    /// The bar height a row type carries when no style of its own names one.
+    /// </summary>
+    /// <param name="type">The row's entity type.</param>
+    /// <returns>The height the type's code-owned default style carries, in points.</returns>
+    /// <remarks>
+    /// <para>
+    /// This is the fallback for a user-authored style that named no bar height
+    /// of its own, and for a built-in style whose registry entry carries none.
+    /// It reads the type's DEFAULT style rather than a constant, because the
+    /// bar height is not one number for every kind: a milestone's default
+    /// style carries a zero bar height (a milestone is a diamond, not a bar),
+    /// while an activity's carries the code-owned bar height. A constant here
+    /// would give every milestone a bar it does not have.
+    /// </para>
+    /// <para>
+    /// A type with no default style in the catalogue contributes nothing, so
+    /// the height stays zero rather than being invented.
+    /// </para>
+    /// </remarks>
+    private static double DefaultHeightFor(GanttEntityType type)
+    {
+        EntityTypeDefinition? definition = EntityTypeCatalog.GetDefinition(type);
+
+        return definition is not null
+            && GanttCatalogues.TryGetPreset(definition.DefaultStyleKey, out GanttStylePreset? preset)
+            && preset is not null
+                ? preset.ActivityHeightPt
+                : 0;
     }
 
     /// <summary>
@@ -1447,7 +1696,8 @@ public static class SceneBuilder
         return new SceneStyle(
             preset.StyleKey,
             string.IsNullOrEmpty(preset.FillColour) ? null : ColourHex.Parse(preset.FillColour),
-            string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour));
+            string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour),
+            textColour: string.IsNullOrEmpty(preset.TextColour) ? null : ColourHex.Parse(preset.TextColour));
     }
 
     /// <summary>
@@ -1483,7 +1733,7 @@ public static class SceneBuilder
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
-        var byId = laneParticipants.ToDictionary(@event => @event.Id);
+        Dictionary<GanttRowId, GanttEvent> byId = laneParticipants.ToDictionary(@event => @event.Id);
 
         foreach (LaneGeometry lane in laneLayout.Lanes)
         {
@@ -1505,7 +1755,14 @@ public static class SceneBuilder
                 // border width a function of a style the guide never defined it from. The
                 // stroke colour comes from the major-boundary style, because a line is a
                 // stroke and the band preset has no stroke token to contribute.
-                GanttLabelPosition position = @event.LabelPosition ?? GanttLabelPosition.DataPanelLeft;
+                // The row's blank position means "the type's default", and the default is
+                // owned by the type's own preset (R5.18l). Writing a literal here was a
+                // second authority: it kept asking for `DataPanelLeft` after the catalogue
+                // stopped offering it, and the builder refused every splitter band.
+                string defaultStyleKey =
+                    EntityTypeCatalog.GetDefinition(GanttEntityType.Splitter)!.DefaultStyleKey;
+                GanttLabelPosition position = @event.LabelPosition
+                    ?? GanttCatalogues.GetPreset(defaultStyleKey).DefaultLabelPosition;
                 // The lane layout is lane-relative — it starts at y=0 for the first
                 // lane — so the plot top is added here, exactly once, the same way
                 // BuildSpans offsets a slot centre. Without it the band would sit in

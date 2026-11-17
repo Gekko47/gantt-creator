@@ -1,8 +1,9 @@
-﻿using ExcelDna.Integration.CustomUI;
+using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 using Moq;
+using System.Windows.Forms;
 
 namespace GanttCreator.AddIn.Tests;
 /// <summary>
@@ -53,6 +54,129 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.Null(service.GetCatalogueWriter());
     }
 
+    [Fact]
+    public void Current_validation_findings_do_not_replace_last_rendered_scene_warnings()
+    {
+        var service = new RibbonStateService();
+        SceneWarning sceneWarning = new(SceneOwnerId.Chart, "PlotRange", "Chart warning.");
+        GanttValidationIssue validationIssue = new(
+            3, "Start", "InvalidDate", GanttValidationSeverity.Error, "Enter a valid start date.");
+
+        service.UpdateWarnings([sceneWarning]);
+        service.UpdateCurrentValidationIssues([validationIssue]);
+
+        Assert.Equal([sceneWarning], service.GetLastSuccessfulSceneWarnings());
+        Assert.Equal([validationIssue], service.GetCurrentValidationIssues());
+    }
+
+    [Fact]
+    public void A_workbook_switch_clears_the_last_rendered_warnings_and_current_issues()
+    {
+        // R5.8/R5.11: both snapshots are per-workbook. Carrying them across a
+        // switch would show another workbook's warnings and stale badges, which
+        // the user can never dismiss.
+        var adapter = new FakeApplicationAdapter { WorkbookFact = false };
+        var service = Arm(adapter);
+        service.UpdateWarnings([new SceneWarning(SceneOwnerId.Chart, "PlotRange", "Chart warning.")]);
+        service.UpdateCurrentValidationIssues(
+            [new GanttValidationIssue(3, "Start", "InvalidDate", GanttValidationSeverity.Error, "Enter a valid start date.")]);
+        Assert.NotEmpty(service.GetLastSuccessfulSceneWarnings());
+        Assert.NotEmpty(service.GetCurrentValidationIssues());
+        Assert.NotNull(service.GetLastSuccessfulRenderAtUtc());
+
+        adapter.RaiseWorkbookStateChanged();
+
+        Assert.Empty(service.GetLastSuccessfulSceneWarnings());
+        Assert.Empty(service.GetCurrentValidationIssues());
+        Assert.Null(service.GetLastSuccessfulRenderAtUtc());
+    }
+
+    [Fact]
+    public void A_fresh_service_points_every_add_primary_at_its_family_default()
+    {
+        // R5.18g: before the user has touched a menu, each split button's primary adds the
+        // family default its label shows.
+        RibbonStateService service = new();
+
+        Assert.Equal(
+            GanttEntityType.AsPlannedActivity,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Activity));
+        Assert.Equal(
+            GanttEntityType.AsPlannedMilestone,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Milestone));
+        Assert.Equal(
+            GanttEntityType.Delineator,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Element));
+    }
+
+    [Fact]
+    public void A_menu_pick_moves_only_its_own_family_primary()
+    {
+        RibbonStateService service = new();
+
+        service.RememberAddedType(GanttEntityType.AsBuiltActivity);
+
+        Assert.Equal(
+            GanttEntityType.AsBuiltActivity,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Activity));
+        Assert.Equal(
+            GanttEntityType.AsPlannedMilestone,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Milestone));
+        Assert.Equal(
+            GanttEntityType.Delineator,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Element));
+    }
+
+    [Fact]
+    public void A_remembered_pick_that_is_no_longer_permitted_falls_back_to_the_family_default()
+    {
+        // The Critical Interval item disables itself when no row can own one. A primary must
+        // never stay pointed at an action its own menu greys out, so the projection falls
+        // back to the default; an unarmed service reports the item unavailable, which is
+        // precisely the condition being pinned.
+        RibbonStateService service = new();
+        Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+
+        service.RememberAddedType(GanttEntityType.CriticalInterval);
+
+        Assert.Equal(
+            GanttEntityType.AsPlannedActivity,
+            service.PrimaryTypeFor(RibbonStateService.AddEntityFamily.Activity));
+    }
+
+    [Fact]
+    public void The_primary_label_names_what_that_primary_would_add()
+    {
+        RibbonStateService service = new();
+
+        Assert.Equal(
+            "As-Planned Activity",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddActivity, service));
+        Assert.Equal(
+            "As-Planned Milestone",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddMilestone, service));
+        Assert.Equal(
+            "Delineator",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddDelineator, service));
+
+        service.RememberAddedType(GanttEntityType.Splitter);
+
+        Assert.Equal(
+            "Splitter",
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.AddDelineator, service));
+    }
+
+    [Fact]
+    public void A_primary_label_for_an_unknown_control_is_empty_rather_than_a_guess()
+    {
+        RibbonStateService service = new();
+
+        Assert.Equal(string.Empty, RibbonStateService.AddEntityPrimaryLabel(null, service));
+        Assert.Equal(
+            string.Empty,
+            RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.Remove, service));
+    }
+
     /// <summary>
     /// Hand-written fake for <see cref="IExcelApplicationAdapter"/>: counts
     /// captures and subscriptions so the tests can prove the getters never probe
@@ -82,6 +206,20 @@ public sealed class RibbonStateServiceTests : IDisposable
             return ThrowOnCapture ? throw new InvalidOperationException("capture failed") : WorkbookFact;
         }
 
+        /// <summary>
+        /// The status-bar messages this fake was asked to show. The warnings
+        /// are ADVISORY and NON-MODAL, so they are asserted through this
+        /// recorder rather than through a dialog.
+        /// </summary>
+        public List<string> StatusBarMessages { get; } = [];
+
+        public void ShowStatusBar(string message) => StatusBarMessages.Add(message);
+
+        public void ClearStatusBar()
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler)
         {
             ArgumentNullException.ThrowIfNull(handler);
@@ -96,6 +234,39 @@ public sealed class RibbonStateServiceTests : IDisposable
         }
 
         internal void RaiseWorkbookStateChanged() => _handler?.Invoke();
+
+        private Action? _sheetActivatedHandler;
+
+        public int SheetActivateSubscribeCount { get; private set; }
+
+        public int SheetActivateDisposeCount { get; private set; }
+
+        public IDisposable SubscribeSheetActivated(Action handler)
+        {
+            ArgumentNullException.ThrowIfNull(handler);
+            SheetActivateSubscribeCount++;
+            _sheetActivatedHandler = handler;
+            return new SheetActivationSubscription(this);
+        }
+
+        internal void RaiseSheetActivated() => _sheetActivatedHandler?.Invoke();
+
+        private sealed class SheetActivationSubscription(FakeApplicationAdapter owner) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                owner.SheetActivateDisposeCount++;
+                owner._sheetActivatedHandler = null;
+            }
+        }
 
         private sealed class Subscription(FakeApplicationAdapter owner) : IDisposable
         {
@@ -140,6 +311,316 @@ public sealed class RibbonStateServiceTests : IDisposable
     /// <c>G-</c> plus 32 lowercase hex characters.
     /// </summary>
     private static string NewRowId(char last = 'a') => "G-" + new string('0', 31) + last;
+
+    private static RibbonStateService ArmedWithTableRead(
+        FakeApplicationAdapter adapter,
+        GanttTableReadOutcome outcome)
+    {
+        var service = Arm(adapter);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read()).Returns(outcome);
+        service.SetTableReader(reader.Object);
+        service.Refresh();
+        return service;
+    }
+
+    [Fact]
+    public void Refresh_reports_first_run_when_no_workbook_is_active()
+    {
+        // R5.16 positive control for the old `refusal != TableMissing` test:
+        // NoActiveWorkbook used to count as initialised, which would make this
+        // snapshot Ready and hide the only button a first-run user has.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = false },
+            GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook));
+
+        Assert.True(service.GetVisible(RibbonControlIds.GetStartedGroup));
+        Assert.True(service.GetVisible(RibbonControlIds.DiagnosticsGroup));
+        Assert.False(service.GetVisible(RibbonControlIds.DataGroup));
+        Assert.False(service.GetVisible(RibbonControlIds.OutlineGroup));
+    }
+
+    [Fact]
+    public void Refresh_reports_needs_repair_when_configuration_exists_without_a_table()
+    {
+        // The recovery case: a workbook that carries _GanttCreatorConfig but has
+        // lost its table must not be treated as a first run, or Initialise's
+        // "use Repair configuration" refusal points at a hidden command.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Refused(
+                GanttTableReadRefusalReason.TableMissing,
+                configurationPresent: true));
+
+        Assert.False(service.GetVisible(RibbonControlIds.GetStartedGroup));
+        Assert.True(service.GetVisible(RibbonControlIds.DataGroup));
+        Assert.True(service.GetEnabled(RibbonControlIds.RepairConfig));
+        Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
+    }
+
+    [Fact]
+    public void Refresh_reports_ready_when_the_table_is_readable()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([]));
+
+        Assert.False(service.GetVisible(RibbonControlIds.GetStartedGroup));
+        Assert.True(service.GetVisible(RibbonControlIds.DataGroup));
+        Assert.True(service.GetEnabled(RibbonControlIds.AddActivity));
+    }
+
+    [Fact]
+    public void Structural_buttons_follow_the_row_under_the_active_cell()
+    {
+        // R5.9b: a child at the bottom of its run offers Promote and Remove,
+        // not Demote, Up or Down. The flags come from RowActionAvailability.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+            [
+                Row(1, "As-Planned Activity"),
+                Row(2, "As-Planned Activity", parentId: NewRowId('a')),
+            ]));
+
+        var identifier = new Mock<ISelectionIdentifier>();
+        _ = identifier.Setup(i => i.Identify()).Returns(new SelectionFacts(true, true, 2, false, 1, 2));
+        service.SetSelectionIdentifier(identifier.Object);
+        service.Refresh();
+
+        Assert.True(service.GetEnabled(RibbonControlIds.PromoteToParent));
+        Assert.False(service.GetEnabled(RibbonControlIds.DemoteToChild));
+        Assert.False(service.GetEnabled(RibbonControlIds.MoveUp));
+        Assert.False(service.GetEnabled(RibbonControlIds.MoveDown));
+        Assert.True(service.GetEnabled(RibbonControlIds.Remove));
+
+        // A header selection resolves no body row, so Remove greys too.
+        _ = identifier.Setup(i => i.Identify()).Returns(new SelectionFacts(true, false, null, true, 0));
+        service.Refresh();
+
+        Assert.False(service.GetEnabled(RibbonControlIds.Remove));
+        Assert.False(service.GetEnabled(RibbonControlIds.PromoteToParent));
+    }
+
+    [Fact]
+    public void Chart_commands_are_disabled_when_another_sheet_is_active()
+    {
+        // R5.16b (ADR-0058): the reader reports that the active sheet is not the
+        // sheet that carries tblGanttData, so every chart command greys while the
+        // recovery surface stays available from any sheet.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], activeSheetIsGanttSheet: false));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
+        Assert.False(service.GetEnabled(RibbonControlIds.RefreshSheet));
+        Assert.False(service.GetEnabled(RibbonControlIds.Warnings));
+        Assert.False(service.GetEnabled(RibbonControlIds.ToggleChartLock));
+        Assert.False(service.GetEnabled(RibbonControlIds.ToggleCellLock));
+        Assert.False(service.GetEnabled(RibbonControlIds.ThemeSettings));
+        Assert.False(service.GetEnabled(RibbonControlIds.ChartTitle));
+        Assert.False(service.GetEnabled(RibbonControlIds.PlotTimeScale));
+        Assert.False(service.GetEnabled(RibbonControlIds.SizeDropdown));
+        Assert.False(service.GetEnabled(RibbonControlIds.Margin));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.InitialiseSheet));
+        Assert.True(service.GetEnabled(RibbonControlIds.RepairConfig));
+        Assert.True(service.GetEnabled(RibbonControlIds.ValidateSheet));
+        Assert.True(service.GetEnabled(RibbonControlIds.Diagnostics));
+    }
+
+    [Fact]
+    public void Expand_and_collapse_are_disabled_on_a_flat_table_and_enabled_with_a_group()
+    {
+        var flat = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([Row(1, "As-Planned Activity")]));
+
+        Assert.False(flat.GetEnabled(RibbonControlIds.ExpandAllGroups));
+        Assert.False(flat.GetEnabled(RibbonControlIds.CollapseAllGroups));
+
+        var grouped = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+            [
+                Row(1, "As-Planned Activity"),
+                Row(2, "As-Planned Activity", parentId: NewRowId('a')),
+            ]));
+
+        Assert.True(grouped.GetEnabled(RibbonControlIds.ExpandAllGroups));
+        Assert.True(grouped.GetEnabled(RibbonControlIds.CollapseAllGroups));
+    }
+
+    [Fact]
+    public void Refresh_activates_the_add_in_tab_when_the_gantt_sheet_is_active()
+    {
+        // Owner ruling D-4: every refresh restores the tab, so a chart refresh
+        // cannot leave the user looking at the Table Design tab.
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+
+        // The configuration must be present for the surface to be Ready; a
+        // successful read without it is NeedsRepair (R5.17b).
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        service.SetTableReader(reader.Object);
+
+        service.Refresh();
+
+        ribbon.Verify(r => r.ActivateTab(RibbonControlIds.Tab), Times.Once);
+    }
+
+    /// <summary>
+    /// R5.20: pressing the automatic-refresh toggle restores the add-in tab, for the same reason a
+    /// refresh does. Reported from the host on 2026-11-16 — the settings write moves Excel's
+    /// selection, which activates the contextual Table Design tab — so the toggle runs the same
+    /// ADR-0058 restore rather than leaving the user looking at another tab.
+    /// </summary>
+    [Fact]
+    public void The_auto_refresh_toggle_restores_the_add_in_tab()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        service.SetTableReader(reader.Object);
+        service.Refresh();
+
+        // The refresh that brings the surface to Ready restores the tab itself, so the calls are
+        // cleared: what is asserted is the toggle's own restore.
+        ribbon.Invocations.Clear();
+
+        service.SetAutoRefresh(false);
+
+        ribbon.Verify(r => r.ActivateTab(RibbonControlIds.Tab), Times.Once);
+    }
+
+    [Fact]
+    public void Refresh_does_not_activate_the_tab_when_another_sheet_is_active()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok(
+                [],
+                configurationPresent: true,
+                activeSheetIsGanttSheet: false));
+        service.SetTableReader(reader.Object);
+
+        service.Refresh();
+
+        ribbon.Verify(r => r.ActivateTab(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void Refresh_does_not_activate_the_tab_before_the_surface_is_ready()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
+        service.SetTableReader(reader.Object);
+
+        service.Refresh();
+
+        ribbon.Verify(r => r.ActivateTab(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_sheet_activation_refreshes_the_gate_and_restores_the_tab()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok(
+                [],
+                configurationPresent: true,
+                activeSheetIsGanttSheet: false));
+        service.SetTableReader(reader.Object);
+        service.Refresh();
+
+        Assert.Equal(1, adapter.SheetActivateSubscribeCount);
+        Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
+
+        // Entering the Gantt sheet: the next read reports it as the active sheet.
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        adapter.RaiseSheetActivated();
+
+        Assert.True(service.GetEnabled(RibbonControlIds.AddActivity));
+        ribbon.Verify(r => r.ActivateTab(RibbonControlIds.Tab), Times.Once);
+    }
+
+    [Fact]
+    public void GetVisible_hides_a_group_it_does_not_know()
+    {
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true });
+
+        Assert.False(service.GetVisible("grpUnknown"));
+        Assert.False(service.GetVisible(null));
+    }
+
+    private static GanttRowDto Row(int rowNumber, string type, string? parentId = null) =>
+        new(
+            rowNumber,
+            NewRowId((char)('a' + rowNumber)),
+            null,
+            0,
+            type,
+            null,
+            null,
+            null,
+            parentId,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null);
+
+    [Fact]
+    public void Critical_interval_is_enabled_when_the_table_has_an_eligible_parent()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([Row(1, "As-Planned Activity")]));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+    }
+
+    [Fact]
+    public void Critical_interval_is_disabled_when_no_row_can_own_it()
+    {
+        // Positive test for the gate: a table of leaves and structural rows has
+        // no parent, so the item is disabled rather than raising an error after
+        // the click. This is the "refuse only when none exists" rule.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+            [
+                Row(1, "As-Planned Milestone"),
+                Row(2, "Spacer"),
+                Row(3, "Splitter"),
+            ]));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+    }
+
+    [Fact]
+    public void Critical_interval_is_disabled_when_the_table_is_empty()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([]));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+    }
 
     [Fact]
     public void GetEnabled_is_deterministic_and_never_probes_the_state_source()
@@ -279,6 +760,41 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.Equal(2, adapter.SubscribeCount);
         Assert.Equal(1, adapter.DisposeCount);
+    }
+
+    [Fact]
+    public void Activate_keeps_an_injected_adapter_even_when_the_host_application_is_live()
+    {
+        // Regression (2026-11-02). Activate used to re-probe
+        // ExcelDnaUtil.Application unconditionally and replace whatever adapter
+        // had been injected. That probe resolves the RUNNING Excel instance, so
+        // simply having Excel open on the machine replaced the fake with a real
+        // adapter over the developer's workbook: SubscribeCount read 0, the
+        // captured facts came from that workbook, and 12 tests went red without
+        // any source change. An injected adapter is authoritative.
+        var service = new HostApplicationRibbonStateService(new object());
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        service.SetApplicationAdapter(adapter);
+
+        service.Activate();
+
+        Assert.Same(adapter, service.GetApplicationAdapter());
+        Assert.Equal(1, adapter.SubscribeCount);
+    }
+
+    [Fact]
+    public void Activate_adopts_the_host_application_when_no_adapter_was_injected()
+    {
+        // The other half of the same contract. AddInHost injects no adapter when
+        // Excel-DNA has not exposed an application yet (AutoOpen can run first),
+        // so Activate must supply one once the application becomes available;
+        // the ribbon onLoad and the queued fallback both rely on that.
+        var service = new HostApplicationRibbonStateService(new object());
+        Assert.Null(service.GetApplicationAdapter());
+
+        service.Activate();
+
+        Assert.IsType<ExcelApplicationAdapter>(service.GetApplicationAdapter());
     }
 
     [Fact]
@@ -536,7 +1052,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["TimeScale"] = nameof(GanttTimeScale.Month),
                     ["PeriodLabelFormat"] = nameof(GanttPeriodLabelFormat.MM),
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogueReader.Object);
 
         service.Refresh();
@@ -566,7 +1082,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = "15-Mar-26",
                     ["PlotFinishDate"] = string.Empty,
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = tableReader
             .Setup(r => r.Read())
@@ -696,7 +1212,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = string.Empty,
                     ["PlotFinishDate"] = "15-Jun-26",
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = tableReader
             .Setup(r => r.Read())
@@ -791,7 +1307,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = "06-Apr-26",
                     ["PlotFinishDate"] = "13-Jul-26",
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogueReader.Object);
 
         service.Refresh();
@@ -823,7 +1339,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = "01-Jun-26",
                     ["PlotFinishDate"] = "30-Sep-26",
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogueReader.Object);
 
         service.Refresh();
@@ -948,9 +1464,15 @@ public sealed class RibbonStateServiceTests : IDisposable
     /// </summary>
     private sealed class FakePanelGridMeasurementPort(PanelCellGrid grid) : IPanelGridMeasurementPort
     {
-        public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+        public PanelGridOutcome Measure(
+            IReadOnlyList<string> includedColumns,
+            IReadOnlyList<double>? bodyRowHeightsPt = null)
         {
             ArgumentNullException.ThrowIfNull(includedColumns);
+
+            // The width display only needs the column widths, so the supplied body heights
+            // are irrelevant here and the fixed grid is returned either way.
+            _ = bodyRowHeightsPt;
             return PanelGridOutcome.Ok(grid);
         }
     }
@@ -978,10 +1500,14 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm);
         var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+
+        // The left chrome is the live plot's origin inset (ADR-0061 D11): the display
+        // must read the SAME chrome the composition passes, or it shows a width two
+        // points wider than the plot that is drawn.
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.LivePlotOriginInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
@@ -1015,15 +1541,6 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Wide, GanttPlotMargins.DefaultCustomCm);
         var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
-        var expected = PlotGeometryResolver.MeasurePlotWidth(
-            SizePresets.A4Portrait,
-            300.0,
-            0,
-            (marginPt * 2) + chrome);
-        Assert.Equal(
-            expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
-            service.GetPlotWidth());
-        Assert.NotEqual(normalWidth, service.GetPlotWidth());
     }
 
     /// <summary>
@@ -1053,7 +1570,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var expected = PlotGeometryResolver.MeasurePlotWidth(
             SizePresets.A4Portrait,
             300.0,
-            0,
+            GanttSheetLayout.LivePlotOriginInsetPt,
             (marginPt * 2) + chrome);
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
@@ -1082,6 +1599,121 @@ public sealed class RibbonStateServiceTests : IDisposable
         // display is empty rather than measured from a retained grid.
         Assert.Equal(string.Empty, RibbonStateService.Instance.GetPlotWidth());
     }
-}
 
-
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_true_when_theme_written_successfully()
+    {
+        var service = new StubThemeDialogRibbonStateService(DialogResult.OK);
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.True(service.ShowThemeSettingsDialog());
+        writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Once);
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_user_cancels()
+    {
+        var service = new StubThemeDialogRibbonStateService(DialogResult.Cancel);
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.False(service.ShowThemeSettingsDialog());
+        writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_writer_refuses()
+    {
+        var service = new StubThemeDialogRibbonStateService(DialogResult.OK);
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()))
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected));
+        service.SetCatalogueWriter(writer.Object);
+
+        // The failure is presented through a modal dialog, which would block
+        // on a message box with nobody to dismiss it, so the test could never
+        // reach its own assertion. The presenter is a seam for exactly this.
+        List<string> presented = [];
+        service.SetErrorPresenter(presented.Add);
+
+        Assert.False(service.ShowThemeSettingsDialog());
+        writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Once);
+        Assert.Single(presented);
+        Assert.Contains("HostRejected", presented[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_reader_fails()
+    {
+        var service = new RibbonStateService();
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ConfigSheetMissing));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.False(service.ShowThemeSettingsDialog());
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_reader_and_writer_are_null()
+    {
+        var service = new RibbonStateService();
+
+        Assert.False(service.ShowThemeSettingsDialog());
+    }
+
+    /// <summary>
+    /// Test double that supplies a fixed host application object instead of
+    /// querying <c>ExcelDnaUtil.Application</c>. The production probe resolves
+    /// whichever Excel instance is running, so a test that used it would pass or
+    /// fail according to the developer's machine rather than the code.
+    /// </summary>
+    private sealed class HostApplicationRibbonStateService(object? hostApplication) : RibbonStateService
+    {
+        internal override object? ResolveHostApplication() => hostApplication;
+    }
+
+    /// <summary>
+    /// Test double for <see cref="RibbonStateService"/> that substitutes a
+    /// fixed dialog result instead of running a blocking WinForms message
+    /// loop, which would hang forever without a user to click OK or Cancel.
+    /// </summary>
+    private sealed class StubThemeDialogRibbonStateService : RibbonStateService
+    {
+        private readonly DialogResult _dialogResult;
+
+        public StubThemeDialogRibbonStateService(DialogResult dialogResult) => _dialogResult = dialogResult;
+
+        protected override DialogResult ShowThemeSettingsDialog(ThemeSettingsForm dialog)
+        {
+            dialog.SetValidatedRequestForTesting(new ThemeEditRequest([], new Dictionary<string, double>()));
+            return _dialogResult;
+        }
+    }
+}
