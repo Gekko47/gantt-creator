@@ -616,16 +616,11 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// The live title keeps a positive width when every table column is hidden
-    /// (ADR-0065 D4).
+    /// The live title is DISABLED when no table column is visible (ADR-0065 D4, owner
+    /// amendment 2026-11-17): the table-width textbox would otherwise overlap the chart.
     /// </summary>
-    /// <remarks>
-    /// The title's width was the sum of the measured columns. With none visible that sum is
-    /// zero, so the owned textbox would collapse and disappear. The orchestrator falls back
-    /// to the built scene's plot right edge minus the table origin.
-    /// </remarks>
     [Fact]
-    public void The_live_title_keeps_a_positive_width_with_no_visible_columns()
+    public void The_live_title_is_omitted_when_no_column_is_visible()
     {
         RefreshFakes fakes = new()
         {
@@ -641,13 +636,50 @@ public class GanttRefreshOrchestratorTests
         GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
-        Assert.True(
+        Assert.False(
             fakes.Shapes.Requests.ContainsKey("ChartTitle"),
-            "No ChartTitle shape was written: " + string.Join(", ", fakes.Shapes.Calls));
+            "A ChartTitle shape was written with no visible column: "
+                + string.Join(", ", fakes.Shapes.Calls));
+        Assert.False(
+            fakes.Shapes.Survives("ChartTitle"),
+            "The title shape survived the zero-column refresh.");
+    }
 
-        RectD? bounds = fakes.Shapes.Requests["ChartTitle"].Geometry.Bounds;
-        Assert.NotNull(bounds);
-        Assert.True(bounds!.Value.Width > 0, "The title collapsed to zero width.");
+    /// <summary>
+    /// The title returns when any column is visible again (ADR-0065 D4, owner amendment
+    /// 2026-11-17): hiding every column removes the owned shape, and the next refresh
+    /// re-creates it without a separate command.
+    /// </summary>
+    [Fact]
+    public void The_live_title_is_restored_when_a_column_is_visible_again()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = GridWithAReservedRow(),
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        Assert.True(orchestrator.Refresh().Succeeded);
+        Assert.True(fakes.Shapes.Survives("ChartTitle"));
+
+        fakes.MeasuredGrid = ZeroColumnGridWithAReservedRow();
+        Assert.True(orchestrator.Refresh().Succeeded);
+        Assert.False(
+            fakes.Shapes.Survives("ChartTitle"),
+            "The title survived after every column was hidden.");
+        Assert.Contains("Delete:ChartTitle", fakes.Shapes.Calls);
+
+        fakes.MeasuredGrid = GridWithAReservedRow();
+        Assert.True(orchestrator.Refresh().Succeeded);
+        Assert.True(
+            fakes.Shapes.Survives("ChartTitle"),
+            "The title did not return after a column was shown.");
     }
 
     /// <summary>

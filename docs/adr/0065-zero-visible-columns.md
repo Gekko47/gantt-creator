@@ -61,14 +61,20 @@ each of which states its current state (`Type (shown)` / `Type (hidden)`) and ca
 tick/dash image. The split button is gated on workbook + initialised + Gantt sheet only, never
 on selection, because it is the recovery path when the table is invisible.
 
-### D4 — The render path accepts a zero-column measurement
+### D4 — The render path accepts a zero-column measurement, and the live title is disabled
 
 The live measurement returns an empty-column grid rather than refusing, and `PanelCellGrid`
 accepts zero columns with a zero summed width. On the live sheet the grid's right edge is the
 measured plot-anchor column's left edge, so with every table column hidden the anchor and the
-origin coincide and the plot expands into the vacated table width. The live title, whose width
-is otherwise the sum of the measured columns, falls back to the built scene's plot right edge
-minus the table origin so it cannot collapse to zero.
+origin coincide and the plot expands into the vacated table width.
+
+The live title is **disabled** while no column is visible (owner amendment 2026-11-17). Its
+textbox spans the table width, so at zero columns it either collapses or — widened over the
+plot — overlaps the chart, which the owner observed. Omitting the title request makes the
+reconciler delete the owned `ChartTitle` shape, and the next refresh that finds any visible
+column re-creates it. The title therefore returns by itself when a column is shown; no separate
+command or setting is involved. The export title is unaffected, because an export composition
+with no panel has nothing to overlap.
 
 `PanelCellGridRefusal.NonPositiveWidth` is retained. A hidden column passed to the grid is still
 a caller error; the caller filters hidden columns from the measured list and never hands the grid
@@ -105,7 +111,7 @@ Office gate; it does not introduce a new selection rule.
 - **A fully hidden table is not a broken workbook.** The table still validates, reads, writes,
   repairs, reopens and exports; only its presentation is gone.
 - **The chart becomes the only visible object.** Its frame still encloses the plot and the
-  leading-gutter strip; its title remains positive and centred over the available chart width.
+  leading-gutter strip; its title is hidden until a visible column returns (D4).
 - **Selection-gated row commands may remain enabled while the table is invisible.** The active
   cell can still intersect the table's logical range. The Columns control is always available to
   restore the columns, and the Office gate records the observed command state.

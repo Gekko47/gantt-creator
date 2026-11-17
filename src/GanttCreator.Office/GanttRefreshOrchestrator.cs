@@ -670,13 +670,23 @@ public sealed class GanttRefreshOrchestrator(
         // or deletes it alongside the scene primitives. ShowTitle=false or a
         // blank title omits the request, so an owned ChartTitle shape is deleted
         // by the reconciler's Owned-minus-Desired difference.
+        //
+        // ADR-0065 D4 (owner amendment 2026-11-17): no visible table column also
+        // DISABLES the live title. The textbox spans the measured table width, so
+        // with every column hidden it is either zero-width or, widened over the plot,
+        // overlaps the chart. Omitting the request deletes an owned ChartTitle, and
+        // the next refresh with any visible column re-creates it — the title returns
+        // without a separate command.
         OfficeShapeRequest? titleRequest = null;
         string? chartTitle = config.Settings.TryGetValue("ChartTitle", out string? title) ? title : null;
         bool showTitle = !config.Settings.TryGetValue("ShowTitle", out string? showText)
             || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
-        if (showTitle && !string.IsNullOrWhiteSpace(chartTitle))
+        PanelCellGrid? titleGrid = grid.Grid;
+        if (showTitle
+            && titleGrid is { Columns.Count: > 0 }
+            && !string.IsNullOrWhiteSpace(chartTitle))
         {
-            PanelCellGrid panelGrid = grid.Grid!;
+            PanelCellGrid panelGrid = titleGrid;
 
             // The title occupies the RESERVED ROW exactly: the heading space
             // ADR-0043 gave it, and the same row that carries the year band over
@@ -693,14 +703,9 @@ public sealed class GanttRefreshOrchestrator(
             double reservedRowHeightPt =
                 panelGrid.OriginTopPt - panelGrid.HeaderHeightPt - panelGrid.TopPaddingHeightPt;
 
-            // ADR-0065 D4: with every table column hidden the measured sum is zero. The
-            // title must not collapse to zero width, so it spans the available chart width
-            // instead. The non-zero case keeps the existing table-width behaviour exactly.
+            // Every column here is visible (the zero-column state is disabled above), so
+            // the sum is the measured table width the title spans.
             double titleWidthPt = panelGrid.Columns.Sum(column => column.WidthPt);
-            if (titleWidthPt <= 0)
-            {
-                titleWidthPt = scene.Result!.Scene.PlotBounds.Right - panelGrid.OriginLeftPt;
-            }
 
             RectD titleBounds = new(
                 panelGrid.OriginLeftPt,

@@ -25,8 +25,8 @@ The canonical doc wins on any disagreement; it is the implementation contract, t
 - Milestones and delineators use `Start` only for geometry; `Finish` is never used for their
   positioning.
 - A table with every user column hidden is a supported live state (ADR-0065): the frame still
-  encloses the plot, the title keeps a positive width, and an export follows the visible set —
-  chart-only when no column is visible.
+  encloses the plot, the live title is suppressed until a column is visible again, and an export
+  follows the visible set — chart-only when no column is visible.
 - `Type` values come only from `EntityTypeCatalog`; per-row `FillColour` / `StrokeColour` /
   `LabelPosition` overrides are validated against the selected type's capabilities, and
   `Custom Activity` / `Custom Milestone` require a valid `StyleKey`.
