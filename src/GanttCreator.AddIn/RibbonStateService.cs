@@ -120,6 +120,61 @@ internal class RibbonStateService
 
     internal DateTimeOffset? GetLastSuccessfulRenderAtUtc() => _lastSuccessfulRenderAtUtc;
 
+    /// <summary>
+    /// Refreshes the displayed automatic plot dates from a completed pass (R5.1a).
+    /// </summary>
+    /// <param name="plotStart">The inclusive plot start the pass rendered, or null when unknown.</param>
+    /// <param name="plotFinish">The inclusive plot finish the pass rendered, or null when unknown.</param>
+    /// <remarks>
+    /// Only an end in AUTO mode is written: an explicit end's display is the date
+    /// the user chose, and a pass must never rewrite it. An end whose formatted
+    /// text did not change is not invalidated, so an unrelated automatic pass costs
+    /// two comparisons and zero ribbon round-trips. Never throws and never
+    /// schedules a pass: it is the tail of one.
+    /// </remarks>
+    internal void UpdateEffectivePlotDates(DateOnly? plotStart, DateOnly? plotFinish)
+    {
+        bool startChanged = false;
+        bool finishChanged = false;
+        RibbonState next = _state;
+
+        if (_state.PlotStartAuto && plotStart is DateOnly start)
+        {
+            string text = GanttDateFormatting.FormatDdMMMyy(start);
+            if (!string.Equals(text, _state.EffectivePlotStartDate, StringComparison.Ordinal))
+            {
+                next = next with { EffectivePlotStartDate = text };
+                startChanged = true;
+            }
+        }
+
+        if (_state.PlotFinishAuto && plotFinish is DateOnly finish)
+        {
+            string text = GanttDateFormatting.FormatDdMMMyy(finish);
+            if (!string.Equals(text, _state.EffectivePlotFinishDate, StringComparison.Ordinal))
+            {
+                next = next with { EffectivePlotFinishDate = text };
+                finishChanged = true;
+            }
+        }
+
+        if (!startChanged && !finishChanged)
+        {
+            return;
+        }
+
+        _state = next;
+        if (startChanged)
+        {
+            InvalidateControl(RibbonControlIds.PlotStartDate);
+        }
+
+        if (finishChanged)
+        {
+            InvalidateControl(RibbonControlIds.PlotFinishDate);
+        }
+    }
+
     internal void UpdateCurrentValidationIssues(IReadOnlyList<GanttValidationIssue> issues)
     {
         ArgumentNullException.ThrowIfNull(issues);
@@ -424,8 +479,8 @@ internal class RibbonStateService
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotStartAuto(bool pressed)
     {
-        bool nextAuto = pressed;
-        if (nextAuto)
+        RibbonState previous = _state;
+        if (pressed)
         {
             _state = _state with
             {
@@ -445,7 +500,7 @@ internal class RibbonStateService
             // the current plot bound when one is known. The stored date is
             // deliberately NOT reused: it may predate the latest data, and
             // the box was showing the bound, so Explicit must start from
-            // what the user saw. A parseable bound (always dd/MM/yyyy from
+            // what the user saw. A parseable bound (always dd/MM-yy from
             // the derivation, but parsed defensively) persists at once.
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly bound))
             {
@@ -453,12 +508,11 @@ internal class RibbonStateService
 
                 // The seeded start is checked against the finish BEFORE the
                 // state is committed, for the same reason as the date commit:
-                // an inverted range must not reach ValidateSettings, which
-                // throws and would be reported as a generic error.
+                // an inverted range must not reach ValidateSettings.
                 if (!TryAcceptExplicitStart(seeded, out string? warning))
                 {
                     PresentWarning(warning!);
-                    Invalidate();
+                    InvalidatePlotDateRow(PlotDateRow.Start);
                     return;
                 }
 
@@ -481,29 +535,24 @@ internal class RibbonStateService
                 if (string.IsNullOrWhiteSpace(_state.PlotStartDate))
                 {
                     // Nothing coherent to persist yet: the date commit owns the
-                    // Explicit write. The ribbon is still invalidated so the
+                    // Explicit write. The row is still invalidated so the
                     // unchecked box and the enabled edit box repaint; without this
                     // the click's visual state never lands because ribbon getters
                     // only re-query on invalidate.
-                    Invalidate();
+                    InvalidatePlotDateRow(PlotDateRow.Start);
                     return;
                 }
             }
         }
 
-#pragma warning disable CA1031
-        try
+        // R5.1a: a refused write restores the row, so the box cannot show a
+        // date the workbook does not hold.
+        if (!TryPersistPlotRange())
         {
-            _commandBoundary.Run("SetPlotStartAuto", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Start);
     }
 
     /// <summary>
@@ -532,8 +581,8 @@ internal class RibbonStateService
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotFinishAuto(bool pressed)
     {
-        bool nextAuto = pressed;
-        if (nextAuto)
+        RibbonState previous = _state;
+        if (pressed)
         {
             _state = _state with
             {
@@ -556,7 +605,7 @@ internal class RibbonStateService
                 if (!TryAcceptExplicitFinish(seeded, out string? warning))
                 {
                     PresentWarning(warning!);
-                    Invalidate();
+                    InvalidatePlotDateRow(PlotDateRow.Finish);
                     return;
                 }
 
@@ -579,29 +628,24 @@ internal class RibbonStateService
                 if (string.IsNullOrWhiteSpace(_state.PlotFinishDate))
                 {
                     // Nothing coherent to persist yet: the date commit owns the
-                    // Explicit write. The ribbon is still invalidated so the
+                    // Explicit write. The row is still invalidated so the
                     // unchecked box and the enabled edit box repaint; without this
                     // the click's visual state never lands because ribbon getters
                     // only re-query on invalidate.
-                    Invalidate();
+                    InvalidatePlotDateRow(PlotDateRow.Finish);
                     return;
                 }
             }
         }
 
-#pragma warning disable CA1031
-        try
+        // R5.1a: a refused write restores the row, so the box cannot show a
+        // date the workbook does not hold.
+        if (!TryPersistPlotRange())
         {
-            _commandBoundary.Run("SetPlotFinishAuto", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Finish);
     }
 
     /// <summary>
@@ -612,19 +656,114 @@ internal class RibbonStateService
     internal void TogglePlotFinishAuto() => SetPlotFinishAuto(!_state.PlotFinishAuto);
 
     /// <summary>
+    /// The picker seam for the plot-date calendar buttons (R5.1a). Virtual so a
+    /// headless test can answer with a date, exactly as
+    /// <see cref="ShowWarningsPanelDialog"/> and <see cref="ShowThemeSettingsDialog()"/>
+    /// are substituted — and so no test builds a WinForms control off the STA thread.
+    /// </summary>
+    /// <param name="request">The month, bounds and caption to open with.</param>
+    /// <returns>The picked date, or null when the user cancelled.</returns>
+    protected virtual DateOnly? ShowPlotDatePicker(PlotDatePickerRequest request) =>
+        PlotDatePickerForm.Show(request);
+
+    /// <summary>Opens the start-date calendar and commits the picked date (R5.1a).</summary>
+    internal void PickPlotStartDate() => PickPlotDate(PlotDateRow.Start);
+
+    /// <summary>Opens the finish-date calendar and commits the picked date (R5.1a).</summary>
+    internal void PickPlotFinishDate() => PickPlotDate(PlotDateRow.Finish);
+
+    /// <summary>
+    /// Shows the picker for one end and commits the result through the normal
+    /// date setter, so parse, inversion check, persistence and scheduling stay one
+    /// path.
+    /// </summary>
+    /// <param name="row">The end being edited.</param>
+    /// <remarks>
+    /// Bounds come from the opposite end's EFFECTIVE date, which is what the
+    /// disabled box already shows; the calendar therefore cannot normally offer an
+    /// inverted pair, and the commit-time check still guards the keyboard path. A
+    /// cancelled dialog, or a pick equal to the date already in force, changes
+    /// nothing: no state, no write, no pass, no invalidation.
+    /// </remarks>
+    private void PickPlotDate(PlotDateRow row)
+    {
+        bool start = row == PlotDateRow.Start;
+        if (start ? _state.PlotStartAuto : _state.PlotFinishAuto)
+        {
+            // The button is disabled in AUTO mode; a callback that still arrives
+            // must not open a picker whose result the row would ignore.
+            return;
+        }
+
+        string effective = start ? _state.EffectivePlotStartDate : _state.EffectivePlotFinishDate;
+        DateOnly initial = PlotRangeResolver.TryParsePlotDate(effective, out DateOnly parsed)
+            ? parsed
+            : Today();
+
+        string opposite = start ? _state.EffectivePlotFinishDate : _state.EffectivePlotStartDate;
+        DateOnly? bound = PlotRangeResolver.TryParsePlotDate(opposite, out DateOnly oppositeDate)
+            ? oppositeDate
+            : null;
+        DateOnly? minimum = start ? null : bound;
+        DateOnly? maximum = start ? bound : null;
+
+        PlotDatePickerRequest request = new(
+            start ? "Plot start date" : "Plot finish date",
+            initial,
+            minimum,
+            maximum);
+
+        if (ShowPlotDatePicker(request) is not DateOnly picked)
+        {
+            return;
+        }
+
+        string text = GanttDateFormatting.FormatDdMMMyy(picked);
+        if (string.Equals(text, effective, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (start)
+        {
+            SetPlotStartDate(text);
+        }
+        else
+        {
+            SetPlotFinishDate(text);
+        }
+    }
+
+    /// <summary>
     /// Commits a user-typed plot-start date in explicit mode. Parses the exact
     /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
     /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
-    /// pivots the start end to Explicit; an unparsable value is a no-op (the
-    /// edit box keeps showing the previously stored date on the next getter
-    /// query, which is the revert). Persists to the workbook configuration
-    /// sheet so it survives a close/reopen, and updates the display value
-    /// immediately since the commit happens outside a workbook load. Never
-    /// refreshes the chart: the next Refresh chart applies the stored settings.
+    /// pivots the start end to Explicit.
+    /// <para>
+    /// R5.1a D5: a blank entry is a SILENT revert — the stored date and the mode
+    /// are untouched, nothing is written and nothing is scheduled — because
+    /// clearing a box is "no input", not an instruction to switch the end to
+    /// Auto (which would be a settings round-trip plus a full rebuild, and would
+    /// duplicate the Auto checkbox beside it).
+    /// </para>
+    /// <para>
+    /// R5.1a D6: the inversion check runs before the state commit, before the
+    /// write and before any pass is scheduled, so a refused pair never reaches
+    /// the workbook or the renderer. A successful commit persists the plot-range
+    /// keys and schedules the coalesced automatic pass (R5.1a D1); a refused
+    /// write restores the previous row, so the box never shows a date the
+    /// workbook does not hold.
+    /// </para>
     /// </summary>
     /// <param name="dateText">The user-entered explicit plot start date text.</param>
     internal void SetPlotStartDate(string dateText)
     {
+        if (string.IsNullOrWhiteSpace(dateText))
+        {
+            InvalidatePlotDateRow(PlotDateRow.Start);
+            return;
+        }
+
         if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
         {
             // R5.1 D3: a mode-change warning follows the R2.6 message
@@ -634,22 +773,23 @@ internal class RibbonStateService
             PresentWarning(
                 $"'{dateText}' is not a plot start date. Use dd-MMM-yy, for example 10-Jan-26. "
                 + "The previous start date has been kept.");
+            InvalidatePlotDateRow(PlotDateRow.Start);
             return;
         }
 
         string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
 
         // The range is checked BEFORE the state is committed, so an inverted
-        // range changes neither the in-memory state nor the workbook. It is
-        // checked here rather than left to `ValidateSettings` because that
-        // throws, and the command boundary would then report it as a generic
-        // unexpected error -- a second, vaguer message after this one.
+        // range changes neither the in-memory state nor the workbook, and it
+        // never reaches the write or the refresh.
         if (!TryAcceptExplicitStart(normalised, out string? warning))
         {
             PresentWarning(warning!);
+            InvalidatePlotDateRow(PlotDateRow.Start);
             return;
         }
 
+        RibbonState previous = _state;
         _state = _state with
         {
             PlotStartAuto = false,
@@ -657,19 +797,12 @@ internal class RibbonStateService
             EffectivePlotStartDate = normalised,
         };
 
-#pragma warning disable CA1031
-        try
+        if (!TryPersistPlotRange())
         {
-            _commandBoundary.Run("SetPlotStartDate", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Start);
     }
 
     /// <summary>
@@ -680,26 +813,25 @@ internal class RibbonStateService
     /// <param name="warning">The user-facing message when the candidate is refused.</param>
     /// <returns>Whether the candidate may be committed.</returns>
     /// <remarks>
-    /// The check is made against the finish end's CURRENT value, so the
-    /// warning names the two dates the user can see. An end still in
-    /// automatic mode cannot invert the range: it derives from the data, so
-    /// the start is whatever the user asked for and the range is the data's
-    /// to decide.
+    /// R5.1a D6: the check reads the finish end's <b>effective</b> date, not its
+    /// stored date and not only when that end is explicit. In explicit mode the
+    /// effective date is the stored one; in AUTO mode it is the data-derived
+    /// date the disabled box is already displaying. The rule therefore matches
+    /// what the user can see, and an explicit start later than the derived
+    /// finish is refused here instead of failing an entire refresh later with
+    /// <c>StartAfterFinish</c>.
+    /// <para>
+    /// When the opposite end has no readable date — a freshly initialised
+    /// workbook with an AUTO finish and no data — there is nothing to invert
+    /// against, so the commit proceeds.
+    /// </para>
     /// </remarks>
     private bool TryAcceptExplicitStart(string normalisedStart, out string? warning)
     {
         warning = null;
 
-        if (_state.PlotFinishAuto)
+        if (!PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly finish))
         {
-            return true;
-        }
-
-        if (!PlotRangeResolver.TryParsePlotDate(_state.PlotFinishDate, out DateOnly finish))
-        {
-            // The finish end has no usable date yet, so there is no range to
-            // invert yet. The finish commit raises the same warning when the
-            // user supplies the other half.
             return true;
         }
 
@@ -727,16 +859,17 @@ internal class RibbonStateService
     /// <param name="normalisedFinish">The candidate finish date, formatted for storage.</param>
     /// <param name="warning">The user-facing message when the candidate is refused.</param>
     /// <returns>Whether the candidate may be committed.</returns>
+    /// <remarks>
+    /// R5.1a D6: the start end is read from its <b>effective</b> date, so an
+    /// explicit finish before the data-derived start is refused here instead of
+    /// failing the whole refresh later with <c>StartAfterFinish</c>. See
+    /// <see cref="TryAcceptExplicitStart"/>.
+    /// </remarks>
     private bool TryAcceptExplicitFinish(string normalisedFinish, out string? warning)
     {
         warning = null;
 
-        if (_state.PlotStartAuto)
-        {
-            return true;
-        }
-
-        if (!PlotRangeResolver.TryParsePlotDate(_state.PlotStartDate, out DateOnly start))
+        if (!PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly start))
         {
             return true;
         }
@@ -842,16 +975,24 @@ internal class RibbonStateService
     /// Commits a user-typed plot-finish date in explicit mode. Parses the exact
     /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
     /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
-    /// pivots the finish end to Explicit; an unparsable value is a no-op (the
-    /// edit box keeps showing the previously stored date on the next getter
-    /// query, which is the revert). Persists to the workbook configuration
-    /// sheet so it survives a close/reopen, and updates the display value
-    /// immediately since the commit happens outside a workbook load. Never
-    /// refreshes the chart: the next Refresh chart applies the stored settings.
+    /// pivots the finish end to Explicit.
+    /// <para>
+    /// R5.1a D5: a blank entry is a silent revert, exactly as on the start end.
+    /// </para>
+    /// <para>
+    /// R5.1a D6: the inversion check runs before the state commit, the write and
+    /// any pass scheduling; a refused write restores the previous row.
+    /// </para>
     /// </summary>
     /// <param name="dateText">The user-entered explicit plot finish date text.</param>
     internal void SetPlotFinishDate(string dateText)
     {
+        if (string.IsNullOrWhiteSpace(dateText))
+        {
+            InvalidatePlotDateRow(PlotDateRow.Finish);
+            return;
+        }
+
         if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
         {
             // R5.1 D3: the same actionable warning the start date gives. See
@@ -859,6 +1000,7 @@ internal class RibbonStateService
             PresentWarning(
                 $"'{dateText}' is not a plot finish date. Use dd-MMM-yy, for example 10-Jan-26. "
                 + "The previous finish date has been kept.");
+            InvalidatePlotDateRow(PlotDateRow.Finish);
             return;
         }
 
@@ -870,9 +1012,11 @@ internal class RibbonStateService
         if (!TryAcceptExplicitFinish(normalised, out string? warning))
         {
             PresentWarning(warning!);
+            InvalidatePlotDateRow(PlotDateRow.Finish);
             return;
         }
 
+        RibbonState previous = _state;
         _state = _state with
         {
             PlotFinishAuto = false,
@@ -880,19 +1024,12 @@ internal class RibbonStateService
             EffectivePlotFinishDate = normalised,
         };
 
-#pragma warning disable CA1031
-        try
+        if (!TryPersistPlotRange())
         {
-            _commandBoundary.Run("SetPlotFinishDate", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
+            _state = previous;
         }
 
-        Invalidate();
+        InvalidatePlotDateRow(PlotDateRow.Finish);
     }
 
     /// <summary>
@@ -944,17 +1081,10 @@ internal class RibbonStateService
 
         _state = _state with { TimeScale = scale, PeriodLabelFormat = format };
 
-#pragma warning disable CA1031
-        try
-        {
-            _commandBoundary.Run("SetTimeScale", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        // R5.1a: the layout commit carries only the layout keys, so it cannot
+        // rewrite the plot dates from a stale snapshot. A refused write leaves
+        // the in-memory value standing and tells the user (TryWriteSettings).
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -985,17 +1115,7 @@ internal class RibbonStateService
         _state = _state with { Margin = selected, MarginCm = customCm };
         _state = _state with { PlotWidthPt = MeasurePlotWidth() };
 
-#pragma warning disable CA1031
-        try
-        {
-            _commandBoundary.Run("SetMargin", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -1021,17 +1141,7 @@ internal class RibbonStateService
         // display tracks the new margin rather than the previous one.
         _state = _state with { PlotWidthPt = MeasurePlotWidth() };
 
-#pragma warning disable CA1031
-        try
-        {
-            _commandBoundary.Run("SetMarginCm", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -1059,17 +1169,7 @@ internal class RibbonStateService
         _state = _state with { Preset = preset };
         _state = _state with { PlotWidthPt = MeasurePlotWidth(), PlotHeightPt = preset.HeightPt };
 
-#pragma warning disable CA1031
-        try
-        {
-            _commandBoundary.Run("SetPreset", PersistPlotSettings);
-        }
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-            // Degrade gracefully: the in-memory state is still correct,
-            // and the next refresh re-reads the worksheet.
-        }
+        _ = TryPersistPlotLayout();
 
         Invalidate();
     }
@@ -1223,66 +1323,169 @@ internal class RibbonStateService
             .Where(column => !column.IsHidden)
             .Select(column => column.Name)];
 
+    /// <summary>The two plot-date rows, so one invalidation helper serves both ends.</summary>
+    private enum PlotDateRow
+    {
+        /// <summary>The Start row: edit box, calendar button and Auto checkbox.</summary>
+        Start,
+
+        /// <summary>The Finish row: edit box, calendar button and Auto checkbox.</summary>
+        Finish,
+    }
+
     /// <summary>
-    /// Writes the ten plot-layout keys from the current snapshot through the
-    /// injected catalogue writer. Centralises the per-setting persist path so
-    /// the six setters cannot construct divergent payloads. The four
-    /// plot-range keys behave as before (fix plan ruling 1: the stored
-    /// explicit dates persist even while their end is AUTO, so they survive
-    /// the round trip and are restored on return to explicit; the Refresh
-    /// pipeline still treats an AUTO end as data-derived and ignores its date
-    /// text, so persisting it cannot blend the modes). The six R5.2 layout
-    /// keys are written alongside them so a single commit keeps the scale,
-    /// the margin pair, and the preset consistent with the dates.
-    /// Reports ConfigWriteOutcome refusals and write exceptions to the user
-    /// via CommandBoundary.
+    /// Re-invalidates one plot-date row by control id (R5.1a).
     /// </summary>
-    private void PersistPlotSettings()
+    /// <param name="row">The row to repaint.</param>
+    /// <remarks>
+    /// Three targeted invalidations instead of a blanket
+    /// <see cref="Invalidate"/>: that call re-queries every getter on the tab to
+    /// repaint three controls. The row is invalidated on the accepted path, so
+    /// the committed text appears at once, and on every refused path, so a
+    /// rejected entry is replaced by the value that was actually kept.
+    /// </remarks>
+    private void InvalidatePlotDateRow(PlotDateRow row)
+    {
+        bool start = row == PlotDateRow.Start;
+        InvalidateControl(start ? RibbonControlIds.PlotStartDate : RibbonControlIds.PlotFinishDate);
+        InvalidateControl(start ? RibbonControlIds.PlotStartCalendar : RibbonControlIds.PlotFinishCalendar);
+        InvalidateControl(start ? RibbonControlIds.PlotStartAuto : RibbonControlIds.PlotFinishAuto);
+    }
+
+    /// <summary>
+    /// Persists the four plot-range keys through the injected catalogue writer
+    /// and schedules the coalesced pass on success.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the in-memory state may stand — either the
+    /// write succeeded or there is no writer to refuse it; <see langword="false"/>
+    /// when the caller must restore the row it was about to commit.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// R5.1a V2: only the four plot keys are sent. The writer merges supplied
+    /// keys over the table's current values, so a plot commit can no longer
+    /// overwrite a newer workbook margin, scale or preset with stale session
+    /// state. The payload size costs nothing either way, because the writer
+    /// rewrites the whole settings table from the catalogue key set.
+    /// </para>
+    /// <para>
+    /// R5.1a V3: a refusal is an expected outcome, not an exception. The caller
+    /// restores the row and the user gets one actionable message, so the box
+    /// never shows a date the workbook does not hold.
+    /// </para>
+    /// <para>
+    /// The stored explicit dates persist even while their end is AUTO, so they
+    /// survive the round trip and are restored on return to explicit; the
+    /// Refresh pipeline still treats an AUTO end as data-derived and ignores its
+    /// date text, so persisting it cannot blend the modes.
+    /// </para>
+    /// </remarks>
+    private bool TryPersistPlotRange()
     {
         string startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
         string finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
 
         // Validate before persisting so invalid settings never reach the workbook.
-        // R5.1: ValidateSettings is wired here to reject bad modes, missing dates,
-        // unparsable dates, and start-after-finish before any workbook write.
-        PlotRangeResolver.ValidateSettings(new PlotRangeSettings
+        try
         {
-            StartMode = startMode,
-            FinishMode = finishMode,
-            StartDate = _state.PlotStartDate,
-            FinishDate = _state.PlotFinishDate,
-        });
+            PlotRangeResolver.ValidateSettings(new PlotRangeSettings
+            {
+                StartMode = startMode,
+                FinishMode = finishMode,
+                StartDate = _state.PlotStartDate,
+                FinishDate = _state.PlotFinishDate,
+            });
+        }
+        catch (ArgumentException exception)
+        {
+            // A hand-edited workbook can hold Explicit mode with no date. Report
+            // it as the row's own warning instead of letting the command
+            // boundary translate it into an operation-id error dialog.
+            PresentWarning($"{exception.Message} The previous value has been kept.");
+            return false;
+        }
 
-        Dictionary<string, string> values = new Dictionary<string, string>
+        return TryWriteSettings(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["PlotStartMode"] = startMode,
             ["PlotFinishMode"] = finishMode,
             ["PlotStartDate"] = _state.PlotStartDate,
             ["PlotFinishDate"] = _state.PlotFinishDate,
+        });
+    }
+
+    /// <summary>
+    /// Persists the five R5.2 layout keys through the injected catalogue writer.
+    /// </summary>
+    /// <returns>Whether the in-memory state may stand.</returns>
+    /// <remarks>
+    /// Kept apart from <see cref="TryPersistPlotRange"/> so a layout edit writes
+    /// only the layout keys and a date edit writes only the dates: each commit
+    /// leaves the other group's workbook values untouched.
+    /// </remarks>
+    private bool TryPersistPlotLayout() =>
+        TryWriteSettings(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
             ["TimeScale"] = _state.TimeScale.ToString(),
             // The month band carries two label forms (MM and MMM), so the
             // format is the user's stored selection rather than a derivation
             // of the scale. The pair is kept compatible by the setter and by
             // the load path (both normalise through
-            // GanttChartSettings.IsCompatible), so
-            // persisting the selection cannot write a pair the catalogue
-            // reader refuses.
+            // GanttChartSettings.IsCompatible), so persisting the selection
+            // cannot write a pair the catalogue reader refuses.
             ["PeriodLabelFormat"] = _state.PeriodLabelFormat.ToString(),
             ["Margin"] = _state.Margin.ToString(),
             ["MarginCm"] = _state.MarginCm.ToString("R", CultureInfo.InvariantCulture),
             ["SizePreset"] = _state.Preset?.Key ?? SizePresets.Default.Key,
-        };
+        });
 
-        ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(values);
-        if (outcome is { Succeeded: true })
+    /// <summary>
+    /// Writes one key set and schedules the coalesced automatic pass on success.
+    /// </summary>
+    /// <param name="values">The keys to write.</param>
+    /// <returns>Whether the in-memory state may stand.</returns>
+    private bool TryWriteSettings(Dictionary<string, string> values)
+    {
+        IConfigCatalogueWriter? writer = _catalogueWriter;
+        if (writer is null)
+        {
+            // No workbook wiring (a headless test, or no initialised sheet): the
+            // in-memory state is the whole truth and there is nothing to refuse.
+            return true;
+        }
+
+        ConfigWriteOutcome outcome;
+        // CA1031: this runs from a ribbon callback, where an escaping exception
+        // surfaces as a host error dialog. A write failure is a refusal: the row
+        // is restored and the user is told, exactly as for a typed refusal.
+#pragma warning disable CA1031
+        try
+        {
+            outcome = writer.WriteSettings(values);
+        }
+        catch (Exception exception)
+        {
+            _commandBoundary.WriteTechnicalRecord(
+                $"gantt.settings persist threw keys={values.Count} type={exception.GetType().FullName}");
+            PresentWarning("The plot settings could not be saved. The previous value has been kept.");
+            return false;
+        }
+#pragma warning restore CA1031
+
+        if (outcome.Succeeded)
         {
             ScheduleAutomaticRefresh();
+            return true;
         }
-        if (outcome is not null && !outcome.Succeeded)
-        {
-            string message = $"Failed to persist plot settings: {outcome.Refusal}";
-            _commandBoundary.Run("PersistPlotSettings", () => throw new InvalidOperationException(message));
-        }
+
+        _commandBoundary.WriteTechnicalRecord(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.settings persist refused keys={values.Count} reason={outcome.Refusal}"));
+        PresentWarning(
+            $"The plot settings could not be saved ({outcome.Refusal}). The previous value has been kept.");
+        return false;
     }
 
     /// <summary>

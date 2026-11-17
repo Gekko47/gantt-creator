@@ -331,6 +331,13 @@ internal sealed record RibbonState(
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && !PlotStartAuto,
         RibbonControlIds.PlotFinishDate =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && !PlotFinishAuto,
+        // R5.1a: each calendar button carries its edit box's exact predicate.
+        // An enabled picker beside a disabled date box would be a second way to
+        // set a value the row is refusing, so the two must never disagree.
+        RibbonControlIds.PlotStartCalendar =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && !PlotStartAuto,
+        RibbonControlIds.PlotFinishCalendar =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && !PlotFinishAuto,
         RibbonControlIds.PlotTimeScale =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         RibbonControlIds.Margin =>

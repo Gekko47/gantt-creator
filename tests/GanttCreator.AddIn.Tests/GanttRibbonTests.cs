@@ -616,6 +616,10 @@ public class GanttRibbonTests
                 RibbonControlIds.CollapseAllGroups,
                 RibbonControlIds.ThemeSettings,
                 RibbonControlIds.ChartTitle,
+                // R5.1a: each calendar button carries its edit box's exact gate,
+                // so an enabled picker can never sit beside a disabled box.
+                RibbonControlIds.PlotStartCalendar,
+                RibbonControlIds.PlotFinishCalendar,
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Warnings,
                 RibbonControlIds.Diagnostics,
@@ -882,33 +886,53 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void Control_level_glyphs_are_unique_while_menu_rows_may_repeat()
+    public void Control_level_glyphs_are_unique_except_the_plot_date_calendar_pair()
     {
         // R5.16a D4 still holds: two different actions must not look the same. Menu rows
         // are exempt, because a dropdown legitimately repeats a family glyph and the row
         // label carries the variant. The comparison runs on the generated catalogue, so it
         // measures the glyph actually served rather than the attribute in the XML.
+        //
+        // R5.1a owner ruling: the two plot-date calendar buttons deliberately share one
+        // glyph. The label column and the supertip name the end, and sharing the asset is
+        // what keeps one decode for both. It is the ONLY allowed duplicate, pinned by the
+        // single-duplicate assertion below rather than by dropping the rule.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
-        string[] controlGlyphs =
+        (string Id, string Glyph)[] controls =
         [
             .. doc.Descendants(ns + "button")
                 .Where(button => !button.Ancestors(ns + "menu").Any())
-                .Select(button => button.Attribute("id")?.Value)
-                .Where(id => id is not null)
-                .Select(id => RibbonGlyphCatalog.TryGet(id, out RibbonGlyphCatalog.Entry entry)
-                    ? entry.Glyph
-                    : null)
-                .Where(slug => slug is not null)
-                .Select(slug => slug!),
+                .Select(button => (
+                    Id: button.Attribute("id")?.Value,
+                    Glyph: button.Attribute("id")?.Value is string id
+                        && RibbonGlyphCatalog.TryGet(id, out RibbonGlyphCatalog.Entry entry)
+                            ? entry.Glyph
+                            : null))
+                .Where(pair => pair.Id is not null && pair.Glyph is not null)
+                .Select(pair => (pair.Id!, pair.Glyph!)),
         ];
 
-        Assert.NotEmpty(controlGlyphs);
-        Assert.Equal(
-            controlGlyphs.Length,
-            controlGlyphs.Distinct(StringComparer.Ordinal).Count());
+        Assert.NotEmpty(controls);
+
+        string[] expectedShared =
+        [
+            .. new[] { RibbonControlIds.PlotFinishCalendar, RibbonControlIds.PlotStartCalendar }
+                .OrderBy(id => id, StringComparer.Ordinal),
+        ];
+
+        List<string[]> duplicates =
+        [
+            .. controls
+                .GroupBy(pair => pair.Glyph, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Select(pair => pair.Id).OrderBy(id => id, StringComparer.Ordinal).ToArray()),
+        ];
+
+        Assert.Single(duplicates);
+        Assert.Equal(expectedShared, duplicates[0]);
     }
 
     [Fact]
@@ -1814,12 +1838,13 @@ public class GanttRibbonTests
     }
 
     /// <summary>
-    /// The setter invalidates exactly once per commit, so the clicked control
-    /// repaints from the new snapshot: without an invalidate the ribbon
-    /// getters never re-query and the box visually sticks.
+    /// The setter re-invalidates exactly its own row — the date box, the calendar
+    /// button and the Auto box — and never the whole tab, so the clicked control
+    /// repaints from the new snapshot at the cost of three getter queries instead
+    /// of every getter on the ribbon (R5.1a C3).
     /// </summary>
     [Fact]
-    public void SetPlotStartAuto_invalidates_once_per_commit()
+    public void SetPlotStartAuto_invalidates_only_the_start_row()
     {
         var ribbon = new Mock<IRibbonUI>();
         var service = new RibbonStateService();
@@ -1829,15 +1854,20 @@ public class GanttRibbonTests
         service.SetPlotStartAuto(true);
 
         Assert.Equal(
-            1,
+            [
+                RibbonControlIds.PlotStartDate,
+                RibbonControlIds.PlotStartCalendar,
+                RibbonControlIds.PlotStartAuto,
+            ],
+            RibbonInvalidatedIds(ribbon));
+        Assert.Equal(
+            0,
             ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate)));
     }
 
-    /// <summary>
-    /// The finish-end analogue: one commit, one invalidate.
-    /// </summary>
+    /// <summary>The finish-end analogue: one commit, three row controls, no blanket invalidate.</summary>
     [Fact]
-    public void SetPlotFinishAuto_invalidates_once_per_commit()
+    public void SetPlotFinishAuto_invalidates_only_the_finish_row()
     {
         var ribbon = new Mock<IRibbonUI>();
         var service = new RibbonStateService();
@@ -1847,9 +1877,26 @@ public class GanttRibbonTests
         service.SetPlotFinishAuto(true);
 
         Assert.Equal(
-            1,
+            [
+                RibbonControlIds.PlotFinishDate,
+                RibbonControlIds.PlotFinishCalendar,
+                RibbonControlIds.PlotFinishAuto,
+            ],
+            RibbonInvalidatedIds(ribbon));
+        Assert.Equal(
+            0,
             ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate)));
     }
+
+    /// <summary>The control ids the service invalidated, in call order.</summary>
+    /// <param name="ribbon">The mocked ribbon handle.</param>
+    /// <returns>The invalidated ids.</returns>
+    private static List<string> RibbonInvalidatedIds(Mock<IRibbonUI> ribbon) =>
+    [
+        .. ribbon.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IRibbonUI.InvalidateControl))
+            .Select(invocation => (string)invocation.Arguments[0]!),
+    ];
 
     /// <summary>
     /// Positive for the true-bounds display: with both ends AUTO and event
@@ -1872,7 +1919,7 @@ public class GanttRibbonTests
                 ["PlotStartDate"] = string.Empty,
                 ["PlotFinishDate"] = string.Empty,
             },
-            GanttStyleRegistry.Empty, new Dictionary<string, double>()));;
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogue.Object);
         var table = new Mock<IGanttTableReader>();
         _ = table.Setup(r => r.Read()).Returns(GanttTableReadOutcome.Ok(

@@ -240,6 +240,13 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+
+            // R5.1a: an AUTO end's displayed date comes from the range the chart
+            // just used. Reading it off the outcome costs two comparisons and only
+            // invalidates the boxes whose text actually moved; the expensive
+            // alternative, a full RibbonStateService.Refresh() after every
+            // automatic pass, was rejected.
+            RibbonStateService.Instance.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
             RibbonStateService.ClearStatusBar();
             // Invalidate only the selection-dependent controls so their enabled
             // state re-evaluates against the post-refresh sheet state. Mirrors

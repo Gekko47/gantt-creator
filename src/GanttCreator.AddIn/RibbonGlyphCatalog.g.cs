@@ -96,6 +96,8 @@ internal static class RibbonGlyphCatalog
         ["mnuColumnVisibility"] = new Entry("show-columns", 32),
         ["btnThemeSettings"] = new Entry("theme-settings", 16),
         ["btnChartTitle"] = new Entry("chart-title", 16),
+        ["btnPlotStartCalendar"] = new Entry("calendar", 16),
+        ["btnPlotFinishCalendar"] = new Entry("calendar", 16),
         ["btnRefreshSheet"] = new Entry("refresh-chart", 32),
         ["btnWarnings"] = new Entry("warnings", 16),
         ["btnDiagnostics"] = new Entry("diagnostics", 16),

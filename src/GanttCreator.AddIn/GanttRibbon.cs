@@ -2458,6 +2458,52 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Called when the user clicks the start-date calendar button (R5.1a). Opens
+    /// the picker and commits a picked date through the same setter the edit box
+    /// uses. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotStartCalendarClick(IRibbonControl control)
+        => OnPlotStartCalendarClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotStartCalendarClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    internal static void OnPlotStartCalendarClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.PickPlotStartDate();
+    }
+
+    /// <summary>
+    /// Called when the user clicks the finish-date calendar button (R5.1a). The
+    /// symmetric counterpart of <see cref="OnPlotStartCalendarClick(IRibbonControl)"/>.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotFinishCalendarClick(IRibbonControl control)
+        => OnPlotFinishCalendarClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotFinishCalendarClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    internal static void OnPlotFinishCalendarClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.PickPlotFinishDate();
+    }
+
+    /// <summary>
     /// The selected index of the Size dropdown (R5.16a). The item list mirrors
     /// <see cref="SizePresets.All"/>, so the index is a projection of the stored
     /// preset rather than a second list. Never throws.

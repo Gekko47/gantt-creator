@@ -25,6 +25,22 @@ R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetCha
 `RibbonStateService.ScheduleAutomaticRefresh`. The explicit scene-warning list
 is surfaced by `GanttRibbon.OnWarningsClick` and `WarningsPanelForm`.
 
+**R5.1a entry points (2026-11-17).** The two plot-date calendar buttons are
+`RibbonControlIds.PlotStartCalendar`/`PlotFinishCalendar`, gated in `RibbonState.IsEnabled` and
+handled by `GanttRibbon.OnPlotStartCalendarClick`/`OnPlotFinishCalendarClick`. The popup is
+`PlotDatePickerForm` (with `PlotDatePickerRequest`), reached through the virtual
+`RibbonStateService.ShowPlotDatePicker` seam; the routing methods are
+`PickPlotStartDate`/`PickPlotFinishDate`, and they commit through the existing
+`SetPlotStartDate`/`SetPlotFinishDate`. Ribbon repaint for one date row is
+`RibbonStateService.InvalidatePlotDateRow`; a completed pass repaints an AUTO end through
+`RibbonStateService.UpdateEffectivePlotDates`, fed by
+`GanttRefreshOutcome.PlotStart`/`PlotFinish` (populated in `GanttRefreshOrchestrator` from the
+`SceneBuildRequest` it built, never from the time scale). Persistence is
+`TryPersistPlotRange` (four keys) and `TryPersistPlotLayout` (five keys) through
+`TryWriteSettings`. Tests: `tests/GanttCreator.AddIn.Tests/PlotDatePickerTests.cs`,
+`tests/GanttCreator.Office.ContractTests/GanttRefreshOutcomePlotRangeTests.cs`, plus the pins in
+`tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs`.
+
 R5.9's presentation delta is pinned in
 `tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs` (keytip presence and
 uniqueness, label coverage, offline-only help text). R5.11's alignment

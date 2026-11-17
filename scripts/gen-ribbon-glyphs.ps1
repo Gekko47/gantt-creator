@@ -175,6 +175,15 @@ $glyphs = [ordered]@{
         'M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2'
         'M9 20h6'
     )
+    # R5.1a: the plot-date pickers. Lucide `calendar`, shared by both rows:
+    # the label column and the supertip name the end, so two glyphs would add
+    # an asset pair and a second decode for no gain.
+    'calendar'          = @(
+        'M8 2v4'
+        'M16 2v4'
+        'rect:3,4,18,18,2'
+        'M3 10h18'
+    )
     'refresh-chart'     = @(
         'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8'
         'M21 3v5h-5'
@@ -251,6 +260,8 @@ $controlGlyphs = [ordered]@{
     mnuColumnVisibility     = @{ Glyph = 'show-columns'; Size = 32 }
     btnThemeSettings        = @{ Glyph = 'theme-settings'; Size = 16 }
     btnChartTitle           = @{ Glyph = 'chart-title'; Size = 16 }
+    btnPlotStartCalendar    = @{ Glyph = 'calendar'; Size = 16 }
+    btnPlotFinishCalendar   = @{ Glyph = 'calendar'; Size = 16 }
     btnRefreshSheet         = @{ Glyph = 'refresh-chart'; Size = 32 }
     btnWarnings             = @{ Glyph = 'warnings'; Size = 16 }
     btnDiagnostics          = @{ Glyph = 'diagnostics'; Size = 16 }

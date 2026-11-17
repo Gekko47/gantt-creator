@@ -251,6 +251,20 @@ internal static class RibbonControlIds
     /// <summary>The Plot finish date edit box (<c>getEnabled</c> driven by workbook + initialised + not auto).</summary>
     internal const string PlotFinishDate = "edtPlotFinishDate";
 
+    /// <summary>
+    /// The Plot start calendar button (R5.1a). Gated exactly like
+    /// <see cref="PlotStartDate"/>: workbook + initialised + Gantt sheet + not auto,
+    /// because a disabled date box with a live calendar button would be a
+    /// second way to set a value the row is not accepting.
+    /// </summary>
+    internal const string PlotStartCalendar = "btnPlotStartCalendar";
+
+    /// <summary>
+    /// The Plot finish calendar button (R5.1a). The parallel of
+    /// <see cref="PlotStartCalendar"/>, gated on <see cref="PlotFinishAuto"/>.
+    /// </summary>
+    internal const string PlotFinishCalendar = "btnPlotFinishCalendar";
+
     /// <summary>The plot time-scale dropdown (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotTimeScale = "ddnPlotTimeScale";
 

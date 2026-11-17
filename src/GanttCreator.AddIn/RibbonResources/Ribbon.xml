@@ -133,15 +133,23 @@
              Width and height are outputs, so they render as labels rather than
              disabled edit boxes. -->
         <group id="grpPlotArea" label="Chart" getVisible="GetVisible">
+          <!-- R5.1a: each date row is Label, edit box, calendar button, Auto box.
+               The picker sits between the two inputs it edits, and both rows use
+               the same glyph because the label column and the supertip name the
+               end; one slug keeps the asset pair and the decode shared. -->
           <box id="boxPlotStart" boxStyle="horizontal">
             <labelControl id="lblPlotStartDate" label="Start"/>
-            <editBox id="edtPlotStartDate" keytip="SD" screentip="Explicit start date" supertip="The chart start date in dd/mm/yyyy form. It is disabled while the automatic start is checked." getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="dd-mmm-yy"/>
-            <checkBox id="chkPlotStartAuto" label="Auto" keytip="SA" screentip="Automatic start date" supertip="Lets the chart start at the first activity. Uncheck to type an explicit start date." getPressed="GetPlotStartAuto" getEnabled="GetEnabled" onAction="OnPlotStartAutoClick"/>
+            <editBox id="edtPlotStartDate" keytip="SD" screentip="Explicit start date" supertip="The chart start date in dd-mmm-yy form. It is disabled while the automatic start is checked." getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="dd-mmm-yy"/>
+            <!-- R5.1a: the label is the control's accessible NAME, hidden so the
+                 row stays one line; the glyph alone would be announced unnamed. -->
+            <button id="btnPlotStartCalendar" label="Start date" showLabel="false" keytip="SC" getImage="GetGlyph" screentip="Pick a start date" supertip="Opens a calendar to choose the chart start date. Disabled while the automatic start is checked." getEnabled="GetEnabled" onAction="OnPlotStartCalendarClick"/>
+            <checkBox id="chkPlotStartAuto" label="Auto" keytip="SA" screentip="Automatic start date" supertip="Lets the chart start at the first activity. Uncheck to type or pick an explicit start date." getPressed="GetPlotStartAuto" getEnabled="GetEnabled" onAction="OnPlotStartAutoClick"/>
           </box>
           <box id="boxPlotFinish" boxStyle="horizontal">
             <labelControl id="lblPlotFinishDate" label="Finish"/>
-            <editBox id="edtPlotFinishDate" keytip="FD" screentip="Explicit finish date" supertip="The chart finish date in dd/mm/yyyy form. It is disabled while the automatic finish is checked." getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="dd-mmm-yy"/>
-            <checkBox id="chkPlotFinishAuto" label="Auto" keytip="FA" screentip="Automatic finish date" supertip="Lets the chart end at the last activity. Uncheck to type an explicit finish date." getPressed="GetPlotFinishAuto" getEnabled="GetEnabled" onAction="OnPlotFinishAutoClick"/>
+            <editBox id="edtPlotFinishDate" keytip="FD" screentip="Explicit finish date" supertip="The chart finish date in dd-mmm-yy form. It is disabled while the automatic finish is checked." getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="dd-mmm-yy"/>
+            <button id="btnPlotFinishCalendar" label="Finish date" showLabel="false" keytip="FC" getImage="GetGlyph" screentip="Pick a finish date" supertip="Opens a calendar to choose the chart finish date. Disabled while the automatic finish is checked." getEnabled="GetEnabled" onAction="OnPlotFinishCalendarClick"/>
+            <checkBox id="chkPlotFinishAuto" label="Auto" keytip="FA" screentip="Automatic finish date" supertip="Lets the chart end at the last activity. Uncheck to type or pick an explicit finish date." getPressed="GetPlotFinishAuto" getEnabled="GetEnabled" onAction="OnPlotFinishAutoClick"/>
           </box>
           <box id="boxPlotTimeScale" boxStyle="horizontal">
             <labelControl id="lblPlotTimeScale" label="Scale"/>

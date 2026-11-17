@@ -637,7 +637,11 @@ public sealed class GanttRefreshOrchestrator(
         }
 
         // Step 11. Build the scene. A refusal here is still before any shape write.
-        SceneBuildOutcome scene = SceneBuilder.TryBuild(request.Request);
+        // The request is held once: it is also what reports the range the scene
+        // used, so the outcome can carry it without the orchestrator reading the
+        // time scale (a geometry object) itself.
+        SceneBuildRequest built = request.Request!;
+        SceneBuildOutcome scene = SceneBuilder.TryBuild(built);
         if (!scene.Succeeded)
         {
             return RefuseAfterWrites(
@@ -763,7 +767,20 @@ public sealed class GanttRefreshOrchestrator(
         {
             _changeTracker?.Reset();
             _shapeDeltaCache?.Commit(desired);
-            return GanttRefreshOutcome.Ok(validation.Issues, reconcile.CompletedCount, duration.CellsWritten, styleCellsWritten, scene.Result!.Scene.Warnings);
+
+            // R5.1a: the rendered range rides on the outcome so the ribbon can
+            // repaint an AUTO end's displayed date from the pass it just ran,
+            // with no second table read. It is taken from the request the scene
+            // was built from, so the orchestrator still derives no geometry of
+            // its own.
+            return GanttRefreshOutcome.Ok(
+                validation.Issues,
+                reconcile.CompletedCount,
+                duration.CellsWritten,
+                styleCellsWritten,
+                scene.Result!.Scene.Warnings,
+                built.PlotStart,
+                built.PlotFinish);
         }
 
 
