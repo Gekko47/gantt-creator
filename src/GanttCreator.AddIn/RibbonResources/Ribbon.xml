@@ -42,7 +42,7 @@
               <button id="entAsPlannedActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="APA" screentip="Planned span" supertip="The planned programme span. Reads Start and Finish; may share its lane with actual and baseline rows." onAction="OnAddEntityClick"/>
               <button id="entAsBuiltActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="ABA" screentip="Actual span" supertip="The actual execution span. Reads Start and Finish; critical intervals point at it by parent." onAction="OnAddEntityClick"/>
               <button id="entBaselineActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BLA" screentip="Baseline span" supertip="The approved baseline span. Reads Start and Finish; the stack index decides which bar sits where." onAction="OnAddEntityClick"/>
-              <button id="entCustomActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CUA" screentip="Style-defined span" supertip="Needs a style key from the Labels group. Reads Start and Finish; an unknown key is an error, never a fallback." onAction="OnAddEntityClick"/>
+              <button id="entCustomActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CUA" screentip="Style-defined span" supertip="Needs a style key from the Style group. Reads Start and Finish; an unknown key is an error, never a fallback." onAction="OnAddEntityClick"/>
               <menuSeparator id="sepAddActivityEvents" title="Events"/>
               <button id="entDelayEvent" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="DLY" screentip="Delay span" supertip="An explicit delay period. Reads Start and Finish; drawn in its own red body with the label inside by default." onAction="OnAddEntityClick"/>
               <button id="entCriticalInterval" getImage="GetGlyph" getLabel="GetEntityMenuLabel" getEnabled="GetCriticalIntervalEnabled" keytip="CRI" screentip="Critical portion" supertip="Reads its own Start and Finish. Attaches to the nearest activity that can own it; disabled when none can." onAction="OnAddEntityClick"/>
@@ -62,7 +62,7 @@
               <button id="entBaselineMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BLM" screentip="Baseline milestone" supertip="A baseline milestone. A four-point diamond at its Start date; Finish is never read." onAction="OnAddEntityClick"/>
               <button id="entCriticalMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CRM" screentip="Critical milestone" supertip="A critical milestone. A four-point diamond at its Start date; it takes no styling from a nearby interval." onAction="OnAddEntityClick"/>
               <menuSeparator id="sepAddMilestoneCustom" title="Custom"/>
-              <button id="entCustomMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CUM" screentip="Style-defined milestone" supertip="Needs a style key from the Labels group. A diamond at its Start date; an unknown key is an error, never a fallback." onAction="OnAddEntityClick"/>
+              <button id="entCustomMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CUM" screentip="Style-defined milestone" supertip="Needs a style key from the Style group. A diamond at its Start date; an unknown key is an error, never a fallback." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
@@ -113,10 +113,6 @@
             <labelControl id="lblDateLabel" label="Date"/>
             <dropDown id="ddnDateLabel" keytip="DT" screentip="Date label choice" supertip="Chooses which date label the selected row shows. A delineator chooses a label corner instead." getEnabled="GetEnabled" getItemCount="GetDateLabelCount" getItemID="GetDateLabelItemID" getItemLabel="GetDateLabelItemLabel" getSelectedItemIndex="GetDateLabelSelectedIndex" onAction="OnDateLabelChange"/>
           </box>
-          <box id="boxCustomStyle" boxStyle="horizontal">
-            <labelControl id="lblCustomStyle" label="Style"/>
-            <dropDown id="ddnCustomStyle" keytip="CS" screentip="Custom style for the row" supertip="Assigns a custom style to the selected Custom Activity or Custom Milestone row." getEnabled="GetEnabled" getItemCount="GetCustomStyleCount" getItemID="GetCustomStyleItemID" getItemLabel="GetCustomStyleItemLabel" getSelectedItemIndex="GetCustomStyleSelectedIndex" onAction="OnCustomStyleChange"/>
-          </box>
         </group>
         <!-- R5.18h, surface revised 2026-11-14 and R5.22: ONE split button. The primary
              toggles all six columns (none hidden hides all; any hidden shows all) and its
@@ -140,6 +136,14 @@
           </splitButton>
         </group>
         <group id="grpStyleTheme" label="Style" getVisible="GetVisible">
+          <!-- Surface revision 2026-11-17 (owner ruling): the per-row style selector is a
+               Style subject, not a Labels one, so it heads the Style group. The caption says
+               "Custom style" because the group heading already says Style, and because the two
+               global dialogs that follow do not assign a row's style. -->
+          <box id="boxCustomStyle" boxStyle="horizontal">
+            <labelControl id="lblCustomStyle" label="Custom style"/>
+            <dropDown id="ddnCustomStyle" keytip="CS" screentip="Custom style for the row" supertip="Assigns a custom style to the selected Custom Activity or Custom Milestone row." getEnabled="GetEnabled" getItemCount="GetCustomStyleCount" getItemID="GetCustomStyleItemID" getItemLabel="GetCustomStyleItemLabel" getSelectedItemIndex="GetCustomStyleSelectedIndex" onAction="OnCustomStyleChange"/>
+          </box>
           <button id="btnThemeSettings" label="Theme settings..." getImage="GetGlyph" keytip="T" screentip="Open the theme settings" supertip="Edits entity styles, chart chrome, and custom styles. Changes apply to the chart after they are saved." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>
           <button id="btnChartTitle" label="Chart title..." getImage="GetGlyph" keytip="H" screentip="Edit the chart title" supertip="Sets the title shown above the Gantt chart. Clearing the title hides it." getEnabled="GetEnabled" onAction="OnChartTitleClick"/>
         </group>

@@ -390,7 +390,7 @@ public class AddRowRibbonTests
             (
                 "entCustomActivity",
                 "Style-defined span",
-                "Needs a style key from the Labels group. Reads Start and Finish; an unknown key is an error, never a fallback."),
+                "Needs a style key from the Style group. Reads Start and Finish; an unknown key is an error, never a fallback."),
             (
                 "entDelayEvent",
                 "Delay span",
@@ -430,7 +430,7 @@ public class AddRowRibbonTests
             (
                 "entCustomMilestone",
                 "Style-defined milestone",
-                "Needs a style key from the Labels group. A diamond at its Start date; an unknown key is an error, never a fallback."),
+                "Needs a style key from the Style group. A diamond at its Start date; an unknown key is an error, never a fallback."),
             (
                 "entDelineator",
                 "Full-height date line",

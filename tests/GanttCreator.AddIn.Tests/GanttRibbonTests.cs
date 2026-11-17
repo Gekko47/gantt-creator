@@ -148,6 +148,39 @@ public class GanttRibbonTests
     }
 
     [Fact]
+    public void The_custom_style_selector_lives_in_the_style_group()
+    {
+        // Owner ruling 2026-11-17: a row's style is a Style subject, not a Labels one.
+        // The selector heads the Style group, so it reads "Custom style [dropdown] |
+        // Theme settings... | Chart title...", and the Labels group keeps only the two
+        // label-position dropdowns. Pinned so a later layout pass cannot move it back
+        // without this fact, its caption and the two entity supertips following.
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = doc.Root!.Name.Namespace;
+
+        XElement style = Assert.Single(
+            doc.Descendants(ns + "group"),
+            element => (string?)element.Attribute("id") == RibbonControlIds.StyleThemeGroup);
+        XElement labels = Assert.Single(
+            doc.Descendants(ns + "group"),
+            element => (string?)element.Attribute("id") == RibbonControlIds.LabelsGroup);
+
+        Assert.Equal("boxCustomStyle", (string?)style.Elements().First().Attribute("id"));
+
+        Assert.Single(
+            style.Descendants(ns + "dropDown"),
+            element => (string?)element.Attribute("id") == RibbonControlIds.CustomStyle);
+        XElement caption = Assert.Single(
+            style.Descendants(ns + "labelControl"),
+            element => (string?)element.Attribute("id") == "lblCustomStyle");
+        Assert.Equal("Custom style", (string?)caption.Attribute("label"));
+
+        Assert.DoesNotContain(
+            labels.Descendants(ns + "dropDown"),
+            element => (string?)element.Attribute("id") == RibbonControlIds.CustomStyle);
+    }
+
+    [Fact]
     public void The_sheet_group_puts_a_large_refresh_beside_one_stacked_column()
     {
         // R5.18e (owner ruling 2026-11-13): Refresh is the group's primary action, so it

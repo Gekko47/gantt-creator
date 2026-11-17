@@ -214,7 +214,8 @@ internal static class RibbonControlIds
     /// initialised + a single style-key row + at least one user-created
     /// style key). R5.6a: items are the non-built-in keys of the
     /// configuration style registry, projected at query time; assigning
-    /// writes the selected row's hidden <c>StyleKey</c> cell.
+    /// writes the selected row's hidden <c>StyleKey</c> cell. The ribbon's
+    /// <c>Style</c> group carries it beside a <c>Custom style</c> row label.
     /// </summary>
     internal const string CustomStyle = "ddnCustomStyle";
 
@@ -331,10 +332,10 @@ internal static class RibbonControlIds
     /// </summary>
     internal const string OutlineGroup = "grpOutline";
 
-    /// <summary>The Labels group (description, date, custom style).</summary>
+    /// <summary>The Labels group (description, date).</summary>
     internal const string LabelsGroup = "grpLabels";
 
-    /// <summary>The Style group (theme settings, chart title).</summary>
+    /// <summary>The Style group (row style, theme settings, chart title).</summary>
     internal const string StyleThemeGroup = "grpStyleTheme";
 
     /// <summary>The Chart group: plot dates and the time scale (R5.16a merge).</summary>
