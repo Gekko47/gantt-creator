@@ -1863,7 +1863,7 @@ public class GanttRowValidatorTests
         // The unknown value is echoed back so the user can see which cell is
         // wrong, and the guidance names the catalogue size.
         Assert.Equal(
-            "Unknown Type 'Widget'; use one of the 16 catalogue display names.",
+            "Unknown Type 'Widget'; use one of the 17 catalogue display names.",
             MessageFor(outcome, GanttValidationCodes.UnknownType));
         Assert.Equal(
             "Id is blank or malformed; expected 'G-' plus 32 lowercase hex digits.",

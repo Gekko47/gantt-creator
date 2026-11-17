@@ -147,7 +147,7 @@ The constraint is not taste, it is raster. Every menu row rasterises to **16 px*
 | All five milestones | `add-milestone` (existing) | flag on a pole | Yes — keep |
 | Delineator, Spacer, Splitter | existing three slugs | line with arrows; band | Yes — keep |
 | The three Procurement rows | `procurement` (new) | the bar motif drawn as **two parallel strokes** (outline instead of solid), which is how the chart shows hatch | Yes — outline versus solid is a silhouette change |
-| Critical Interval, Critical Milestone | `critical` (new, or `critical-span` plus `critical-milestone`) | the bar or flag with **one wide diagonal stroke** across it | Borderline — only if the slash is 2 units; to be judged on the live pass |
+| Critical Interval, Critical Milestone | `critical-span` and `critical-milestone` (new) | the bar motif or the flag with **one wide diagonal stroke** across it — two slugs, because a bar glyph on a milestone row names the wrong shape | **Adopted** (owner ruling 2026-11-17, conditional on the diagonal reading at 16 px) |
 | Delay Event | `span-delay` (new) | the bar motif with a **gap** in one bar | No — the gap closes to sub-pixel; rejected |
 | Custom Activity, Custom Milestone | `style-defined` (new) | a small pen or star accent on the bar or flag | No — the accent is noise at 16 px; rejected |
 

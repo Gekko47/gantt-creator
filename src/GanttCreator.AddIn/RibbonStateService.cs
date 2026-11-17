@@ -2484,14 +2484,17 @@ internal class RibbonStateService
         GanttEntityType.CustomActivity
             or GanttEntityType.CustomMilestone => "circle-dashed",
 
+        // The critical pair keeps its family shape and gains the shared slash, so the
+        // primary names "critical" without lying about whether it is a bar or a flag.
+        GanttEntityType.CriticalInterval => "critical-span",
+        GanttEntityType.CriticalMilestone => "critical-milestone",
+
         GanttEntityType.AsBuiltMilestone
             or GanttEntityType.AsPlannedMilestone
-            or GanttEntityType.BaselineMilestone
-            or GanttEntityType.CriticalMilestone => "add-milestone",
+            or GanttEntityType.BaselineMilestone => "add-milestone",
         GanttEntityType.AsBuiltActivity
             or GanttEntityType.AsPlannedActivity
-            or GanttEntityType.BaselineActivity
-            or GanttEntityType.CriticalInterval => "add-activity",
+            or GanttEntityType.BaselineActivity => "add-activity",
 
         // An unnamed value cannot reach here — the remembered type always comes from the
         // catalogue — but the enum is not a closed set to the compiler, so it needs an arm.

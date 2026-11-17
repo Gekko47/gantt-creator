@@ -66,7 +66,7 @@ public class GanttRowValidatorMessageTests
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
         Assert.Equal(
-            "Unknown Type 'Widget'; use one of the 16 catalogue display names.",
+            "Unknown Type 'Widget'; use one of the 17 catalogue display names.",
             MessageFor(outcome, GanttValidationCodes.UnknownType));
     }
 

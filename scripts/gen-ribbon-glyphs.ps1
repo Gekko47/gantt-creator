@@ -126,6 +126,23 @@ $glyphs = [ordered]@{
         'M3.721 6.391a10 10 0 0 1 2.7-2.69'
         'M6.391 20.279a10 10 0 0 1-2.69-2.7'
     )
+    # The two critical rows keep their family shape and gain ONE shared gesture: a
+    # wide diagonal struck through it, which is how the chart shows a critical
+    # interval overlaying a parent bar. Two slugs rather than one because a bar
+    # glyph on a milestone row would name the wrong shape, and the diagonal alone
+    # would say "something is critical" without saying what.
+    'critical-span'     = @(
+        'M6 5h10'
+        'M4 12h9'
+        'M9 19h9'
+        'M6 20 18 4'
+    )
+    'critical-milestone' = @(
+        'M12 13v8'
+        'M12 3v3'
+        'M4 6a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h13a2 2 0 0 0 1.152-.365l3.424-2.317a1 1 0 0 0 0-1.635l-3.424-2.318A2 2 0 0 0 17 6z'
+        'M6 20 18 4'
+    )
     'delineator'        = @(
         'M12 3v18'
         'm16 16 4-4-4-4'
@@ -270,14 +287,14 @@ $controlGlyphs = [ordered]@{
     entBaselineActivity     = @{ Glyph = 'add-activity'; Size = 16 }
     entCustomActivity       = @{ Glyph = 'circle-dashed'; Size = 16 }
     entDelayEvent           = @{ Glyph = 'span-delay'; Size = 16 }
-    entCriticalInterval     = @{ Glyph = 'add-activity'; Size = 16 }
+    entCriticalInterval     = @{ Glyph = 'critical-span'; Size = 16 }
     entAsPlannedProcurement = @{ Glyph = 'procurement'; Size = 16 }
     entAsBuiltProcurement   = @{ Glyph = 'procurement'; Size = 16 }
     entBaselineProcurement  = @{ Glyph = 'procurement'; Size = 16 }
     entAsPlannedMilestone   = @{ Glyph = 'add-milestone'; Size = 16 }
     entAsBuiltMilestone     = @{ Glyph = 'add-milestone'; Size = 16 }
     entBaselineMilestone    = @{ Glyph = 'add-milestone'; Size = 16 }
-    entCriticalMilestone    = @{ Glyph = 'add-milestone'; Size = 16 }
+    entCriticalMilestone    = @{ Glyph = 'critical-milestone'; Size = 16 }
     entCustomMilestone      = @{ Glyph = 'circle-dashed'; Size = 16 }
     entDelineator           = @{ Glyph = 'delineator'; Size = 16 }
     entSpacer               = @{ Glyph = 'spacer'; Size = 16 }
@@ -319,6 +336,8 @@ $stateGlyphs = @(
     'procurement|32'
     'span-delay|32'
     'circle-dashed|32'
+    'critical-span|32'
+    'critical-milestone|32'
 )
 
 # Positive guard: a table entry naming geometry that does not exist is a hard

@@ -242,7 +242,7 @@ public sealed class RibbonGlyphAssetsTests
     }
 
     [Fact]
-    public void Every_entity_type_maps_into_the_eight_primary_glyphs()
+    public void Every_entity_type_maps_into_the_ten_primary_glyphs()
     {
         // The checker verifies these eight assets at 32 px directly, because they are
         // reached through the primary callback rather than through the catalogue. This
@@ -262,6 +262,8 @@ public sealed class RibbonGlyphAssetsTests
                 "add-activity",
                 "add-milestone",
                 "circle-dashed",
+                "critical-milestone",
+                "critical-span",
                 "delineator",
                 "procurement",
                 "spacer",
@@ -279,8 +281,11 @@ public sealed class RibbonGlyphAssetsTests
         // Delay Event or a procurement period leaves the label naming that type, and a
         // family picture beside it is the label/glyph mismatch R5.19 removed.
         Assert.Equal("add-activity", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.AsBuiltActivity));
-        Assert.Equal("add-activity", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CriticalInterval));
-        Assert.Equal("add-milestone", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CriticalMilestone));
+        // The critical pair is the exception the owner asked for: it keeps the family
+        // shape and gains the shared slash, so "critical" is visible at a glance and the
+        // bar-versus-flag question stays answered.
+        Assert.Equal("critical-span", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CriticalInterval));
+        Assert.Equal("critical-milestone", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CriticalMilestone));
 
         Assert.Equal("span-delay", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.DelayEvent));
         Assert.Equal("procurement", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.AsBuiltProcurement));

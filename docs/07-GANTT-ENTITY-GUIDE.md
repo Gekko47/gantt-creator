@@ -134,9 +134,10 @@ Initial catalogue:
 | `As-Planned Milestone` | As-planned milestone | Start only | AsPlannedMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
 | `Baseline Milestone` | Baseline milestone | Start only | BaselineMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
 | `Critical Milestone` | Critical milestone | Start only | CriticalMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
+| `Custom Milestone` | Named custom milestone | Start only | required `StyleKey` | style-defined | style-defined subset |
 | `Delineator` | Full-height vertical date line | Start only | DefaultDelineator | Stroke | Auto, TopLeft, TopRight, BottomLeft, BottomRight, None |
 
-Full display names are used because the VeryHidden range removes the direct-list length limitation. These exact values form part of the workbook schema; localisation or renaming requires a schema migration. The `GanttEntityType` enum values and names are the separate durable machine identity: a display-name migration must not renumber or rename the domain enum. The catalogue has exactly **16 selectable Types**; this guide's other sections describe the broader visual/entity taxonomy and do not add dropdown values.
+Full display names are used because the VeryHidden range removes the direct-list length limitation. These exact values form part of the workbook schema; localisation or renaming requires a schema migration. The `GanttEntityType` enum values and names are the separate durable machine identity: a display-name migration must not renumber or rename the domain enum. The catalogue has exactly **17 selectable Types** — the sixteen listed above through `Delineator` plus `Custom Milestone`, which this table omitted until the 2026-11-17 owner ruling corrected the count against `EntityTypeCatalog.TypeCount`; this guide's other sections describe the broader visual/entity taxonomy and do not add dropdown values.
 
 Dropdown implementation requirements:
 

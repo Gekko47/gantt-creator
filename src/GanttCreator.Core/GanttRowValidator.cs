@@ -254,7 +254,7 @@ public static class GanttRowValidator
                 "Type",
                 GanttValidationCodes.UnknownType,
                 GanttValidationSeverity.Error,
-                $"Unknown Type '{row.TypeText}'; use one of the 16 catalogue display names."
+                $"Unknown Type '{row.TypeText}'; use one of the 17 catalogue display names."
             );
         }
         else if (!typeBlocked)

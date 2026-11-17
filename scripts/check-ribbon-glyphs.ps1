@@ -335,6 +335,8 @@ $primaryGlyphs = @(
     'add-activity'
     'add-milestone'
     'circle-dashed'
+    'critical-span'
+    'critical-milestone'
     'delineator'
     'spacer'
     'splitter'
