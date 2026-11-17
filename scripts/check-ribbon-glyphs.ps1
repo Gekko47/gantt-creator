@@ -326,10 +326,21 @@ foreach ($match in [regex]::Matches($catalogueText, 'internal const string \w+ =
     }
 }
 
-# The five glyphs the three add primaries can show, at 32 px. The set mirrors the
+# The eight glyphs the three add primaries can show, at 32 px. The set mirrors the
 # generator's state table and is pinned by RibbonGlyphAssetsTests, which asserts every
-# GanttEntityType maps into exactly these five.
-$primaryGlyphs = @('add-activity', 'add-milestone', 'delineator', 'spacer', 'splitter')
+# GanttEntityType maps into exactly these eight. The three concept slugs were added by the
+# 2026-11-17 surface revision so a primary whose label names Delay Event, a procurement
+# period or a Custom row cannot keep showing the family picture.
+$primaryGlyphs = @(
+    'add-activity'
+    'add-milestone'
+    'delineator'
+    'spacer'
+    'splitter'
+    'procurement'
+    'span-delay'
+    'pen'
+)
 foreach ($slug in $primaryGlyphs) {
     foreach ($palette in @('light', 'dark')) {
         $file = '{0}-{1}-32.png' -f $slug, $palette

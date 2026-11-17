@@ -242,11 +242,13 @@ public sealed class RibbonGlyphAssetsTests
     }
 
     [Fact]
-    public void Every_entity_type_maps_into_the_five_primary_glyphs()
+    public void Every_entity_type_maps_into_the_eight_primary_glyphs()
     {
-        // The checker verifies these five assets at 32 px directly, because they are
+        // The checker verifies these eight assets at 32 px directly, because they are
         // reached through the primary callback rather than through the catalogue. This
-        // test is what keeps that list honest.
+        // test is what keeps that list honest. The three concept slugs landed with the
+        // 2026-11-17 surface revision, when the menus started drawing those rows
+        // differently.
         string[] slugs =
         [
             .. Enum.GetValues<GanttEntityType>()
@@ -256,19 +258,34 @@ public sealed class RibbonGlyphAssetsTests
         ];
 
         Assert.Equal(
-            ["add-activity", "add-milestone", "delineator", "spacer", "splitter"],
+            [
+                "add-activity",
+                "add-milestone",
+                "delineator",
+                "pen",
+                "procurement",
+                "spacer",
+                "span-delay",
+                "splitter",
+            ],
             slugs);
     }
 
     [Fact]
-    public void Activity_and_milestone_variants_keep_one_family_glyph()
+    public void Variants_that_differ_only_by_timing_keep_one_family_glyph()
     {
-        // Their variants differ by timing, not by shape, so only the element family splits
-        // its glyph. The label still names the exact type.
+        // Planned, actual and baseline differ by timing, not by shape, so they keep the
+        // family picture. A row whose MENU glyph changed must change here too: picking
+        // Delay Event or a procurement period leaves the label naming that type, and a
+        // family picture beside it is the label/glyph mismatch R5.19 removed.
         Assert.Equal("add-activity", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.AsBuiltActivity));
         Assert.Equal("add-activity", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CriticalInterval));
         Assert.Equal("add-milestone", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CriticalMilestone));
-        Assert.Equal("add-milestone", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomMilestone));
+
+        Assert.Equal("span-delay", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.DelayEvent));
+        Assert.Equal("procurement", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.AsBuiltProcurement));
+        Assert.Equal("pen", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomActivity));
+        Assert.Equal("pen", RibbonStateService.AddEntityPrimaryGlyph(GanttEntityType.CustomMilestone));
     }
 
     // Ported from ColumnVisibilityImagesTests: the column menu offers the five authoring

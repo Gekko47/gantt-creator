@@ -2460,28 +2460,34 @@ internal class RibbonStateService
     /// R5.18g made the three primaries follow the last menu pick in their LABEL. R5.19
     /// gave them a glyph, and a glyph that did not follow the same pick reintroduced the
     /// original defect one channel over: a button reading "Spacer" while drawing a
-    /// delineator. Only the element family splits per type; activities and milestones keep
-    /// one family glyph because their variants differ by timing, not by shape.
+    /// delineator. Activities and milestones keep one family glyph for the variants that
+    /// differ only by timing, but a type whose MENU ROW now draws a different picture
+    /// takes that picture here too — otherwise picking "Delay Event" would leave a
+    /// timeline-of-bars glyph beside a delay label, which is the same defect again.
     /// </remarks>
     internal static string AddEntityPrimaryGlyph(GanttEntityType type) => type switch
     {
         GanttEntityType.Splitter => "splitter",
         GanttEntityType.Spacer => "spacer",
         GanttEntityType.Delineator => "delineator",
+
+        // R5.16a surface revision 2026-11-17: the three concept rows the menus draw
+        // differently from their family.
+        GanttEntityType.AsPlannedProcurement
+            or GanttEntityType.AsBuiltProcurement
+            or GanttEntityType.BaselineProcurement => "procurement",
+        GanttEntityType.DelayEvent => "span-delay",
+        GanttEntityType.CustomActivity
+            or GanttEntityType.CustomMilestone => "pen",
+
         GanttEntityType.AsBuiltMilestone
             or GanttEntityType.AsPlannedMilestone
             or GanttEntityType.BaselineMilestone
-            or GanttEntityType.CriticalMilestone
-            or GanttEntityType.CustomMilestone => "add-milestone",
+            or GanttEntityType.CriticalMilestone => "add-milestone",
         GanttEntityType.AsBuiltActivity
             or GanttEntityType.AsPlannedActivity
             or GanttEntityType.BaselineActivity
-            or GanttEntityType.CriticalInterval
-            or GanttEntityType.DelayEvent
-            or GanttEntityType.AsBuiltProcurement
-            or GanttEntityType.AsPlannedProcurement
-            or GanttEntityType.BaselineProcurement
-            or GanttEntityType.CustomActivity => "add-activity",
+            or GanttEntityType.CriticalInterval => "add-activity",
 
         // An unnamed value cannot reach here — the remembered type always comes from the
         // catalogue — but the enum is not a closed set to the compiler, so it needs an arm.

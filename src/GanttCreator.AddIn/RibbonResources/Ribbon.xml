@@ -28,39 +28,52 @@
           <!-- R5.18g: the three add primaries label themselves from the catalogue and
                follow the last menu pick, so the button never promises one type and adds
                another. The label text lives in EntityTypeCatalog, not here. -->
+          <!-- Surface revision 2026-11-17 (owner ruling): every section carries a titled
+               divider, INCLUDING the first one. The primary renames itself to the last
+               menu pick, so the button cannot say what the top block is; an unlabelled
+               first block is the ambiguity the owner reported. Keytips read as basis +
+               kind (AP/AB/BL/CU/CR + A activity, P procurement), reviewed in
+               plans/ribbon-add-entity-menu-clarity-plan.md §3.1. Supertips state the
+               differentiator, never a restatement of the label. -->
           <splitButton id="spbAddActivity" size="large" getEnabled="GetEnabled">
             <button id="btnAddActivity" getLabel="GetAddEntityPrimaryLabel" getImage="GetAddEntityPrimaryImage" keytip="AA" screentip="Add an activity row" supertip="Adds the activity type named on the button. Open the list for every activity type." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
             <menu id="mnuAddActivity">
-              <button id="entAsPlannedActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AP" screentip="Add an As-Planned Activity" supertip="Adds an as-planned activity row." onAction="OnAddEntityClick"/>
-              <button id="entAsBuiltActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AB" screentip="Add an As-Built Activity" supertip="Adds an as-built activity row." onAction="OnAddEntityClick"/>
-              <button id="entBaselineActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AL" screentip="Add a Baseline Activity" supertip="Adds a baseline activity row." onAction="OnAddEntityClick"/>
-              <button id="entCustomActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AU" screentip="Add a Custom Activity" supertip="Adds a custom activity row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
-              <button id="entDelayEvent" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AV" screentip="Add a Delay Event" supertip="Adds a delay event row under an activity." onAction="OnAddEntityClick"/>
-              <button id="entCriticalInterval" getImage="GetGlyph" getLabel="GetEntityMenuLabel" getEnabled="GetCriticalIntervalEnabled" keytip="AI" screentip="Add a Critical Interval" supertip="Adds a critical interval under the nearest activity that can own it. Disabled when no row can own one." onAction="OnAddEntityClick"/>
+              <menuSeparator id="sepAddActivity" title="Activity"/>
+              <button id="entAsPlannedActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="APA" screentip="Planned span" supertip="The planned programme span. Reads Start and Finish; may share its lane with actual and baseline rows." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="ABA" screentip="Actual span" supertip="The actual execution span. Reads Start and Finish; critical intervals point at it by parent." onAction="OnAddEntityClick"/>
+              <button id="entBaselineActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BLA" screentip="Baseline span" supertip="The approved baseline span. Reads Start and Finish; the stack index decides which bar sits where." onAction="OnAddEntityClick"/>
+              <button id="entCustomActivity" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CUA" screentip="Style-defined span" supertip="Needs a style key from the Labels group. Reads Start and Finish; an unknown key is an error, never a fallback." onAction="OnAddEntityClick"/>
+              <menuSeparator id="sepAddActivityEvents" title="Events"/>
+              <button id="entDelayEvent" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="DLY" screentip="Delay span" supertip="An explicit delay period. Reads Start and Finish; drawn in its own red body with the label inside by default." onAction="OnAddEntityClick"/>
+              <button id="entCriticalInterval" getImage="GetGlyph" getLabel="GetEntityMenuLabel" getEnabled="GetCriticalIntervalEnabled" keytip="CRI" screentip="Critical portion" supertip="Reads its own Start and Finish. Attaches to the nearest activity that can own it; disabled when none can." onAction="OnAddEntityClick"/>
               <menuSeparator id="sepProcurement" title="Procurement"/>
-              <button id="entAsPlannedProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AQ" screentip="Add an As-Planned Procurement row" supertip="Adds an as-planned procurement row." onAction="OnAddEntityClick"/>
-              <button id="entAsBuiltProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AR" screentip="Add an As-Built Procurement row" supertip="Adds an as-built procurement row." onAction="OnAddEntityClick"/>
-              <button id="entBaselineProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="AS" screentip="Add a Baseline Procurement row" supertip="Adds a baseline procurement row." onAction="OnAddEntityClick"/>
+              <button id="entAsPlannedProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="APP" screentip="Planned procurement" supertip="A planned procurement period. Reads Start and Finish; drawn hatched instead of solid." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="ABP" screentip="Actual procurement" supertip="An actual procurement period. Reads Start and Finish; drawn hatched instead of solid." onAction="OnAddEntityClick"/>
+              <button id="entBaselineProcurement" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BLP" screentip="Baseline procurement" supertip="A baseline procurement period. Reads Start and Finish; drawn hatched instead of solid." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
           <splitButton id="spbAddMilestone" size="large" getEnabled="GetEnabled">
             <button id="btnAddMilestone" getLabel="GetAddEntityPrimaryLabel" getImage="GetAddEntityPrimaryImage" keytip="AM" screentip="Add a milestone row" supertip="Adds the milestone type named on the button. Open the list for every milestone type." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
             <menu id="mnuAddMilestone">
-              <button id="entAsPlannedMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BP" screentip="Add an As-Planned Milestone" supertip="Adds an as-planned milestone row. A milestone plots from its Start date only." onAction="OnAddEntityClick"/>
-              <button id="entAsBuiltMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BB" screentip="Add an As-Built Milestone" supertip="Adds an as-built milestone row." onAction="OnAddEntityClick"/>
-              <button id="entBaselineMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BL" screentip="Add a Baseline Milestone" supertip="Adds a baseline milestone row." onAction="OnAddEntityClick"/>
-              <button id="entCriticalMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BI" screentip="Add a Critical Milestone" supertip="Adds a critical milestone row." onAction="OnAddEntityClick"/>
-              <button id="entCustomMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BU" screentip="Add a Custom Milestone" supertip="Adds a custom milestone row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
+              <menuSeparator id="sepAddMilestone" title="Milestone"/>
+              <button id="entAsPlannedMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="APM" screentip="Planned milestone" supertip="A planned milestone. A four-point diamond at its Start date; Finish is never read." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="ABM" screentip="Actual milestone" supertip="An actual milestone. A four-point diamond at its Start date; Finish is never read." onAction="OnAddEntityClick"/>
+              <button id="entBaselineMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="BLM" screentip="Baseline milestone" supertip="A baseline milestone. A four-point diamond at its Start date; Finish is never read." onAction="OnAddEntityClick"/>
+              <button id="entCriticalMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CRM" screentip="Critical milestone" supertip="A critical milestone. A four-point diamond at its Start date; it takes no styling from a nearby interval." onAction="OnAddEntityClick"/>
+              <menuSeparator id="sepAddMilestoneCustom" title="Custom"/>
+              <button id="entCustomMilestone" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="CUM" screentip="Style-defined milestone" supertip="Needs a style key from the Labels group. A diamond at its Start date; an unknown key is an error, never a fallback." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
           <splitButton id="spbAddElements" size="large" getEnabled="GetEnabled">
             <button id="btnAddDelineator" getLabel="GetAddEntityPrimaryLabel" getImage="GetAddEntityPrimaryImage" keytip="AD" screentip="Add a delineator or a structural row" supertip="Adds the element type named on the button. Open the list for a spacer or a splitter." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
             <menu id="mnuAddElements">
-              <button id="entDelineator" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="JD" screentip="Add a Delineator" supertip="Adds a delineator row. A delineator draws a full-height line at its Start date." onAction="OnAddEntityClick"/>
-              <button id="entSpacer" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="JS" screentip="Add a Spacer" supertip="Adds a spacer row that separates sections of the table." onAction="OnAddEntityClick"/>
-              <button id="entSplitter" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="JP" screentip="Add a Splitter" supertip="Adds a splitter band that separates sections of the table." onAction="OnAddEntityClick"/>
+              <menuSeparator id="sepAddElementsMarker" title="Chart marker"/>
+              <button id="entDelineator" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="DEL" screentip="Full-height date line" supertip="A full-height line at its Start date. Finish, lane and stack are kept but flagged as not used." onAction="OnAddEntityClick"/>
+              <menuSeparator id="sepAddElementsStructure" title="Table structure"/>
+              <button id="entSpacer" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="SPA" screentip="Blank spacer row" supertip="A blank row that only adds vertical space. No chart shape; any dates on it are ignored with a warning." onAction="OnAddEntityClick"/>
+              <button id="entSplitter" getImage="GetGlyph" getLabel="GetEntityMenuLabel" keytip="SPL" screentip="Section band" supertip="A named band across the table and plot that separates sections. No date geometry; the description is the band label." onAction="OnAddEntityClick"/>
             </menu>
           </splitButton>
 
