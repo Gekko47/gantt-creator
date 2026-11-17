@@ -133,4 +133,39 @@ public sealed class GanttColumnVisibilityTests
 
         Assert.False(GanttColumnVisibility.SchemaOwnsVisibility(null));
     }
+
+    [Fact]
+    public void Every_ribbon_item_id_is_a_legal_st_UniqueID_and_resolves_back()
+    {
+        // RibbonX types `id` as ST_UniqueID, which rejects a space: the live host refused
+        // `colActivity ID` on load on 2026-11-17. The display name keeps its space (it is
+        // the header), the id is the name with spaces removed, and the resolver is the
+        // inverse the callbacks use.
+        Assert.Equal("ActivityID", GanttColumnVisibility.RibbonItemId("Activity ID"));
+        Assert.Equal("Start", GanttColumnVisibility.RibbonItemId("Start"));
+
+        foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+        {
+            string id = GanttColumnVisibility.RibbonItemId(name);
+            Assert.DoesNotContain(id, char.IsWhiteSpace);
+            Assert.True(GanttColumnVisibility.TryResolveRibbonItemId(id, out string? resolved));
+            Assert.Equal(name, resolved);
+        }
+
+        Assert.False(GanttColumnVisibility.TryResolveRibbonItemId("Activity ID", out _));
+        Assert.False(GanttColumnVisibility.TryResolveRibbonItemId("Id", out _));
+        Assert.False(GanttColumnVisibility.TryResolveRibbonItemId(null, out _));
+    }
+
+    [Fact]
+    public void The_derived_ribbon_item_ids_are_unique()
+    {
+        // Two display names that differ only by a space would collide once slugged, and
+        // one of the two rows would control the wrong column.
+        HashSet<string> ids = new(StringComparer.Ordinal);
+        foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+        {
+            Assert.True(ids.Add(GanttColumnVisibility.RibbonItemId(name)), $"{name} slug collides.");
+        }
+    }
 }

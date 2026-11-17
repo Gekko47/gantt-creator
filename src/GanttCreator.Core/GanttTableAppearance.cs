@@ -46,6 +46,27 @@ public static class GanttTableAppearance
     /// </summary>
     public static IReadOnlyList<string> CentredColumnNames { get; } = ["Start", "Finish", "Duration"];
 
+    /// <summary>
+    /// The width, in points, Initialise gives every visible table column.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>An owner ruling (2026-11-17), not a measured metric.</b> A freshly initialised
+    /// table used Excel's Normal-font default, which made the data panel narrow and the
+    /// descriptions clipped; the owner asked for 60pt on every visible column. It is a
+    /// presentation default applied by Initialise (and by a sheet rebuild), never by a
+    /// Refresh or a Repair over an existing table, so a user's own column resize is not
+    /// undone by the next pass.
+    /// </para>
+    /// <para>
+    /// It is a code constant rather than a catalogue metric because it is not part of the
+    /// workbook schema: changing it does not change a stored contract and must not move
+    /// the catalogue hash. The panel still measures the columns it is given, so the plot
+    /// origin follows whatever width the sheet actually carries.
+    /// </para>
+    /// </remarks>
+    public static double DefaultVisibleColumnWidthPt => 60.0;
+
     /// <summary>The built-in Excel table style the add-in assigns to the data table.</summary>
     /// <remarks>
     /// <para>

@@ -674,6 +674,12 @@ public class ExcelWorkbookRecovery(
             PresentTable(table);
             ApplyColumnPresentation(table);
 
+            // A freshly rebuilt sheet must match a freshly initialised one, including the
+            // owner's column-width default (2026-11-17). It is applied here, in the
+            // creation path only, so a Repair over an existing table never undoes a
+            // user's own column resize.
+            ApplyDefaultColumnWidths(table);
+
             GanttTableReadOutcome verify = _tableReader.Read();
             if (!verify.Succeeded)
             {
@@ -1368,6 +1374,52 @@ public class ExcelWorkbookRecovery(
 
         ApplyHeaderFormat(table);
         ApplyBorderColour(table);
+    }
+
+    /// <summary>Bounded width corrections; the characters-to-points relation is affine.</summary>
+    private const int _widthCorrectionPasses = 2;
+
+    /// <summary>
+    /// Gives every visible column the initialise default width on a rebuilt sheet.
+    /// </summary>
+    /// <param name="table">The newly created table.</param>
+    /// <remarks>
+    /// Read-before-write and bounded at two measured corrections, the same conversion the
+    /// initialiser and the gutter use. A column the stored visibility choice hides is
+    /// skipped so the rebuild preserves the user's layout as well as the default.
+    /// </remarks>
+    private void ApplyDefaultColumnWidths(Excel.ListObject table)
+    {
+        double targetPt = GanttTableAppearance.DefaultVisibleColumnWidthPt;
+        Excel.ListColumns columns = GetTableColumns(table);
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (int index = 1; index <= schema.Count; index++)
+        {
+            if (schema[index - 1].IsHidden)
+            {
+                continue;
+            }
+
+            Excel.ListColumn column = GetColumnAt(columns, index);
+            Excel.Range entireColumn = GetEntireColumn(GetColumnRange(column));
+            if (ReadHiddenFlag(entireColumn))
+            {
+                continue;
+            }
+
+            for (int pass = 0; pass < _widthCorrectionPasses; pass++)
+            {
+                if (ReadColumnWidthCharacters(entireColumn) is not { } characters
+                    || ReadColumnWidthPoints(entireColumn) is not { } points
+                    || ExcelWorkbookInitialiser.CorrectedColumnWidthCharacters(
+                        characters, points, targetPt) is not { } corrected)
+                {
+                    break;
+                }
+
+                SetColumnWidthCharacters(entireColumn, corrected);
+            }
+        }
     }
 
     /// <summary>Applies the theme's header fill and header type to the table's header row.</summary>

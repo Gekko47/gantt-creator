@@ -720,6 +720,16 @@ public class WorkbookInitialiserTests
         internal override void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
             HorizontalAlignmentWrites.Add(alignment);
 
+        /// <summary>
+        /// The stand-in ranges cannot report a width (the PIA member is not proxied), so the
+        /// visible-width pass is skipped here. <see cref="VisibleColumnWidthTests"/> owns
+        /// that behaviour and drives it through the same seams.
+        /// </summary>
+        internal override double? ReadColumnWidthCharacters(Excel.Range column) => null;
+
+        /// <inheritdoc cref="ReadColumnWidthCharacters"/>
+        internal override double? ReadColumnWidthPoints(Excel.Range column) => null;
+
         /// <summary>How many times the header band was themed; it is table-wide, so once.</summary>
         public int HeaderFormatWrites { get; private set; }
 

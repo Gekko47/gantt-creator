@@ -711,7 +711,7 @@ public class GanttRibbonTests
         string[] expected =
         [
             .. GanttColumnVisibility.ToggleableColumnNames
-                .Select(name => RibbonControlIds.ColumnItemPrefix + name),
+                .Select(name => RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.RibbonItemId(name)),
         ];
         Assert.Equal(
             expected,

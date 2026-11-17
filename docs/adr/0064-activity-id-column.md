@@ -61,8 +61,19 @@ the structure-repair plan inserts a missing schema column when a v26 workbook is
 - **Everything else is name-keyed and needs no change**: the reader map, the row writer, the
   visibility port, the presentation restorer, the validation reporter, the change analyzer,
   the extra-column scan and the Type-column validation.
-- **The ribbon row id is `colActivity ID`.** Item ids are `col` + the schema display name, and
-  the header contains a space. RibbonX ids are opaque attribute strings and the prefix parser
-  is ordinal, so the id is expected to work; a live gate confirms the row renders and toggles.
+- **The ribbon row id is `colActivityID`, not `colActivity ID`.** The first cut used
+  `col` + the display name, and the live host refused it on load (2026-11-17): RibbonX types
+  the `id` attribute as `ST_UniqueID`, which rejects a space — "A name contained an invalid
+  character ... Error parsing 'colActivity ID' as ID datatype". The header and the cell text
+  stay `Activity ID`; only the control id is slugged, by
+  `GanttColumnVisibility.RibbonItemId` (display name with spaces removed), and
+  `TryResolveRibbonItemId` is the inverse the callbacks use. Single-word columns keep their
+  existing ids, and a future display name with a space gets a legal id without an edit.
+- **Every visible column is 60pt wide on a fresh table.** The owner ruling (2026-11-17) sets
+  `GanttTableAppearance.DefaultVisibleColumnWidthPt`, applied by Initialise and by a sheet
+  rebuild only — never by a Repair or Refresh over an existing table, so a user's own column
+  resize survives. It is a presentation constant, not a catalogue metric, so it does not
+  move the schema version or the catalogue hash. Because the panel is measured, a wider
+  default moves the plot origin right and narrows the plot by the same amount.
 - **The catalogue hash moves through the schema seed only.** No catalogue row, style or
   setting changes, so the settings table's key set and the config anchor do not move.

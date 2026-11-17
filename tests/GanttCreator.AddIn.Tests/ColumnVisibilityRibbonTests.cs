@@ -87,7 +87,8 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         {
             Assert.Equal(
                 name + " (shown)",
-                service.GetColumnVisibilityLabel(RibbonControlIds.ColumnItemPrefix + name));
+                service.GetColumnVisibilityLabel(
+                    RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.RibbonItemId(name)));
         }
 
         // The positive refusal cases: an engine column (never offered) and a null id.
@@ -151,7 +152,7 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
         (RibbonStateService service, Mock<IConfigCatalogueWriter> writer) = Arm(port);
 
         service.ToggleColumnVisibility("colType");
-        service.ToggleColumnVisibility("colActivity ID");
+        service.ToggleColumnVisibility("colActivityID");
         service.ToggleColumnVisibility("colDescription");
         service.ToggleColumnVisibility("colStart");
         int appliedAfterFour = port.Applied.Count;

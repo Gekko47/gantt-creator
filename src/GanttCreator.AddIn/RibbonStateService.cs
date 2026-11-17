@@ -2769,7 +2769,7 @@ internal class RibbonStateService
         InvalidateControl(RibbonControlIds.ColumnsMenu);
         foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
         {
-            InvalidateControl(RibbonControlIds.ColumnItemPrefix + name);
+            InvalidateControl(RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.RibbonItemId(name));
         }
 
         ScheduleAutomaticRefresh();
@@ -2794,14 +2794,10 @@ internal class RibbonStateService
             return false;
         }
 
+        // The id suffix is a slug, not the display name (RibbonX ids reject a space),
+        // so the Core resolver owns the inverse mapping.
         string candidate = itemId[RibbonControlIds.ColumnItemPrefix.Length..];
-        if (!GanttColumnVisibility.IsToggleable(candidate))
-        {
-            return false;
-        }
-
-        columnName = candidate;
-        return true;
+        return GanttColumnVisibility.TryResolveRibbonItemId(candidate, out columnName);
     }
 
     /// <summary>

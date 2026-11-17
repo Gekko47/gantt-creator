@@ -1341,6 +1341,11 @@ public class ExcelWorkbookInitialiser(
             ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
         }
 
+        // The visible columns take the owner-approved default width (R5.21 follow-up,
+        // 2026-11-17). Applied after the classification pass so the engine columns,
+        // which are now hidden, are skipped.
+        ApplyVisibleColumnWidths(columns, schema);
+
         // The header row is locked for EVERY column (R5.18k follow-up). `ListColumn.Range`
         // includes the header cell, so the per-column write above left the headers of the
         // authoring columns unlocked -- and once the visible columns led the table, that
@@ -1357,6 +1362,53 @@ public class ExcelWorkbookInitialiser(
         // Table-wide, so they run once rather than per column.
         ApplyHeaderFormat(table);
         ApplyBorderColour(table);
+    }
+
+    /// <summary>
+    /// Sets every user-visible column to
+    /// <see cref="GanttTableAppearance.DefaultVisibleColumnWidthPt"/>, read-before-write
+    /// and bounded at two measured corrections.
+    /// </summary>
+    /// <param name="columns">The live table's columns.</param>
+    /// <param name="schema">The schema, in the table's column order.</param>
+    /// <remarks>
+    /// <para>
+    /// Excel expresses a column width in characters and reports it in points, and the
+    /// relation is affine, so one correction cannot land exactly on a point target. The
+    /// same two-pass bound the gutter uses is applied here, and a column already inside
+    /// the tolerance is left alone so a converged Initialise writes nothing.
+    /// </para>
+    /// <para>
+    /// Engine columns are skipped: their visibility is the schema's and they carry zero
+    /// width, so writing a width into one would either fail or store a value nobody sees.
+    /// </para>
+    /// </remarks>
+    internal virtual void ApplyVisibleColumnWidths(
+        ListColumns columns,
+        IReadOnlyList<GanttTableColumn> schema)
+    {
+        double targetPt = GanttTableAppearance.DefaultVisibleColumnWidthPt;
+        for (int index = 1; index <= schema.Count; index++)
+        {
+            if (schema[index - 1].IsHidden)
+            {
+                continue;
+            }
+
+            ListColumn column = GetColumnAt(columns, index);
+            Excel.Range entireColumn = GetEntireColumn(column.Range);
+            for (int pass = 0; pass < _gutterCorrectionPasses; pass++)
+            {
+                if (ReadColumnWidthCharacters(entireColumn) is not { } characters
+                    || ReadColumnWidthPoints(entireColumn) is not { } points
+                    || CorrectedColumnWidthCharacters(characters, points, targetPt) is not { } corrected)
+                {
+                    break;
+                }
+
+                SetColumnWidthCharacters(entireColumn, corrected);
+            }
+        }
     }
 
     /// <summary>Applies the theme's header fill, text colour and header type to the table's header row.</summary>

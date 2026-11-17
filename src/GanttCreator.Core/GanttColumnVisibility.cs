@@ -90,6 +90,63 @@ public static class GanttColumnVisibility
     public static bool SchemaOwnsVisibility(GanttTableColumn? column) =>
         column is not null && column.IsHidden;
 
+    /// <summary>
+    /// The stable ribbon row id for a column: its display name with spaces removed.
+    /// </summary>
+    /// <param name="columnName">The exact schema display name.</param>
+    /// <returns>The id suffix to append to the control-id prefix.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="columnName"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>RibbonX ids cannot contain a space.</b> The <c>id</c> attribute is typed
+    /// <c>ST_UniqueID</c>, and the live host rejected <c>colActivity ID</c> on load:
+    /// "A name contained an invalid character ... Error parsing 'colActivity ID' as ID
+    /// datatype" (2026-11-17). The display name keeps its space because it is the header
+    /// text; only the control id is slugged, so <c>Activity ID</c> becomes
+    /// <c>ActivityID</c> and the column it controls is still the one the header names.
+    /// </para>
+    /// <para>
+    /// Space removal is the whole rule rather than a per-column table: it is
+    /// deterministic, it leaves every single-word column's id unchanged
+    /// (<c>colStart</c> stays <c>colStart</c>), and a future display name with a space
+    /// gets a legal id without an edit here. <see cref="TryResolveRibbonItemId"/> is the
+    /// inverse lookup the ribbon callbacks use, so the mapping has one home.
+    /// </para>
+    /// </remarks>
+    public static string RibbonItemId(string columnName)
+    {
+        ArgumentNullException.ThrowIfNull(columnName);
+        return columnName.Replace(" ", string.Empty, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Resolves a ribbon row id back to the column's exact display name.
+    /// </summary>
+    /// <param name="itemId">The id suffix, without the control-id prefix.</param>
+    /// <param name="columnName">The display name when the id resolves.</param>
+    /// <returns><see langword="true"/> when the id names an offered column.</returns>
+    public static bool TryResolveRibbonItemId(
+        string? itemId,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? columnName)
+    {
+        columnName = null;
+        if (string.IsNullOrEmpty(itemId))
+        {
+            return false;
+        }
+
+        foreach (string name in ToggleableColumnNames)
+        {
+            if (string.Equals(RibbonItemId(name), itemId, StringComparison.Ordinal))
+            {
+                columnName = name;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Returns whether the dropdown offers this column.</summary>
     /// <param name="columnName">The exact schema display name, or null.</param>
     /// <returns><see langword="true"/> for a name in <see cref="ToggleableColumnNames"/>.</returns>

@@ -109,6 +109,16 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
+    public void The_visible_column_default_width_is_sixty_points()
+    {
+        // Owner ruling 2026-11-17: a freshly initialised table gives every visible column
+        // 60pt. It is a presentation constant, not a schema metric, so it must not move the
+        // catalogue hash.
+        Assert.Equal(60.0, GanttTableAppearance.DefaultVisibleColumnWidthPt);
+        Assert.True(double.IsFinite(GanttTableAppearance.DefaultVisibleColumnWidthPt));
+    }
+
+    [Fact]
     public void The_header_text_colour_never_equals_the_header_fill()
     {
         // Live evidence 2026-11-14: the initialiser wrote the fill alone, so the table
