@@ -77,7 +77,8 @@ public interface IPanelGridMeasurementPort
     /// <param name="includedColumns">
     /// The schema display names of the columns to measure, in the order the
     /// panel must use. Order is significant — the emitted cell bounds depend on
-    /// it — so it is preserved rather than sorted.
+    /// it — so it is preserved rather than sorted. An <b>empty</b> list is the fully
+    /// hidden table and is a valid measurement (ADR-0065 D4), not a caller error.
     /// </param>
     /// <param name="bodyRowHeightsPt">
     /// The body rows' heights in points, in body order, when the caller has just

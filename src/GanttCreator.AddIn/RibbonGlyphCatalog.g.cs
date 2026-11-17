@@ -93,7 +93,7 @@ internal static class RibbonGlyphCatalog
         ["btnMoveDown"] = new Entry("move-down", 16),
         ["btnExpandAllGroups"] = new Entry("expand-all", 16),
         ["btnCollapseAllGroups"] = new Entry("collapse-all", 16),
-        ["mnuColumnVisibility"] = new Entry("show-columns", 32),
+        ["btnColumnVisibilityAll"] = new Entry("show-columns", 32),
         ["btnThemeSettings"] = new Entry("theme-settings", 16),
         ["btnChartTitle"] = new Entry("chart-title", 16),
         ["btnPlotStartCalendar"] = new Entry("calendar", 16),

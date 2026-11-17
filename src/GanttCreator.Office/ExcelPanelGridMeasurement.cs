@@ -57,11 +57,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     {
         ArgumentNullException.ThrowIfNull(includedColumns);
 
-        if (includedColumns.Count == 0)
-        {
-            return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
-        }
-
+        // ADR-0065 D4: an empty list is a real measurement of a fully hidden table, not a
+        // caller error. Every column that IS listed is still measured and validated below.
         Excel.Application? application = _application;
         if (application is null)
         {
@@ -191,8 +188,23 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // the host reports no figure: a zero origin is exactly the page-coordinate
         // assumption this change removes, and it would reintroduce the misalignment
         // silently.
+        // The plot originates at the PLOT ANCHOR COLUMN's left edge, not at the summed
+        // widths of the visible columns. Read it before the origin so the zero-column
+        // fallback below has the number it needs.
+        double? plotOriginRight = ReadPlotAnchorLeft(table);
+        double? originLeft = ReadOriginLeft(table);
+
+        // ADR-0065 D4: with every table column hidden the anchor column's left edge and the
+        // table's origin are the same measured coordinate (the probe measured both at
+        // 14.25pt). Use the anchor only as the EMPTY-set fallback; a non-empty set with an
+        // unreadable origin still refuses rather than guessing.
+        if (originLeft is null && includedColumns.Count == 0)
+        {
+            originLeft = plotOriginRight;
+        }
+
         if (ReadOriginTop(table) is not { } originTop
-            || ReadOriginLeft(table) is not { } originLeft
+            || originLeft is not { } resolvedOriginLeft
             || ReadTopPaddingHeight(table) is not { } topPaddingHeight
             || ReadAnchorHeight(table) is not { } anchorHeight
             || ReadBottomPaddingHeight(table) is not { } bottomPaddingHeight)
@@ -208,13 +220,6 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // — the origin, the rows — still refuses, which is the line this draws.
         double leadingGutter = ReadLeadingGutterWidth(table) ?? 0d;
 
-        // The plot starts at the PLOT ANCHOR COLUMN's left edge, not at the summed widths
-        // of the visible columns. The table carries twelve hidden engine columns after the
-        // visible ones, so the sum stops after the last visible column and the chart began
-        // inside the hidden range (owner report 2026-11-15). A host that reports no left
-        // edge falls back to the sum, which is the previous behaviour.
-        double? plotOriginRight = ReadPlotAnchorLeft(table);
-
         // Core validates the grid: a non-positive or non-finite width or height, a
         // blank or duplicated column name, a missing required column, and a negative
         // or non-finite origin are all refused there with their own typed reasons
@@ -225,7 +230,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             headerHeight,
             includedColumns,
             originTop,
-            originLeft,
+            resolvedOriginLeft,
             topPaddingHeight,
             bottomPaddingHeight,
             anchorHeight,

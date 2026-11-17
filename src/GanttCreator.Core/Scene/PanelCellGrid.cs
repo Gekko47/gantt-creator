@@ -19,8 +19,7 @@ public enum PanelCellGridRefusal
     /// <summary>The request was null.</summary>
     NullRequest = 0,
 
-    /// <summary>No columns were supplied.</summary>
-    NoColumns = 1,
+    // 1 was NoColumns; ADR-0065 made a zero-column measurement a supported live state.
 
     /// <summary>A column width was not finite, or was not positive.</summary>
     NonPositiveWidth = 2,
@@ -497,11 +496,6 @@ public sealed record PanelCellGrid
         if (columns is null)
         {
             return Refused(PanelCellGridRefusal.NullRequest);
-        }
-
-        if (columns.Count == 0)
-        {
-            return Refused(PanelCellGridRefusal.NoColumns);
         }
 
         if (rowHeightsPt is null || (!allowEmptyRows && rowHeightsPt.Count == 0))

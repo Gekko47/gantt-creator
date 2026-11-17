@@ -1,13 +1,14 @@
 using GanttCreator.Core;
+using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 using Moq;
 
 namespace GanttCreator.AddIn.Tests;
 
 /// <summary>
-/// Contracts for the column-visibility dropdown's projection and action (R5.18h):
-/// the items, the state each label states, the port and key the toggle writes, and the
-/// refusal that keeps the table authorable.
+/// Contracts for the column-visibility split button's projection and action (R5.18h,
+/// R5.22): the per-column rows, the all/none primary, the port and key the toggle writes,
+/// and the compensation path that keeps the sheet and the setting together.
 /// </summary>
 /// <remarks>
 /// These run against the session singleton because that is what the RibbonX callbacks
@@ -40,6 +41,21 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
 
             Applied.Add(hidden);
             return ColumnVisibilityPortOutcome.Ok(hidden);
+        }
+    }
+
+    /// <summary>A panel-grid port that records the visible set the width display asks for.</summary>
+    private sealed class RecordingPanelGridMeasurementPort(PanelCellGrid grid) : IPanelGridMeasurementPort
+    {
+        internal IReadOnlyList<string> LastColumns { get; private set; } = [];
+
+        public PanelGridOutcome Measure(
+            IReadOnlyList<string> includedColumns,
+            IReadOnlyList<double>? bodyRowHeightsPt = null)
+        {
+            LastColumns = [.. includedColumns];
+            _ = bodyRowHeightsPt;
+            return PanelGridOutcome.Ok(grid);
         }
     }
 
@@ -142,28 +158,112 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
     }
 
     /// <summary>
-    /// Hiding the last authoring column is refused: nothing is applied, nothing is
-    /// written, and the states do not move.
+    /// Hiding every column is allowed and persisted (ADR-0065 D1): the old last-column
+    /// refusal is gone, so the sixth toggle applies and records the full set.
     /// </summary>
     [Fact]
-    public void Hiding_the_last_authoring_column_changes_nothing()
+    public void Hiding_every_column_is_applied_persisted_and_stated()
     {
         FakeColumnVisibilityPort port = new();
         (RibbonStateService service, Mock<IConfigCatalogueWriter> writer) = Arm(port);
 
-        service.ToggleColumnVisibility("colType");
-        service.ToggleColumnVisibility("colActivityID");
-        service.ToggleColumnVisibility("colDescription");
-        service.ToggleColumnVisibility("colStart");
-        int appliedAfterFour = port.Applied.Count;
+        foreach (string itemId in new[]
+                 {
+                     "colType", "colActivityID", "colDescription",
+                     "colStart", "colFinish", "colDuration",
+                 })
+        {
+            service.ToggleColumnVisibility(itemId);
+        }
 
-        service.ToggleColumnVisibility("colFinish");
-
-        Assert.Equal(appliedAfterFour, port.Applied.Count);
+        Assert.Equal(6, port.Applied.Count);
         Assert.Equal(
-            "Type,Activity ID,Description,Start",
+            string.Join(',', GanttColumnVisibility.ToggleableColumnNames),
             LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
-        Assert.Equal("Finish (shown)", service.GetColumnVisibilityLabel("colFinish"));
+        Assert.Equal("Duration (hidden)", service.GetColumnVisibilityLabel("colDuration"));
+        Assert.Equal("Show all columns", service.GetColumnVisibilityAllLabel());
+    }
+
+    /// <summary>
+    /// The primary hides every column from an all-visible state and persists the full list
+    /// (ADR-0065 D3).
+    /// </summary>
+    [Fact]
+    public void Toggling_all_hides_every_column_and_persists_the_full_list()
+    {
+        FakeColumnVisibilityPort port = new();
+        (RibbonStateService service, Mock<IConfigCatalogueWriter> writer) = Arm(port);
+
+        service.ToggleAllColumnVisibility();
+
+        Assert.Equal(GanttColumnVisibility.ToggleableColumnNames.Count, port.Applied[0].Count);
+        Assert.Equal(
+            string.Join(',', GanttColumnVisibility.ToggleableColumnNames),
+            LastWritten(writer)?[GanttColumnVisibility.SettingKey]);
+        Assert.Equal("Show all columns", service.GetColumnVisibilityAllLabel());
+    }
+
+    /// <summary>
+    /// A partial state shows all rather than completing the hide, so the primary is a
+    /// forgiving reset and the menu keeps precise hiding (ADR-0065 D3).
+    /// </summary>
+    [Fact]
+    public void Toggling_all_from_a_partial_state_shows_every_column()
+    {
+        FakeColumnVisibilityPort port = new("Start");
+        (RibbonStateService service, _) = Arm(port);
+
+        service.ToggleAllColumnVisibility();
+
+        Assert.Empty(port.Applied[0]);
+        Assert.Equal("Hide all columns", service.GetColumnVisibilityAllLabel());
+    }
+
+    /// <summary>
+    /// A refused persist re-applies the previous set, so the sheet and the setting cannot
+    /// describe different choices (ADR-0065 D5).
+    /// </summary>
+    [Fact]
+    public void A_refused_persist_restores_the_previous_state()
+    {
+        FakeColumnVisibilityPort port = new();
+        (RibbonStateService service, Mock<IConfigCatalogueWriter> writer) = Arm(port);
+        writer.Setup(w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected));
+
+        service.ToggleAllColumnVisibility();
+
+        Assert.Equal(2, port.Applied.Count);
+        Assert.Equal(GanttColumnVisibility.ToggleableColumnNames.Count, port.Applied[0].Count);
+        Assert.Empty(port.Applied[1]);
+        Assert.Equal("Hide all columns", service.GetColumnVisibilityAllLabel());
+    }
+
+    /// <summary>
+    /// The width readout measures the candidate visible set, so an all-hidden toggle
+    /// measures zero columns and still reports the plot width the chart will use.
+    /// </summary>
+    [Fact]
+    public void Toggling_all_recomputes_the_width_from_the_empty_visible_set()
+    {
+        FakeColumnVisibilityPort port = new();
+        (RibbonStateService service, _) = Arm(port);
+        // SetPreset persists the layout; a loose writer mock would return null and the
+        // service would dereference it. The width fact is about the measurement, not the write.
+        service.SetCatalogueWriter(null);
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 300.0)],
+            [12.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        RecordingPanelGridMeasurementPort measurement = new(grid);
+        service.SetPanelGridMeasurementPort(measurement);
+        service.SetPreset(SizePresets.A4Landscape);
+
+        service.ToggleAllColumnVisibility();
+
+        Assert.Empty(measurement.LastColumns);
+        Assert.False(string.IsNullOrEmpty(service.GetPlotWidth()));
     }
 
     /// <summary>An item id the dropdown never issued is ignored, not guessed at.</summary>

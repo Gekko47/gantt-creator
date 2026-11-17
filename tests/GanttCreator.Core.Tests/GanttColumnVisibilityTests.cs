@@ -80,18 +80,81 @@ public sealed class GanttColumnVisibilityTests
     }
 
     [Fact]
-    public void Hiding_the_last_visible_authoring_column_is_refused()
+    public void Hiding_every_authoring_column_is_allowed_and_one_can_be_shown_again()
     {
-        // Type, Activity ID, Description and Start are already hidden; hiding Finish
-        // would leave no authoring column at all, so the table could not be typed into
-        // by hand. `Duration` does not count: the schema classifies it as read-only.
-        ColumnVisibilityOutcome outcome = GanttColumnVisibility.Toggle(
-            Set("Type", "Activity ID", "Description", "Start"),
-            "Finish");
+        // ADR-0065: zero visible columns is a supported state. The old last-column refusal
+        // is gone, so hiding the sixth column succeeds, and the same toggle shows one again.
+        ColumnVisibilityOutcome all = GanttColumnVisibility.Toggle(
+            Set("Type", "Activity ID", "Description", "Start", "Finish"),
+            "Duration");
 
-        Assert.False(outcome.Succeeded);
-        Assert.Null(outcome.Hidden);
-        Assert.Equal(ColumnVisibilityRefusal.LastVisibleColumn, outcome.Refusal);
+        Assert.True(all.Succeeded);
+        Assert.Equal(
+            Set("Type", "Activity ID", "Description", "Start", "Finish", "Duration"),
+            all.Hidden!);
+
+        ColumnVisibilityOutcome shown = GanttColumnVisibility.Toggle(all.Hidden!, "Type");
+        Assert.True(shown.Succeeded);
+        Assert.DoesNotContain("Type", shown.Hidden!);
+        Assert.Equal(5, shown.Hidden!.Count);
+    }
+
+    [Fact]
+    public void Toggling_all_hides_every_offered_column_and_toggling_again_shows_them()
+    {
+        ColumnVisibilityOutcome hidden = GanttColumnVisibility.ToggleAll(Set());
+
+        Assert.True(hidden.Succeeded);
+        Assert.Equal(Set([.. GanttColumnVisibility.ToggleableColumnNames]), hidden.Hidden!);
+
+        ColumnVisibilityOutcome shown = GanttColumnVisibility.ToggleAll(hidden.Hidden!);
+
+        Assert.True(shown.Succeeded);
+        Assert.Empty(shown.Hidden!);
+    }
+
+    [Fact]
+    public void A_partial_state_shows_all_rather_than_completing_the_hide()
+    {
+        // ADR-0065 D3: any hidden column means show all. The primary is a forgiving reset;
+        // precise hiding belongs to the menu rows.
+        ColumnVisibilityOutcome outcome = GanttColumnVisibility.ToggleAll(Set("Start"));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(outcome.Hidden!);
+    }
+
+    [Fact]
+    public void The_full_hidden_set_round_trips_in_schema_order()
+    {
+        IReadOnlySet<string> all = Set([.. GanttColumnVisibility.ToggleableColumnNames]);
+
+        string text = GanttColumnVisibility.Format(all);
+
+        Assert.Equal(string.Join(',', GanttColumnVisibility.ToggleableColumnNames), text);
+        Assert.Equal(all, GanttColumnVisibility.Parse(text).Hidden!);
+    }
+
+    [Fact]
+    public void Visible_columns_are_the_schema_visible_set_minus_the_hidden_names()
+    {
+        IReadOnlyList<string> expected =
+            [.. GanttTableSchema.Default.Columns
+                .Where(column => !column.IsHidden)
+                .Select(column => column.Name)];
+
+        Assert.Equal(expected, GanttColumnVisibility.VisibleColumns(Set()));
+        Assert.Equal(
+            [.. expected.Where(name => !string.Equals(name, "Start", StringComparison.Ordinal))],
+            GanttColumnVisibility.VisibleColumns(Set("Start")));
+        Assert.Empty(GanttColumnVisibility.VisibleColumns(Set([.. expected])));
+    }
+
+    [Fact]
+    public void A_null_toggle_all_or_visible_columns_input_is_refused()
+    {
+        _ = Assert.Throws<ArgumentNullException>(() => GanttColumnVisibility.ToggleAll(null!));
+        _ = Assert.Throws<ArgumentNullException>(() => GanttColumnVisibility.VisibleColumns(null!));
     }
 
     [Fact]

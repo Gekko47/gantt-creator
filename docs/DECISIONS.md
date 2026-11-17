@@ -61,6 +61,8 @@
 | ADR-0060 | The live table's header type and outside border match the chart | Accepted | 2026-11-14 | [`adr/0060-live-table-header-and-outside-border-match-the-chart.md`](adr/0060-live-table-header-and-outside-border-match-the-chart.md) |
 | ADR-0061 | Initialise presents the chart surface: no gridlines, engine columns hidden first, one margin, strokes inside the frame | Accepted | 2026-11-15 | [`adr/0061-initialise-presents-the-chart-surface.md`](adr/0061-initialise-presents-the-chart-surface.md) |
 | ADR-0063 | Ribbon glyphs use a two-palette Lucide set and a guarded Office theme probe | Accepted | 2026-11-16 | [`adr/0063-ribbon-glyph-palette-and-office-theme-probe.md`](adr/0063-ribbon-glyph-palette-and-office-theme-probe.md) |
+| ADR-0064 | A user-authored `Activity ID` column leads the visible columns | Accepted | 2026-11-17 | [`adr/0064-activity-id-column.md`](adr/0064-activity-id-column.md) |
+| ADR-0065 | Zero visible table columns are a supported state, and the Columns control toggles all of them | Accepted | 2026-11-17 | [`adr/0065-zero-visible-columns.md`](adr/0065-zero-visible-columns.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,

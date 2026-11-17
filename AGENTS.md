@@ -28,7 +28,7 @@ At session start, read [the repository map](docs/REPO-MAP.md) for project respon
 - Windows desktop Excel add-in: Excel-DNA 1.9, C#, `.NET 10`, `net10.0-windows`, x64 first.
 - Exactly one visible user worksheet plus one add-in-managed `xlSheetVeryHidden` configuration worksheet named `_GanttCreatorConfig`. Never create another helper sheet.
 - The VeryHidden worksheet stores only versioned catalogues, styles, metrics, label options, defined-name sources, and configuration metadata. Never store activity rows, schedule descriptions/dates, rendered shapes, scene data, calculations, logs, or export staging there.
-- The worksheet data table is visible and directly beside the live Gantt.
+- The worksheet data table stays on the visible worksheet directly beside the live Gantt and is never moved to a helper sheet. Every user-visible column may be hidden on request from the ribbon's Columns control and restored from the same control; zero visible columns is a supported state (ADR-0065).
 - The `Type` column uses the single code-owned catalogue in `docs/07-GANTT-ENTITY-GUIDE.md`, materialised to the VeryHidden configuration worksheet for data validation; do not duplicate, extend, or infer type values elsewhere.
 - Live output is native Excel cells and shapes. All positioning comes from the scene/layout model.
 - Every visible entity uses the geometry, style-token, label, z-order, validation, and renderer-equivalence contract in `docs/07-GANTT-ENTITY-GUIDE.md`. Undefined behaviour is an unknown requiring a decision.

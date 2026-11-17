@@ -40,7 +40,9 @@ public sealed class ExcelColumnVisibilityPortTests
         Excel.Worksheet? worksheet,
         Dictionary<string, bool> hidden,
         List<string> writes,
-        int? liveColumnCount = null)
+        int? liveColumnCount = null,
+        bool ignoreHiddenWrites = false,
+        string? failOnName = null)
         : ExcelColumnVisibilityPort(application, guard)
     {
         internal override bool TryFindGanttTable(
@@ -66,9 +68,31 @@ public sealed class ExcelColumnVisibilityPortTests
             string name = GanttColumnVisibility.ToggleableColumnNames[index - 1];
 
             Mock<Excel.Range> entire = new();
-            entire.SetupGet(r => r.Hidden).Returns(hidden[name]);
-            entire.SetupSet(r => r.Hidden = It.IsAny<object>())
-                .Callback((object value) => writes.Add(name + ":" + value));
+            // Dynamic, not a captured constant: the port verifies by re-reading the flag.
+            entire.SetupGet(r => r.Hidden).Returns(() => hidden[name]);
+            if (string.Equals(name, failOnName, StringComparison.Ordinal))
+            {
+                // The production adapter catches COMException; the fake must throw the same
+                // type. GetExceptionForHR builds one without naming a reserved exception.
+                entire.SetupSet(r => r.Hidden = It.IsAny<object>())
+                    .Throws(
+                        System.Runtime.InteropServices.Marshal.GetExceptionForHR(
+                            unchecked((int)0x800A03EC))!);
+            }
+            else
+            {
+                entire.SetupSet(r => r.Hidden = It.IsAny<object>())
+                    .Callback((object value) =>
+                    {
+                        writes.Add(name + ":" + value);
+                        if (!ignoreHiddenWrites)
+                        {
+                            // A real host reports the state it was given; the verification
+                            // read below depends on this being the live truth.
+                            hidden[name] = (bool)value;
+                        }
+                    });
+            }
 
             Mock<Excel.Range> range = new();
             range.SetupGet(r => r.EntireColumn).Returns(entire.Object);
@@ -119,7 +143,9 @@ public sealed class ExcelColumnVisibilityPortTests
         List<string> writes,
         Excel.ListObject? table = null,
         ProtectionGuardOutcome protection = ProtectionGuardOutcome.NotProtected,
-        int? liveColumnCount = null) =>
+        int? liveColumnCount = null,
+        bool ignoreHiddenWrites = false,
+        string? failOnName = null) =>
         new(
             Application().Object,
             Guard(protection).Object,
@@ -127,7 +153,9 @@ public sealed class ExcelColumnVisibilityPortTests
             new Mock<Excel.Worksheet>().Object,
             hidden,
             writes,
-            liveColumnCount);
+            liveColumnCount,
+            ignoreHiddenWrites,
+            failOnName);
 
     /// <summary>The read reports exactly the offered columns the worksheet hides.</summary>
     [Fact]
@@ -232,6 +260,64 @@ public sealed class ExcelColumnVisibilityPortTests
         Assert.Equal(1, outcome.ColumnsWritten);
         Assert.Equal("Type:False", Assert.Single(writes));
         Assert.Empty(outcome.Hidden!);
+    }
+
+    /// <summary>
+    /// The all-hidden set is applied and verified across every offered column (ADR-0065 D1).
+    /// This is the port path the repair's stored-visibility apply uses, so a rebuild restores
+    /// the fully hidden state just as it restores a partial one.
+    /// </summary>
+    [Fact]
+    public void Apply_can_hide_every_offered_column()
+    {
+        List<string> writes = [];
+        TestablePort port = Port(Flags(), writes);
+
+        ColumnVisibilityPortOutcome outcome = port.Apply(
+            new HashSet<string>(GanttColumnVisibility.ToggleableColumnNames, StringComparer.Ordinal));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(GanttColumnVisibility.ToggleableColumnNames.Count, outcome.ColumnsWritten);
+        Assert.All(
+            GanttColumnVisibility.ToggleableColumnNames,
+            name => Assert.Contains(name + ":True", writes));
+    }
+
+    /// <summary>
+    /// A host that accepts the write but keeps the column visible is a silent no-op: the
+    /// verification must refuse rather than persist a choice the sheet does not show.
+    /// </summary>
+    [Fact]
+    public void Apply_refuses_when_the_host_keeps_a_column_visible()
+    {
+        List<string> writes = [];
+        TestablePort port = Port(Flags(), writes, ignoreHiddenWrites: true);
+
+        ColumnVisibilityPortOutcome outcome = port.Apply(
+            new HashSet<string>(["Description"], StringComparer.Ordinal));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ColumnVisibilityRefusalReason.WriteFailed, outcome.Refusal);
+        Assert.Contains("Description:True", writes);
+    }
+
+    /// <summary>
+    /// A failure part-way through the set restores the previous flags, so the sheet is not
+    /// left half-hidden while the caller reports a refusal.
+    /// </summary>
+    [Fact]
+    public void Apply_rolls_back_a_partial_failure()
+    {
+        List<string> writes = [];
+        TestablePort port = Port(Flags(), writes, failOnName: "Start");
+
+        ColumnVisibilityPortOutcome outcome = port.Apply(
+            new HashSet<string>(["Activity ID", "Start", "Finish"], StringComparer.Ordinal));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ColumnVisibilityRefusalReason.WriteFailed, outcome.Refusal);
+        Assert.Contains("Activity ID:True", writes);
+        Assert.Contains("Activity ID:False", writes);
     }
 
     /// <summary>

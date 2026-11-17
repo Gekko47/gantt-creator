@@ -481,11 +481,11 @@ public class ExcelPanelGridMeasurementTests
     }
 
     /// <summary>
-    /// An empty column list is refused before any host call, so the refusals above
-    /// are the measurement rule rather than a degenerate request.
+    /// An empty column list is a real measurement of a fully hidden table (ADR-0065 D4),
+    /// not a degenerate request: the rows, header and origins are still measured.
     /// </summary>
     [Fact]
-    public void Measure_refuses_an_empty_column_list_before_reading_the_host()
+    public void Measure_accepts_an_empty_column_list_and_measures_the_table()
     {
         FakeTable table = TableReporting(64d, 15d);
         var measurement = new TestableMeasurement(
@@ -499,7 +499,9 @@ public class ExcelPanelGridMeasurementTests
 
         PanelGridOutcome outcome = measurement.Measure([]);
 
-        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal);
+        Assert.Empty(outcome.Grid!.Columns);
+        Assert.Equal(0d, outcome.Grid.TotalWidthPt);
     }
 
     /// <summary>

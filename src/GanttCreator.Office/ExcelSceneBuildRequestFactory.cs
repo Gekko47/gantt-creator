@@ -118,7 +118,12 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         // Hidden is null precisely when the parse refused, so this one fallback covers both
         // the absent key and a malformed one: nothing hidden, measure the schema's set.
         IReadOnlySet<string> hidden = stored.Hidden ?? new HashSet<string>(StringComparer.Ordinal);
-        return [.. MeasuredColumnsCore.Where(name => !hidden.Contains(name))];
+
+        // ADR-0065 D6: ONE visible-column authority. The live measurement and the future
+        // export composition both read this helper, so a hidden column cannot be measured
+        // by one half of the product and exported by the other. An empty result is the
+        // chart-only state, not a refusal.
+        return GanttColumnVisibility.VisibleColumns(hidden);
     }
 
     /// <summary>The setting key naming the size preset.</summary>

@@ -306,7 +306,7 @@ $controlGlyphs = [ordered]@{
     btnMoveDown             = @{ Glyph = 'move-down'; Size = 16 }
     btnExpandAllGroups      = @{ Glyph = 'expand-all'; Size = 16 }
     btnCollapseAllGroups    = @{ Glyph = 'collapse-all'; Size = 16 }
-    mnuColumnVisibility     = @{ Glyph = 'show-columns'; Size = 32 }
+    btnColumnVisibilityAll  = @{ Glyph = 'show-columns'; Size = 32 }
     btnThemeSettings        = @{ Glyph = 'theme-settings'; Size = 16 }
     btnChartTitle           = @{ Glyph = 'chart-title'; Size = 16 }
     btnPlotStartCalendar    = @{ Glyph = 'calendar'; Size = 16 }

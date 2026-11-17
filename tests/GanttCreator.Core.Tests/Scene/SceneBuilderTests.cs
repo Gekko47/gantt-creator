@@ -812,6 +812,50 @@ public sealed class SceneBuilderTests
     }
 
     /// <summary>
+    /// A live grid with NO visible columns still builds, and the frame encloses the plot
+    /// rather than collapsing onto the zero-width panel (ADR-0065 D4).
+    /// </summary>
+    [Fact]
+    public void A_zero_column_live_grid_still_builds_and_the_frame_encloses_the_plot()
+    {
+        // The live grid's right edge is the plot anchor's measured left edge; with every
+        // table column hidden the probe measured both at the table origin (40 here).
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [],
+            [10.0],
+            10,
+            [],
+            originTopPt: 60,
+            originLeftPt: 40,
+            leadingGutterPt: 10,
+            plotOriginRightPt: 40).Grid!;
+
+        Assert.Empty(grid.Columns);
+        Assert.Equal(0d, grid.TotalWidthPt);
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        const double halfStroke = 0.5;
+        SceneLine left = outcome.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+        SceneLine right = outcome.Result.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:right", StringComparison.Ordinal));
+
+        // The gutter strip is still the left margin, and the plot still closes the right edge:
+        // the zero-width panel contributes 30..40, the plot contributes 300..600.
+        Assert.Equal(30 + halfStroke, left.From!.X, precision: 9);
+        Assert.Equal(600 - halfStroke, right.From!.X, precision: 9);
+    }
+
+    /// <summary>
     /// The live frame's LEFT margin reads the measured gutter, the same 4pt the other three
     /// sides take from <c>ChartOuterPaddingPt</c> (owner ruling 2026-11-16).
     /// </summary>

@@ -656,10 +656,6 @@ public class GanttRibbonTests
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.SizeDropdown,
                 RibbonControlIds.Margin,
-                // R5.18h: the column-visibility MENU sits in its own Columns group
-                // after the Labels group, gated on workbook + initialised on the
-                // Gantt sheet like the layout controls. Its rows inherit its gate.
-                RibbonControlIds.ColumnsMenu,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
                 RibbonControlIds.MarginCm,
@@ -693,20 +689,38 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void The_columns_control_is_one_large_menu_whose_rows_are_the_columns()
+    public void The_columns_control_is_a_split_button_whose_menu_rows_are_the_columns()
     {
-        // Owner ruling 2026-11-14: the control is ONE large button whose rows are the
-        // columns, not a "Show" label plus a combo. A `menu` is a large ribbon control, so
-        // the group holds no box and no dropDown any more. The rows are a projection of the
-        // Core contract's toggleable set: a column added there without a row here fails, and
-        // a row naming a column the contract does not offer fails too.
+        // R5.22/ADR-0065 D3: ONE split button. The primary toggles all six; the menu keeps
+        // the per-column toggles. Office 2010's CT_SplitButton puts the primary `button`
+        // first and the `menu` second, and the parent carries `size`/`getEnabled`.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
-        XElement menu = Assert.Single(
-            doc.Descendants(ns + "menu"),
-            element => element.Attribute("id")?.Value == RibbonControlIds.ColumnsMenu);
+        XElement split = Assert.Single(
+            doc.Descendants(ns + "splitButton"),
+            element => element.Attribute("id")?.Value == RibbonControlIds.ColumnsSplitButton);
+
+        Assert.Equal("large", split.Attribute("size")?.Value);
+        Assert.NotNull(split.Attribute("getEnabled"));
+
+        // The child order is part of the schema: button (or toggleButton) then menu.
+        Assert.Equal(
+            ["button", "menu"],
+            split.Elements().Select(element => element.Name.LocalName));
+
+        XElement primary = Assert.Single(split.Elements(ns + "button"));
+        Assert.Equal(RibbonControlIds.ColumnVisibilityAll, primary.Attribute("id")?.Value);
+        Assert.Equal("GetColumnVisibilityAllLabel", primary.Attribute("getLabel")?.Value);
+        Assert.Equal("GetGlyph", primary.Attribute("getImage")?.Value);
+        Assert.Equal("OnColumnVisibilityToggleAll", primary.Attribute("onAction")?.Value);
+
+        // The menu is the drop-down, not a ribbon control: no size and no second gate.
+        XElement menu = Assert.Single(split.Elements(ns + "menu"));
+        Assert.Equal(RibbonControlIds.ColumnsMenu, menu.Attribute("id")?.Value);
+        Assert.Null(menu.Attribute("size"));
+        Assert.Null(menu.Attribute("getEnabled"));
 
         string[] expected =
         [
@@ -717,11 +731,6 @@ public class GanttRibbonTests
             expected,
             menu.Elements(ns + "button").Select(element => element.Attribute("id")!.Value));
 
-        // A menu without `size="large"` is a one-row dropdown; the owner asked for the
-        // three-row button (live report 2026-11-15). The attribute is the whole control
-        // height contract, so it is asserted rather than left to a screenshot.
-        Assert.Equal("large", menu.Attribute("size")?.Value);
-
         Assert.All(
             menu.Elements(ns + "button"),
             row =>
@@ -731,10 +740,28 @@ public class GanttRibbonTests
                 Assert.Equal("OnColumnVisibilityToggle", row.Attribute("onAction")?.Value);
             });
 
-        // The old combo is gone: a leftover dropDown would render beside the menu.
+        // The old combo is gone: a leftover dropDown would render beside the split button.
         Assert.DoesNotContain(
             doc.Descendants(ns + "dropDown"),
             element => element.Attribute("id")?.Value == "ddnColumnVisibility");
+    }
+
+    [Fact]
+    public void The_columns_split_button_carries_the_single_gate()
+    {
+        // A splitButton is the ribbon control now, so its getEnabled is the one gate; the
+        // primary and the menu rows inherit it. The broader gated-control pin queries only
+        // buttons/dropdowns/editBoxes/menus, so this fact owns the splitButton placement.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        XElement split = Assert.Single(
+            doc.Descendants(ns + "splitButton"),
+            element => element.Attribute("id")?.Value == RibbonControlIds.ColumnsSplitButton);
+
+        _ = Assert.Single(split.Attributes("getEnabled"));
+        Assert.Null(split.Elements(ns + "menu").Single().Attribute("getEnabled"));
     }
 
     [Fact]
@@ -749,6 +776,7 @@ public class GanttRibbonTests
 
         foreach (string id in new[]
         {
+            RibbonControlIds.ColumnsSplitButton,
             RibbonControlIds.Diagnostics,
             RibbonControlIds.OpenLog,
             RibbonControlIds.InitialiseSheet,
@@ -773,6 +801,7 @@ public class GanttRibbonTests
         })
         {
             var matches = doc.Descendants(ns + "button")
+                .Concat(doc.Descendants(ns + "splitButton"))
                 .Concat(doc.Descendants(ns + "dropDown"))
                 .Concat(doc.Descendants(ns + "editBox"))
                 .Where(b => b.Attribute("id")?.Value == id)

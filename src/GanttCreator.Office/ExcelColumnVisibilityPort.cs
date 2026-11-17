@@ -128,12 +128,26 @@ public class ExcelColumnVisibilityPort(
             return ColumnVisibilityPortOutcome.Refused(ColumnVisibilityRefusalReason.UnknownColumn);
         }
 
+        // Capture the previous flags BEFORE any write so a partial apply can be undone.
+        // A read failure here mutates nothing and is reported as a write failure.
+        List<bool> previous = new(columns!.Count);
+        try
+        {
+            foreach (Excel.ListColumn column in columns)
+            {
+                previous.Add(ReadHiddenFlag(GetEntireColumn(column.Range)));
+            }
+        }
+        catch (COMException)
+        {
+            return ColumnVisibilityPortOutcome.Refused(ColumnVisibilityRefusalReason.WriteFailed);
+        }
+
         int written = 0;
-        for (int index = 0; index < columns!.Count; index++)
+        for (int index = 0; index < columns.Count; index++)
         {
             bool wanted = hidden.Contains(GanttColumnVisibility.ToggleableColumnNames[index]);
-            Excel.Range columnRange = columns[index].Range;
-            Excel.Range entireColumn = GetEntireColumn(columnRange);
+            Excel.Range entireColumn = GetEntireColumn(columns[index].Range);
             if (ReadHiddenFlag(entireColumn) == wanted)
             {
                 continue;
@@ -145,13 +159,65 @@ public class ExcelColumnVisibilityPort(
             }
             catch (COMException)
             {
+                // A partial apply is not a representable state: put the columns back before
+                // reporting, so the sheet and the setting cannot describe different things.
+                _ = TryRestoreHiddenFlags(columns, previous);
                 return ColumnVisibilityPortOutcome.Refused(ColumnVisibilityRefusalReason.WriteFailed);
             }
 
             written++;
         }
 
+        // Verify the host actually applied the set (ADR-0065 D5). A silent no-op — the host
+        // accepts the write and keeps a column visible — would otherwise be persisted as a
+        // choice the sheet does not show.
+        for (int index = 0; index < columns.Count; index++)
+        {
+            bool wanted = hidden.Contains(GanttColumnVisibility.ToggleableColumnNames[index]);
+            Excel.Range entireColumn = GetEntireColumn(columns[index].Range);
+            if (ReadHiddenFlag(entireColumn) != wanted)
+            {
+                _ = TryRestoreHiddenFlags(columns, previous);
+                return ColumnVisibilityPortOutcome.Refused(ColumnVisibilityRefusalReason.WriteFailed);
+            }
+        }
+
         return ColumnVisibilityPortOutcome.Ok(hidden, written);
+    }
+
+    /// <summary>
+    /// Best-effort restoration of the previous hidden flags after a refused apply.
+    /// </summary>
+    /// <param name="columns">The resolved columns, in contract order.</param>
+    /// <param name="previous">The flags read before the write.</param>
+    /// <returns><see langword="true"/> when every column reads its previous flag.</returns>
+    /// <remarks>
+    /// The caller reports the ORIGINAL refusal; this helper never turns a failed restore into
+    /// success. A host that refuses both the write and the restore leaves the sheet changed,
+    /// which is why the refusal is still reported and the setting is never written.
+    /// </remarks>
+    private bool TryRestoreHiddenFlags(
+        List<Excel.ListColumn> columns,
+        List<bool> previous)
+    {
+        bool restored = true;
+        for (int index = 0; index < columns.Count; index++)
+        {
+            Excel.Range entireColumn = GetEntireColumn(columns[index].Range);
+            try
+            {
+                if (ReadHiddenFlag(entireColumn) != previous[index])
+                {
+                    SetHiddenFlag(entireColumn, previous[index]);
+                }
+            }
+            catch (COMException)
+            {
+                restored = false;
+            }
+        }
+
+        return restored;
     }
 
     /// <summary>

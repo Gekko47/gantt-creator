@@ -129,9 +129,21 @@ internal static class RibbonControlIds
     internal const string ColumnsGroup = "grpColumns";
 
     /// <summary>
-    /// The column-visibility menu (R5.18h, surface revised 2026-11-14). It is one
-    /// LARGE button whose rows are the columns themselves: each row toggles one
-    /// authoring column and states the result in its own label and tick/dash glyph.
+    /// The column-visibility SPLIT BUTTON (R5.22, ADR-0065 D3). Its primary toggles all
+    /// six columns (none hidden hides all; any hidden shows all); its menu holds the
+    /// per-column rows.
+    /// </summary>
+    internal const string ColumnsSplitButton = "spbColumnVisibility";
+
+    /// <summary>
+    /// The split button's primary action (R5.22). Its label states the action it will take.
+    /// </summary>
+    internal const string ColumnVisibilityAll = "btnColumnVisibilityAll";
+
+    /// <summary>
+    /// The column-visibility menu (R5.18h, surface revised 2026-11-14). It is the split
+    /// button's drop-down: each row toggles one authoring column and states the result in
+    /// its own label and tick/dash glyph.
     /// </summary>
     internal const string ColumnsMenu = "mnuColumnVisibility";
 

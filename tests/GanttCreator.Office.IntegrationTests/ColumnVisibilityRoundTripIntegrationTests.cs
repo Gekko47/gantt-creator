@@ -120,4 +120,103 @@ public class ColumnVisibilityRoundTripIntegrationTests(ITestOutputHelper output)
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+
+    /// <summary>
+    /// The all-hidden state survives the host, the classification restorer and the live
+    /// measurement (ADR-0065 D1/D4).
+    /// </summary>
+    /// <remarks>
+    /// This is the live counterpart of the probe: it hides all six user columns through the
+    /// real port, proves the restorer leaves the user's choice alone, and proves the
+    /// zero-column measurement succeeds with the anchor column collapsed onto the table
+    /// origin. The orchestrator's full Refresh is the Office gate's job; this fact covers the
+    /// three adapters the Refresh depends on.
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Every_user_column_can_be_hidden_and_the_zero_column_measurement_succeeds()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            using var scope = new OfficeFixture.ComScope();
+            Excel.Workbook workbook = scope.Track(fixture.CreateWorkbook());
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            Excel.Worksheet sheet = (Excel.Worksheet)scope.Track(
+                workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = (Excel.ListObject)scope.Track(
+                sheet.ListObjects[GanttTableSchema.TableName]);
+
+            // Seed one body row: a freshly initialised table has a header and no body rows,
+            // so DataBodyRange is legitimately null before any hiding happens (see
+            // PanelGridMeasurementIntegrationTests). The probe exercised a two-row body, so
+            // the "the body survives hiding every column" claim needs a body to survive.
+            _ = scope.Track(table.ListRows.Add());
+
+            var port = new ExcelColumnVisibilityPort(fixture.Excel);
+            var allHidden = new HashSet<string>(
+                GanttColumnVisibility.ToggleableColumnNames,
+                StringComparer.Ordinal);
+
+            ColumnVisibilityPortOutcome applied = port.Apply(allHidden);
+            Assert.True(applied.Succeeded, $"apply refused: {applied.Refusal}");
+            Assert.Equal(GanttColumnVisibility.ToggleableColumnNames.Count, applied.ColumnsWritten);
+
+            foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+            {
+                Excel.ListColumn column = (Excel.ListColumn)scope.Track(table.ListColumns[name]);
+                Excel.Range entire = (Excel.Range)scope.Track(column.Range.EntireColumn);
+                Assert.True(
+                    Convert.ToBoolean(entire.Hidden, System.Globalization.CultureInfo.InvariantCulture),
+                    $"{name} is visible after the all-hidden apply.");
+                Assert.Equal(
+                    0d,
+                    Convert.ToDouble(entire.Width, System.Globalization.CultureInfo.InvariantCulture),
+                    precision: 6);
+            }
+
+            ColumnVisibilityPortOutcome readBack = port.ReadHidden();
+            Assert.True(readBack.Succeeded, $"read refused: {readBack.Refusal}");
+            Assert.Equal(allHidden, readBack.Hidden!);
+
+            // The classification restorer is the Refresh's presentation pass: it must leave
+            // the user columns alone and still force the engine columns hidden.
+            ColumnPresentationOutcome refreshed = new ExcelColumnPresentationRestorer(fixture.Excel)
+                .EnsureClassification();
+            Assert.True(refreshed.Succeeded, $"the classification restorer refused: {refreshed.Refusal}");
+            foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
+            {
+                Excel.ListColumn column = (Excel.ListColumn)scope.Track(table.ListColumns[name]);
+                Excel.Range entire = (Excel.Range)scope.Track(column.Range.EntireColumn);
+                Assert.True(
+                    Convert.ToBoolean(entire.Hidden, System.Globalization.CultureInfo.InvariantCulture),
+                    $"{name} was un-hidden by the classification restorer.");
+            }
+
+            // The live measurement must accept the empty included-column list, and the anchor
+            // column's left edge must equal the table's origin (the probe measured both).
+            PanelGridOutcome measured = new ExcelPanelGridMeasurement(fixture.Excel).Measure([]);
+            Assert.True(measured.Succeeded, $"the zero-column measurement refused: {measured.Refusal}");
+            Assert.Empty(measured.Grid!.Columns);
+
+            Excel.Range header = (Excel.Range)scope.Track(table.HeaderRowRange);
+            Excel.Range anchor = (Excel.Range)scope.Track(
+                sheet.Columns[GanttSheetLayout.PlotAnchorColumnIndex]);
+            Assert.Equal(
+                Convert.ToDouble(header.Left, System.Globalization.CultureInfo.InvariantCulture),
+                Convert.ToDouble(anchor.Left, System.Globalization.CultureInfo.InvariantCulture),
+                precision: 2);
+            Assert.True(
+                table.DataBodyRange is not null,
+                "The table lost its body when every user column was hidden.");
+
+            _output.WriteLine("all six user columns hid, the restorer kept them hidden, and the zero-column measurement succeeded");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
 }

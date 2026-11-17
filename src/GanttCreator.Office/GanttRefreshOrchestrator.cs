@@ -692,10 +692,20 @@ public sealed class GanttRefreshOrchestrator(
             // instead of enclosing it. One row has one authority: the row.
             double reservedRowHeightPt =
                 panelGrid.OriginTopPt - panelGrid.HeaderHeightPt - panelGrid.TopPaddingHeightPt;
+
+            // ADR-0065 D4: with every table column hidden the measured sum is zero. The
+            // title must not collapse to zero width, so it spans the available chart width
+            // instead. The non-zero case keeps the existing table-width behaviour exactly.
+            double titleWidthPt = panelGrid.Columns.Sum(column => column.WidthPt);
+            if (titleWidthPt <= 0)
+            {
+                titleWidthPt = scene.Result!.Scene.PlotBounds.Right - panelGrid.OriginLeftPt;
+            }
+
             RectD titleBounds = new(
                 panelGrid.OriginLeftPt,
                 panelGrid.TopPaddingHeightPt,
-                panelGrid.Columns.Sum(column => column.WidthPt),
+                titleWidthPt,
                 reservedRowHeightPt);
             titleRequest = new OfficeShapeRequest(
                 // One authority for the name: the writer's ownership scan pre-filters on

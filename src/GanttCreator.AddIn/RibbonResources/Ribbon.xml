@@ -118,25 +118,26 @@
             <dropDown id="ddnCustomStyle" keytip="CS" screentip="Custom style for the row" supertip="Assigns a custom style to the selected Custom Activity or Custom Milestone row." getEnabled="GetEnabled" getItemCount="GetCustomStyleCount" getItemID="GetCustomStyleItemID" getItemLabel="GetCustomStyleItemLabel" getSelectedItemIndex="GetCustomStyleSelectedIndex" onAction="OnCustomStyleChange"/>
           </box>
         </group>
-        <!-- R5.18h, surface revised 2026-11-14: ONE large button whose rows are the
-             columns themselves. A `menu` is a large ribbon control, so the group no
-             longer needs a "Show" label plus a combo, and each row is a normal menu
-             row: a toggle, not a selection, whose own label and 16px tick/dash state
-             the current visibility. The five ids are `col` + the schema display name,
-             exactly the ids the Core contract's toggleable set names, so the rows are a
-             projection of the catalogue rather than a second list. -->
+        <!-- R5.18h, surface revised 2026-11-14 and R5.22: ONE split button. The primary
+             toggles all six columns (none hidden hides all; any hidden shows all) and its
+             label states the ACTION, because a split button has no pressed state. The menu
+             keeps one row per column: a toggle, not a selection, whose own label and 16px
+             tick/dash state the current visibility. The row ids are `col` + the schema
+             display name, exactly the ids the Core contract's toggleable set names, so the
+             rows are a projection of the catalogue rather than a second list.
+             `size`/`getEnabled` belong on the splitButton; the menu is its drop-down. -->
         <group id="grpColumns" label="Columns" getVisible="GetVisible">
-          <!-- `size="large"` is what makes the menu a big ribbon button: without it the
-               host renders a one-row dropdown and leaves the group's height empty
-               (live report 2026-11-15, "still 1 row high, should be 3 rows high"). -->
-          <menu id="mnuColumnVisibility" getImage="GetGlyph" label="Show columns" keytip="CO" screentip="Table columns" supertip="Shows or hides a table column. At least one of Type, Activity ID, Description, Start, Finish and Duration always stays visible." getEnabled="GetEnabled" size="large">
-            <button id="colType" keytip="1" screentip="Show or hide Type" supertip="Shows or hides the Type column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
-            <button id="colActivityID" keytip="2" screentip="Show or hide Activity ID" supertip="Shows or hides the Activity ID column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
-            <button id="colDescription" keytip="3" screentip="Show or hide Description" supertip="Shows or hides the Description column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
-            <button id="colStart" keytip="4" screentip="Show or hide Start" supertip="Shows or hides the Start column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
-            <button id="colFinish" keytip="5" screentip="Show or hide Finish" supertip="Shows or hides the Finish column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
-            <button id="colDuration" keytip="6" screentip="Show or hide Duration" supertip="Shows or hides the Duration column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
-          </menu>
+          <splitButton id="spbColumnVisibility" size="large" getEnabled="GetEnabled">
+            <button id="btnColumnVisibilityAll" keytip="CA" getLabel="GetColumnVisibilityAllLabel" getImage="GetGlyph" screentip="Hide or show every table column" supertip="Hides all six table columns so only the chart shows. When any column is hidden, shows them all. The menu toggles one column at a time." onAction="OnColumnVisibilityToggleAll"/>
+            <menu id="mnuColumnVisibility" keytip="CO" screentip="Table columns" supertip="Toggles one table column. Every column may be hidden, leaving the chart alone.">
+              <button id="colType" keytip="1" screentip="Show or hide Type" supertip="Shows or hides the Type column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+              <button id="colActivityID" keytip="2" screentip="Show or hide Activity ID" supertip="Shows or hides the Activity ID column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+              <button id="colDescription" keytip="3" screentip="Show or hide Description" supertip="Shows or hides the Description column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+              <button id="colStart" keytip="4" screentip="Show or hide Start" supertip="Shows or hides the Start column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+              <button id="colFinish" keytip="5" screentip="Show or hide Finish" supertip="Shows or hides the Finish column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+              <button id="colDuration" keytip="6" screentip="Show or hide Duration" supertip="Shows or hides the Duration column. Its label and tick state the current visibility." getLabel="GetColumnVisibilityLabel" getImage="GetColumnVisibilityImage" onAction="OnColumnVisibilityToggle"/>
+            </menu>
+          </splitButton>
         </group>
         <group id="grpStyleTheme" label="Style" getVisible="GetVisible">
           <button id="btnThemeSettings" label="Theme settings..." getImage="GetGlyph" keytip="T" screentip="Open the theme settings" supertip="Edits entity styles, chart chrome, and custom styles. Changes apply to the chart after they are saved." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>

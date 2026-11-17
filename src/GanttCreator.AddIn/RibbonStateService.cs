@@ -1268,7 +1268,15 @@ internal class RibbonStateService
     /// refuses, which the display renders as empty rather than a guess.
     /// </summary>
     /// <returns>The plot width in points, or null.</returns>
-    private double? MeasurePlotWidth()
+    private double? MeasurePlotWidth() => MeasurePlotWidth(_hiddenColumns);
+
+    /// <summary>
+    /// Measures the plot width for a candidate hidden set, so a toggle can state the width
+    /// it is about to produce without waiting for the next state refresh.
+    /// </summary>
+    /// <param name="hidden">The hidden set the measurement must honour.</param>
+    /// <returns>The plot width in points, or null.</returns>
+    private double? MeasurePlotWidth(IReadOnlySet<string> hidden)
     {
         SizePreset? preset = _state.Preset;
         if (preset is null)
@@ -1285,7 +1293,7 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            PanelGridOutcome outcome = port.Measure(MeasuredColumns());
+            PanelGridOutcome outcome = port.Measure(MeasuredColumns(hidden));
             if (!outcome.Succeeded || outcome.Grid is null)
             {
                 return null;
@@ -1313,15 +1321,17 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// The display names of the visible table columns, in panel order â€” the
-    /// same list the live measurement port measures. Derived from the schema
-    /// rather than hand-written so a hidden column is never measured (R4.8A
-    /// D5: a hidden column reports width 0 and the grid refuses it).
+    /// The display names of the visible table columns, in panel order, for one hidden set.
     /// </summary>
-    private static List<string> MeasuredColumns() =>
-        [.. GanttTableSchema.Default.Columns
-            .Where(column => !column.IsHidden)
-            .Select(column => column.Name)];
+    /// <param name="hidden">The user's hidden set; an empty set measures every visible column.</param>
+    /// <returns>The columns the live measurement port measures.</returns>
+    /// <remarks>
+    /// <see cref="GanttColumnVisibility.VisibleColumns"/> is the single authority, so a
+    /// hidden column is never measured (R4.8A D5: a hidden column reports width 0 and the
+    /// grid refuses it) and an all-hidden set measures nothing (ADR-0065 D4).
+    /// </remarks>
+    private static List<string> MeasuredColumns(IReadOnlySet<string> hidden) =>
+        [.. GanttColumnVisibility.VisibleColumns(hidden)];
 
     /// <summary>The two plot-date rows, so one invalidation helper serves both ends.</summary>
     private enum PlotDateRow
@@ -1824,6 +1834,11 @@ internal class RibbonStateService
                 SizePreset? preset = ReadPreset(settings);
                 GanttPeriodLabelFormat periodLabelFormat = ReadPeriodLabelFormat(settings, timeScale);
 
+                // The dropdown's ticks and the width display must read the SAME hidden set.
+                // This was below the assignment, so PlotWidthPt was measured from the previous
+                // activation's set (ADR-0065 D5).
+                LoadColumnVisibilityFromWorksheet();
+
                 _state = _state with
                 {
                     PlotStartAuto = startAuto,
@@ -1840,10 +1855,6 @@ internal class RibbonStateService
                 };
 
                 RefreshEffectivePlotDates(settings);
-
-                // The same activation read seeds the column dropdown: its ticks are
-                // worksheet state, not a second setting to parse.
-                LoadColumnVisibilityFromWorksheet();
 
                 // R5.20: the persisted automatic-refresh switch rides the same read on the two
                 // occasions the workbook is authoritative (first load, workbook change) and is
@@ -2713,10 +2724,9 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Flips one column's visibility from the dropdown: parsed through the Core
-    /// contract (an unknown id is ignored, a refused toggle reports why), applied to the
-    /// worksheet through the port, then written to <see cref="GanttColumnVisibility.SettingKey"/>
-    /// so the choice survives reopening the workbook. Never throws.
+    /// Flips one column's visibility from the split button's menu: parsed through the Core
+    /// contract (an unknown id is ignored), then applied, persisted and compensated through
+    /// <see cref="ApplyHiddenColumns"/>. Never throws.
     /// </summary>
     /// <param name="selectionId">The selected item ID, or null in tests.</param>
     internal void ToggleColumnVisibility(string? selectionId)
@@ -2729,19 +2739,58 @@ internal class RibbonStateService
         ColumnVisibilityOutcome outcome = GanttColumnVisibility.Toggle(_hiddenColumns, columnName);
         if (!outcome.Succeeded)
         {
-            // Derived from the contract rather than restated: a column added to the
-            // offered set must not leave the message naming the old set.
-            PresentWarning(
-                "At least one of "
-                + string.Join(", ", GanttColumnVisibility.ToggleableColumnNames)
-                + " must stay visible, or the table could not be typed into.");
+            // A resolved item id always names an offered column, so this branch is a
+            // defensive stop rather than a user-facing refusal. The last-column refusal
+            // was removed by ADR-0065 D1.
             return;
         }
 
-        IReadOnlySet<string> next = outcome.Hidden!;
+        ApplyHiddenColumns(outcome.Hidden!);
+    }
 
-        // The worksheet is applied BEFORE the setting is written: a persist that
-        // succeeded while the hide failed would record a choice the sheet does not show.
+    /// <summary>
+    /// Toggles the whole offered set from the split button's primary (R5.22, ADR-0065 D3):
+    /// none hidden hides all six; any hidden — including a partial state — shows all six.
+    /// Never throws.
+    /// </summary>
+    internal void ToggleAllColumnVisibility()
+    {
+        ColumnVisibilityOutcome outcome = GanttColumnVisibility.ToggleAll(_hiddenColumns);
+        ApplyHiddenColumns(outcome.Hidden!);
+    }
+
+    /// <summary>
+    /// The split button's primary label: the ACTION the next press will take, because a
+    /// split button has no pressed state (ADR-0065 D3).
+    /// </summary>
+    /// <returns><c>Hide all columns</c> when none is hidden, otherwise <c>Show all columns</c>.</returns>
+    internal string GetColumnVisibilityAllLabel() =>
+        _hiddenColumns.Count == 0 ? "Hide all columns" : "Show all columns";
+
+    /// <summary>
+    /// Applies, persists and compensates one column-visibility change. Both the per-column
+    /// row and the all/none primary go through this one path, so the sheet, the setting and
+    /// the ribbon cannot describe different states. Never throws.
+    /// </summary>
+    /// <param name="next">The candidate hidden set from the Core contract.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The worksheet is applied before the setting is written.</b> A persist that
+    /// succeeded while the hide failed would record a choice the sheet does not show.
+    /// </para>
+    /// <para>
+    /// <b>A refused persist is compensated.</b> The next Refresh measures the sheet, so a
+    /// sheet left hidden while the setting still says visible would make the measurement pass
+    /// a hidden column's zero width to the grid and refuse. The previous set is re-applied
+    /// before the warning, so the two authorities stay together.
+    /// </para>
+    /// </remarks>
+    private void ApplyHiddenColumns(IReadOnlySet<string> next)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+
+        IReadOnlySet<string> previous = _hiddenColumns;
+
         ColumnVisibilityPortOutcome applied = _columnVisibilityPort is { } port
             ? port.Apply(next)
             : ColumnVisibilityPortOutcome.Ok(next);
@@ -2751,8 +2800,6 @@ internal class RibbonStateService
             return;
         }
 
-        _hiddenColumns = new HashSet<string>(next, StringComparer.Ordinal);
-
         Dictionary<string, string> values = new(StringComparer.Ordinal)
         {
             [GanttColumnVisibility.SettingKey] = GanttColumnVisibility.Format(next),
@@ -2760,17 +2807,36 @@ internal class RibbonStateService
         ConfigWriteOutcome? write = _catalogueWriter?.WriteSettings(values);
         if (write is not null && !write.Succeeded)
         {
-            PresentWarning($"Failed to persist the column visibility: {write.Refusal}");
+            ColumnVisibilityPortOutcome restored = _columnVisibilityPort is { } restorePort
+                ? restorePort.Apply(previous)
+                : ColumnVisibilityPortOutcome.Ok(previous);
+            PresentWarning(
+                restored.Succeeded
+                    ? $"Failed to persist the column visibility: {write.Refusal}"
+                    : $"Failed to persist the column visibility: {write.Refusal}; "
+                        + $"the previous state could not be restored: {restored.Refusal}.");
+            return;
         }
 
-        // A menu's row labels and images are cached per ROW, so invalidating the menu
-        // alone can leave every row stating the previous state. The menu and each row
-        // are invalidated together.
+        _hiddenColumns = new HashSet<string>(next, StringComparer.Ordinal);
+        _state = _state with { PlotWidthPt = MeasurePlotWidth(_hiddenColumns) };
+
+        // A split button caches its primary and its menu rows separately: invalidate all
+        // three surfaces together or the label/tick can keep saying the previous state.
+        InvalidateControl(RibbonControlIds.ColumnsSplitButton);
+        InvalidateControl(RibbonControlIds.ColumnVisibilityAll);
         InvalidateControl(RibbonControlIds.ColumnsMenu);
         foreach (string name in GanttColumnVisibility.ToggleableColumnNames)
         {
             InvalidateControl(RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.RibbonItemId(name));
         }
+
+        InvalidateControl(RibbonControlIds.PlotWidth);
+
+        // The settings write moves Excel's selection and activates Table Design. A refresh
+        // restores the Gantt tab, but with the automatic refresh off no refresh follows, so
+        // the toggle restores it itself (the R5.20 rule).
+        ActivateGanttTab();
 
         ScheduleAutomaticRefresh();
     }

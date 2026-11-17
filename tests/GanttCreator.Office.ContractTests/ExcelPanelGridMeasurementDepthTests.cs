@@ -128,13 +128,15 @@ public sealed class ExcelPanelGridMeasurementDepthTests
     }
 
     [Fact]
-    public void Measure_refuses_an_empty_column_list_before_touching_the_host()
+    public void Measure_reads_the_host_for_an_empty_column_list()
     {
+        // ADR-0065 D4: the empty list no longer short-circuits. This host has no table,
+        // so reaching the table lookup is the proof that the early refusal is gone.
         var measurement = new ExcelPanelGridMeasurement(Application(Sheets()));
 
         PanelGridOutcome outcome = measurement.Measure([]);
 
-        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
+        Assert.Equal(PanelGridRefusalReason.TableMissing, outcome.Refusal);
     }
 
     [Fact]

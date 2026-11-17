@@ -6,11 +6,8 @@ public enum ColumnVisibilityRefusal
     /// <summary>The stored list named a column the ribbon does not offer.</summary>
     UnknownColumn = 0,
 
-    /// <summary>Showing or hiding would leave no authoring column visible.</summary>
-    LastVisibleColumn = 1,
-
     /// <summary>The stored list could not be read as a list of column names.</summary>
-    MalformedList = 2,
+    MalformedList = 1,
 }
 
 /// <summary>The typed result of a column-visibility operation.</summary>
@@ -36,10 +33,11 @@ public sealed record ColumnVisibilityOutcome(
 /// point of ADR-0029 D8 is that those stay out of sight.
 /// </para>
 /// <para>
-/// <b>The last visible authoring column is refused.</b> A table with no authoring column
-/// visible cannot be authored by hand at all — the user could not type the next activity
-/// without going to the ribbon first — so the toggle that would produce it is refused
-/// with its own reason rather than allowed and left to be discovered.
+/// <b>Zero visible columns is a supported state (ADR-0065 D1).</b> The analyst may hide
+/// every user-visible column and work with the chart alone; the table, its rows and its
+/// cells stay on the worksheet and the add-in keeps reading and writing them. The toggle
+/// no longer refuses the last authoring column, and <see cref="ToggleAll"/> moves the whole
+/// offered set between visible and hidden.
 /// </para>
 /// <para>
 /// <b>One strictly-parsed settings key.</b> The choice is stored as a comma-separated
@@ -252,35 +250,59 @@ public static class GanttColumnVisibility
         {
             // Remove reported the name absent, so this add cannot be a duplicate.
             _ = next.Add(columnName!);
-            if (!AnyAuthoringColumnVisible(next))
-            {
-                return new ColumnVisibilityOutcome(null, ColumnVisibilityRefusal.LastVisibleColumn);
-            }
         }
 
         return new ColumnVisibilityOutcome(next, null);
     }
 
     /// <summary>
-    /// Returns whether at least one column the schema classifies as authoring is visible.
+    /// Flips the whole offered set: any hidden column means show all, none hidden means hide
+    /// all (ADR-0065 D3).
     /// </summary>
-    /// <param name="hidden">The candidate hidden set.</param>
-    /// <returns><see langword="true"/> when the table can still be authored by hand.</returns>
+    /// <param name="hidden">The current hidden set.</param>
+    /// <returns>The new hidden set.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="hidden"/> is null.</exception>
     /// <remarks>
-    /// The authoring set comes from the schema's own classification rather than from a
-    /// second list here, so a future column classified as authoring is covered without
-    /// anyone remembering to add it.
+    /// The primary split-button action is this one rule, so a partial state — some columns
+    /// hidden and some shown — shows all rather than completing the hide. That keeps the
+    /// big button a forgiving reset and leaves precise hiding to the menu rows.
     /// </remarks>
-    internal static bool AnyAuthoringColumnVisible(IReadOnlySet<string> hidden)
+    public static ColumnVisibilityOutcome ToggleAll(IReadOnlySet<string> hidden)
     {
-        foreach (GanttTableColumn column in GanttTableSchema.Default.Columns)
-        {
-            if (column.Access == GanttColumnAccess.Authoring && !hidden.Contains(column.Name))
-            {
-                return true;
-            }
-        }
+        ArgumentNullException.ThrowIfNull(hidden);
 
-        return false;
+        HashSet<string> next = hidden.Count == 0
+            ? new HashSet<string>(ToggleableColumnNames, StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        return new ColumnVisibilityOutcome(next, null);
+    }
+
+    /// <summary>
+    /// Returns the schema's visible columns that the hidden set does not name, in schema order.
+    /// </summary>
+    /// <param name="hidden">The user's hidden set.</param>
+    /// <returns>The columns the live panel measures and the export reproduces.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="hidden"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>One authority for "what is visible" (ADR-0065 D6).</b> The live measurement reads
+    /// this list, and the future export composition must read it too, so a hidden column
+    /// cannot be measured by one half of the product and exported by the other.
+    /// </para>
+    /// <para>
+    /// An empty result is the chart-only state, not a refusal. The engine columns are
+    /// excluded by the schema's own classification rather than by a second list here.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> VisibleColumns(IReadOnlySet<string> hidden)
+    {
+        ArgumentNullException.ThrowIfNull(hidden);
+
+        return
+        [
+            .. GanttTableSchema.Default.Columns
+                .Where(column => !column.IsHidden && !hidden.Contains(column.Name))
+                .Select(column => column.Name),
+        ];
     }
 }

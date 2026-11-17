@@ -84,7 +84,7 @@ public sealed class RibbonGlyphAssetsTests
     {
         Assert.NotNull(RibbonGlyphAssets.ForControl("btnRefreshSheet"));
         Assert.NotNull(RibbonGlyphAssets.ForControl("btnWarnings"));
-        Assert.NotNull(RibbonGlyphAssets.ForControl("mnuColumnVisibility"));
+        Assert.NotNull(RibbonGlyphAssets.ForControl("btnColumnVisibilityAll"));
     }
 
     [Fact]
@@ -163,16 +163,20 @@ public sealed class RibbonGlyphAssetsTests
     }
 
     [Fact]
-    public void The_show_columns_menu_carries_a_glyph()
+    public void The_show_columns_primary_carries_a_glyph_and_the_menu_does_not()
     {
-        // mnuColumnVisibility was the one large control that shipped with no glyph at all
-        // before R5.19, so it is pinned rather than left to the completeness test alone.
+        // R5.22 moved the large control to a splitButton: the PRIMARY is the ribbon control
+        // and therefore the one that carries a glyph. The menu is its drop-down; its rows
+        // carry the state pictures instead.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(_workbookRibbonId));
 
+        XElement primary = doc.Descendants(_customUiNamespace + "button")
+            .Single(element => (string?)element.Attribute("id") == "btnColumnVisibilityAll");
         XElement menu = doc.Descendants(_customUiNamespace + "menu")
             .Single(element => (string?)element.Attribute("id") == "mnuColumnVisibility");
 
-        Assert.Equal("GetGlyph", (string?)menu.Attribute("getImage"));
+        Assert.Equal("GetGlyph", (string?)primary.Attribute("getImage"));
+        Assert.Null(menu.Attribute("getImage"));
     }
 
     [Fact]

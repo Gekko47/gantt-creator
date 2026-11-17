@@ -1519,6 +1519,40 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns the split button's primary label (R5.22, ADR-0065 D3): the ACTION the next
+    /// press will take, because a split button has no pressed state. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control Excel is asking about.</param>
+    public string GetColumnVisibilityAllLabel(IRibbonControl control) =>
+        GetColumnVisibilityAllLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetColumnVisibilityAllLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the session
+    /// singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns><c>Hide all columns</c> or <c>Show all columns</c>.</returns>
+    internal static string GetColumnVisibilityAllLabel(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetColumnVisibilityAllLabel();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Returns the image for one column menu row (R5.18h): the tick when that column is
     /// shown, the dash when it is hidden. Excel expects an <c>IPictureDisp</c>. Never
     /// throws.
@@ -1578,6 +1612,40 @@ public class GanttRibbon : ExcelRibbon
         try
         {
             stateService.ToggleColumnVisibility(control?.Id);
+        }
+        catch
+        {
+            // A failed toggle must not propagate into Excel; the state service has
+            // already reported its own refusals through the status bar.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Toggles the whole offered set from the split button's primary (R5.22, ADR-0065 D3):
+    /// none hidden hides all six; any hidden shows all six. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control Excel is reporting.</param>
+    public void OnColumnVisibilityToggleAll(IRibbonControl control) =>
+        OnColumnVisibilityToggleAll(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnColumnVisibilityToggleAll(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without the session
+    /// singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The primary control, or null when unavailable.</param>
+    /// <param name="stateService">The state service that applies the toggle.</param>
+    internal static void OnColumnVisibilityToggleAll(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.ToggleAllColumnVisibility();
         }
         catch
         {

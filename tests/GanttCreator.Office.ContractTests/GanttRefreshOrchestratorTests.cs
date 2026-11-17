@@ -616,6 +616,60 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// The live title keeps a positive width when every table column is hidden
+    /// (ADR-0065 D4).
+    /// </summary>
+    /// <remarks>
+    /// The title's width was the sum of the measured columns. With none visible that sum is
+    /// zero, so the owned textbox would collapse and disappear. The orchestrator falls back
+    /// to the built scene's plot right edge minus the table origin.
+    /// </remarks>
+    [Fact]
+    public void The_live_title_keeps_a_positive_width_with_no_visible_columns()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = ZeroColumnGridWithAReservedRow(),
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.True(
+            fakes.Shapes.Requests.ContainsKey("ChartTitle"),
+            "No ChartTitle shape was written: " + string.Join(", ", fakes.Shapes.Calls));
+
+        RectD? bounds = fakes.Shapes.Requests["ChartTitle"].Geometry.Bounds;
+        Assert.NotNull(bounds);
+        Assert.True(bounds!.Value.Width > 0, "The title collapsed to zero width.");
+    }
+
+    /// <summary>
+    /// A zero-column grid that still carries the reserved row the live title occupies.
+    /// </summary>
+    private static PanelCellGrid ZeroColumnGridWithAReservedRow()
+    {
+        PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
+            [],
+            [15d],
+            15d,
+            [],
+            originTopPt: 51d,
+            originLeftPt: 0d,
+            topPaddingHeightPt: 18d);
+
+        Assert.True(created.Succeeded, "The zero-column grid was refused: " + created.Refusal);
+        Assert.NotNull(created.Grid);
+        return created.Grid;
+    }
+
+    /// <summary>
     /// A grid that models a sheet with a real reserved row: an 18pt top padding
     /// row, an 18pt reserved row, a 15pt header row, and one 15pt body row.
     /// </summary>

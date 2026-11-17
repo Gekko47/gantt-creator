@@ -252,13 +252,23 @@ public sealed class PanelCellGridTests
     }
 
     [Fact]
-    public void An_empty_column_list_is_refused()
+    public void An_empty_column_list_is_accepted_with_a_zero_width()
     {
-        // Positive test: a panel with no columns would emit a header with no
-        // cells and a body with no content, which §3 does not permit.
-        Assert.Equal(
-            PanelCellGridRefusal.NoColumns,
-            PanelCellGrid.TryCreate([], [12.0], 12.0, Required).Refusal);
+        // ADR-0065 D4: a fully hidden table measures zero columns. The grid is valid and
+        // carries the plot anchor's measured left edge as its right edge on the live sheet.
+        PanelCellGridCreationOutcome outcome =
+            PanelCellGrid.TryCreate(
+                [],
+                [12.0],
+                12.0,
+                [],
+                originLeftPt: 40d,
+                plotOriginRightPt: 40d);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(outcome.Grid!.Columns);
+        Assert.Equal(0d, outcome.Grid.TotalWidthPt);
+        Assert.Equal(40d, outcome.Grid.PanelRightPt);
     }
 
     [Fact]

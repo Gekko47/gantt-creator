@@ -351,10 +351,10 @@ internal sealed record RibbonState(
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         RibbonControlIds.ChartTitle =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
-        // R5.18h: hiding a column is a table-presentation command, so it needs an
-        // initialised table on the Gantt sheet and nothing else — the same gate the
-        // layout controls use. The MENU is gated; its rows inherit the menu's state.
-        RibbonControlIds.ColumnsMenu =>
+        // R5.22/ADR-0065 D3: the Columns SPLIT BUTTON needs an initialised table on the
+        // Gantt sheet and nothing else — never selection, because it is the recovery path
+        // when every table column is hidden. The primary and the menu rows inherit this gate.
+        RibbonControlIds.ColumnsSplitButton =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         _ => true,
     };

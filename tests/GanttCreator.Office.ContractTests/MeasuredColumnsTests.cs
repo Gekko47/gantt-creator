@@ -63,6 +63,22 @@ public class MeasuredColumnsTests
     }
 
     [Fact]
+    public void All_columns_hidden_measures_nothing()
+    {
+        // ADR-0065 D4/D6: the fully hidden table is a real state. The measured list is
+        // empty, so the grid is zero-column and the future export gets the chart alone.
+        Dictionary<string, string> settings = new(StringComparer.Ordinal)
+        {
+            [GanttColumnVisibility.SettingKey] =
+                string.Join(',', GanttColumnVisibility.ToggleableColumnNames),
+        };
+
+        IReadOnlyList<string> measured = ExcelSceneBuildRequestFactory.MeasuredColumnsFor(settings);
+
+        Assert.Empty(measured);
+    }
+
+    [Fact]
     public void A_malformed_stored_list_falls_back_to_the_schema_visible_columns()
     {
         // GanttColumnVisibility refuses a name it does not know rather than reading the

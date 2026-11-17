@@ -76,7 +76,7 @@ Required columns:
 | `StrokeColour` | `#RRGGBB` or blank | Per-row outline, hatch, critical, or delineator colour override |
 | `Visible` | Boolean or blank | Blank/true renders; false retains the row without rendering |
 
-Optional columns can be added only by an approved schema ADR, initially `SortOrder` and user notes. Core data columns remain visible; property columns may be shown/hidden using the Ribbon but remain on the same worksheet. Do not introduce one column per critical interval. A critical interval is another event record tied to a lane or parent.
+Optional columns can be added only by an approved schema ADR, initially `SortOrder` and user notes. Core data columns remain on the same worksheet and are never moved to the configuration sheet; every user-visible column, including the core data columns, may be hidden and restored from the Ribbon's Columns control, and zero visible columns is a supported state (ADR-0065). Property columns may be shown/hidden the same way. Do not introduce one column per critical interval. A critical interval is another event record tied to a lane or parent.
 
 Workbook-level configuration uses one worksheet named `_GanttCreatorConfig` with `Visible = xlSheetVeryHidden`, plus workbook-defined names prefixed `GanttCreator.` that point to its validation ranges. Shape ownership uses a deterministic shape name plus tags/alternative text.
 
