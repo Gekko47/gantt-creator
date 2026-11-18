@@ -84,13 +84,38 @@ candidate the evidence names, not a guess. Two attempts on the same adapter, the
 
 ## Phase C — roll the proven pattern out, one adapter per commit
 
-Ordered by the evidence, which the Phase-B probe re-ranked:
+**Attempt 2 result (2026-11-18) — the initialiser audit is WITHDRAWN, not pending.** The host probe
+scoped above was extended to the mechanism itself. Run 1 of
+[`probe-quit-cases.ps1`](../scripts/probe-quit-cases.ps1) stuck on two table cases and exited on
+nine; run 2 of the identical script exited on **every** case, including all five table repeats and
+both calculate variants. The flap is non-deterministic at the COM level and not attributable to an
+operation, so releasing the initialiser's proxies has no supporting evidence. This is the
+bounded-retry stop: two attempts made, both recorded, no speculative product change landed.
 
-1. [`ExcelWorkbookInitialiser`](../src/GanttCreator.Office/ExcelWorkbookInitialiser.cs) — **the
-   discriminator**: every leaking reader body calls `Initialise`, and the clean one does not. Audit
-   the proxy fields it acquires and drops (created `ListObject`/`ListColumn`s, `Names.Add` result,
-   header and whole-column `Range`s, `Validation` objects, created `Worksheet`s) and release each
-   through a `ReleaseAcquired` seam on the same rule.
+**The next experiment is harness ordering, not an adapter.** `OfficeFixture` calls `Quit()` and only
+then finalises: an RCW that is unreleased but unfinalised still holds a reference when `Quit()` runs.
+Phase C0 tests that ordering directly — GC before `Quit()` — because it explains a race that no
+per-adapter release can fix.
+
+## Phase C0 — harness ordering (do this before any adapter)
+
+1. In [`OfficeFixture.DisposeAsync`](../tests/GanttCreator.Office.IntegrationTests/OfficeFixture.cs:836),
+   move the `GC.Collect`/`WaitForPendingFinalizers`/`GC.Collect` pass **before** the `Quit()` attempt,
+   keeping a second pass after it. Everything else stays: the workbook close/release order, the
+   `ReleaseComObject` per proxy, the 10 s graceful bound and its probe.
+2. Contract-test the ordering in `OfficeFixtureTests` (a seam or an ordered-recording double proves
+   the collect happened before the quit), and re-run a filtered body class, then the full gate.
+3. Success is bodies flipping **1 → 0**. If the flap persists, record it, keep the ordering change
+   only if it is independently correct (finalising before quitting is the right order), and stop
+   again — the mechanism is then outside this harness entirely.
+
+## Phase C — adapter releases, only after C0
+
+Ordered by the evidence, which the Phase-B probe re-ranked. **Nothing here is landed until C0 says
+whether the flap is harness-side:**
+
+1. [`ExcelWorkbookInitialiser`](../src/GanttCreator.Office/ExcelWorkbookInitialiser.cs) — held back
+   by the attempt-2 stop above; revisit only if C0 shows the flap is adapter-side.
 2. [`ExcelRowHeightNormaliser`](../src/GanttCreator.Office/ExcelRowHeightNormaliser.cs:668) —
    `NormaliseLayoutRow`/`GetLayoutRow` drops a `worksheet.Rows[i]` Range per layout row (up to 6
    per normalisation); `TryGetTypeColumn`, `CellValueAt`, `GetBodyRowCount`, `GetBodyRowAt` drop
