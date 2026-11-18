@@ -71,8 +71,21 @@ internal class OfficeFixture : IAsyncLifetime
     /// </remarks>
     private string _quitOutcome = "not-attempted";
 
+    /// <summary>
+    /// How long the body had run when <see cref="DisposeAsync"/> STARTED.
+    /// </summary>
+    /// <remarks>
+    /// Captured at teardown entry, not read at report time: the report runs after the
+    /// graceful poll and the kill, so reading the stopwatch there would fold the very
+    /// wait under investigation into the figure meant to explain it. Measured
+    /// 2026-11-18: that mistake made every leaking record read 11-14 s and every clean
+    /// one 3 s, which is the poll, not the body.
+    /// </remarks>
+    private long _bodyMsAtTeardown = -1;
+
     /// <summary>How long this fixture's body had been running when teardown began.</summary>
-    internal long LifetimeMs => _lifetime.ElapsedMilliseconds;
+    internal long LifetimeMs =>
+        _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds;
 
     /// <summary>What teardown's <c>Quit()</c> attempt did.</summary>
     internal string QuitOutcome => _quitOutcome;
@@ -320,7 +333,7 @@ internal class OfficeFixture : IAsyncLifetime
                     ForcedKillCount,
                     LastGracefulExitElapsedMs,
                     _quitOutcome,
-                    _lifetime.ElapsedMilliseconds));
+                    _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -734,6 +747,10 @@ internal class OfficeFixture : IAsyncLifetime
     {
         if (_disposed) return;
         _disposed = true;
+
+        // Captured first: the record must report the body's own duration, not the
+        // graceful poll this teardown is about to run.
+        _bodyMsAtTeardown = _lifetime.ElapsedMilliseconds;
 
         // A fixture that launched no Excel still owns the PIDs a test seeded
         // through OwnedProcessIdsForTest, so the owned-process exit check below

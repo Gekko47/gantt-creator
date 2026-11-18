@@ -105,14 +105,18 @@ under PowerShell COM at all. No `OfficeFixture` change is authorised by this evi
 `not-attempted`) and `BodyMs` per teardown, one contract test pins the record shape, and
 `verify-office.ps1` prints a `Quit()` outcome histogram beside the attribution.
 
-**First measurement:** an isolated leaking body read `Quit:"returned"`, `BodyMs:11883`, killed after
+**First measurement:** an isolated leaking body read `Quit:"returned"`, killed after
 `GracefulExitMs:10083` — Excel accepted the quit and survived. Nulling the body's adapter local
-before teardown changed nothing (`10086 ms`), so "Quit refused" and "adapter instance rooted" are both
-out.
+changed nothing (`10086 ms`), so "Quit refused" and "adapter instance rooted" are both out.
 
-**Next experiment is host-scoped:** single-threaded apartment host, and a clean body immediately
-before the leaking one in the same process, to separate a host-wide surviving reference from a
-body-scoped one. Success is a named mechanism, not a green count.
+**Full-run dataset (69/69 green):** 52 records, **all `Quit:"returned"`**, 40 leaking and 12 clean.
+Body duration, captured at teardown entry, is 797-4,332 ms for leaking bodies and 676-3,261 ms for
+clean ones: overlapping, so duration is not the discriminator. The packed add-in is not auto-opened
+in those instances (no `OPEN*` value in the Excel `Options` key).
+
+**Next experiment bisects the workbook structure** with this same record: a body that creates only
+the Gantt table, one that creates only `_GanttCreatorConfig`, and one that creates both. Success is a
+named mechanism, not a green count.
 
 ## Phase C — adapter releases, only after C0
 
