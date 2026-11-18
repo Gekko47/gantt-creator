@@ -96,6 +96,21 @@ public static class GanttTableAppearance
     /// </remarks>
     public static string TableStyleName => "TableStyleLight1";
 
+    /// <summary>The data panel's body-cell fill: the <c>DataPanelFill</c> colour token.</summary>
+    /// <remarks>
+    /// The live table's body cells are left unstyled (the worksheet is the panel), but the
+    /// export composition reproduces them as shapes (entity guide section 3), and it must
+    /// read the same token rather than restate a hex value. R6.3 is its first consumer.
+    /// </remarks>
+    public static ColourHex BodyFill => Colour("DataPanelFill");
+
+    /// <summary>The data panel's body text colour: the <c>DefaultText</c> colour token.</summary>
+    /// <remarks>
+    /// The same token the chart's outside labels resolve, so an exported cell's text and a
+    /// chart label cannot disagree about what "default text" means.
+    /// </remarks>
+    public static ColourHex BodyTextColour => Colour("DefaultText");
+
     /// <summary>The theme's font family for table text.</summary>
     public static string FontFamily => GanttCatalogues.TypographyDefaultText("FontFamily");
 

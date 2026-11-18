@@ -87,6 +87,16 @@ public static class ExportBoundsResolver
             return Refused(ExportBoundsRefusal.NullRequest);
         }
 
+        // R6.3: anchoring is a live-only rule. `SceneBuilder` gates it on the request
+        // member rather than the profile, so an anchored request re-profiled to
+        // EditableExport would silently compose an export scene whose lanes depend on
+        // worksheet rows - wrong geometry, and nothing else refuses it. The export
+        // assembly pins the member off; this guard covers every other caller.
+        if (request.AnchorLanesToRows)
+        {
+            return Refused(ExportBoundsRefusal.AnchoredRequest);
+        }
+
         // Fail closed on an unrecognised value, for the same reason
         // SceneCompositionProfiles.DrawsDataPanel does: a member added to the enum
         // without a rule must not silently receive one mode's behaviour.

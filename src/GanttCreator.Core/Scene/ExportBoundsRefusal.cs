@@ -32,6 +32,18 @@ public enum ExportBoundsRefusal
     /// reason is carried on the resolution's <see cref="ExportBoundsOutcome"/>.
     /// </summary>
     SceneBuildRefused = 5,
+
+    /// <summary>
+    /// The request asks for lane anchoring to worksheet rows, which is a live-only
+    /// composition rule (ADR-0034). An export or staged composition keeps the R3.4
+    /// stacking so its geometry does not depend on the worksheet it is exported from.
+    /// </summary>
+    /// <remarks>
+    /// Raised before any composition runs. The live request factory pins anchoring in
+    /// code and the export assembly pins it off, so this refusal only fires for a caller
+    /// that bypassed both — the case a silent wrong export would otherwise occupy.
+    /// </remarks>
+    AnchoredRequest = 6,
 }
 
 /// <summary>The actionable message the export contract attaches to a refusal.</summary>

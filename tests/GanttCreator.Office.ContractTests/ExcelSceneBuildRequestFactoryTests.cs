@@ -1757,6 +1757,132 @@ public class ExcelSceneBuildRequestFactoryTests
             precision: 6);
     }
 
+    /// <summary>
+    /// R6.3: the export request pins the live-only members off, in code.
+    /// </summary>
+    /// <remarks>
+    /// <c>SceneBuilder</c> gates lane anchoring on the request member, not on the
+    /// profile, so re-profiling a live request to <c>EditableExport</c> would silently
+    /// anchor the export's lanes to worksheet rows — geometry that depends on the sheet
+    /// the export was taken from. This pins the export assembly's own members, and the
+    /// live counterpart below pins the opposite values so a single shared default cannot
+    /// satisfy both.
+    /// </remarks>
+    [Fact]
+    public void The_export_request_pins_anchoring_off_and_the_export_profile()
+    {
+        SceneBuildRequestOutcome outcome = CreateExport(Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        SceneBuildRequest request = outcome.Request!;
+
+        Assert.False(request.AnchorLanesToRows);
+        Assert.Equal(SceneCompositionProfile.EditableExport, request.Profile);
+        Assert.False(request.AllowEmptyEvents);
+        Assert.Null(request.Panel);
+
+        // The export geometry rule, pinned from a measured live defect (2026-11-18):
+        // composed from the live measured top the chart's bands landed at Y = -28 and
+        // the host clamped every one to 0. An export composition starts at the origin,
+        // pads uniformly, and leaves room for the bands above the plot.
+        Assert.Equal(0, request.Grid!.OriginTopPt, precision: 6);
+        Assert.Equal(0, request.Grid.OriginLeftPt, precision: 6);
+
+        double chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        Assert.Equal(chrome, request.ChartPadding.LeftPt, precision: 6);
+        Assert.Equal(chrome, request.ChartPadding.TopPt, precision: 6);
+        Assert.Equal(chrome, request.ChartPadding.RightPt, precision: 6);
+        Assert.Equal(chrome, request.ChartPadding.BottomPt, precision: 6);
+        Assert.True(
+            request.PlotBounds!.Value.Y > 0,
+            "The export plot top must leave room for the bands drawn above it.");
+    }
+
+    /// <summary>The live request keeps the opposite pins, so the two modes cannot share one default.</summary>
+    [Fact]
+    public void The_live_request_keeps_its_anchoring_and_empty_table_fallback()
+    {
+        SceneBuildRequestOutcome outcome = new ExcelSceneBuildRequestFactory(Metrics()).Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        SceneBuildRequest request = outcome.Request!;
+
+        Assert.True(request.AnchorLanesToRows);
+        Assert.Equal(SceneCompositionProfile.LiveExcel, request.Profile);
+        Assert.True(request.AllowEmptyEvents);
+    }
+
+    /// <summary>
+    /// R6.1's export asymmetry: a chart-only empty composition reaches the scene builder's
+    /// own <c>EmptyEvents</c> refusal rather than drawing the live calendar-year fallback.
+    /// </summary>
+    [Fact]
+    public void An_empty_export_composition_reaches_the_scene_builders_empty_events_refusal()
+    {
+        SceneBuildRequestOutcome outcome = new ExcelSceneBuildRequestFactory(Metrics()).CreateExport(
+            [],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+
+            // The grid is the measured worksheet, which still exists with no body row;
+            // the empty table is the event list, not the measurement.
+            Grid(),
+            new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        ExportBoundsOutcome resolution = ExportBoundsResolver.TryResolve(
+            outcome.Request,
+            panelTheme: null,
+            ExportSelection.ChartOnly);
+
+        Assert.False(resolution.Succeeded);
+        Assert.Equal(ExportBoundsRefusal.SceneBuildRefused, resolution.Refusal);
+        Assert.Equal(SceneBuilderRefusal.EmptyEvents, resolution.SceneRefusal);
+    }
+
+    /// <summary>
+    /// R6.3: the export panel theme reads the table-appearance authority rather than
+    /// restating a colour, a face, or a size.
+    /// </summary>
+    [Fact]
+    public void The_export_panel_theme_reads_the_table_appearance_authority()
+    {
+        PanelTheme theme = ExportPanelTheme.Resolve();
+
+        Assert.Equal(GanttTableAppearance.BodyFill, theme.BodyFill.FillColour);
+        Assert.Equal(GanttTableAppearance.BodyTextColour, theme.BodyText.TextColour);
+        Assert.Equal(GanttTableAppearance.FontFamily, theme.BodyText.FontFamily);
+        Assert.Equal(GanttTableAppearance.BodyFontSizePt, theme.BodyText.FontSizePt);
+
+        Assert.Equal(GanttTableAppearance.HeaderFill, theme.HeaderFill.FillColour);
+        Assert.Equal(GanttTableAppearance.HeaderFontSizePt, theme.HeaderText.FontSizePt);
+        Assert.Equal(GanttTableAppearance.HeaderIsBold, theme.HeaderText.Bold);
+        Assert.Equal(GanttTableAppearance.HeaderTextColour, theme.HeaderText.TextColour);
+
+        Assert.Equal(GanttTableAppearance.BorderColour, theme.Border.StrokeColour);
+        Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), theme.Border.OutlineWidthPt);
+    }
+
+    /// <summary>Builds an export request over one event and the supplied measured grid.</summary>
+    private static SceneBuildRequestOutcome CreateExport(
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics)
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        return factory.CreateExport(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            themedMetrics);
+    }
+
     /// <summary>A registry with the one style the fixture events reference.</summary>
     private static GanttStyleRegistry StyleRegistry() =>
         new([

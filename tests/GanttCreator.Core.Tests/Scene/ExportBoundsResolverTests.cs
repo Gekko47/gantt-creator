@@ -456,6 +456,24 @@ public sealed class ExportBoundsResolverTests
     }
 
     [Fact]
+    public void An_anchored_request_is_refused_before_any_composition()
+    {
+        // R6.3 hardening: SceneBuilder gates lane anchoring on the request member, not
+        // on the profile, so an anchored request re-profiled to EditableExport would
+        // silently compose export geometry that depends on worksheet rows. The model
+        // refuses it rather than producing a wrong scene that nothing else reports.
+        ExportBoundsOutcome outcome = ExportBoundsResolver.TryResolve(
+            Request() with { AnchorLanesToRows = true },
+            _panelTheme,
+            ExportSelection.ChartOnly);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ExportBoundsRefusal.AnchoredRequest, outcome.Refusal);
+        Assert.Null(outcome.Scene);
+        Assert.Null(outcome.Bounds);
+    }
+
+    [Fact]
     public void A_refusal_carries_no_scene()
     {
         // The scene member is success-only, so a caller cannot stage a partial

@@ -256,6 +256,10 @@ public sealed class ProtectionGuardFirstTests
         // performs the guard-first ordering. Classifying it read-only here is the accurate
         // statement that this file itself has nothing to guard.
         "src/GanttCreator.Office/EditablePanelStagingComposer.cs",
+
+        // Composes a style record from the code-owned catalogue; writes nothing and
+        // touches no COM object, so it is read-only and consults no guard.
+        "src/GanttCreator.Office/ExportPanelTheme.cs",
         "src/GanttCreator.Office/ShapeOwnershipTag.cs",
         "src/GanttCreator.Office/ShapeDeltaCache.cs",
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",

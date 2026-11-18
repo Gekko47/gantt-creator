@@ -80,9 +80,8 @@ public sealed record StagingCompositionOutcome(
 }
 
 /// <summary>
-/// R6.2: stages the editable-export data panel as native rectangle/text/line shapes at a
-/// deterministic staging origin on the live worksheet, from the scene's own panel
-/// primitives.
+/// R6.2/R6.3: stages the editable-export composition as native shapes at a deterministic
+/// staging origin on the live worksheet, from the scene's own primitives.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -118,6 +117,13 @@ public sealed record StagingCompositionOutcome(
 /// any refusal after the first create, deletes the shapes it staged before returning.
 /// Fault injection beyond these paths and the tag sweep are R6.5's row; nothing in this
 /// class is exposed through a command until R6.8.
+/// </para>
+/// <para>
+/// <b>Full scene (R6.3).</b> <see cref="ComposeFullScene"/> stages every primitive the
+/// export scene carries - the panel from R6.2 plus every chart entity - through the same
+/// one-vector translation, pre-flight, and cleanup. It re-stamps each request out of the
+/// ADR-0052 host-owned resize class (D1): a staged shape is temporary and deleted, never
+/// reconciled, so a user row or column resize must not stretch it while it exists.
 /// </para>
 /// <para>
 /// <b>Request assembly is not this row.</b> The caller supplies the resolver's outcome;
@@ -228,14 +234,123 @@ public static class EditablePanelStagingComposer
             return Refused(StagingCompositionRefusal.UnsupportedPrimitive, resolution);
         }
 
-        List<string> staged = [];
-        using IDisposable batch = stagingPort.BeginBatch();
-        foreach (OfficeShapeRequest request in translation.Requests)
+        return Stage(translation.Requests, origin, bounds.Bounds, resolution, stagingPort);
+    }
+
+    /// <summary>
+    /// R6.3: stages the complete export scene - every panel primitive R6.2 stages plus
+    /// every chart entity - at the same deterministic staging origin.
+    /// </summary>
+    /// <param name="resolution">
+    /// The bounds resolution whose scene and bounds the composition consumes, as produced
+    /// by <see cref="ExportBoundsResolver.TryResolve"/>.
+    /// </param>
+    /// <param name="stagingPort">
+    /// The staging-scheme shape write port. Its collection must be empty on entry.
+    /// </param>
+    /// <returns>The staged identifiers and envelope, or a typed refusal.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>No filter and no sub-scene.</b> The parent scene is already a total order, so
+    /// this path translates it directly; the panel's filter and sub-scene exist only
+    /// because R6.2's row stages the panel alone. A zero-visible-column composition is
+    /// not an empty composition here: the scene still carries the chart, and the chart
+    /// still stages beside the export bounds R6.1 resolved.
+    /// </para>
+    /// <para>
+    /// <b>D2 bounds equality.</b> Entity guide section 1 exports no whitespace outside
+    /// <see cref="GanttScene.ChartBounds"/>, so the union of these staged envelopes is
+    /// expected to equal <see cref="StagingCompositionOutcome.StagedBounds"/> within
+    /// <see cref="GeometryMath.Epsilon"/>; the contract tests assert that with
+    /// <see cref="StagedEnvelopeCheck"/> rather than inside the composer.
+    /// </para>
+    /// </remarks>
+    public static StagingCompositionOutcome ComposeFullScene(
+        ExportBoundsOutcome? resolution,
+        IShapeWritePort? stagingPort)
+    {
+        if (resolution is null)
         {
-            ShapeWriteOutcome write = stagingPort.Create(request);
+            return Refused(StagingCompositionRefusal.NullResolution, null);
+        }
+
+        if (stagingPort is null)
+        {
+            return Refused(StagingCompositionRefusal.NullPort, resolution);
+        }
+
+        if (!resolution.Succeeded || resolution.Bounds is null || resolution.Scene is null)
+        {
+            return Refused(
+                resolution.Succeeded
+                    ? StagingCompositionRefusal.MissingScene
+                    : StagingCompositionRefusal.ExportRefused,
+                resolution);
+        }
+
+        GanttScene scene = resolution.Scene;
+        ExportBounds bounds = resolution.Bounds;
+
+        if (stagingPort.ListOwned().Count > 0)
+        {
+            return Refused(StagingCompositionRefusal.StagingAlreadyPopulated, resolution);
+        }
+
+        PointD origin = StagingOriginFor(bounds.ChartBounds);
+        ChartOriginDelta delta = new(
+            origin.X - bounds.PlacementDelta.X,
+            origin.Y - bounds.PlacementDelta.Y);
+
+        SceneTranslationOutcome translation = new SceneShapeRenderer(delta).Translate(scene);
+        if (!translation.Complete)
+        {
+            // A primitive family with no translation: refuse before the first create,
+            // so the sheet is untouched.
+            return Refused(StagingCompositionRefusal.UnsupportedPrimitive, resolution);
+        }
+
+        if (translation.Requests.Count == 0)
+        {
+            // A valid scene always carries primitives, but an empty request list is a
+            // supported empty composition rather than a reason to touch the sheet.
+            return new StagingCompositionOutcome([], null, null, resolution, null);
+        }
+
+        // D1: staged shapes never enter the ADR-0052 host-owned resize classes. They are
+        // temporary and deleted, never reconciled, so the host must not resize them when
+        // a user changes a row height or column width while the set exists.
+        OfficeShapeRequest[] requests =
+        [
+            .. translation.Requests.Select(request => request with { HostOwnsExtent = false }),
+        ];
+
+        return Stage(requests, origin, bounds.Bounds, resolution, stagingPort);
+    }
+
+    /// <summary>
+    /// Creates the translated requests through the port, cleaning up on a host refusal.
+    /// </summary>
+    /// <param name="requests">The translated requests, in scene order.</param>
+    /// <param name="origin">The staging origin.</param>
+    /// <param name="exportBounds">The zero-origin export bounds.</param>
+    /// <param name="resolution">The resolution being staged.</param>
+    /// <param name="port">The staging write port.</param>
+    /// <returns>The staged identifiers and envelope, or a typed host refusal.</returns>
+    private static StagingCompositionOutcome Stage(
+        IReadOnlyList<OfficeShapeRequest> requests,
+        PointD origin,
+        RectD exportBounds,
+        ExportBoundsOutcome resolution,
+        IShapeWritePort port)
+    {
+        List<string> staged = [];
+        using IDisposable batch = port.BeginBatch();
+        foreach (OfficeShapeRequest request in requests)
+        {
+            ShapeWriteOutcome write = port.Create(request);
             if (!write.Succeeded)
             {
-                CleanupStaged(stagingPort, staged);
+                CleanupStaged(port, staged);
                 return new StagingCompositionOutcome(
                     [],
                     null,
@@ -247,7 +362,7 @@ public static class EditablePanelStagingComposer
             staged.Add(request.PrimitiveId);
         }
 
-        RectD stagedBounds = new(origin.X, origin.Y, bounds.Bounds.Width, bounds.Bounds.Height);
+        RectD stagedBounds = new(origin.X, origin.Y, exportBounds.Width, exportBounds.Height);
         return new StagingCompositionOutcome(staged, stagedBounds, null, resolution, null);
     }
 
