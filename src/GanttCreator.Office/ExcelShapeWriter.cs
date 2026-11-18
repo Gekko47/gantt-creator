@@ -24,6 +24,12 @@ namespace GanttCreator.Office;
 /// <see langword="null"/> for no trace. Bounded to that one primitive so the cost is
 /// a handful of property reads per Refresh; the production sink must not throw.
 /// </param>
+/// <param name="ownershipScheme">
+/// The ownership scheme to stamp and prove, or <see langword="null"/> for the live
+/// chart's scheme. A staging scheme (R6.2 D4) writes the staging name prefix and tag
+/// instead, so a staged composition and the live chart can share one worksheet without
+/// either ownership scan touching the other's shapes.
+/// </param>
 /// <remarks>
 /// <para>
 /// ADR-0008 D4: the protection guard is the first read-only check, before any
@@ -51,15 +57,32 @@ namespace GanttCreator.Office;
 /// A caller can never write an untagged shape through this port, which is what
 /// makes R4.8's preservation guarantee structural rather than conventional.
 /// </para>
+/// <para>
+/// <b>One ownership scheme per instance (R6.2 D4).</b> The adapter can be constructed
+/// with <see cref="ShapeOwnershipScheme.Staging"/> instead of the default live scheme.
+/// A staging instance stamps the staging name prefix and staging tag on every shape it
+/// creates and proves only those on delete and list, so the live chart and a staged
+/// composition can share one worksheet without either scan ever touching the other's
+/// shapes. The tag proof remains a recomputation from the shape name in both schemes.
+/// </para>
 /// </remarks>
 public class ExcelShapeWriter(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null,
-    Action<string>? trace = null) : IShapeWritePort
+    Action<string>? trace = null,
+    ShapeOwnershipScheme? ownershipScheme = null) : IShapeWritePort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <summary>
+    /// The ownership scheme this adapter stamps and proves: the live chart's scheme by
+    /// default, or the staging scheme (R6.2 D4). One instance is one scheme for its
+    /// whole life; the two families are distinguished by name prefix and tag, never by
+    /// instance identity.
+    /// </summary>
+    private readonly ShapeOwnershipScheme _ownership = ownershipScheme ?? ShapeOwnershipScheme.Live;
 
     /// <summary>Optional diagnostic sink for the splitter band's live geometry.</summary>
     private readonly Action<string>? _trace = trace;
@@ -300,7 +323,7 @@ public class ExcelShapeWriter(
         // Refused before any host call. The name is written during ApplyOwnership,
         // which is AFTER AddShape, so without this check an over-long identifier
         // would place a shape on the sheet only to fail on the name write.
-        if (request.PrimitiveId.Length > MaxShapeNameLength)
+        if (NameFor(request.PrimitiveId).Length > MaxShapeNameLength)
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
@@ -321,7 +344,7 @@ public class ExcelShapeWriter(
 
         long stepStart = _trace is null ? 0L : Stopwatch.GetTimestamp();
 
-        if (FindShapeByName(shapes, request.PrimitiveId) is not null)
+        if (FindShapeByName(shapes, NameFor(request.PrimitiveId)) is not null)
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.AlreadyExists);
         }
@@ -402,7 +425,7 @@ public class ExcelShapeWriter(
         {
             // The new shape is a valid proxy for the rest of the batch: the geometry check
             // and the z-order preflight would otherwise look it up again (ADR-0054).
-            _ = Remember(request.PrimitiveId, created);
+            _ = Remember(NameFor(request.PrimitiveId), created);
             TraceBandShape("create", created, request.PrimitiveId, before: null);
         }
 
@@ -449,7 +472,7 @@ public class ExcelShapeWriter(
             return refusal!;
         }
 
-        Excel.Shape? existing = FindShapeByName(shapes, request.PrimitiveId);
+        Excel.Shape? existing = FindShapeByName(shapes, NameFor(request.PrimitiveId));
         if (existing is null)
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
@@ -572,7 +595,7 @@ public class ExcelShapeWriter(
             return refusal!;
         }
 
-        Excel.Shape? existing = FindShapeByName(shapes, primitiveId);
+        Excel.Shape? existing = FindShapeByName(shapes, NameFor(primitiveId));
         if (existing is null)
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
@@ -591,7 +614,7 @@ public class ExcelShapeWriter(
         // in the same batch legitimately reuses it.
         if (_batchProxies is not null)
         {
-            _ = _batchProxies.Remove(primitiveId);
+            _ = _batchProxies.Remove(NameFor(primitiveId));
         }
 
         return ShapeWriteOutcome.Ok();
@@ -629,7 +652,7 @@ public class ExcelShapeWriter(
             // is in CouldBeOwnedName, and the tag comparison stays exactly as it was
             // for every name that passes this test -- including the recompute that
             // makes a user's renamed copy of one of our shapes fail ownership.
-            bool ownedTag = CouldBeOwnedName(name) && CarriesOwnershipTagFor(shape, name);
+            bool ownedTag = CouldBeOwnedName(name) && CarriesTagForName(shape, name);
             if (ownedTag)
             {
                 owned.Add(name);
@@ -674,7 +697,7 @@ public class ExcelShapeWriter(
             return refusal!;
         }
 
-        Excel.Shape? existing = FindShapeByName(shapes, primitiveId);
+        Excel.Shape? existing = FindShapeByName(shapes, NameFor(primitiveId));
 
         // The tag authorises the unlock, not the name: handing the user a writable shape the add-in
         // does not own would turn "unlock" into a way to edit anything on the sheet (ADR-0055 D6).
@@ -722,7 +745,7 @@ public class ExcelShapeWriter(
 
             // The tag, not the name, is the ownership proof -- the same rule Delete and Update
             // follow, so a user's shape that shares a name is left unlocked.
-            if (!CarriesOwnershipTagFor(shape, name))
+            if (!CarriesTagForName(shape, name))
             {
                 continue;
             }
@@ -766,7 +789,7 @@ public class ExcelShapeWriter(
             return false;
         }
 
-        Excel.Shape? shape = FindShapeByName(shapes, request.PrimitiveId);
+        Excel.Shape? shape = FindShapeByName(shapes, NameFor(request.PrimitiveId));
         if (shape is null || !CarriesOwnershipTagFor(shape, request.PrimitiveId))
         {
             return false;
@@ -904,7 +927,7 @@ public class ExcelShapeWriter(
         for (int index = 0; index < backToFront.Count; index++)
         {
             string primitiveId = backToFront[index];
-            Excel.Shape? shape = FindShapeByName(shapes, primitiveId);
+            Excel.Shape? shape = FindShapeByName(shapes, NameFor(primitiveId));
             if (shape is null || !CarriesOwnershipTagFor(shape, primitiveId))
             {
                 // NotFound rather than a new refusal: from the caller's point of view
@@ -1221,16 +1244,42 @@ public class ExcelShapeWriter(
     /// comparison is ordinal because the tag is machine-generated by
     /// <see cref="ShapeOwnershipTag.ForPrimitiveId"/>.
     /// </remarks>
-    private static bool CarriesOwnershipTagFor(Excel.Shape shape, string primitiveId)
+    private bool CarriesOwnershipTagFor(Excel.Shape shape, string primitiveId) =>
+        CarriesTagForName(shape, NameFor(primitiveId));
+
+    /// <summary>
+    /// Determines whether a shape's alternative text is the tag this adapter's scheme
+    /// expects for an already-composed shape name.
+    /// </summary>
+    /// <param name="shape">The shape whose alternative text is read.</param>
+    /// <param name="shapeName">The full shape name, as composed by <see cref="NameFor"/>.</param>
+    /// <returns>
+    /// <see langword="true"/> when the shape's alternative text is exactly the scheme's
+    /// tag for <paramref name="shapeName"/>.
+    /// </returns>
+    /// <remarks>
+    /// This is the name-argument form the ownership scans need: <see cref="ListOwned"/>
+    /// and <see cref="LockOwnedShapes"/> already hold the live name, so composing it
+    /// again would double the staging prefix. The tag is still recomputed from the name,
+    /// never trusted.
+    /// </remarks>
+    private bool CarriesTagForName(Excel.Shape shape, string shapeName)
     {
         ArgumentNullException.ThrowIfNull(shape);
-        ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shapeName);
 
         return string.Equals(
             shape.AlternativeText,
-            ShapeOwnershipTag.ForPrimitiveId(primitiveId),
+            _ownership.TagForName(shapeName),
             StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Composes the shape name this adapter's ownership scheme writes for an identifier.
+    /// </summary>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <returns>The exact shape name to write, find, and remember.</returns>
+    private string NameFor(string primitiveId) => _ownership.NameFor(primitiveId);
 
     /// <summary>
     /// Writes the two ADR-0019 ownership members onto a newly created shape.
@@ -1254,10 +1303,11 @@ public class ExcelShapeWriter(
     /// <param name="shape">The created shape.</param>
     /// <param name="primitiveId">The stable scene primitive identifier.</param>
     /// <returns>The typed result.</returns>
-    private static ShapeWriteOutcome ApplyOwnership(Excel.Shape shape, string primitiveId)
+    private ShapeWriteOutcome ApplyOwnership(Excel.Shape shape, string primitiveId)
     {
-        shape.Name = primitiveId;
-        shape.AlternativeText = ShapeOwnershipTag.ForPrimitiveId(primitiveId);
+        string name = NameFor(primitiveId);
+        shape.Name = name;
+        shape.AlternativeText = _ownership.TagForName(name);
 
         // ADR-0055: an owned shape is locked by default, so the user cannot drag it out of place
         // by accident. `Locked` is inert until the worksheet is protected, which the refresh arms
