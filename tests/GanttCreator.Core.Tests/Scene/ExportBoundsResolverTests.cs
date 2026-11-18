@@ -420,4 +420,52 @@ public sealed class ExportBoundsResolverTests
 
         Assert.Equal(first.Bounds, second.Bounds);
     }
+
+    [Fact]
+    public void The_resolved_scene_is_the_scene_the_bounds_were_read_from()
+    {
+        // R6.2 amendment: the bounds describe a scene, so the scene is carried on the
+        // outcome rather than discarded. The composition consumes this scene instead of
+        // building a second one, which is what keeps the bounds and the staged shapes
+        // from being two authorities over the same composition.
+        ExportBoundsOutcome outcome = ExportBoundsResolver.TryResolve(
+            Request(),
+            _panelTheme,
+            ExportSelection.TablePlusChart);
+
+        Assert.True(outcome.Succeeded, "Resolution refused: " + outcome.Refusal);
+        Assert.NotNull(outcome.Scene);
+
+        // The bounds are exactly the carried scene's chart bounds - the same object
+        // graph, not a recomputation that could drift.
+        Assert.Equal(outcome.Scene!.ChartBounds, outcome.Bounds!.ChartBounds);
+
+        // And the carried scene is byte-for-byte the export scene a direct build
+        // produces: same primitive identifiers in the same order, same plot.
+        SceneBuildOutcome direct = SceneBuilder.TryBuild(
+            Request() with
+            {
+                Profile = SceneCompositionProfile.EditableExport,
+                Panel = _panelTheme,
+            });
+        Assert.NotNull(direct.Result);
+        Assert.Equal(direct.Result!.Scene!.PlotBounds, outcome.Scene.PlotBounds);
+        Assert.Equal(
+            direct.Result.Scene.Primitives.Select(primitive => primitive.PrimitiveId),
+            outcome.Scene.Primitives.Select(primitive => primitive.PrimitiveId));
+    }
+
+    [Fact]
+    public void A_refusal_carries_no_scene()
+    {
+        // The scene member is success-only, so a caller cannot stage a partial
+        // composition from a refused resolution.
+        ExportBoundsOutcome outcome = ExportBoundsResolver.TryResolve(
+            Request(events: []),
+            _panelTheme,
+            ExportSelection.TablePlusChart);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Null(outcome.Scene);
+    }
 }

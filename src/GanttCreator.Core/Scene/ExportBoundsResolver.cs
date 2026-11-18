@@ -8,10 +8,22 @@ namespace GanttCreator.Core.Scene;
 /// <see cref="ExportBoundsRefusal.SceneBuildRefused"/>, so the underlying cause is not
 /// lost behind the export classification.
 /// </param>
+/// <param name="Scene">
+/// The export scene the bounds were read from, or <see langword="null"/> on a refusal.
+/// </param>
+/// <remarks>
+/// <b>The scene rides the outcome (R6.2 amendment).</b> The resolver already builds the
+/// export scene to read its <see cref="GanttScene.ChartBounds"/>; discarding it forced
+/// R6.2's composition to build the same scene a second time, which is a second authority
+/// waiting to disagree. The scene is carried here so the composition consumes the exact
+/// scene the bounds describe, in one build. The member is additive and defaults to
+/// <see langword="null"/>: every existing caller that reads only the bounds is unchanged.
+/// </remarks>
 public sealed record ExportBoundsOutcome(
     ExportBounds? Bounds,
     ExportBoundsRefusal? Refusal,
-    SceneBuilderRefusal? SceneRefusal)
+    SceneBuilderRefusal? SceneRefusal,
+    GanttScene? Scene = null)
 {
     /// <summary>Gets whether the resolution succeeded.</summary>
     public bool Succeeded => Bounds is not null;
@@ -131,7 +143,11 @@ public static class ExportBoundsResolver
 
         SceneBuildOutcome build = SceneBuilder.TryBuild(exportRequest);
         return build.Result is { } result
-            ? new ExportBoundsOutcome(new ExportBounds(result.Scene.ChartBounds), null, null)
+            ? new ExportBoundsOutcome(
+                new ExportBounds(result.Scene.ChartBounds),
+                null,
+                null,
+                result.Scene)
             : new ExportBoundsOutcome(null, ExportBoundsRefusal.SceneBuildRefused, build.Refusal);
     }
 
