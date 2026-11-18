@@ -49,6 +49,17 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 . (Join-Path $scriptRoot 'verify-helpers.ps1')
 
+# An unexpected terminating error must still name itself in the check-run
+# annotations: without this the step reports only "Process completed with exit
+# code 1", which is the gap that made the 2026-11-18 CI failure unreadable.
+trap {
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        Write-Host (Format-CheckAnnotation -Title 'test-scripts: unhandled error' -Message $_.Exception.Message)
+    }
+    Write-Error -Message $_.Exception.Message -ErrorAction Continue
+    exit 1
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 # Join-Path concatenates rather than resolving a rooted second argument, so an
 # absolute -ScriptsRoot (used by this script's own fixture tests) would become
@@ -77,6 +88,9 @@ if (-not $installedPester -or $installedPester.Version.Major -lt $script:minPest
         Install-Module -Name Pester -MinimumVersion "$($script:minPesterMajor).0" -Scope CurrentUser -Force -SkipPublisherCheck
     }
     catch {
+        if ($env:GITHUB_ACTIONS -eq 'true') {
+            Write-Host (Format-CheckAnnotation -Title 'test-scripts: Pester install failed' -Message $_.Exception.Message)
+        }
         Write-Error "Failed to install Pester: $_"
         exit 1
     }
@@ -87,6 +101,9 @@ try {
     Import-Module Pester -MinimumVersion "$($script:minPesterMajor).0" -ErrorAction Stop
 }
 catch {
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        Write-Host (Format-CheckAnnotation -Title 'test-scripts: Pester import failed' -Message $_.Exception.Message)
+    }
     Write-Error "Pester $($script:minPesterMajor).0+ not available: $_"
     exit 1
 }
@@ -101,8 +118,12 @@ if ($testFiles.Count -eq 0) {
     # No-silent-pass policy: a gate that finds nothing to check proves
     # nothing about scripts/ health, so an empty discovery is a failure
     # with an instruction, never a PASS.
-    Write-Error ("test-scripts: No *.Tests.ps1 files found in '$scriptsDir'. " +
-        'The script-lint gate requires at least one Pester test file.')
+    $message = "test-scripts: No *.Tests.ps1 files found in '$scriptsDir'. " +
+        'The script-lint gate requires at least one Pester test file.'
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        Write-Host (Format-CheckAnnotation -Title 'test-scripts: no test files' -Message $message)
+    }
+    Write-Error $message
     exit 1
 }
 
@@ -180,6 +201,13 @@ else {
 # streams and the exit code.
 $verdict = Get-ScriptTestGateVerdict -Results @($results) -DiscoveredCount $testFiles.Count
 foreach ($line in $verdict.Lines) { Write-Host $line }
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    # A verdict error is not a failed test (a zero-test file or a lost worker),
+    # so the per-test loop below cannot report it; annotate it here.
+    foreach ($message in $verdict.Errors) {
+        Write-Host (Format-CheckAnnotation -Title 'test-scripts: verdict error' -Message $message)
+    }
+}
 foreach ($message in $verdict.Errors) { Write-Error -Message $message -ErrorAction Continue }
 
 Write-Host "test-scripts: Total=$($verdict.Total), Passed=$($verdict.Passed), Failed=$($verdict.Failed)"
