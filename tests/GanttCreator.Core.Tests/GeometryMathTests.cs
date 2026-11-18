@@ -42,6 +42,15 @@ public sealed class GeometryMathTests
             10.0 + (HostOwnedGeometry.GeometryMatchTolerancePt * 2),
             HostOwnedGeometry.GeometryMatchTolerancePt));
 
+    [Fact]
+    public void ApproximatelyEqual_with_a_tolerance_accepts_the_exact_boundary() =>
+        // The comparison is inclusive at the tolerance: the difference equals the
+        // tolerance exactly, and a strict '<' would reject it.
+        Assert.True(GeometryMath.ApproximatelyEqual(
+            0.0,
+            HostOwnedGeometry.GeometryMatchTolerancePt,
+            HostOwnedGeometry.GeometryMatchTolerancePt));
+
     [Theory]
     [InlineData(double.NaN, 1.0)]
     [InlineData(1.0, double.PositiveInfinity)]
@@ -61,6 +70,16 @@ public sealed class GeometryMathTests
     }
 
     [Theory]
+    [InlineData(float.MaxValue)]
+    [InlineData(-float.MaxValue)]
+    public void SnapToDisplayPrecision_accepts_the_float_range_boundaries(float boundary)
+    {
+        // Both range checks are inclusive at the boundary: a strict comparison would
+        // refuse a value that is representable as a finite float.
+        Assert.Equal(boundary, GeometryMath.SnapToDisplayPrecision(boundary));
+    }
+
+    [Theory]
     [InlineData(double.NaN)]
     [InlineData(double.PositiveInfinity)]
     [InlineData(double.NegativeInfinity)]
@@ -69,6 +88,7 @@ public sealed class GeometryMathTests
         ArgumentOutOfRangeException exception = Assert.Throws<ArgumentOutOfRangeException>(
             () => GeometryMath.SnapToDisplayPrecision(value));
         Assert.Equal("value", exception.ParamName);
+        Assert.Contains("Geometry must be finite", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

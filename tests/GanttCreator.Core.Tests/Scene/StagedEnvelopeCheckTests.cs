@@ -114,6 +114,40 @@ public sealed class StagedEnvelopeCheckTests
     }
 
     [Fact]
+    public void Every_edge_at_the_host_tolerance_boundary_is_inside()
+    {
+        // The stray test is inclusive at the boundary on every edge. Each envelope below
+        // sits exactly ON one edge's tolerance boundary, with the other edges well inside,
+        // and a strict comparison would report it as a stray. Zero-width/zero-height
+        // envelopes are used so the computed Right/Bottom equal the placed coordinate
+        // exactly (RectD computes them as X + Width and Y + Height).
+        double tolerance = HostOwnedGeometry.GeometryMatchTolerancePt;
+
+        RectD topAtBoundary = new(
+            _expected.Left,
+            _expected.Top - tolerance,
+            _expected.Width,
+            _expected.Height);
+        RectD rightAtBoundary = new(
+            _expected.Right + tolerance,
+            _expected.Top,
+            0,
+            _expected.Height);
+        RectD bottomAtBoundary = new(
+            _expected.Left,
+            _expected.Bottom + tolerance,
+            _expected.Width,
+            0);
+
+        StagedEnvelopeResult result = StagedEnvelopeCheck.Evaluate(
+            [topAtBoundary, rightAtBoundary, bottomAtBoundary],
+            _expected,
+            tolerance);
+
+        Assert.Empty(result.Strays);
+    }
+
+    [Fact]
     public void An_envelope_beyond_the_host_tolerance_is_still_a_stray()
     {
         // The host tolerance is not a blanket: twice it is a real disagreement, and the
