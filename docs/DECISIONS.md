@@ -63,6 +63,7 @@
 | ADR-0063 | Ribbon glyphs use a two-palette Lucide set and a guarded Office theme probe | Accepted | 2026-11-16 | [`adr/0063-ribbon-glyph-palette-and-office-theme-probe.md`](adr/0063-ribbon-glyph-palette-and-office-theme-probe.md) |
 | ADR-0064 | A user-authored `Activity ID` column leads the visible columns | Accepted | 2026-11-17 | [`adr/0064-activity-id-column.md`](adr/0064-activity-id-column.md) |
 | ADR-0065 | Zero visible table columns are a supported state, and the Columns control toggles all of them | Accepted | 2026-11-17 | [`adr/0065-zero-visible-columns.md`](adr/0065-zero-visible-columns.md) |
+| ADR-0066 | Deleting staging shapes after `ShapeRange.Copy` preserves the Office drawing clipboard format | Accepted | 2026-11-18 | [`adr/0066-copy-after-delete-preserves-the-drawing-format.md`](adr/0066-copy-after-delete-preserves-the-drawing-format.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,

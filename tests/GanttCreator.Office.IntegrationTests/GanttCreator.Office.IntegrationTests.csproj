@@ -9,6 +9,13 @@
     <RootNamespace>GanttCreator.Office.IntegrationTests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!--
+      Required by the LibraryImport source generator. ClipboardFormatProbe uses
+      source-generated P/Invoke for the Win32 clipboard calls; the generator
+      emits unsafe code even for blittable signatures (SYSLIB1062). The probe
+      is the only consumer and no hand-written unsafe code exists in the project.
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
