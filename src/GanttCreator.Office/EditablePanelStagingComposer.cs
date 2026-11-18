@@ -347,7 +347,23 @@ public static class EditablePanelStagingComposer
         using IDisposable batch = port.BeginBatch();
         foreach (OfficeShapeRequest request in requests)
         {
-            ShapeWriteOutcome write = port.Create(request);
+            ShapeWriteOutcome write;
+            try
+            {
+                write = port.Create(request);
+            }
+#pragma warning disable CA1031
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // R6.5: an exception is the operation's report, but shapes already staged
+                // must not outlive it. The birth list is the only registry this class owns,
+                // so cleanup runs here rather than in a caller that cannot see it. The
+                // exception is rethrown unchanged after the reverse-order cleanup.
+                CleanupStaged(port, staged);
+                throw;
+            }
+
             if (!write.Succeeded)
             {
                 CleanupStaged(port, staged);

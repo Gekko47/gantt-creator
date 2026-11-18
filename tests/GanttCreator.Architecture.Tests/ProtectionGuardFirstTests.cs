@@ -274,6 +274,12 @@ public sealed class ProtectionGuardFirstTests
         // performs the guard-first ordering. Classifying it read-only here is the accurate
         // statement that this file itself has nothing to guard.
         "src/GanttCreator.Office/EditablePanelStagingComposer.cs",
+        // R6.5: the staging lifecycle. Like the composer and the grouper it holds no COM
+        // proxy and performs no direct mutation: compose, group, delete and the copy seam
+        // all go through the injected ports, whose registered mutating implementations
+        // perform the guard-first ordering. A guard read here would be unreachable code
+        // rather than a missing guard.
+        "src/GanttCreator.Office/StagingLifecycle.cs",
 
         // Composes a style record from the code-owned catalogue; writes nothing and
         // touches no COM object, so it is read-only and consults no guard.
