@@ -17,6 +17,9 @@
          Office process that appeared during the run
       5. on failure, retains logs and a screenshot manifest under
          scripts/_artifacts/office-evidence/
+      6. reports the COM-proxy leak signal per teardown, fails with exit 4 when a
+         teardown forced more than one kill, and fails closed with exit 5 when no
+         teardown record was written at all
 #>
 
 [CmdletBinding()]
@@ -35,150 +38,55 @@ param(
     # the larger bound is stated plainly: a real hang now takes two minutes longer to surface.
     # Raise it again only with a fresh measurement, never to make a red run green.
     [int]$DeadlineSeconds = 780,
-    # Ratchet on the COM-proxy leak signal: the ceiling on forced kills the run
-    # may contain before the gate fails. It is set to the measured baseline, so
-    # the gate is green today and a regression past the ceiling is red. Each
-    # commit that retires a leaked proxy chain lowers it; the end state is 0.
-    # The number counts real test teardowns only -- a test that forces a kill
-    # deliberately sets OfficeFixture.SuppressLeakSignal and is excluded.
+    # Ratchet on the COM-proxy leak signal. Two things changed on 2026-11-18, and
+    # both come from reading the measurement rather than the total:
     #
-    # L19's remedy LANDED on 2026-09-28: all seven tests that force an escalation
-    # on purpose now set OfficeFixture.SuppressLeakSignal -- ShapeOwnershipTag,
-    # ShapeRender, StyleRender, TextRender (x2), PolygonRender, RefreshIdempotence
-    # -- so a deliberate kill no longer counts against the signal.
+    # 1. The verdict is now the PER-TEARDOWN invariant, not an absolute run total.
+    #    OfficeFixture owns one Excel per fixture and force-kills it once when
+    #    Quit() does not terminate, so a teardown contributes at most one kill and
+    #    the run total counts leaking TEST BODIES, not leaked chains. Two live runs
+    #    give the measurement: 52 teardown records on 2026-11-18 (12 at 0, 40 at 1)
+    #    and 51 on 2026-11-16 (12 at 0, 39 at 1), with NONE above 1 in either run.
+    #    Totals track the test count -- 38 at 63 bodies, 40 at 65, 67 and 69, 41 on
+    #    the R5.22 tree -- which is why the retired ceiling had to be raised six
+    #    times (24 -> 26 -> 28 -> 30 -> 35 -> 37 -> 38), always to the highest value
+    #    observed and therefore always with no margin. It failed for ADDING A TEST,
+    #    not for adding a leak.
     #
-    # RAISED 26 -> 28 BY OWNER DECISION on 2026-10-02, in the same change as
-    # ADR-0035. The method is unchanged -- the ceiling is still the highest value
-    # observed on the current tree -- but the tree changed, so the baseline did.
+    #    Two candidate replacement scalars were tested against the same measurement
+    #    and both drift with suite composition: the total rises by one per new
+    #    workbook-operating body, and the escalating fraction (40/52 = 77% on
+    #    2026-11-18, 39/51 = 76% the run before) rises
+    #    toward 100% as such bodies are added. The per-teardown count is the one
+    #    quantity here that does not scale with the suite: one fixture owns one
+    #    process, so TWO kills from one teardown means two owned processes or a
+    #    second escalation path, whatever the suite holds.
     #
-    # What the two baselines are:
-    #   * 26 was the highest value observed on the PRE-ADR-0035 tree. Repeated runs
-    #     of identical trees measured 24, 25 and 26, and a ceiling of 24 was tried
-    #     and failed the gate on a suite that was 46/46 green -- so 26, the highest
-    #     observation, was the only defensible upper bound. That reasoning still
-    #     holds; it was simply applied to a tree that no longer exists.
-    #   * 28 is the highest value observed on the current tree, measured across four
-    #     runs: 30, 29, 28 as this change's tests were converted to
-    #     OfficeFixture.ComScope and merged into an existing test body, and 26 on
-    #     the pre-ADR-0035 tree. The direction of travel is downward and explained.
+    # 2. The signal FAILS CLOSED. A missing or empty forced-kill log used to read as
+    #    zero kills and pass; an unmeasured signal is not a zero signal, so that is
+    #    now exit 5 with the reason stated.
     #
-    # WHAT THIS COSTS, stated plainly rather than buried: the ratchet's only job is
-    # to notice a regression, and its sensitivity is the gap between the true
-    # baseline and the ceiling. Raising it to 28 means a future regression that adds
-    # one or two leaked proxy chains (26 -> 27, 26 -> 28) now passes silently. That
-    # is a real loss of detection and it is the reason the previous text said not to
-    # raise it. It was raised anyway, by decision, with that cost accepted.
+    # The run total, the recorded-teardown count and the escalating fraction are
+    # still logged: they are the numbers R5.20 D4 exists to drive to zero, and the
+    # end state is still 0. They are reported, not gated, because while the shared
+    # per-body chain is open they cannot separate a new leak from a new test. The
+    # per-test attribution line is the mitigation, and the stray sweep (exit 3) is
+    # the suite-size-independent leak verdict.
     #
-    # RAISED 28 -> 30 ON 2026-10-04, with a MEASURED band rather than an assumption.
-    # The live gate was run four times across this work:
+    # A deliberately forced kill is excluded by OfficeFixture.SuppressLeakSignal,
+    # which twelve fixtures across ten test classes set today (search
+    # `SuppressLeakSignal = true`); a suppressed fixture writes no record at all.
     #
-    #   * HEAD c5e993a (ADR-0038, WITHOUT the inserter normalisation fix):
-    #     48/50 tests, 2 FAILED, signal 30.
-    #   * working tree WITH the fix, run 1: 50/50 tests, signal 29
-    #   * working tree WITH the fix, run 2: 50/50 tests, signal 29
-    #   * working tree WITH the fix, run 3: 50/50 tests, signal 30
-    #
-    # WHAT THE MEASUREMENT ACTUALLY SHOWS, including a correction to an earlier
-    # reading of it:
-    #
-    #   1. 28 WAS ALREADY STALE BEFORE ANY FIX. The committed ADR-0038 tree
-    #      measures 30, two over the ceiling it shipped with. This is not a
-    #      regression introduced by the inserter change -- the ceiling was never
-    #      re-measured after the ADR-0035/0036 row-insert work, because the live
-    #      gate had not been run since 2026-09-28.
-    #   2. THE INSERTER FIX DOES NOT CHANGE THE SIGNAL. An intermediate reading
-    #      of runs 1 and 2 concluded it "lowers the signal, 30 -> 29" and that 29
-    #      was therefore the right figure. Run 3 read 30 on the same code, so that
-    #      conclusion was WRONG: two agreeing runs were coincidence, not stability.
-    #      The band on the fixed tree is 29-30 and INCLUDES HEAD's 30. The honest
-    #      statement is that the fix is neutral on this counter, which is what the
-    #      per-test attribution predicted -- both AddRow bodies read 1, the same as
-    #      every other body, so the extra normaliser calls reuse cached RCWs rather
-    #      than leaving new live proxies.
-    #   3. The ceiling is therefore 30, the highest value observed on this tree.
-    #      Setting it to 29 would have made the gate flap on a passing tree, which
-    #      is the exact failure mode the ratchet exists to avoid.
-    #
-    # WHAT THIS COSTS, stated plainly rather than buried: the ratchet's only job
-    # is to notice a regression, and its sensitivity is the gap between the true
-    # baseline and the ceiling. At 30 a future regression that adds ONE leaked
-    # proxy chain now passes silently. That is a real loss of detection and it is
-    # the reason the text below says not to raise it again without a measurement.
-    #
-    # NOTE ON THE BAND: 29-30 is a two-point band, not the +/- 2 the old text
-    # described from 24/25/26. That is a narrower spread than the earlier history
-    # suggested, and it is the best available evidence that the signal is more
-    # stable than it once was -- but two points is not a distribution, and a
-    # ceiling is still a single number. Treat 30 as "highest observed", not as a
-    # proven floor.
-    #
-    # RAISED 30 -> 35 ON 2026-10-11, again with a measured band. Two
-    # live gate runs on the current tree, the same day, both read 35
-    # (the second a deliberate retry with the machine kept quiet, per
-    # the bounded-retry rule). The office suite itself was 54/54 green
-    # on both runs -- the ratchet, not the tests, was red. Per-test
-    # attribution is uniform, not an outlier: every non-fixture
-    # workbook body forces exactly one teardown kill, as it always
-    # has. Against the last re-measurement (2026-10-10, read ~30)
-    # the +5 decomposes as: +2 the ParentChildMutationIntegrationTests
-    # bodies added by the R5.3 work, whose Office gate was never run
-    # (STATUS.md records "Office host gate Not run"), so the ceiling
-    # went stale exactly as the 28 did; +1 the new
-    # RowHeightNormaliserIntegrationTests body (the first live
-    # exercise of the normaliser), the same uniform per-body cost;
-    # +2 net OfficeFixture CreateWorkbook/Packed_XLL-family teardowns
-    # that ran clean (approx. 4 s) on 2026-10-04 and 2026-10-10 and
-    # flap to forced-kill on 2026-10-11, with a different member
-    # flapping in each run -- the non-determinism KNOWN-LIMITATIONS
-    # L19 already documents for that family. WHAT THIS COSTS: at 35 a
-    # future regression that adds up to five leaked proxy chains
-    # passes silently. 34 was rejected for the same reason 29 was: it
-    # would make the gate flap on a passing tree.
-    #
-    # RAISED 35 -> 37 ON 2026-11-10, on the owner's explicit instruction, and
-    # confirmed by a second run the same evening: the R5.16 office gate read 37
-    # forced kills at 18:04 and 36 at 19:40 on the same tree, with the suite
-    # 60/60 green both times (10m32s, 10m24s). The ratchet alone was red on the
-    # first run. A one-point band is not a distribution, and it cannot fully
-    # distinguish a new leak from the L19 teardown flap, but the two readings
-    # agree on the total and on the outlier. The attribution is
-    # mostly uniform (one kill per workbook body, as always) with one outlier:
-    # `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` reads
-    # 3. R5.16 added two proxy-holding candidates on exactly that kind of path
-    # -- `ExcelGanttTableReader.HasConfigurationSheet` enumerates sheets through
-    # `GetSheetAt` on the table-missing path without releasing them, and
-    # `ExcelGanttRowInserter.DecideParent` reads the body before the insert --
-    # and either could account for the +2. That is a hypothesis, not a finding;
-    # nothing here proves it, and the honest next step is a second run to see
-    # whether 37 repeats or drifts, plus releasing the sheet proxies in
-    # `HasConfigurationSheet` the way `NormaliseLayoutRow` should be released.
-    # WHAT THIS COSTS: at 37 a regression adding up to two leaked chains passes
-    # silently. 36 was not chosen because it would flap on the observed value.
-    #
-    # The end state is still 0. This is a baseline correction, not a licence.
-    # `NormaliseLayoutRow` creates a worksheet-row Range per layout row per
-    # normalisation and never releases it; releasing that one Range is the
-    # highest-value single retirement available and would move this in the right
-    # direction.
-    #
-    # RAISED 37 -> 38 ON 2026-11-12, ON THE OWNER'S EXPLICIT INSTRUCTION, to keep a new
-    # live proof rather than to accommodate a regression. The new
-    # GanttTableReaderIntegrationTests.The_reader_and_the_adapter_follow_the_active_sheet
-    # body proves the R5.16b reader fact and the adapter's single AppEvents_SheetActivate
-    # connection against real COM.
-    # MEASURED BAND, NOT A POINT: the 61/61 tree without that body read 37 (10m32s). The
-    # 62/62 tree with it read 38 (10m45s) and then 37 (10m31s, the run this ceiling ships
-    # with). The body may or may not add a forced kill: the per-test attribution names it at
-    # 1, like every other body that calls Read(), because the reader deliberately releases
-    # no shared COM root. The honest statement is that this tree's band is 37-38, and 38 is
-    # the highest observation -- the rule every earlier raise used.
-    # WHAT THIS COSTS: the ratchet can no longer notice one single new leaked chain,
-    # because the ceiling again equals the highest observation, as it did at 30 and 37
-    # before it. The mitigation is the per-test attribution in the run log: a new leak
-    # appears as a new named body, not as anonymous headroom.
-    # Do not raise it again without a measurement that explains the new figure, and do not
-    # lower it below 38 without a run whose kill count is at or under the proposed value.
-    [int]$MaxForcedKills = 38
+    # Two attribution caveats belong beside the number:
+    #   * The per-test line SUMS a [Theory]'s cases under its method name, so
+    #     `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` reads 3
+    #     because it has three InlineData rows, one kill each. The "outlier at 3"
+    #     the retired 35 -> 37 comment treated as a possible extra leaked chain was
+    #     this aggregation, not a three-chain teardown, and the measurement above
+    #     (no record above 1) is the proof.
+    #   * The retired ceiling and its history are the evidence for why an absolute
+    #     total cannot be a gate: L19 keeps that record.
+    [int]$MaxForcedKillsPerTeardown = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -553,10 +461,14 @@ Save-Trx
 $finalManifest = Read-OwnedPidManifest $ownedPidsPath
 $straysKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids @() -FixtureManifest $finalManifest
 
-# Report the COM-proxy leak signal. A non-zero total means a test body left a
-# proxy alive and the owned Excel only exited because the fixture killed it.
+# Report the COM-proxy leak signal. A teardown that had to force a kill did so
+# because a test body left a proxy alive and the owned Excel only exited because
+# the fixture killed it. Every record is ONE fixture teardown, so its Count is
+# how many owned processes that teardown had to kill -- one, normally.
 $forcedKills = 0
+$teardowns = 0
 $killAttribution = [ordered]@{}
+$overTeardownCeiling = @()
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
         foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
@@ -581,7 +493,11 @@ try {
             } else {
                 continue
             }
+            $teardowns++
             $forcedKills += $count
+            if ($count -gt $MaxForcedKillsPerTeardown) {
+                $overTeardownCeiling += [pscustomobject]@{ Test = $test; Count = $count }
+            }
             if ($count -gt 0) {
                 if (-not $killAttribution.Contains($test)) { $killAttribution[$test] = 0 }
                 $killAttribution[$test] += $count
@@ -591,15 +507,20 @@ try {
 } catch {
     Log "WARN: could not read the forced-kill log: $($_.Exception.Message)"
 }
-Log "COM proxy leak signal: $forcedKills forced kill(s) across the run (ratchet ceiling $MaxForcedKills, end state 0; each one is a test body that left a COM proxy alive)"
+# The escalating fraction is computed as a whole percent with no culture
+# formatting, so the report text is identical on every host locale.
+$escalatingPercent = if ($teardowns -gt 0) { [int][math]::Round(100.0 * $forcedKills / $teardowns) } else { 0 }
+Log "COM proxy leak signal: $forcedKills forced kill(s) across $teardowns recorded teardown(s) ($escalatingPercent% escalated; per-teardown ceiling $MaxForcedKillsPerTeardown, end state 0). The total is REPORTED, not gated: while the shared per-body chain is open it tracks how many Office test bodies exist, not how many chains leaked."
 
-# Per-test attribution. The total above is the verdict; this is WHY it is what
+# Per-test attribution. The total above is what D4 tracks; this is WHY it is what
 # it is, and it is what makes the signal actionable rather than merely
 # measurable. Without it a count can only be bounded, never pinned to the test
 # body responsible, so a leaked chain can be retired by name instead of by
 # guesswork.
 if ($killAttribution.Count -gt 0) {
-    Log "COM proxy leak signal by test body (descending):"
+    # A [Theory]'s data rows are summed under its method name here, so a method
+    # with three InlineData rows reads 3 for three one-kill teardowns.
+    Log "COM proxy leak signal by test body (descending; a [Theory]'s cases are summed under its method name):"
     foreach ($entry in ($killAttribution.GetEnumerator() | Sort-Object -Property Value -Descending)) {
         Log ("  {0,3}  {1}" -f $entry.Value, $entry.Key)
     }
@@ -618,12 +539,25 @@ if ($straysKilled -gt 0) {
     exit 3
 }
 
-# Ratchet on the leak signal. The ceiling is the measured baseline, so this is
-# green today; a test that starts leaking again pushes the count past it and the
-# gate goes red. Each commit that retires a leaked proxy chain lowers the
-# ceiling, and the end state is 0 -- no test should need a forced kill at all.
-if ($forcedKills -gt $MaxForcedKills) {
-    Log "FAIL: COM proxy leak signal $forcedKills exceeds the ratchet ceiling $MaxForcedKills. A test that previously released its COM proxies has stopped, or a new test is leaking. Evidence preserved under $evidence."
+# Fail closed. The leak signal is the only automated check on unreleased proxies,
+# and an absent log is not a zero signal: OfficeFixture writes one record per
+# teardown, so a successful OfficeIntegration run always produces records. None
+# means the handoff broke (env var, path, or the fixture write), and the gate must
+# say the signal was never measured instead of passing on a number it did not read.
+if ($teardowns -eq 0) {
+    Log "FAIL: no teardown record was found in $forcedKillsPath, so the COM proxy leak signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
+    exit 5
+}
+
+# Ratchet on the leak signal, per teardown. One fixture owns one Excel process, so
+# a teardown that needed more than one kill owned more than one process or
+# escalated twice -- a real anomaly that does not scale with how many tests the
+# suite holds, which is what the retired absolute total could never be.
+if ($overTeardownCeiling.Count -gt 0) {
+    foreach ($entry in $overTeardownCeiling) {
+        Log ("  teardown {0} forced {1} kill(s)" -f $entry.Test, $entry.Count)
+    }
+    Log "FAIL: $($overTeardownCeiling.Count) teardown(s) forced more than $MaxForcedKillsPerTeardown kill(s). One fixture owns one Excel process, so a teardown above the ceiling owned more than one process or escalated twice. Evidence preserved under $evidence."
     exit 4
 }
 

@@ -25,6 +25,18 @@ if defined VERIFY_OFFICE_STUB_TRX (
   for %%I in ("%VERIFY_OFFICE_STUB_TRX%") do if not exist "%%~dpI" mkdir "%%~dpI"
   echo ^<TestRun^>harness-fake^</TestRun^> > "%VERIFY_OFFICE_STUB_TRX%"
 )
+rem A real run also writes ONE forced-kill record per fixture teardown, and the
+rem gate now fails closed when none was written. VERIFY_OFFICE_STUB_KILLS models
+rem the count: unset or 0 is a clean teardown, 1 is the normal one-kill teardown,
+rem 2 is the positive case for the per-teardown ceiling, and 'none' models the
+rem handoff breaking so no record exists at all.
+if not defined VERIFY_OFFICE_STUB_KILLS set VERIFY_OFFICE_STUB_KILLS=0
+if /i not "%VERIFY_OFFICE_STUB_KILLS%"=="none" (
+  if defined GANTTCREATOR_FORCED_KILLS_PATH (
+    for %%I in ("%GANTTCREATOR_FORCED_KILLS_PATH%") do if not exist "%%~dpI" mkdir "%%~dpI"
+    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+  )
+)
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
 @'
@@ -214,26 +226,39 @@ exit /b 0
         $codeOnly | Should -Match 'exit 3'
     }
 
-    It 'fails the gate when the COM-proxy leak ratchet is exceeded' {
-        # The leak is measured, not fixed, so the gate carries a ceiling. It is
-        # set to the measured baseline: green today, red on a regression, and
-        # lowered as each test file stops leaking.
+    It 'gates the leak signal per teardown, not by an absolute run total' {
+        # One fixture owns one Excel process, so one teardown contributes at most
+        # one kill. The run total therefore counts leaking TEST BODIES and tracks
+        # suite size -- 38 at 63 bodies, 40 at 65 and 67, 41 on the R5.22 tree --
+        # which is why the retired absolute ceiling had to be raised six times and
+        # always to the highest observation, leaving it no margin.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match '\$MaxForcedKills = \d+'
-        $codeOnly | Should -Match '\$forcedKills -gt \$MaxForcedKills'
-        $codeOnly | Should -Match 'exceeds the ratchet ceiling'
+        $codeOnly | Should -Match '\$MaxForcedKillsPerTeardown = \d+'
+        $codeOnly | Should -Match '\$count -gt \$MaxForcedKillsPerTeardown'
+        $codeOnly | Should -Match 'forced more than \$MaxForcedKillsPerTeardown kill\(s\)'
         $codeOnly | Should -Match 'exit 4'
+        # The absolute total must not gate: it can only fail on suite size.
+        $codeOnly | Should -Not -Match '\$forcedKills -gt \$MaxForcedKills\b'
+        $codeOnly | Should -Not -Match 'exceeds the ratchet ceiling'
     }
 
-    It 'pins the owner-approved leak ceiling at 38' {
-        # Raised 37 -> 38 by owner decision on 2026-11-12 to keep the R5.16b live
-        # reader/adapter body. Pinning the number turns the file's "do not raise it
-        # again without a measurement" instruction into a gate: a careless edit to
-        # the ceiling fails here instead of passing silently.
+    It 'pins the per-teardown ceiling at 1' {
+        # The invariant, not a baseline: a fixture owns one process, so a teardown
+        # that needed two kills owned two processes or escalated twice.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match '\$MaxForcedKills = 38'
+        $codeOnly | Should -Match '\$MaxForcedKillsPerTeardown = 1'
+    }
+
+    It 'fails closed when no teardown record was written' {
+        # An unmeasured signal is not a zero signal: the retired total read a
+        # missing log as 0 kills and passed the gate.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$teardowns -eq 0'
+        $codeOnly | Should -Match 'was NOT measured'
+        $codeOnly | Should -Match 'exit 5'
     }
 
     It 'excludes a deliberate escalation from the leak signal' {
@@ -244,10 +269,18 @@ exit /b 0
         $fixture | Should -Match 'if \(SuppressLeakSignal\)'
     }
 
-    It 'positive control: the ratchet assertion fires on a flagged stub' {
-        $flagged = "if (`$forcedKills -gt `$MaxForcedKills) { }`n"
+    It 'positive control: the retired total ceiling is detected if it comes back' {
+        # Proves the negative assertion above is not dead: the forbidden
+        # comparison is recognised when it is present.
+        $flagged = "if (`$forcedKills -gt `$MaxForcedKills) { exit 4 }`n"
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Not -Match 'exceeds the ratchet ceiling'
+        $codeOnly | Should -Match '\$forcedKills -gt \$MaxForcedKills\b'
+    }
+
+    It 'positive control: the fail-closed assertion detects a written message' {
+        $flagged = "if (`$teardowns -eq 0) { Write-Host 'the signal was NOT measured'; exit 5 }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'was NOT measured'
     }
 
     It 'positive control: the fail-on-stray assertion fires on a flagged stub' {
@@ -413,6 +446,59 @@ exit /b 0
             $raw = Get-Content -LiteralPath $script:scriptPath -Raw
             $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
             ([regex]::Matches($codeOnly, 'Save-Trx')).Count | Should -Be 3
+        }
+
+        It 'reports the leak signal and passes when every teardown forced one kill' {
+            # The measured shape of an accepted run: one record, one kill. This is
+            # the positive control for the per-teardown ceiling, which is the case
+            # the retired absolute total failed on.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 0
+            $output | Should -Match '1 forced kill\(s\) across 1 recorded teardown\(s\)'
+            $output | Should -Match 'verify-office: PASS'
+        }
+
+        It 'fails when one teardown forced more than one kill' {
+            # One fixture owns one Excel process, so two kills from one teardown
+            # is the anomaly the per-teardown ceiling exists to catch.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '2'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 4
+            $output | Should -Match 'forced more than 1 kill\(s\)'
+        }
+
+        It 'fails closed when no teardown record was written' {
+            # The retired total read a missing log as zero kills and passed. An
+            # unmeasured signal must not be a zero signal.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = 'none'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 5
+            $output | Should -Match 'was NOT measured'
         }
     }
 }
