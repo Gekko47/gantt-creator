@@ -245,6 +245,17 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IShapeWritePort.cs",
         "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
         "src/GanttCreator.Office/ShapeWriteOutcome.cs",
+        // R6.2: the staging ownership scheme and its tag builder. Both are pure -- a name
+        // prefix and a SHA-256-derived tag computed from the shape name. No interop proxy,
+        // no workbook state, and nothing for a protection guard to authorise.
+        "src/GanttCreator.Office/ShapeOwnershipScheme.cs",
+        "src/GanttCreator.Office/ShapeStagingTag.cs",
+        // R6.2: the panel staging composer. It holds no COM proxy and issues no direct
+        // worksheet mutation: every create and delete goes through the injected
+        // IShapeWritePort, whose registered mutating implementation (ExcelShapeWriter)
+        // performs the guard-first ordering. Classifying it read-only here is the accurate
+        // statement that this file itself has nothing to guard.
+        "src/GanttCreator.Office/EditablePanelStagingComposer.cs",
         "src/GanttCreator.Office/ShapeOwnershipTag.cs",
         "src/GanttCreator.Office/ShapeDeltaCache.cs",
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",
