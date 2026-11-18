@@ -8,13 +8,30 @@
 			],
 			"env": {
 				"DEFAULT_MINIMUM_TOKENS": ""
-			}
+			},
+			"alwaysAllow": [
+				"query-docs",
+				"resolve-library-id"
+			]
 		},
 		"microsoft-learn": {
 			"type": "streamable-http",
 			"url": "https://learn.microsoft.com/api/mcp",
 			"alwaysAllow": [
 				"microsoft_docs_search"
+			]
+		},
+		"github": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-github"
+			],
+			"env": {
+				"GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+			},
+			"alwaysAllow": [
+				"list_pull_requests"
 			]
 		}
 	}
