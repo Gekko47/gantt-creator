@@ -92,22 +92,21 @@ both calculate variants. The flap is non-deterministic at the COM level and not 
 operation, so releasing the initialiser's proxies has no supporting evidence. This is the
 bounded-retry stop: two attempts made, both recorded, no speculative product change landed.
 
-**The next experiment is harness ordering, not an adapter.** `OfficeFixture` calls `Quit()` and only
-then finalises: an RCW that is unreleased but unfinalised still holds a reference when `Quit()` runs.
-Phase C0 tests that ordering directly — GC before `Quit()` — because it explains a race that no
-per-adapter release can fix.
+**Phase C0 result (2026-11-18) — the ordering hypothesis is falsified too, before any fixture change.**
+[`probe-quit-ordering.ps1`](../scripts/probe-quit-ordering.ps1) ran the same leaking workload ten
+times under **Quit then GC** and ten times under **GC then Quit**: **10/10 exited in both orders**.
+A companion measurement — one leaking body under `dotnet test --filter` — still read **1 forced kill
+at 10,098 ms**, so the flap is deterministic per body **inside the xUnit host** and does not reproduce
+under PowerShell COM at all. No `OfficeFixture` change is authorised by this evidence.
 
-## Phase C0 — harness ordering (do this before any adapter)
+## Phase C0' — collect the discriminator inside the harness
 
-1. In [`OfficeFixture.DisposeAsync`](../tests/GanttCreator.Office.IntegrationTests/OfficeFixture.cs:836),
-   move the `GC.Collect`/`WaitForPendingFinalizers`/`GC.Collect` pass **before** the `Quit()` attempt,
-   keeping a second pass after it. Everything else stays: the workbook close/release order, the
-   `ReleaseComObject` per proxy, the 10 s graceful bound and its probe.
-2. Contract-test the ordering in `OfficeFixtureTests` (a seam or an ordered-recording double proves
-   the collect happened before the quit), and re-run a filtered body class, then the full gate.
-3. Success is bodies flipping **1 → 0**. If the flap persists, record it, keep the ordering change
-   only if it is independently correct (finalising before quitting is the right order), and stop
-   again — the mechanism is then outside this harness entirely.
+The next step is instrumentation, not a fix: record per teardown the `Quit()` outcome (threw or
+returned), the body's wall time, and whether `Initialise` ran, then compare the leaking and clean
+bodies on the same run. Candidates the data would separate: a host-held RCW (finalisation order is
+irrelevant, which C0 already shows), a `Quit()` refused because the host is busy with the add-in's own
+event plumbing, or an Excel-side pending operation proportional to the work done. Success for this
+phase is a named mechanism, not a green count.
 
 ## Phase C — adapter releases, only after C0
 
