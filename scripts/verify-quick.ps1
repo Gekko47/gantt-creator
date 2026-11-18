@@ -157,7 +157,11 @@ Invoke-Step 'restore' {
     # so --locked-mode is always available. This matches verify.ps1 and
     # proves the lock files are honoured without network access.
     # Pass $Solution explicitly so the step does not depend on the caller's CWD.
-    dotnet restore $Solution --locked-mode
+    # Restore the SAME configuration the build uses: GanttCreator.slnx marks
+    # the test projects Project="false" for Debug|*, and restore honours that,
+    # so a default (Debug) restore leaves them without assets and the Release
+    # build fails on a clean machine (CI, 2026-11-18).
+    dotnet restore $Solution --locked-mode -p:Configuration=$Configuration
 }
 
 Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build.props)' {

@@ -122,7 +122,12 @@ jobs:
             nuget-${{ runner.os }}-
 
       - name: Restore (locked mode)
-        run: dotnet restore --locked-mode
+        # Restore the SAME configuration the build uses. GanttCreator.slnx marks
+        # every test project `Build Solution="Debug|*" Project="false"`, and
+        # restore honours the solution configuration, so a default (Debug)
+        # restore leaves the test projects without obj/project.assets.json and
+        # the Release build then fails on a clean runner (observed 2026-11-18).
+        run: dotnet restore GanttCreator.slnx --locked-mode -p:Configuration=Release
 
       - name: Format check (production only; tests/ tolerated per tests/Directory.Build.props)
         run: dotnet format GanttCreator.slnx --verify-no-changes --exclude tests

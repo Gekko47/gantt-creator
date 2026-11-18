@@ -152,6 +152,24 @@ steps:
         '- run: dotnet format GanttCreator.slnx --verify-no-changes --exclude tests' | Should -Not -Match '(?mi)^\s*-?\s*(?:run:\s*)?dotnet\s+(?!format\b|restore\b)[a-z][a-z0-9-]*\b'
     }
 
+    It 'restores the configuration the build uses (test projects are Debug-excluded in the solution)' {
+        # Regression, CI 2026-11-18: GanttCreator.slnx marks every test project
+        # `Build Solution="Debug|*" Project="false"`, and restore honours the
+        # solution configuration. A default (Debug) restore therefore leaves the
+        # test projects without obj/project.assets.json, and the Release build
+        # then fails with "Assets file ... not found". Every restore that feeds a
+        # Release build must name the same configuration.
+        $block = Get-CiStepBlock -Text $script:ciText -StepName 'Restore (locked mode)'
+        $block | Should -Not -BeNullOrEmpty
+        $block | Should -Match 'dotnet restore .*--locked-mode'
+        $block | Should -Match '-p:Configuration=Release'
+
+        $repoRoot = Split-Path -Parent $PSScriptRoot
+        $expected = 'dotnet restore \$Solution --locked-mode -p:Configuration=\$Configuration'
+        (Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify-quick.ps1') -Raw) | Should -Match $expected
+        (Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\verify.ps1') -Raw) | Should -Match $expected
+    }
+
     It 'test step delegates to scripts/test-non-office.ps1 (verify-quick parity)' {
         # The non-Office dotnet test command is version-sensitive and must
         # not be re-implemented inline in the workflow; the step points at
