@@ -202,7 +202,7 @@ The editable export must contain no live cells because PowerPoint cannot preserv
 Process:
 
 1. Build the export scene only when **Copy Editable** or **Send to PowerPoint** is clicked.
-2. Place temporary shapes at a deterministic staging origin on the same worksheet, outside the user's working view, without writing cells or adding a sheet.
+2. Place temporary shapes at a deterministic staging origin on the same worksheet, outside the user's working view, without writing cells or adding a sheet. The staging identity is fixed (R6.2): a staged shape's `Name` is `GanttCreatorStaging:` followed by the primitive identifier, and its `AlternativeText` is `GanttCreator.Staging.v1:{hash}` recomputed from that name. Because the live reconciler proves ownership by recomputing the expected tag from the shape name, neither ownership scan can classify the other family's shapes, so a coalesced refresh during staging cannot touch the staging shapes and a staging cleanup cannot touch the chart (`ShapeOwnershipScheme`).
 3. Group all temporary shapes and verify group bounds against the scene bounds.
 4. Copy the group with `ShapeRange.Copy`.
 5. For clipboard-only copy, verify an expected Office drawing clipboard format is present before reporting success.
