@@ -34,13 +34,13 @@ if not defined VERIFY_OFFICE_STUB_KILLS set VERIFY_OFFICE_STUB_KILLS=0
 if /i not "%VERIFY_OFFICE_STUB_KILLS%"=="none" (
   if defined GANTTCREATOR_FORCED_KILLS_PATH (
     for %%I in ("%GANTTCREATOR_FORCED_KILLS_PATH%") do if not exist "%%~dpI" mkdir "%%~dpI"
-    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0,"Quit":"returned","BodyMs":1234}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
   )
 )
 rem VERIFY_OFFICE_STUB_CLEAN=1 adds a second record whose teardown exited
 rem gracefully, so a test can prove the clean list is reported too.
 if "%VERIFY_OFFICE_STUB_CLEAN%"=="1" (
-  echo {"Test":"stub-clean","Count":0,"GracefulExitMs":0}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+  echo {"Test":"stub-clean","Count":0,"GracefulExitMs":0,"Quit":"returned","BodyMs":900}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
 )
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
@@ -298,6 +298,17 @@ exit /b 0
         $codeOnly | Should -Match 'StringComparer\]::Ordinal'
     }
 
+    It 'reports what Quit() did in each recorded teardown' {
+        # A Quit that returns while the process survives and a Quit the host
+        # refuses are different defects, and the count alone cannot tell them
+        # apart. R5.18n D4 needs the outcome in the run log.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$quitOutcomes'
+        $codeOnly | Should -Match "Properties\['Quit'\]"
+        $codeOnly | Should -Match 'by Quit\(\) outcome'
+    }
+
     It 'positive control: the fail-on-stray assertion fires on a flagged stub' {
         # Ensures the negative assertion above can detect a regression where the
         # stray verdict is removed.
@@ -531,6 +542,22 @@ exit /b 0
             $output | Should -Match '1 forced kill\(s\) across 2 recorded teardown\(s\)'
             $output | Should -Match 'clean teardowns'
             $output | Should -Match 'stub-clean'
+        }
+
+        It 'reports the Quit() outcome the records carry' {
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 0
+            $output | Should -Match 'by Quit\(\) outcome'
+            $output | Should -Match 'returned'
         }
     }
 }

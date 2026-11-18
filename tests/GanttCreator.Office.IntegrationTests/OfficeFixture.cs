@@ -49,6 +49,35 @@ internal class OfficeFixture : IAsyncLifetime
     private bool _disposed;
 
     /// <summary>
+    /// Runs from construction, i.e. from the start of the test body, so the teardown
+    /// record can report how long the body worked before it let go.
+    /// </summary>
+    /// <remarks>
+    /// R5.18n D4's surviving correlation is "a body that operates on a workbook
+    /// leaks, one that does not is clean". Duration is the cheapest proxy for that
+    /// on the record, and it costs one stopwatch per fixture.
+    /// </remarks>
+    private readonly Stopwatch _lifetime = Stopwatch.StartNew();
+
+    /// <summary>
+    /// What teardown's <c>Quit()</c> attempt did: <c>returned</c>, a
+    /// <c>com:0x…</c> refusal, <c>error:Type</c> for anything else, or
+    /// <c>not-attempted</c> when there was no application to quit.
+    /// </summary>
+    /// <remarks>
+    /// A <c>Quit()</c> that RETURNS while the process survives and a <c>Quit()</c>
+    /// the host REFUSES are different defects, and the forced-kill count cannot tell
+    /// them apart. Recorded in the forced-kill log so one run names the mechanism.
+    /// </remarks>
+    private string _quitOutcome = "not-attempted";
+
+    /// <summary>How long this fixture's body had been running when teardown began.</summary>
+    internal long LifetimeMs => _lifetime.ElapsedMilliseconds;
+
+    /// <summary>What teardown's <c>Quit()</c> attempt did.</summary>
+    internal string QuitOutcome => _quitOutcome;
+
+    /// <summary>
     /// Every EXCEL.EXE process this launch created, in discovery order. A single
     /// <c>new Application()</c> can start more than one process, so the first is
     /// the primary tracked PID and the rest are recorded too; otherwise those
@@ -78,6 +107,13 @@ internal class OfficeFixture : IAsyncLifetime
     /// must not be set in a shipping gate.
     /// </summary>
     internal const string GracefulExitSecondsVariable = "GANTTCREATOR_GRACEFUL_EXIT_SECONDS";
+
+    /// <summary>
+    /// Environment variable naming the forced-kill log the verifying shell reads.
+    /// Single authority for the name: the writer and the contract test that asserts
+    /// the record's shape must not drift apart.
+    /// </summary>
+    internal const string ForcedKillsPathVariable = "GANTTCREATOR_FORCED_KILLS_PATH";
 
     /// <summary>
     /// How long the owned process gets to exit on its own after <c>Quit()</c> and
@@ -249,6 +285,18 @@ internal class OfficeFixture : IAsyncLifetime
     /// Best-effort, like the PID handoff: it is diagnostics, never a pass/fail
     /// input, and a failure to write must not fail the test.
     /// </remarks>
+    /// <summary>
+    /// Asks the owned Excel to quit. Virtual so a contract test can drive the
+    /// recorded outcome without a host — a seam that throws must be recorded as a
+    /// refusal, not mistaken for a clean shutdown.
+    /// </summary>
+    /// <param name="application">The owned application.</param>
+    internal virtual void QuitApplication(Application application)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        application.Quit();
+    }
+
     internal void ReportForcedKillCount()
     {
         if (SuppressLeakSignal)
@@ -256,7 +304,7 @@ internal class OfficeFixture : IAsyncLifetime
             return;
         }
 
-        var path = Environment.GetEnvironmentVariable("GANTTCREATOR_FORCED_KILLS_PATH");
+        string? path = Environment.GetEnvironmentVariable(ForcedKillsPathVariable);
         if (string.IsNullOrEmpty(path))
         {
             return;
@@ -267,7 +315,12 @@ internal class OfficeFixture : IAsyncLifetime
             // The test identity is captured when the fixture is CONSTRUCTED -- see the
             // _testName remarks for why it cannot be resolved at report time.
             string record = System.Text.Json.JsonSerializer.Serialize(
-                new ForcedKillRecord(_testName, ForcedKillCount, LastGracefulExitElapsedMs));
+                new ForcedKillRecord(
+                    _testName,
+                    ForcedKillCount,
+                    LastGracefulExitElapsedMs,
+                    _quitOutcome,
+                    _lifetime.ElapsedMilliseconds));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -283,7 +336,14 @@ internal class OfficeFixture : IAsyncLifetime
     /// <param name="Test">The test body's name, or <see langword="null"/> when it could not be resolved.</param>
     /// <param name="Count">How many forced kills this teardown escalated to.</param>
     /// <param name="GracefulExitMs">How long the graceful poll ran before the kill was issued.</param>
-    private sealed record ForcedKillRecord(string? Test, int Count, long GracefulExitMs);
+    /// <param name="Quit">What teardown's <c>Quit()</c> attempt did.</param>
+    /// <param name="BodyMs">How long the body had been running when teardown began.</param>
+    private sealed record ForcedKillRecord(
+        string? Test,
+        int Count,
+        long GracefulExitMs,
+        string Quit,
+        long BodyMs);
 
     /// <summary>
     /// Names the test method that is tearing this fixture down.
@@ -835,12 +895,15 @@ internal class OfficeFixture : IAsyncLifetime
         // execute Quit() and ReleaseComObject in a separate phase.
         try
         {
-            _excel.Quit();
+            QuitApplication(_excel);
+            _quitOutcome = "returned";
         }
         catch (COMException ex)
         {
-            // Excel may already be shutting down; capture if this is the
-            // first error we've seen.
+            // Excel refused or was already shutting down. The outcome is recorded
+            // because a refused Quit and a Quit that returns while the process
+            // survives are different defects (R5.18n D4).
+            _quitOutcome = $"com:0x{ex.HResult:X8}";
             if (cleanupException == null)
             {
                 cleanupException = ex;
@@ -849,6 +912,7 @@ internal class OfficeFixture : IAsyncLifetime
 #pragma warning disable CA1031 // General-completed: intentionally aggregated; first failure preserved and rethrown via ExceptionDispatchInfo.
         catch (Exception ex)
         {
+            _quitOutcome = $"error:{ex.GetType().Name}";
             if (cleanupException == null)
             {
                 cleanupException = ex;

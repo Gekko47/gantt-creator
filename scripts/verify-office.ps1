@@ -469,6 +469,7 @@ $forcedKills = 0
 $teardowns = 0
 $killAttribution = [ordered]@{}
 $cleanTeardowns = [System.Collections.Generic.List[string]]::new()
+$quitOutcomes = [ordered]@{}
 $overTeardownCeiling = @()
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
@@ -477,6 +478,7 @@ try {
             if ($trimmed.Length -eq 0) { continue }
             $count = 0
             $test = $null
+            $quit = $null
             if ($trimmed.StartsWith('{')) {
                 # One fixture teardown's contribution, with the test that caused it
                 # (ADR-0035's determinism work). The total is unchanged by the
@@ -486,6 +488,7 @@ try {
                     $rec = $trimmed | ConvertFrom-Json -ErrorAction Stop
                     $count = [int]$rec.Count
                     $test = [string]$rec.Test
+                    if ($rec.PSObject.Properties['Quit']) { $quit = [string]$rec.Quit }
                 } catch { continue }
             } elseif ([int]::TryParse($trimmed, [ref]$count)) {
                 # A bare integer from an older evidence file: still summed, so a
@@ -496,6 +499,10 @@ try {
             }
             $teardowns++
             $forcedKills += $count
+            if (-not [string]::IsNullOrEmpty($quit)) {
+                if (-not $quitOutcomes.Contains($quit)) { $quitOutcomes[$quit] = 0 }
+                $quitOutcomes[$quit]++
+            }
             if ($count -gt $MaxForcedKillsPerTeardown) {
                 $overTeardownCeiling += [pscustomobject]@{ Test = $test; Count = $count }
             }
@@ -542,6 +549,16 @@ if ($cleanTeardowns.Count -gt 0) {
     Log "COM proxy leak signal, clean teardowns (the fixture's process exited without a kill):"
     foreach ($name in $cleanTeardowns) {
         Log ("  {0,3}  {1}" -f 0, $name)
+    }
+}
+
+# What Quit() did in each recorded teardown. A Quit that RETURNS while the process
+# survives is a different defect from one the host REFUSES, and R5.18n D4 needs
+# that distinction in the run log rather than in a probe that cannot reproduce it.
+if ($quitOutcomes.Count -gt 0) {
+    Log "COM proxy leak signal by Quit() outcome:"
+    foreach ($entry in ($quitOutcomes.GetEnumerator() | Sort-Object -Property Key)) {
+        Log ("  {0,3}  {1}" -f $entry.Value, $entry.Key)
     }
 }
 

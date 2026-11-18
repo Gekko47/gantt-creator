@@ -101,12 +101,18 @@ under PowerShell COM at all. No `OfficeFixture` change is authorised by this evi
 
 ## Phase C0' — collect the discriminator inside the harness
 
-The next step is instrumentation, not a fix: record per teardown the `Quit()` outcome (threw or
-returned), the body's wall time, and whether `Initialise` ran, then compare the leaking and clean
-bodies on the same run. Candidates the data would separate: a host-held RCW (finalisation order is
-irrelevant, which C0 already shows), a `Quit()` refused because the host is busy with the add-in's own
-event plumbing, or an Excel-side pending operation proportional to the work done. Success for this
-phase is a named mechanism, not a green count.
+**Landed 2026-11-18.** `OfficeFixture` records `Quit` (returned / `com:0x…` / `error:Type` /
+`not-attempted`) and `BodyMs` per teardown, one contract test pins the record shape, and
+`verify-office.ps1` prints a `Quit()` outcome histogram beside the attribution.
+
+**First measurement:** an isolated leaking body read `Quit:"returned"`, `BodyMs:11883`, killed after
+`GracefulExitMs:10083` — Excel accepted the quit and survived. Nulling the body's adapter local
+before teardown changed nothing (`10086 ms`), so "Quit refused" and "adapter instance rooted" are both
+out.
+
+**Next experiment is host-scoped:** single-threaded apartment host, and a clean body immediately
+before the leaking one in the same process, to separate a host-wide surviving reference from a
+body-scoped one. Success is a named mechanism, not a green count.
 
 ## Phase C — adapter releases, only after C0
 

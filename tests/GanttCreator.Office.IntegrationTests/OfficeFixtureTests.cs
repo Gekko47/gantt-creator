@@ -569,6 +569,47 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task Teardown_records_the_quit_outcome_and_the_body_duration()
+    {
+        // R5.18n D4's discriminator: a Quit() that returns while the process
+        // survives and a Quit() the host refuses are different defects, and the
+        // count cannot tell them apart. The record carries both the outcome and how
+        // long the body worked, so one live run names the mechanism.
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            "office-fixture-record-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        string? previousPath = Environment.GetEnvironmentVariable(
+            OfficeFixture.ForcedKillsPathVariable);
+        Environment.SetEnvironmentVariable(OfficeFixture.ForcedKillsPathVariable, path);
+        try
+        {
+            var fixture = new ReportingStubbornFixture { LivePid = 4343 };
+
+            await fixture.DisposeStubbornAsync().ConfigureAwait(true);
+
+            // No application was launched here, so the outcome is the sentinel that
+            // distinguishes "nothing to quit" from "quit returned".
+            Assert.Equal("not-attempted", fixture.QuitOutcome);
+            Assert.True(fixture.LifetimeMs >= 0);
+
+            string[] lines = await File.ReadAllLinesAsync(path).ConfigureAwait(true);
+            string line = Assert.Single(lines);
+            Assert.Contains("\"Quit\":\"not-attempted\"", line, StringComparison.Ordinal);
+            Assert.Contains("\"BodyMs\":", line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                OfficeFixture.ForcedKillsPathVariable, previousPath);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task Teardown_reports_a_process_that_outlives_the_forced_kill()
     {
         // A kill that does not take effect must not be tolerated silently: the
@@ -660,6 +701,17 @@ public class OfficeFixtureTests
         {
             KilledProcessIds.Add(processId);
             return processId != 0;
+        }
+    }
+
+    /// <summary>A stubborn fixture that still reports its kill, so the record shape can be asserted.</summary>
+    private sealed class ReportingStubbornFixture : StubbornFixture
+    {
+        public ReportingStubbornFixture()
+        {
+            // The base suppresses the signal because its kill is deliberate; this
+            // variant writes the record so the test can read its shape.
+            SuppressLeakSignal = false;
         }
     }
 
