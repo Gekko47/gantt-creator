@@ -468,6 +468,7 @@ $straysKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBefore
 $forcedKills = 0
 $teardowns = 0
 $killAttribution = [ordered]@{}
+$cleanTeardowns = [System.Collections.Generic.List[string]]::new()
 $overTeardownCeiling = @()
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
@@ -498,6 +499,14 @@ try {
             if ($count -gt $MaxForcedKillsPerTeardown) {
                 $overTeardownCeiling += [pscustomobject]@{ Test = $test; Count = $count }
             }
+            if ($count -eq 0) {
+                # A clean teardown is part of the measurement, not noise: it is a
+                # body that released everything it acquired, so the difference
+                # between a leaking body and a clean one is visible in every run
+                # without a probe being written.
+                $cleanTeardowns.Add(
+                    [string]::IsNullOrEmpty($test) ? '(unattributed teardown)' : $test)
+            }
             if ($count -gt 0) {
                 if (-not $killAttribution.Contains($test)) { $killAttribution[$test] = 0 }
                 $killAttribution[$test] += $count
@@ -523,6 +532,16 @@ if ($killAttribution.Count -gt 0) {
     Log "COM proxy leak signal by test body (descending; a [Theory]'s cases are summed under its method name):"
     foreach ($entry in ($killAttribution.GetEnumerator() | Sort-Object -Property Value -Descending)) {
         Log ("  {0,3}  {1}" -f $entry.Value, $entry.Key)
+    }
+}
+
+# The clean side of the same measurement. Ordinal sort, so the list is identical
+# on every host locale and two runs can be diffed.
+if ($cleanTeardowns.Count -gt 0) {
+    $cleanTeardowns.Sort([System.StringComparer]::Ordinal)
+    Log "COM proxy leak signal, clean teardowns (the fixture's process exited without a kill):"
+    foreach ($name in $cleanTeardowns) {
+        Log ("  {0,3}  {1}" -f 0, $name)
     }
 }
 

@@ -71,7 +71,8 @@ public class GanttTableReaderTests
             Func<Excel.Range, int>? bodyFirstRow = null,
             Func<Excel.Range, int>? bodyRowCount = null,
             Func<Excel.Range, int, Excel.Range>? bodyRow = null,
-            Func<Excel.Application, object?>? activeSheet = null
+            Func<Excel.Application, object?>? activeSheet = null,
+            Action<object?>? releaseAcquired = null
         )
             : base(application, dateSystemConverter)
         {
@@ -84,7 +85,17 @@ public class GanttTableReaderTests
             BodyRowCount = bodyRowCount ?? (_ => throw new InvalidOperationException("should not be called"));
             BodyRow = bodyRow ?? ((_, _) => throw new InvalidOperationException("should not be called"));
             ActiveSheet = activeSheet;
+            ReleaseCallback = releaseAcquired;
         }
+
+        /// <summary>
+        /// Every proxy the reader released, in call order. The Moq doubles are not
+        /// COM objects, so the production <c>IsComObject</c> guard would skip them;
+        /// this seam is what makes the release path observable.
+        /// </summary>
+        public List<object?> Released { get; } = [];
+
+        public Action<object?>? ReleaseCallback { get; }
 
         public Func<Excel.Sheets, int, object> SheetAt { get; }
         public Func<Excel.ListObjects, int, Excel.ListObject> TableAt { get; }
@@ -115,6 +126,12 @@ public class GanttTableReaderTests
 
         internal override object? GetActiveSheet(Excel.Application application) =>
             ActiveSheet is null ? null : ActiveSheet(application);
+
+        internal override void ReleaseAcquired(object? proxy)
+        {
+            Released.Add(proxy);
+            ReleaseCallback?.Invoke(proxy);
+        }
     }
 
     private static List<string> SchemaHeaders() => GanttTableSchema.Default.Columns.Select(c => c.Name).ToList();
@@ -314,6 +331,95 @@ public class GanttTableReaderTests
 
         Assert.True(outcome.Succeeded);
         Assert.False(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    /// <summary>
+    /// A read must release every sheet and table proxy it acquired for itself, and
+    /// must never release the table it returns: one fixture-owned Excel only quits
+    /// when nothing holds a proxy, and the returned table belongs to the caller.
+    /// </summary>
+    [Fact]
+    public void Read_releases_the_proxies_it_acquires_and_never_the_table_it_returns()
+    {
+        var notes = new SheetGraph();
+        _ = notes.Worksheet.SetupGet(w => w.Name).Returns("Notes");
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var gantt = new SheetGraph(table);
+        _ = gantt.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([notes, gantt]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, index) => index == 1 ? notes.Worksheet.Object : gantt.Worksheet.Object,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            _ => BodyMatrix(FullRow()));
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+
+        // The table is RETURNED to the caller, so the reader never releases it.
+        Assert.DoesNotContain(reader.Released, released => ReferenceEquals(released, table.Table.Object));
+
+        // Every sheet and ListObjects collection the reader enumerated is released,
+        // including the owner sheet's proxies acquired by the two presence scans.
+        Assert.Contains(reader.Released, released => ReferenceEquals(released, notes.Worksheet.Object));
+        Assert.Contains(reader.Released, released => ReferenceEquals(released, gantt.Worksheet.Object));
+        Assert.Contains(reader.Released, released => ReferenceEquals(released, notes.ListObjects.Object));
+        Assert.Contains(reader.Released, released => ReferenceEquals(released, gantt.ListObjects.Object));
+    }
+
+    [Fact]
+    public void Read_releases_the_enumerated_sheets_when_the_table_is_missing()
+    {
+        var config = new SheetGraph();
+        _ = config.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.ConfigSheetName);
+
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([config]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => config.Worksheet.Object,
+            date1904: _ => false);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.True(outcome.ConfigurationPresent);
+        Assert.Contains(reader.Released, released => ReferenceEquals(released, config.Worksheet.Object));
+    }
+
+    [Fact]
+    public void Read_releases_a_sheet_proxy_that_is_not_a_worksheet()
+    {
+        // A chart sheet satisfies neither presence scan and carries no list
+        // objects, but its proxy was still acquired through Sheets.Item.
+        var anchor = new SheetGraph();
+        var chartSheet = new object();
+
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([anchor]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => chartSheet,
+            date1904: _ => false);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.Contains(reader.Released, released => ReferenceEquals(released, chartSheet));
     }
 
     [Fact]

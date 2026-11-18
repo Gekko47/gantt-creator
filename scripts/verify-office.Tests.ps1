@@ -37,6 +37,11 @@ if /i not "%VERIFY_OFFICE_STUB_KILLS%"=="none" (
     echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
   )
 )
+rem VERIFY_OFFICE_STUB_CLEAN=1 adds a second record whose teardown exited
+rem gracefully, so a test can prove the clean list is reported too.
+if "%VERIFY_OFFICE_STUB_CLEAN%"=="1" (
+  echo {"Test":"stub-clean","Count":0,"GracefulExitMs":0}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+)
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
 @'
@@ -283,6 +288,16 @@ exit /b 0
         $codeOnly | Should -Match 'was NOT measured'
     }
 
+    It 'names the clean teardowns beside the leaking ones' {
+        # The clean list is what a leaking body must become, so it is part of the
+        # measurement: R5.18n D4 is judged by bodies moving from 1 to 0.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'clean teardowns'
+        $codeOnly | Should -Match '\$cleanTeardowns\.Add'
+        $codeOnly | Should -Match 'StringComparer\]::Ordinal'
+    }
+
     It 'positive control: the fail-on-stray assertion fires on a flagged stub' {
         # Ensures the negative assertion above can detect a regression where the
         # stray verdict is removed.
@@ -499,6 +514,23 @@ exit /b 0
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 5
             $output | Should -Match 'was NOT measured'
+        }
+
+        It 'reports the clean teardowns in the same run as the leaking ones' {
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; VERIFY_OFFICE_STUB_CLEAN = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 0
+            $output | Should -Match '1 forced kill\(s\) across 2 recorded teardown\(s\)'
+            $output | Should -Match 'clean teardowns'
+            $output | Should -Match 'stub-clean'
         }
     }
 }

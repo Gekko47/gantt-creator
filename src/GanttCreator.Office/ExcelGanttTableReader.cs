@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -21,9 +22,20 @@ namespace GanttCreator.Office;
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
 /// <c>Range</c>, and <c>ListObject</c> objects reached here are Excel-owned
-/// shared roots. This adapter takes no ownership of them, never calls
-/// <c>FinalReleaseComObject</c>, and force-releases nothing. Every proxy is
-/// held in a local and used without chained member expressions.
+/// shared roots. This adapter takes no ownership of them: every proxy it is
+/// given, and every proxy it returns through an <c>out</c> parameter, belongs
+/// to the caller and is never released here. Every proxy is held in a local and
+/// used without chained member expressions.
+/// </para>
+/// <para>
+/// <b>Self-acquired proxies are released.</b> A sheet read through
+/// <c>Sheets.Item</c>, a <c>ListObjects</c> collection, and a candidate
+/// <c>ListObject</c> that is not the table being searched for are acquired by
+/// this adapter and never leave it, so nothing else can release them. They go
+/// through <see cref="ReleaseAcquired"/> — deliberately <c>ReleaseComObject</c>,
+/// not <c>FinalReleaseComObject</c>, because a worksheet and a table are
+/// shared-identity objects whose RCW another component in this process may also
+/// be holding; cancelling one acquisition is the whole of this adapter's claim.
 /// </para>
 /// <para>
 /// The <c>internal virtual</c> accessors isolate the Excel COM parameterised
@@ -248,10 +260,20 @@ public class ExcelGanttTableReader(
         for (int index = 1; index <= count; index++)
         {
             object sheet = GetSheetAt(sheets, index);
-            if (sheet is Worksheet worksheet
-                && GanttWorkbookContract.IsConfigSheetName(worksheet.Name))
+            try
             {
-                return true;
+                if (sheet is Worksheet worksheet
+                    && GanttWorkbookContract.IsConfigSheetName(worksheet.Name))
+                {
+                    return true;
+                }
+            }
+            finally
+            {
+                // Acquired here and never returned, so only this method can
+                // release it. Without this the sheet proxy survives to the
+                // finaliser and keeps Excel alive past Quit().
+                ReleaseAcquired(sheet);
             }
         }
 
@@ -268,10 +290,18 @@ public class ExcelGanttTableReader(
         int count = sheets.Count;
         for (int index = 1; index <= count; index++)
         {
-            if (GetSheetAt(sheets, index) is Worksheet worksheet
-                && GanttWorkbookContract.IsGanttSheetLabel(worksheet.Name))
+            object sheet = GetSheetAt(sheets, index);
+            try
             {
-                return true;
+                if (sheet is Worksheet worksheet
+                    && GanttWorkbookContract.IsGanttSheetLabel(worksheet.Name))
+                {
+                    return true;
+                }
+            }
+            finally
+            {
+                ReleaseAcquired(sheet);
             }
         }
 
@@ -294,20 +324,48 @@ public class ExcelGanttTableReader(
         for (int index = 1; index <= count; index++)
         {
             object sheet = GetSheetAt(sheets, index);
-            if (sheet is Worksheet worksheet)
+            if (sheet is not Worksheet worksheet)
             {
-                ListObjects listObjects = worksheet.ListObjects;
+                // A chart sheet carries no list objects; the proxy was still
+                // acquired here, so it is released here.
+                ReleaseAcquired(sheet);
+                continue;
+            }
+
+            ListObjects listObjects = worksheet.ListObjects;
+            bool found = false;
+            try
+            {
                 int tableCount = listObjects.Count;
                 for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject candidate = GetTableAt(listObjects, tableIndex);
                     if (GanttChartContract.IsDataTableName(candidate.Name))
                     {
+                        // The matched table and its sheet are RETURNED, so they
+                        // stay un-released: the caller owns them from here.
                         table = candidate;
                         owner = worksheet;
-                        return true;
+                        found = true;
+                        break;
                     }
+
+                    ReleaseAcquired(candidate);
                 }
+            }
+            finally
+            {
+                ReleaseAcquired(listObjects);
+                if (!found)
+                {
+                    // Not the owning sheet, and the caller never sees it.
+                    ReleaseAcquired(sheet);
+                }
+            }
+
+            if (found)
+            {
+                return true;
             }
         }
 
@@ -545,6 +603,53 @@ public class ExcelGanttTableReader(
     /// <param name="index">The one-based sheet index.</param>
     /// <returns>The sheet at the index.</returns>
     internal virtual object GetSheetAt(Sheets sheets, int index) => sheets[index];
+
+    /// <summary>
+    /// Releases a proxy this adapter acquired itself, so a body that reads the
+    /// table cannot keep Excel alive past <c>Quit()</c>.
+    /// </summary>
+    /// <param name="proxy">The self-acquired proxy, or <see langword="null"/>.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Never called for a proxy the caller owns</b> — the application, the
+    /// workbook, the <c>Sheets</c> collection handed in, or the table and owner
+    /// returned through <c>out</c>. Releasing those would cancel a reference
+    /// this adapter never took.
+    /// </para>
+    /// <para>
+    /// <b><c>ReleaseComObject</c>, not <c>FinalReleaseComObject</c>.</b> A
+    /// worksheet, a <c>ListObjects</c> collection and a <c>ListObject</c> have
+    /// stable COM identity, so the RCW the host returns may be one another
+    /// component in this process is still using; this call cancels exactly the
+    /// acquisition made here. A transient object with no other holder — a
+    /// <c>Range</c> created for one read — is the case
+    /// <c>ExcelPanelGridMeasurement</c> final-releases, and it is not this one.
+    /// </para>
+    /// <para>
+    /// Best-effort: a release must never change the read's outcome or escape
+    /// into Excel, so a non-COM value (the plain object a contract test
+    /// supplies) is ignored, and a refused release is swallowed with the
+    /// exception recorded for the debugger rather than rethrown.
+    /// </para>
+    /// </remarks>
+    internal virtual void ReleaseAcquired(object? proxy)
+    {
+        if (proxy is null || !Marshal.IsComObject(proxy))
+        {
+            return;
+        }
+
+        try
+        {
+            _ = Marshal.ReleaseComObject(proxy);
+        }
+        catch (Exception ex) when (ex is ArgumentException or COMException)
+        {
+            // Already released, or the host refused it. The read has already
+            // produced its answer, so there is nothing to report to the user.
+            _ = ex;
+        }
+    }
 
     /// <summary>
     /// Returns the list object at the one-based index. Test seam over the COM
