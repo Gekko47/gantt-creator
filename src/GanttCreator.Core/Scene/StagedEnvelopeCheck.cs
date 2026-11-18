@@ -17,21 +17,30 @@ namespace GanttCreator.Core.Scene;
 /// escaped, and the R6.3 stop condition requires finding it rather than padding the
 /// bounds.
 /// </remarks>
-public sealed record StagedEnvelopeResult(RectD? Union, IReadOnlyList<RectD> Strays)
+/// <param name="TolerancePt">
+/// The tolerance this evaluation applied, so <see cref="Matches"/> compares with the
+/// same tolerance the stray list was built with. Defaults to
+/// <see cref="GeometryMath.Epsilon"/>; an R6.4 host read-back passes
+/// <c>HostOwnedGeometry.GeometryMatchTolerancePt</c>.
+/// </param>
+public sealed record StagedEnvelopeResult(
+    RectD? Union,
+    IReadOnlyList<RectD> Strays,
+    double TolerancePt = GeometryMath.Epsilon)
 {
     /// <summary>
-    /// Gets whether the union equals the expected bounds within
-    /// <see cref="GeometryMath.Epsilon"/> on all four edges, with no stray shape.
+    /// Gets whether the union equals the expected bounds within <see cref="TolerancePt"/>
+    /// on all four edges, with no stray shape.
     /// </summary>
     /// <param name="expected">The bounds the staged set must occupy.</param>
     /// <returns><see langword="true"/> when the staged set reproduces the expected bounds.</returns>
     public bool Matches(RectD expected) =>
         Union is { } union
         && Strays.Count == 0
-        && GeometryMath.ApproximatelyEqual(union.Left, expected.Left)
-        && GeometryMath.ApproximatelyEqual(union.Top, expected.Top)
-        && GeometryMath.ApproximatelyEqual(union.Right, expected.Right)
-        && GeometryMath.ApproximatelyEqual(union.Bottom, expected.Bottom);
+        && GeometryMath.ApproximatelyEqual(union.Left, expected.Left, TolerancePt)
+        && GeometryMath.ApproximatelyEqual(union.Top, expected.Top, TolerancePt)
+        && GeometryMath.ApproximatelyEqual(union.Right, expected.Right, TolerancePt)
+        && GeometryMath.ApproximatelyEqual(union.Bottom, expected.Bottom, TolerancePt);
 }
 
 /// <summary>
@@ -57,15 +66,23 @@ public static class StagedEnvelopeCheck
     /// <summary>Evaluates a staged set's envelopes against the bounds they must occupy.</summary>
     /// <param name="envelopes">One bounding box per staged shape, in any order.</param>
     /// <param name="expected">The bounds the staged set must occupy.</param>
+    /// <param name="tolerancePt">
+    /// The allowed difference per edge. Defaults to <see cref="GeometryMath.Epsilon"/> for
+    /// scene-to-scene comparisons; an R6.4 host read-back passes the host's storage
+    /// tolerance rather than widening the scene tolerance.
+    /// </param>
     /// <returns>The union, the stray envelopes, and the equality answer.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="envelopes"/> is <see langword="null"/>.</exception>
-    public static StagedEnvelopeResult Evaluate(IReadOnlyList<RectD> envelopes, RectD expected)
+    public static StagedEnvelopeResult Evaluate(
+        IReadOnlyList<RectD> envelopes,
+        RectD expected,
+        double tolerancePt = GeometryMath.Epsilon)
     {
         ArgumentNullException.ThrowIfNull(envelopes);
 
         if (envelopes.Count == 0)
         {
-            return new StagedEnvelopeResult(null, []);
+            return new StagedEnvelopeResult(null, [], tolerancePt);
         }
 
         List<RectD> strays = [];
@@ -76,10 +93,10 @@ public static class StagedEnvelopeCheck
 
         foreach (RectD envelope in envelopes)
         {
-            if (envelope.Left < expected.Left - GeometryMath.Epsilon
-                || envelope.Top < expected.Top - GeometryMath.Epsilon
-                || envelope.Right > expected.Right + GeometryMath.Epsilon
-                || envelope.Bottom > expected.Bottom + GeometryMath.Epsilon)
+            if (envelope.Left < expected.Left - tolerancePt
+                || envelope.Top < expected.Top - tolerancePt
+                || envelope.Right > expected.Right + tolerancePt
+                || envelope.Bottom > expected.Bottom + tolerancePt)
             {
                 strays.Add(envelope);
             }
@@ -96,6 +113,7 @@ public static class StagedEnvelopeCheck
         // masquerade as an equal envelope.
         return new StagedEnvelopeResult(
             new RectD(left, top, right - left, bottom - top),
-            strays);
+            strays,
+            tolerancePt);
     }
 }

@@ -45,6 +45,34 @@ public static class ShapeStagingTag
     public const string NamePrefix = "GanttCreatorStaging:";
 
     /// <summary>
+    /// The primitive identifier of the export group shape the R6.4 grouping stage creates
+    /// (work-item D1 amendment, 2026-11-18).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately contains <b>no colon</b>. Every scene primitive identifier is
+    /// <c>{ownerId}:{role}</c> (<c>ScenePrimitive.CreateId</c> refuses a blank role and
+    /// always emits the separator), so this identifier can never equal a staged child's
+    /// primitive identifier and <see cref="GroupName"/> can never collide with a staged
+    /// shape name.
+    /// </para>
+    /// <para>
+    /// The full name still contains the prefix's colon, so the staging ownership scan
+    /// (<c>ExcelShapeWriter.CouldBeOwnedName</c>) reaches the group's tag: the group is a
+    /// temporary staging shape exactly like its children - invisible to the live scheme,
+    /// deletable by the staging writer (which deletes the children with it), and counted
+    /// by the composer's <c>StagingAlreadyPopulated</c> pre-flight.
+    /// </para>
+    /// </remarks>
+    public const string GroupPrimitiveId = "export-group";
+
+    /// <summary>
+    /// The exact <c>Name</c> the grouping stage writes to the export group shape:
+    /// <see cref="NamePrefix"/> followed by <see cref="GroupPrimitiveId"/>.
+    /// </summary>
+    public const string GroupName = NamePrefix + GroupPrimitiveId;
+
+    /// <summary>
     /// The exact prefix every staged shape's alternative text starts with. It is a
     /// different prefix from <see cref="ShapeOwnershipTag.Prefix"/>, so neither
     /// family's ownership filter can classify the other's shapes as its own.

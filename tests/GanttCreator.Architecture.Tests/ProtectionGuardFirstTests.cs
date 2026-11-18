@@ -153,6 +153,14 @@ public sealed class ProtectionGuardFirstTests
         // the workbook and table and before the first flag write, because the
         // refusal must precede any mutation rather than interrupt it.
         new("src/GanttCreator.Office/ExcelColumnVisibilityPort.cs", "Apply"),
+        // R6.4: the grouping adapter creates, stamps, and ungroups shape groups on the
+        // user's VISIBLE worksheet - generated content, so a data mutation under
+        // ADR-0008 D4 (the `.Locked` assignment in ApplyGroupStamp is the discovered
+        // shape). Both mutating entry points carry their own guard query as their first
+        // host check - the discovery rule works per file, the order rule per entry
+        // point - and ResolveShapes repeats it against the resolved target.
+        new("src/GanttCreator.Office/ExcelShapeGrouper.cs", "GroupStaged"),
+        new("src/GanttCreator.Office/ExcelShapeGrouper.cs", "UngroupStaged"),
     ];
 
     /// <summary>
@@ -250,6 +258,16 @@ public sealed class ProtectionGuardFirstTests
         // no workbook state, and nothing for a protection guard to authorise.
         "src/GanttCreator.Office/ShapeOwnershipScheme.cs",
         "src/GanttCreator.Office/ShapeStagingTag.cs",
+        // R6.4: the grouping port's declaration and its read-back record. A declaration
+        // plus a record -- no interop proxy, no statement, nothing to guard. Its mutating
+        // implementation is registered above.
+        "src/GanttCreator.Office/IShapeGroupingPort.cs",
+        // R6.4: the grouping stage. Like the staging composer and the reconciler it holds
+        // no COM proxy and performs no direct mutation: every group and ungroup goes
+        // through the injected IShapeGroupingPort, whose registered mutating
+        // implementation performs the guard-first ordering. A guard read here would be
+        // unreachable code rather than a missing guard.
+        "src/GanttCreator.Office/StagedShapeGrouper.cs",
         // R6.2: the panel staging composer. It holds no COM proxy and issues no direct
         // worksheet mutation: every create and delete goes through the injected
         // IShapeWritePort, whose registered mutating implementation (ExcelShapeWriter)

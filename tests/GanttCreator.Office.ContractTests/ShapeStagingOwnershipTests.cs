@@ -36,6 +36,28 @@ public sealed class ShapeStagingOwnershipTests
         Assert.Equal(tag, ShapeStagingTag.ForStagedName(stagedName));
     }
 
+    [Fact]
+    public void The_group_identity_is_a_staging_shape_that_cannot_collide_with_a_child()
+    {
+        // R6.4 D1: the group is a temporary staging shape with its own deterministic name.
+        Assert.Equal(ShapeStagingTag.NamePrefix + "export-group", ShapeStagingTag.GroupName);
+
+        // The colon-free identifier is structurally distinct from every scene primitive
+        // id (which always carries the {ownerId}:{role} separator), so the group's name
+        // can never collide with a staged child's name.
+        Assert.False(ShapeStagingTag.GroupPrimitiveId.Contains(':', StringComparison.Ordinal));
+        Assert.True(ShapeStagingTag.GroupName.Contains(':', StringComparison.Ordinal));
+
+        // The full name is in the form the ownership scan reaches, and its tag is the
+        // scheme's own recomputation - so the group is provably staging-owned and can
+        // never be mistaken for the live chart's.
+        Assert.True(ExcelShapeWriter.CouldBeOwnedName(ShapeStagingTag.GroupName));
+        string tag = ShapeStagingTag.ForStagedName(ShapeStagingTag.GroupName);
+        Assert.True(ShapeStagingTag.IsStagingTag(tag));
+        Assert.False(ShapeOwnershipTag.IsOwnedTag(tag));
+        Assert.Equal(tag, ShapeStagingTag.ForStagedName(ShapeStagingTag.GroupName));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

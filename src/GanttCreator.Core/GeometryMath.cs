@@ -13,7 +13,23 @@ public static class GeometryMath
     /// <param name="right">The second value in points.</param>
     /// <returns><see langword="true"/> when the values are within the documented tolerance.</returns>
     public static bool ApproximatelyEqual(double left, double right) =>
-        double.IsFinite(left) && double.IsFinite(right) && Math.Abs(left - right) <= Epsilon;
+        ApproximatelyEqual(left, right, Epsilon);
+
+    /// <summary>Determines whether two finite values are equal within a stated tolerance.</summary>
+    /// <param name="left">The first value in points.</param>
+    /// <param name="right">The second value in points.</param>
+    /// <param name="tolerancePt">
+    /// The allowed absolute difference in points. A host read-back passes the host's own
+    /// storage tolerance (<c>HostOwnedGeometry.GeometryMatchTolerancePt</c>); a scene-to-scene
+    /// comparison keeps <see cref="Epsilon"/>.
+    /// </param>
+    /// <returns><see langword="true"/> when both values are finite and within the tolerance.</returns>
+    /// <remarks>
+    /// Non-finite values are never approximately equal, whatever the tolerance: a NaN or an
+    /// infinity in a read-back is a failure, not a large number.
+    /// </remarks>
+    public static bool ApproximatelyEqual(double left, double right, double tolerancePt) =>
+        double.IsFinite(left) && double.IsFinite(right) && Math.Abs(left - right) <= tolerancePt;
 
     /// <summary>Converts a point value to the single display precision used by Excel COM.</summary>
     /// <param name="value">The point value to convert.</param>

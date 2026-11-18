@@ -1,3 +1,5 @@
+using GanttCreator.Core.Scene;
+
 namespace GanttCreator.Core.Tests;
 
 public sealed class GeometryMathTests
@@ -23,6 +25,34 @@ public sealed class GeometryMathTests
     {
         Assert.False(GeometryMath.ApproximatelyEqual(left, right));
     }
+
+    [Fact]
+    public void ApproximatelyEqual_with_a_tolerance_accepts_a_host_rounded_value() =>
+        // R6.4: the group envelope is a host read-back stored in single precision
+        // (measured 2026-11-18: 514.3622047pt requested, 514.3621826pt read back).
+        Assert.True(GeometryMath.ApproximatelyEqual(
+            514.3622047,
+            514.3621826,
+            HostOwnedGeometry.GeometryMatchTolerancePt));
+
+    [Fact]
+    public void ApproximatelyEqual_with_a_tolerance_rejects_a_value_beyond_it() =>
+        Assert.False(GeometryMath.ApproximatelyEqual(
+            10.0,
+            10.0 + (HostOwnedGeometry.GeometryMatchTolerancePt * 2),
+            HostOwnedGeometry.GeometryMatchTolerancePt));
+
+    [Theory]
+    [InlineData(double.NaN, 1.0)]
+    [InlineData(1.0, double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity, double.NegativeInfinity)]
+    public void ApproximatelyEqual_with_a_tolerance_still_rejects_non_finite_values(
+        double left,
+        double right) =>
+        Assert.False(GeometryMath.ApproximatelyEqual(
+            left,
+            right,
+            HostOwnedGeometry.GeometryMatchTolerancePt));
 
     [Fact]
     public void SnapToDisplayPrecision_converts_finite_value_once()

@@ -92,6 +92,65 @@ public sealed class StagedEnvelopeCheckTests
     }
 
     [Fact]
+    public void A_host_rounded_envelope_matches_within_the_host_tolerance()
+    {
+        // R6.4: the group envelope is a host read-back stored in single precision. The
+        // comparison passes the host tolerance explicitly rather than widening the scene
+        // tolerance (measured 2026-11-18: 514.3622047pt requested, 514.3621826pt read back).
+        RectD rounded = new(
+            _expected.Left + 0.002,
+            _expected.Top - 0.002,
+            _expected.Width - 0.004,
+            _expected.Height + 0.004);
+
+        StagedEnvelopeResult result = StagedEnvelopeCheck.Evaluate(
+            [rounded],
+            _expected,
+            HostOwnedGeometry.GeometryMatchTolerancePt);
+
+        Assert.Empty(result.Strays);
+        Assert.True(result.Matches(_expected));
+        Assert.Equal(HostOwnedGeometry.GeometryMatchTolerancePt, result.TolerancePt);
+    }
+
+    [Fact]
+    public void An_envelope_beyond_the_host_tolerance_is_still_a_stray()
+    {
+        // The host tolerance is not a blanket: twice it is a real disagreement, and the
+        // stray list names the envelope rather than only failing the union comparison.
+        RectD beyond = new(
+            _expected.Left - (HostOwnedGeometry.GeometryMatchTolerancePt * 2),
+            _expected.Top,
+            _expected.Width + (HostOwnedGeometry.GeometryMatchTolerancePt * 2),
+            _expected.Height);
+
+        StagedEnvelopeResult result = StagedEnvelopeCheck.Evaluate(
+            [beyond],
+            _expected,
+            HostOwnedGeometry.GeometryMatchTolerancePt);
+
+        _ = Assert.Single(result.Strays);
+        Assert.False(result.Matches(_expected));
+    }
+
+    [Fact]
+    public void The_default_tolerance_remains_the_scene_epsilon()
+    {
+        // Every R6.3 call site keeps the exact comparison: an envelope a thousandth of a
+        // point off does not match under the default.
+        RectD off = new(
+            _expected.Left + 0.001,
+            _expected.Top,
+            _expected.Width - 0.001,
+            _expected.Height);
+
+        StagedEnvelopeResult result = StagedEnvelopeCheck.Evaluate([off], _expected);
+
+        Assert.False(result.Matches(_expected));
+        Assert.Equal(GeometryMath.Epsilon, result.TolerancePt);
+    }
+
+    [Fact]
     public void A_null_envelope_list_is_rejected()
     {
         _ = Assert.Throws<ArgumentNullException>(
