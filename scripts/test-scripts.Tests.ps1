@@ -153,3 +153,36 @@ Describe 'test-scripts.ps1 (end to end)' {
         $r.Output | Should -Match 'test-scripts: Total=2, Passed=2, Failed=0'
     }
 }
+
+Describe 'Format-CheckAnnotation' {
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\verify-helpers.ps1')
+        $script:gateText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'test-scripts.ps1') -Raw
+    }
+
+    It 'formats a title-only annotation (positive control)' {
+        Format-CheckAnnotation -Title 'test-scripts: a.Tests.ps1' -Message 'expected 2 but got 1' |
+            Should -Be '::error title=test-scripts%3A a.Tests.ps1::expected 2 but got 1'
+    }
+
+    It 'points at the repository-relative test file when one is supplied' {
+        Format-CheckAnnotation -Title 't' -Message 'm' -File 'scripts/a.Tests.ps1' |
+            Should -Be '::error file=scripts/a.Tests.ps1,title=t::m'
+    }
+
+    It 'flattens a multi-line message and escapes the percent sign (command cannot be broken)' {
+        $line = Format-CheckAnnotation -Title 't' -Message "line1`r`nline2 50%"
+        $line | Should -Be '::error title=t::line1 line2 50%25'
+        $line | Should -Not -Match "`n"
+    }
+
+    It 'escapes the property delimiters in a title' {
+        Format-CheckAnnotation -Title 'a:b,c' -Message 'm' |
+            Should -Be '::error title=a%3Ab%2Cc::m'
+    }
+
+    It 'is wired into the runner behind the GITHUB_ACTIONS gate' {
+        $script:gateText | Should -Match 'Format-CheckAnnotation'
+        $script:gateText | Should -Match ([regex]::Escape("if (`$env:GITHUB_ACTIONS -eq 'true')"))
+    }
+}

@@ -209,6 +209,50 @@ function Get-ScriptTestGateVerdict {
     }
 }
 
+function Format-CheckAnnotation {
+    <#
+    .SYNOPSIS
+        Formats one GitHub Actions ::error:: annotation line.
+
+    .DESCRIPTION
+        A failure inside the script-lint gate is otherwise readable only by
+        downloading the job log, and that endpoint refuses an unauthenticated
+        caller. Workflow commands are collected as check-run annotations, and
+        that API is readable for a public repository, so one failed Pester test
+        becomes one annotation.
+
+        The message is flattened to a single line and the workflow-command
+        escaping is applied (% first, per the command contract), so a Pester
+        message containing a newline or a percent sign cannot terminate or
+        corrupt the command. Property values escape ':' and ',' as well, because
+        those delimit the property list.
+
+    .PARAMETER Title
+        Annotation title; the failing test file in the runner's use.
+
+    .PARAMETER Message
+        Failure text. Newlines are flattened rather than emitted.
+
+    .PARAMETER File
+        Repository-relative path the annotation points at; omitted when empty.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$Message,
+        [string]$File = ''
+    )
+
+    $escapeProperty = { param([string]$Value) $Value.Replace('%', '%25').Replace("`r", ' ').Replace("`n", ' ').Replace(':', '%3A').Replace(',', '%2C') }
+
+    $properties = 'title=' + (& $escapeProperty $Title)
+    if ($File) { $properties = 'file=' + (& $escapeProperty $File) + ',' + $properties }
+    # A CRLF pair is one line break, so it collapses to ONE space before the
+    # remaining lone CR/LF characters are flattened.
+    $messageText = $Message.Replace('%', '%25').Replace("`r`n", ' ').Replace("`r", ' ').Replace("`n", ' ')
+
+    return "::error $properties::$messageText"
+}
+
 function Get-PssaTargetFile {
     <#
     .SYNOPSIS

@@ -184,6 +184,22 @@ foreach ($message in $verdict.Errors) { Write-Error -Message $message -ErrorActi
 
 Write-Host "test-scripts: Total=$($verdict.Total), Passed=$($verdict.Passed), Failed=$($verdict.Failed)"
 
+# A CI failure must be readable from the check-run annotations, because the job
+# log needs an authenticated download. GITHUB_ACTIONS gates the prefix so a
+# local run keeps Pester's own output instead of printing workflow commands.
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    foreach ($result in @($results)) {
+        $annotationFile = "scripts/$($result.Name)"
+        if ($result.Error) {
+            Write-Host (Format-CheckAnnotation -Title "test-scripts: $($result.Name)" -Message $result.Error -File $annotationFile)
+            continue
+        }
+        foreach ($failure in @($result.Failures)) {
+            Write-Host (Format-CheckAnnotation -Title "test-scripts: $($result.Name)" -Message $failure -File $annotationFile)
+        }
+    }
+}
+
 if ($verdict.ExitCode -ne 0) {
     if ($verdict.Failed -gt 0) {
         Write-Error -Message "test-scripts: $($verdict.Failed) test(s) failed out of $($verdict.Total)" -ErrorAction Continue
