@@ -158,7 +158,16 @@ foo
             $result = Invoke-GateOnFixture -FixtureDir $td
             $result.Proc.ExitCode | Should -Not -Be 0
             $err = Get-Content -LiteralPath (Join-Path $result.RunnerDir 'gate-err.txt') -Raw
-            $err | Should -Match 'Analysing nothing is not a pass'
+            # The gate reports through Write-Error, so the child host renders a
+            # formatted error block: ANSI styling plus a hard wrap at the host
+            # width (80 columns on the GitHub runner splits the sentence with a
+            # "     | " gutter, observed 2026-11-18). Strip the styling and
+            # rejoin those continuation lines before matching, so the assertion
+            # checks the message rather than the host's rendering width.
+            $plain = $err -replace "`e\[[0-9;]*m", ''
+            $plain = $plain -replace "`r?`n\s*\|\s*", ' '
+            $plain = $plain -replace '\s+', ' '
+            $plain | Should -Match 'Analysing nothing is not a pass'
         }
         finally {
             Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
