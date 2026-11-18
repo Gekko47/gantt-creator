@@ -209,7 +209,7 @@ Process:
 6. For PowerPoint, call `Shapes.PasteSpecial` with `ppPasteShape` and verify the returned `ShapeRange`, count, and non-zero bounds.
 7. Delete all temporary owned shapes in `finally` and restore selection/view state when possible.
 
-Phase 10 contains a compatibility spike. If deletion invalidates a delayed clipboard format on a supported Office build, the approved fallback is a short-lived staging workbook retained until the copy operation is materialised—not a permanent helper worksheet. This must be decided from measured evidence.
+Phase 6 contains a compatibility spike (R6.7, which runs first in that phase). If deletion invalidates a delayed clipboard format on a supported Office build, the approved fallback is a short-lived staging workbook retained until the copy operation is materialised—not a permanent helper worksheet. This must be decided from measured evidence.
 
 ## PowerPoint automation
 
