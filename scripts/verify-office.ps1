@@ -17,9 +17,10 @@
          Office process that appeared during the run
       5. on failure, retains logs and a screenshot manifest under
          scripts/_artifacts/office-evidence/
-      6. reports the COM-proxy leak signal per teardown, fails with exit 4 when a
-         teardown forced more than one kill, and fails closed with exit 5 when no
-         teardown record was written at all
+      6. reports the forced-exit signal per teardown -- how many owned Excel
+         processes a teardown had to kill after Quit() returned -- fails with
+         exit 4 when a teardown forced more than one exit, and fails closed with
+         exit 5 when no teardown record was written at all
 #>
 
 [CmdletBinding()]
@@ -38,20 +39,35 @@ param(
     # the larger bound is stated plainly: a real hang now takes two minutes longer to surface.
     # Raise it again only with a fresh measurement, never to make a red run green.
     [int]$DeadlineSeconds = 780,
-    # Ratchet on the COM-proxy leak signal. Two things changed on 2026-11-18, and
-    # both come from reading the measurement rather than the total:
+    # Ratchet on the forced-exit signal. What the number MEANS was corrected on
+    # 2026-11-18 by a body bisect, and what is GATED was corrected earlier the same
+    # day from the measurement rather than from the total:
     #
-    # 1. The verdict is now the PER-TEARDOWN invariant, not an absolute run total.
+    # 0. A forced exit is NOT evidence of an unreleased proxy. A probe that varied
+    #    one operation per body (one Excel per fixture, the same record this gate
+    #    reads) found that bodies which release nothing exit cleanly, that a body
+    #    which only walks the Sheets -> ListObjects indexer chain still needs a
+    #    kill, and that the surviving Excel is idle and RESPONDING (windowless,
+    #    flat CPU) yet never exits after Quit() returns -- it was still alive at
+    #    30 s with the grace widened. There is also a body-independent flap: a body
+    #    that releases nothing needed a kill in 2 of its 7 runs. So this measures
+    #    an Excel SHUTDOWN RACE, with an explicit Marshal.ReleaseComObject from the
+    #    test body as a deterministic trigger, and it is named accordingly. R5.18n
+    #    D4 is closed on that finding: no adapter change is justified by it, and
+    #    the received "unreleased proxies keep Excel alive" story is not what these
+    #    breaks are.
+    #
+    # 1. The verdict is the PER-TEARDOWN invariant, not an absolute run total.
     #    OfficeFixture owns one Excel per fixture and force-kills it once when
-    #    Quit() does not terminate, so a teardown contributes at most one kill and
-    #    the run total counts leaking TEST BODIES, not leaked chains. Two live runs
-    #    give the measurement: 52 teardown records on 2026-11-18 (12 at 0, 40 at 1)
-    #    and 51 on 2026-11-16 (12 at 0, 39 at 1), with NONE above 1 in either run.
-    #    Totals track the test count -- 38 at 63 bodies, 40 at 65, 67 and 69, 41 on
-    #    the R5.22 tree -- which is why the retired ceiling had to be raised six
-    #    times (24 -> 26 -> 28 -> 30 -> 35 -> 37 -> 38), always to the highest value
-    #    observed and therefore always with no margin. It failed for ADDING A TEST,
-    #    not for adding a leak.
+    #    Quit() does not terminate, so a teardown contributes at most one forced
+    #    exit and the run total counts TEST BODIES that hit the race, not
+    #    conditions. Two live runs give the measurement: 52 teardown records on
+    #    2026-11-18 (12 at 0, 40 at 1) and 51 on 2026-11-16 (12 at 0, 39 at 1),
+    #    with NONE above 1 in either run. Totals track the test count -- 38 at 63
+    #    bodies, 40 at 65, 67 and 69, 41 on the R5.22 tree -- which is why the
+    #    retired ceiling had to be raised six times (24 -> 26 -> 28 -> 30 -> 35 ->
+    #    37 -> 38), always to the highest value observed and therefore always with
+    #    no margin. It failed for ADDING A TEST, not for adding a leak.
     #
     #    Two candidate replacement scalars were tested against the same measurement
     #    and both drift with suite composition: the total rises by one per new
@@ -67,11 +83,12 @@ param(
     #    now exit 5 with the reason stated.
     #
     # The run total, the recorded-teardown count and the escalating fraction are
-    # still logged: they are the numbers R5.20 D4 exists to drive to zero, and the
-    # end state is still 0. They are reported, not gated, because while the shared
-    # per-body chain is open they cannot separate a new leak from a new test. The
-    # per-test attribution line is the mitigation, and the stray sweep (exit 3) is
-    # the suite-size-independent leak verdict.
+    # still logged: they are the numbers R5.18n D4 recorded run over run, and the
+    # end state is still 0. They are reported, not gated, because they cannot
+    # separate a new body that hits the race from a new test. The per-test
+    # attribution line is the mitigation, and the stray sweep (exit 3) is the only
+    # suite-size-independent verdict here: a process still alive after the run is a
+    # genuine orphan, which the shutdown race is not.
     #
     # A deliberately forced kill is excluded by OfficeFixture.SuppressLeakSignal,
     # which twelve fixtures across ten test classes set today (search
@@ -86,7 +103,7 @@ param(
     #     (no record above 1) is the proof.
     #   * The retired ceiling and its history are the evidence for why an absolute
     #     total cannot be a gate: L19 keeps that record.
-    [int]$MaxForcedKillsPerTeardown = 1
+    [int]$MaxForcedExitsPerTeardown = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -461,10 +478,11 @@ Save-Trx
 $finalManifest = Read-OwnedPidManifest $ownedPidsPath
 $straysKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids @() -FixtureManifest $finalManifest
 
-# Report the COM-proxy leak signal. A teardown that had to force a kill did so
-# because a test body left a proxy alive and the owned Excel only exited because
-# the fixture killed it. Every record is ONE fixture teardown, so its Count is
-# how many owned processes that teardown had to kill -- one, normally.
+# Report the forced-exit signal. Every record is ONE fixture teardown, so its
+# Count is how many owned processes that teardown had to kill after Quit()
+# returned -- one, normally. The count is NOT read as "a proxy chain leaked": the
+# 2026-11-18 bisect measured idle, responding Excel processes that ignore a
+# returned Quit(), including in bodies that release nothing at all.
 $forcedKills = 0
 $teardowns = 0
 $killAttribution = [ordered]@{}
@@ -503,14 +521,13 @@ try {
                 if (-not $quitOutcomes.Contains($quit)) { $quitOutcomes[$quit] = 0 }
                 $quitOutcomes[$quit]++
             }
-            if ($count -gt $MaxForcedKillsPerTeardown) {
+            if ($count -gt $MaxForcedExitsPerTeardown) {
                 $overTeardownCeiling += [pscustomobject]@{ Test = $test; Count = $count }
             }
             if ($count -eq 0) {
-                # A clean teardown is part of the measurement, not noise: it is a
-                # body that released everything it acquired, so the difference
-                # between a leaking body and a clean one is visible in every run
-                # without a probe being written.
+                # A clean teardown is part of the measurement, not noise: it is the
+                # side of the race the gate has to keep, so printing both sides
+                # makes a shift visible in every run without a probe being written.
                 $cleanTeardowns.Add(
                     [string]::IsNullOrEmpty($test) ? '(unattributed teardown)' : $test)
             }
@@ -526,17 +543,16 @@ try {
 # The escalating fraction is computed as a whole percent with no culture
 # formatting, so the report text is identical on every host locale.
 $escalatingPercent = if ($teardowns -gt 0) { [int][math]::Round(100.0 * $forcedKills / $teardowns) } else { 0 }
-Log "COM proxy leak signal: $forcedKills forced kill(s) across $teardowns recorded teardown(s) ($escalatingPercent% escalated; per-teardown ceiling $MaxForcedKillsPerTeardown, end state 0). The total is REPORTED, not gated: while the shared per-body chain is open it tracks how many Office test bodies exist, not how many chains leaked."
+Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) ($escalatingPercent% escalated; per-teardown ceiling $MaxForcedExitsPerTeardown, end state 0). This measures an Excel shutdown race, not a proxy chain: a body that releases nothing can still hit it, and releasing the Sheets collection has not produced one in five runs. The total is REPORTED, not gated: it tracks how many Office test bodies exist."
 
-# Per-test attribution. The total above is what D4 tracks; this is WHY it is what
-# it is, and it is what makes the signal actionable rather than merely
-# measurable. Without it a count can only be bounded, never pinned to the test
-# body responsible, so a leaked chain can be retired by name instead of by
-# guesswork.
+# Per-test attribution. The total above is the reported number; this is WHERE it
+# comes from, and it is what makes the signal actionable rather than merely
+# measurable. Without it a count can only be bounded, never pinned to the body
+# responsible for hitting the race.
 if ($killAttribution.Count -gt 0) {
     # A [Theory]'s data rows are summed under its method name here, so a method
     # with three InlineData rows reads 3 for three one-kill teardowns.
-    Log "COM proxy leak signal by test body (descending; a [Theory]'s cases are summed under its method name):"
+    Log "Forced-exit signal by test body (descending; a [Theory]'s cases are summed under its method name):"
     foreach ($entry in ($killAttribution.GetEnumerator() | Sort-Object -Property Value -Descending)) {
         Log ("  {0,3}  {1}" -f $entry.Value, $entry.Key)
     }
@@ -546,17 +562,18 @@ if ($killAttribution.Count -gt 0) {
 # on every host locale and two runs can be diffed.
 if ($cleanTeardowns.Count -gt 0) {
     $cleanTeardowns.Sort([System.StringComparer]::Ordinal)
-    Log "COM proxy leak signal, clean teardowns (the fixture's process exited without a kill):"
+    Log "Forced-exit signal, clean teardowns (the fixture's process exited without a kill):"
     foreach ($name in $cleanTeardowns) {
         Log ("  {0,3}  {1}" -f 0, $name)
     }
 }
 
 # What Quit() did in each recorded teardown. A Quit that RETURNS while the process
-# survives is a different defect from one the host REFUSES, and R5.18n D4 needs
-# that distinction in the run log rather than in a probe that cannot reproduce it.
+# survives is the shutdown race itself, and it is a different defect from one the
+# host REFUSES; that distinction lives in the run log because a probe cannot
+# reproduce it on demand.
 if ($quitOutcomes.Count -gt 0) {
-    Log "COM proxy leak signal by Quit() outcome:"
+    Log "Forced-exit signal by Quit() outcome:"
     foreach ($entry in ($quitOutcomes.GetEnumerator() | Sort-Object -Property Key)) {
         Log ("  {0,3}  {1}" -f $entry.Value, $entry.Key)
     }
@@ -575,25 +592,24 @@ if ($straysKilled -gt 0) {
     exit 3
 }
 
-# Fail closed. The leak signal is the only automated check on unreleased proxies,
-# and an absent log is not a zero signal: OfficeFixture writes one record per
-# teardown, so a successful OfficeIntegration run always produces records. None
+# Fail closed. An absent log is not a zero signal: OfficeFixture writes one record
+# per teardown, so a successful OfficeIntegration run always produces records. None
 # means the handoff broke (env var, path, or the fixture write), and the gate must
 # say the signal was never measured instead of passing on a number it did not read.
 if ($teardowns -eq 0) {
-    Log "FAIL: no teardown record was found in $forcedKillsPath, so the COM proxy leak signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
+    Log "FAIL: no teardown record was found in $forcedKillsPath, so the forced-exit signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
     exit 5
 }
 
-# Ratchet on the leak signal, per teardown. One fixture owns one Excel process, so
-# a teardown that needed more than one kill owned more than one process or
-# escalated twice -- a real anomaly that does not scale with how many tests the
+# Ratchet on the forced-exit signal, per teardown. One fixture owns one Excel
+# process, so a teardown that needed more than one kill owned more than one process
+# or escalated twice -- a real anomaly that does not scale with how many tests the
 # suite holds, which is what the retired absolute total could never be.
 if ($overTeardownCeiling.Count -gt 0) {
     foreach ($entry in $overTeardownCeiling) {
-        Log ("  teardown {0} forced {1} kill(s)" -f $entry.Test, $entry.Count)
+        Log ("  teardown {0} forced {1} exit(s)" -f $entry.Test, $entry.Count)
     }
-    Log "FAIL: $($overTeardownCeiling.Count) teardown(s) forced more than $MaxForcedKillsPerTeardown kill(s). One fixture owns one Excel process, so a teardown above the ceiling owned more than one process or escalated twice. Evidence preserved under $evidence."
+    Log "FAIL: $($overTeardownCeiling.Count) teardown(s) forced more than $MaxForcedExitsPerTeardown exit(s). One fixture owns one Excel process, so a teardown above the ceiling owned more than one process or escalated twice. Evidence preserved under $evidence."
     exit 4
 }
 

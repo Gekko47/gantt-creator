@@ -231,17 +231,18 @@ exit /b 0
         $codeOnly | Should -Match 'exit 3'
     }
 
-    It 'gates the leak signal per teardown, not by an absolute run total' {
+    It 'gates the forced-exit signal per teardown, not by an absolute run total' {
         # One fixture owns one Excel process, so one teardown contributes at most
-        # one kill. The run total therefore counts leaking TEST BODIES and tracks
-        # suite size -- 38 at 63 bodies, 40 at 65 and 67, 41 on the R5.22 tree --
-        # which is why the retired absolute ceiling had to be raised six times and
-        # always to the highest observation, leaving it no margin.
+        # one forced exit. The run total therefore counts TEST BODIES that hit the
+        # shutdown race and tracks suite size -- 38 at 63 bodies, 40 at 65 and 67,
+        # 41 on the R5.22 tree -- which is why the retired absolute ceiling had to
+        # be raised six times and always to the highest observation, leaving it no
+        # margin.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match '\$MaxForcedKillsPerTeardown = \d+'
-        $codeOnly | Should -Match '\$count -gt \$MaxForcedKillsPerTeardown'
-        $codeOnly | Should -Match 'forced more than \$MaxForcedKillsPerTeardown kill\(s\)'
+        $codeOnly | Should -Match '\$MaxForcedExitsPerTeardown = \d+'
+        $codeOnly | Should -Match '\$count -gt \$MaxForcedExitsPerTeardown'
+        $codeOnly | Should -Match 'forced more than \$MaxForcedExitsPerTeardown exit\(s\)'
         $codeOnly | Should -Match 'exit 4'
         # The absolute total must not gate: it can only fail on suite size.
         $codeOnly | Should -Not -Match '\$forcedKills -gt \$MaxForcedKills\b'
@@ -253,7 +254,7 @@ exit /b 0
         # that needed two kills owned two processes or escalated twice.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match '\$MaxForcedKillsPerTeardown = 1'
+        $codeOnly | Should -Match '\$MaxForcedExitsPerTeardown = 1'
     }
 
     It 'fails closed when no teardown record was written' {
@@ -266,7 +267,7 @@ exit /b 0
         $codeOnly | Should -Match 'exit 5'
     }
 
-    It 'excludes a deliberate escalation from the leak signal' {
+    It 'excludes a deliberate escalation from the forced-exit signal' {
         # A test that forces a kill to prove the escalation path works must not
         # count against the ratchet, or the ceiling can never be reached.
         $fixture = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests\GanttCreator.Office.IntegrationTests\OfficeFixture.cs') -Raw
@@ -288,9 +289,10 @@ exit /b 0
         $codeOnly | Should -Match 'was NOT measured'
     }
 
-    It 'names the clean teardowns beside the leaking ones' {
-        # The clean list is what a leaking body must become, so it is part of the
-        # measurement: R5.18n D4 is judged by bodies moving from 1 to 0.
+    It 'names the clean teardowns beside the forced ones' {
+        # The clean list is the control side of the measurement, so it is part of
+        # the report: R5.18n D4 is closed on the finding that the two sides differ
+        # by an explicit release, not by an unreleased proxy chain.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match 'clean teardowns'
@@ -474,10 +476,10 @@ exit /b 0
             ([regex]::Matches($codeOnly, 'Save-Trx')).Count | Should -Be 3
         }
 
-        It 'reports the leak signal and passes when every teardown forced one kill' {
-            # The measured shape of an accepted run: one record, one kill. This is
-            # the positive control for the per-teardown ceiling, which is the case
-            # the retired absolute total failed on.
+        It 'reports the forced-exit signal and passes when every teardown forced one exit' {
+            # The measured shape of an accepted run: one record, one forced exit.
+            # This is the positive control for the per-teardown ceiling, which is
+            # the case the retired absolute total failed on.
             $outFile = Join-Path $script:harnessRoot 'out.txt'
             $errFile = Join-Path $script:harnessRoot 'err.txt'
             $sep = [System.IO.Path]::PathSeparator
@@ -489,11 +491,11 @@ exit /b 0
                 -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 0
-            $output | Should -Match '1 forced kill\(s\) across 1 recorded teardown\(s\)'
+            $output | Should -Match '1 forced exit\(s\) across 1 recorded teardown\(s\)'
             $output | Should -Match 'verify-office: PASS'
         }
 
-        It 'fails when one teardown forced more than one kill' {
+        It 'fails when one teardown forced more than one exit' {
             # One fixture owns one Excel process, so two kills from one teardown
             # is the anomaly the per-teardown ceiling exists to catch.
             $outFile = Join-Path $script:harnessRoot 'out.txt'
@@ -507,7 +509,7 @@ exit /b 0
                 -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '2'; PATH = ($script:stubDir + $sep + $env:PATH) }
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 4
-            $output | Should -Match 'forced more than 1 kill\(s\)'
+            $output | Should -Match 'forced more than 1 exit\(s\)'
         }
 
         It 'fails closed when no teardown record was written' {
@@ -527,7 +529,7 @@ exit /b 0
             $output | Should -Match 'was NOT measured'
         }
 
-        It 'reports the clean teardowns in the same run as the leaking ones' {
+        It 'reports the clean teardowns in the same run as the forced ones' {
             $outFile = Join-Path $script:harnessRoot 'out.txt'
             $errFile = Join-Path $script:harnessRoot 'err.txt'
             $sep = [System.IO.Path]::PathSeparator
@@ -539,7 +541,7 @@ exit /b 0
                 -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; VERIFY_OFFICE_STUB_CLEAN = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 0
-            $output | Should -Match '1 forced kill\(s\) across 2 recorded teardown\(s\)'
+            $output | Should -Match '1 forced exit\(s\) across 2 recorded teardown\(s\)'
             $output | Should -Match 'clean teardowns'
             $output | Should -Match 'stub-clean'
         }

@@ -11,6 +11,17 @@ fixture's own create/close/release ordering is not the chain. Reader bodies that
 packed XLL still escalate, which excludes the loaded add-in as the shared chain and leaves the
 adapter-acquired proxies as the live hypothesis.
 
+**Result (2026-11-18) — the plan is closed by re-framing, and Phase D is not reached.** The body
+bisect falsified the "one shared chain" premise: bodies that release nothing exit cleanly, a body
+that only walks the `Sheets` → `ListObjects` indexer chain still needs a kill, and the surviving Excel
+is idle and RESPONDING yet never exits after `Quit()` returns (still alive at 30 s with the grace
+widened). There is also a body-independent flap — a no-release body needed a kill in 2 of its 7 runs.
+The owner accepted the finding and chose to name the signal for what it measures: the gate now
+reports a **forced-exit signal**, the per-teardown ceiling of 1 and the fail-closed verdict stand, and
+`R5.18n` D4 is closed. Phases C and D are retained as the record of what was planned and why it is
+not being done; the releases that did land (the reader's self-acquired proxies, the
+`Application.Selection` proxy) stay, because each is correct on its own terms.
+
 **Non-negotiables carried from the contract.**
 
 - Never release a shared root the caller owns (`Application`, `Workbook`, `Sheets`, the `Worksheet`
@@ -141,7 +152,10 @@ whether the flap is harness-side:**
 Each commit: seam + positive tests + `verify-quick`; each phase boundary: full `verify-office.ps1`
 with the total/fraction recorded in STATUS.
 
-## Phase D — close the loop and re-tighten the gate
+## Phase D — close the loop and re-tighten the gate (not taken: the plan closed by re-framing)
+
+**Not taken.** The owner's 2026-11-18 decision closed D4 by renaming the signal instead, so D1–D4
+below describe the path a future shutdown-race investigation would take, not a current commitment.
 
 **D1. End state.** A full gate run reading **0 forced kills** (or only the documented
 `OfficeFixture.CreateWorkbook`/`Packed_XLL` flapping family, L19). Record the run, the duration
@@ -180,7 +194,9 @@ flowchart TD
 - Phase B: reader contract tests green; filtered live run shows reader bodies at 0; full gate green.
 - Phase C: per-adapter contract tests green; the reported total falls monotonically across runs.
 - Phase D: a gate run at 0 (or allowance-only) kills; the ceiling re-pinned; `verify-quick` and
-  `verify-office` both green on the final tree; STATUS/L19/roadmap updated.
+  `verify-office` both green on the final tree; STATUS/L19/roadmap updated. **Superseded
+  2026-11-18:** the accepted end state is a green gate whose forced-exit counts are reported per
+  teardown, not a run at 0.
 
 ## Exclusions
 
