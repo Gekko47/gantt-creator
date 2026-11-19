@@ -66,7 +66,7 @@
 > kills against a ceiling of 26** (`KNOWN-LIMITATIONS.md` L19) — R4.8A's new
 > adapter surface is the first thing that could push it over.
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The current index contains **105** roadmap-guide records: **43 Tier A and 62 Tier B**, counted from the table on 2026-10-31, including the two later Tier-A additions R4.7I and R4.11. The earlier 94/41/53 count was a dated snapshot and omitted later roadmap additions. Historical recount notes below explain the earlier discrepancies; they do not describe the current index. [`../STATUS.md`](../STATUS.md) records implementation and acceptance state; `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. **Revised 19 November 2026 at the Phase-6 exit:** R7.1–R7.7 were upgraded to Tier A against the landed R6 pipeline, so the index is now **50 Tier A and 55 Tier B** of the **105** roadmap-guide records (the previous 43/62 count was the 2026-10-31 snapshot). The earlier 94/41/53 count was a dated snapshot and omitted later roadmap additions. Historical recount notes below explain the earlier discrepancies; they do not describe the current index. [`../STATUS.md`](../STATUS.md) records implementation and acceptance state; `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
@@ -262,30 +262,30 @@ the live acceptance matrix and the unresolved R5.9 property-column scope
 decision before claiming Phase 5 exit. The code-side refresh foundation does
 not include R4.10 or its benchmark.
 
-### Phase 6 — PowerPoint editable export (Tier B; upgrade at Phase 5 exit; R6.7 spike first)
+### Phase 6 — editable composition and clipboard (Tier A; implemented 2026-11-18/19)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R6.7 | `R6.7-powerpoint-compatibility-spike.md` | Authored (Tier B; spike — runs first) |
-| R6.1 | `R6.1-export-bounds-model.md` | Authored (Tier B) |
-| R6.2 | `R6.2-table-composition.md` | Authored (Tier B) |
-| R6.3 | `R6.3-chart-staging.md` | Authored (Tier B) |
-| R6.4 | `R6.4-grouping.md` | Authored (Tier B) |
-| R6.5 | `R6.5-staging-lifecycle.md` | Authored (Tier B) |
-| R6.6 | `R6.6-clipboard-copy.md` | Authored (Tier B) |
-| R6.8 | `R6.8-copy-editable-command.md` | Authored (Tier B) |
+| R6.7 | `R6.7-powerpoint-compatibility-spike.md` | Implemented 2026-11-18 (spike ran first; ADR-0066 accepted) |
+| R6.1 | `R6.1-export-bounds-model.md` | Implemented 2026-11-18 |
+| R6.2 | `R6.2-table-composition.md` | Implemented 2026-11-18 |
+| R6.3 | `R6.3-chart-staging.md` | Implemented 2026-11-18 |
+| R6.4 | `R6.4-grouping.md` | Implemented 2026-11-18 |
+| R6.5 | `R6.5-staging-lifecycle.md` | Implemented 2026-11-18 |
+| R6.6 | `R6.6-clipboard-copy.md` | Implemented 2026-11-18 |
+| R6.8 | `R6.8-copy-editable-command.md` | Implemented 2026-11-19; manual exit demonstration owed |
 
-### Phase 7 — direct PowerPoint transfer (Tier B; upgrade at Phase 6 exit)
+### Phase 7 — direct PowerPoint transfer (Tier A; upgraded 2026-11-19 at the Phase-6 exit)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R7.1 | `R7.1-powerpoint-adapters.md` | Authored (Tier B) |
-| R7.2 | `R7.2-attach-slide-cases.md` | Authored (Tier B) |
-| R7.3 | `R7.3-paste-special-verify.md` | Authored (Tier B) |
-| R7.4 | `R7.4-slide-fit-position.md` | Authored (Tier B) |
-| R7.5 | `R7.5-transfer-failures.md` | Authored (Tier B) |
-| R7.6 | `R7.6-send-to-powerpoint.md` | Authored (Tier B) |
-| R7.7 | `R7.7-transfer-soak.md` | Authored (Tier B) |
+| R7.1 | `R7.1-powerpoint-adapters.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.2 | `R7.2-attach-slide-cases.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.3 | `R7.3-paste-special-verify.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.4 | `R7.4-slide-fit-position.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.5 | `R7.5-transfer-failures.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.6 | `R7.6-send-to-powerpoint.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.7 | `R7.7-transfer-soak.md` | Authored (Tier A; upgraded 2026-11-19) |
 
 ### Phase 8 — 300-DPI PNG export (Tier B; upgrade at Phase 7 exit; R8.2a precedes R8.3)
 
