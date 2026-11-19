@@ -347,6 +347,19 @@ internal static class RibbonControlIds
     /// <summary>The Sheet group: refresh, warnings, and the two lock toggles.</summary>
     internal const string SheetGroup = "grpSheet";
 
+    /// <summary>
+    /// The Export group (R6.8). Named here as well as in the XML because
+    /// <see cref="RibbonState.IsVisible"/> is fail-closed: a group absent from the
+    /// visibility table is hidden, so the XML group and this constant are one decision.
+    /// </summary>
+    internal const string ExportGroup = "grpExport";
+
+    /// <summary>
+    /// The Copy Editable button (R6.8): the Export group's first member, gated on
+    /// workbook + initialised + the Gantt sheet being active, like every chart command.
+    /// </summary>
+    internal const string CopyEditable = "btnCopyEditable";
+
     /// <summary>The Diagnostics group, visible in every mode.</summary>
     internal const string DiagnosticsGroup = "grpDiagnostics";
 }

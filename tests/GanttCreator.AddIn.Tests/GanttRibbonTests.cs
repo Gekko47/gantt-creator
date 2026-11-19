@@ -655,6 +655,9 @@ public class GanttRibbonTests
                 RibbonControlIds.PlotFinishCalendar,
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Warnings,
+                // R6.8: Copy Editable sits in the new Export group, between the Sheet and
+                // Diagnostics groups in document order, and carries the same R5.16b gate.
+                RibbonControlIds.CopyEditable,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 // Owner ruling 2026-11-09: the CHART and CELL lock toggles replace the shape pair.
