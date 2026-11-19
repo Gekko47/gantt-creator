@@ -461,9 +461,18 @@ internal static class CopyEditableCommand
         StagingLifecycleOutcome lifecycle = lifecycleRun(lifecycleRequest);
         if (!lifecycle.Succeeded)
         {
+            string refusalMessage = TranslateLifecycle(lifecycle);
+
+            // The refusal reaches the user through a TaskDialog, whose text cannot be copied
+            // out of, so the detail — the observed clipboard formats included — is recorded as
+            // evidence. Without this a live copy failure was only describable by paraphrase.
+            request.TechnicalRecord?.Invoke(
+                "gantt.copy refused=" + (lifecycle.Refusal?.ToString() ?? "none")
+                + " detail=" + refusalMessage);
+
             return Refuse(
                 MapLifecycleRefusal(lifecycle.Refusal),
-                TranslateLifecycle(lifecycle),
+                refusalMessage,
                 droppedRows,
                 failurePresenter);
         }

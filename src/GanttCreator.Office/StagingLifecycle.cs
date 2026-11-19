@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Office;
@@ -248,6 +250,10 @@ public static class StagingLifecycle
         StagedGroupOutcome? group = null;
         StagingCopyResult? copy = null;
         StagingLifecycleRefusal? refusal = null;
+        long startedAt = Stopwatch.GetTimestamp();
+        long composedAt = startedAt;
+        long groupedAt = startedAt;
+        long copiedAt = startedAt;
 
         try
         {
@@ -258,6 +264,7 @@ public static class StagingLifecycle
             scope.CaptureSelection();
 
             composition = EditablePanelStagingComposer.ComposeFullScene(request.Resolution, port);
+            composedAt = Stopwatch.GetTimestamp();
             if (!composition.Succeeded)
             {
                 refusal = StagingLifecycleRefusal.CompositionRefused;
@@ -268,6 +275,7 @@ public static class StagingLifecycle
                 registry.AddRange(composition.StagedPrimitiveIds);
 
                 group = StagedShapeGrouper.Group(composition, request.GroupingPort);
+                groupedAt = Stopwatch.GetTimestamp();
                 if (!group.Succeeded)
                 {
                     refusal = StagingLifecycleRefusal.GroupingRefused;
@@ -279,6 +287,7 @@ public static class StagingLifecycle
                     groupPrimitiveId = ShapeStagingTag.GroupPrimitiveId;
 
                     copy = request.Copy?.Invoke(group);
+                    copiedAt = Stopwatch.GetTimestamp();
                     if (copy is not null && !copy.Succeeded)
                     {
                         refusal = StagingLifecycleRefusal.CopyRefused;
@@ -291,6 +300,14 @@ public static class StagingLifecycle
         }
         finally
         {
+            // One record for the two stages that cost host time, emitted only when the run
+            // refused there: a clean run stays record-free (D3) and a residue run already
+            // owns its own single record.
+            if (refusal is StagingLifecycleRefusal.GroupingRefused or StagingLifecycleRefusal.CopyRefused)
+            {
+                TraceStages(request.TechnicalRecord, startedAt, composedAt, groupedAt, copiedAt, registry.Count);
+            }
+
             Cleanup(port, registry, groupPrimitiveId, residue, request.TechnicalRecord);
 
             // The verification read: whatever the staging scan still reports is residue.
@@ -319,6 +336,45 @@ public static class StagingLifecycle
         }
 
         return new StagingLifecycleOutcome(composition, group, copy, refusal, residue);
+    }
+
+    /// <summary>
+    /// Records the composition, grouping and copy durations of a run that refused at one of the
+    /// two expensive stages, so a slow or refused live copy is measurable from the log.
+    /// </summary>
+    /// <param name="trace">The technical record sink, or <see langword="null"/>.</param>
+    /// <param name="startedAt">The run's start timestamp.</param>
+    /// <param name="composedAt">The timestamp the composition finished at.</param>
+    /// <param name="groupedAt">The timestamp the grouping finished at.</param>
+    /// <param name="copiedAt">The timestamp the copy seam returned at.</param>
+    /// <param name="staged">The number of staged primitives.</param>
+    /// <remarks>
+    /// A stage that was never reached reports 0, never a negative span: the copy step of a run
+    /// whose grouping refused has no duration to report.
+    /// </remarks>
+    private static void TraceStages(
+        Action<string>? trace,
+        long startedAt,
+        long composedAt,
+        long groupedAt,
+        long copiedAt,
+        int staged)
+    {
+        if (trace is null)
+        {
+            return;
+        }
+
+        static string Ms(long from, long to)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"{(to > from ? to - from : 0) * 1000d / Stopwatch.Frequency:F0}");
+        }
+
+        trace(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.copy stages composition={Ms(startedAt, composedAt)} group={Ms(composedAt, groupedAt)} copy={Ms(groupedAt, copiedAt)} staged={staged}"));
     }
 
     /// <summary>
