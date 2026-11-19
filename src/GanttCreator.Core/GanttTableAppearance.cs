@@ -255,4 +255,31 @@ public static class GanttTableAppearance
 
         return GanttCellAlignment.Left;
     }
+
+    /// <summary>
+    /// Returns the SCENE text alignment for a column, so the exported data panel reads
+    /// the same alignment the live worksheet cells carry.
+    /// </summary>
+    /// <param name="columnName">The exact header text.</param>
+    /// <returns>
+    /// <see cref="GanttTextAlignment.Centre"/> for a centred value column, otherwise
+    /// <see cref="GanttTextAlignment.Left"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>One mapping, not two.</b> The live table writes <see cref="AlignmentFor"/> onto
+    /// its cells, and the editable export draws those cells as shapes. Reading the same
+    /// authority and converting once here keeps the sheet and its copy from disagreeing
+    /// about which columns are centred (owner report 2026-11-19: the copied
+    /// <c>Start</c>/<c>Finish</c>/<c>Duration</c> values rendered left-aligned).
+    /// </para>
+    /// <para>
+    /// The cell set is closed at <see cref="GanttCellAlignment"/>'s two members, so the
+    /// conversion cannot silently gain a third value without this switch failing first.
+    /// </para>
+    /// </remarks>
+    public static GanttTextAlignment SceneAlignmentFor(string? columnName) =>
+        AlignmentFor(columnName) == GanttCellAlignment.Centre
+            ? GanttTextAlignment.Centre
+            : GanttTextAlignment.Left;
 }

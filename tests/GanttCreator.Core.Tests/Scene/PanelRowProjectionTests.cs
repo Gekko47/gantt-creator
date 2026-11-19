@@ -27,7 +27,8 @@ public sealed class PanelRowProjectionTests
         GanttRowId? id = null,
         GanttRowId? laneId = null,
         bool visible = true,
-        string? description = "work") =>
+        string? description = "work",
+        GanttRowId? parentId = null) =>
         new(
             rowNumber,
             id ?? GanttRowId.New(),
@@ -37,7 +38,7 @@ public sealed class PanelRowProjectionTests
             description,
             null,
             null,
-            null,
+            parentId,
             null,
             null,
             null,
@@ -47,6 +48,30 @@ public sealed class PanelRowProjectionTests
 
     private static PanelRowProjectionResult Project(params GanttEvent[] events) =>
         PanelRowProjection.TryProject(events, Grid(), GanttDateDisplayFormat.DdMMyyyy);
+
+    /// <summary>
+    /// The panel row carries the SAME outline indent the live sheet writes, so the copied
+    /// Description cell is indented like the worksheet (owner report 2026-11-19).
+    /// </summary>
+    /// <remarks>
+    /// The indent is derived from the outline plan, not from <c>ParentId</c> alone: a child
+    /// the planner declines to group must not be indented.
+    /// </remarks>
+    [Fact]
+    public void A_grouped_child_carries_the_outline_indent_and_its_parent_does_not()
+    {
+        GanttRowId parent = GanttRowId.New();
+
+        PanelRowProjectionResult result = Project(
+            Event(1, id: parent),
+            Event(2, parentId: parent));
+
+        Assert.Null(result.Refusal);
+        Assert.Equal(0, result.Rows.Single(row => row.RowId == parent).IndentLevel);
+        Assert.Equal(
+            HierarchyIndentation.ChildIndentLevel,
+            result.Rows.Single(row => row.RowId != parent).IndentLevel);
+    }
 
     [Fact]
     public void Every_source_row_gets_a_panel_row_whatever_its_type_or_visibility()

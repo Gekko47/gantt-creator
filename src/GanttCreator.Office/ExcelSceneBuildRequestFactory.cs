@@ -396,16 +396,25 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             // no height of its own; reserving one left a blank strip above the chart.
             double reservedBandsPt = yearBandHeightPt + periodBandHeightPt;
 
-            // The measured ANCHOR ROW rides across (owner ruling 2026-11-19): the live chart
-            // paints its plot-spanning bands through that row and closes the plot with its
-            // line, and the copy must read the same. Origin and worksheet padding stay zero
-            // because an export composition has no worksheet rows of its own.
+            // ONE ROW SET for the panel and the plot (owner report 2026-11-19): both span
+            // exactly the rows the panel reproduces, so their bottom edges coincide. The
+            // plot used to follow events.Max(RowNumber) while the panel followed every
+            // measured row, which left the chart a few points past the copied table.
+            int reproducedRows = events.Count == 0 ? 0 : events.Max(atEvent => atEvent.RowNumber);
+            int reproducedRowCount = Math.Min(reproducedRows, measuredGrid.RowHeightsPt.Count);
+            double[] reproducedHeights = [.. measuredGrid.RowHeightsPt.Take(reproducedRowCount)];
+
+            // The export has no worksheet rows of its own, so the ANCHOR ROW the live chart
+            // overhangs into is not carried across (owner ruling 2026-11-19, superseding
+            // ADR-0068 D4). Carrying it made the plot-spanning bands and the closing line
+            // end a few points below the copied panel's last row. Origin and worksheet
+            // padding stay zero because there is no sheet.
             PanelCellGridCreationOutcome exportGridOutcome = PanelCellGrid.TryCreate(
                 measuredGrid.Columns,
-                measuredGrid.RowHeightsPt,
+                reproducedHeights,
                 measuredGrid.HeaderHeightPt,
                 measuredGrid.RequiredColumns,
-                anchorRowHeightPt: measuredGrid.AnchorRowHeightPt,
+                anchorRowHeightPt: 0d,
 
                 // An empty body is legal: the export's empty-table refusal belongs to
                 // ExportBoundsResolver, not the grid.
@@ -420,30 +429,21 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             measuredGrid = exportGrid;
             panelRightPt = measuredGrid.PanelRightPt;
 
-            // The bottom margin is the outer padding PLUS the anchor row the plot overhangs
-            // into, which is the live arrangement (ADR-0038 D1/D4): the frame closes below
-            // the overhang and the closing line, not through them.
+            // A uniform outer padding on all four sides: with no anchor row there is no
+            // overhang to close below, so the bottom margin equals the top and the frame
+            // keeps the same 4pt breathing room the other sides have.
             padding = new ChartPaddingPt(
                 LeftPt: chrome,
                 TopPt: chrome,
                 RightPt: chrome,
-                BottomPt: chrome + measuredGrid.AnchorRowHeightPt);
+                BottomPt: chrome);
 
             topPt = chrome + reservedBandsPt;
 
-            // The plot spans the rows the panel REPRODUCES — one per event — not every row
-            // the table measured. A trailing row that yields no event (blank, or a blocked
-            // row dropped by a partial render) made the plot one row longer than the panel,
-            // so their bottoms stopped aligning (owner report 2026-11-19).
-            int reproducedRows = events.Count == 0 ? 0 : events.Max(atEvent => atEvent.RowNumber);
-            double reproducedHeightPt = 0;
-            for (int index = 0; index < reproducedRows && index < measuredGrid.RowHeightsPt.Count; index++)
-            {
-                reproducedHeightPt += measuredGrid.RowHeightsPt[index];
-            }
-
-            heightPt = reproducedHeightPt > 0
-                ? reproducedHeightPt
+            // The plot's height is the SAME summed row heights the panel is built from, so
+            // plot bottom == panel bottom by construction rather than by a second sum.
+            heightPt = measuredGrid.TotalRowHeightPt > 0
+                ? measuredGrid.TotalRowHeightPt
                 : themedMetrics.GetValueOrDefault(
                     _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken));
         }

@@ -108,6 +108,14 @@ public static class PanelRowProjection
             }
         }
 
+        // The indent is derived from the SAME outline plan the live sheet applies, not
+        // from ParentId alone. A row can name a parent the planner declines to group (the
+        // parent is not a row of this table, or the child sits above it); indenting that
+        // row would draw a step the sheet does not show. HierarchyIndentation owns that
+        // rule, so the copy cannot invent a different one.
+        IReadOnlyDictionary<int, int> indents =
+            HierarchyIndentation.Plan(OutlineGroupPlanner.Plan(events));
+
         // RowNumber is the one-based body-row index, so ascending is table order.
         // The stable-ID tie-break is unreachable given the duplicate check above, but
         // keeps the ordering total if that check is ever relaxed.
@@ -116,7 +124,10 @@ public static class PanelRowProjection
             .. events
                 .OrderBy(atEvent => atEvent.RowNumber)
                 .ThenBy(atEvent => atEvent.Id.Value, StringComparer.Ordinal)
-                .Select(atEvent => new PanelRow(atEvent.Id, Cells(atEvent, grid, dateFormat))),
+                .Select(atEvent => new PanelRow(
+                    atEvent.Id,
+                    Cells(atEvent, grid, dateFormat),
+                    HierarchyIndentation.IndentFor(indents, atEvent.RowNumber))),
         ];
 
         return new PanelRowProjectionResult(rows, null);

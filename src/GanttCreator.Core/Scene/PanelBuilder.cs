@@ -1,6 +1,6 @@
 namespace GanttCreator.Core.Scene;
 
-/// <summary>One data-panel body row: its row identity and its cell texts.</summary>
+/// <summary>One data-panel body row: its row identity, its cell texts, and its indent.</summary>
 /// <param name="RowId">The row's stable identity, which owns every primitive it emits.</param>
 /// <param name="Cells">
 /// The cell texts in <see cref="PanelBuildRequest.Grid"/> column order. A
@@ -8,7 +8,11 @@ namespace GanttCreator.Core.Scene;
 /// text, because a blank cell is legal data (R2.5 U2) and an empty text
 /// primitive would be noise a renderer has to special-case.
 /// </param>
-public sealed record PanelRow(GanttRowId RowId, IReadOnlyList<string?> Cells);
+/// <param name="IndentLevel">
+/// The outline indent the row's <c>Description</c> cell carries, in steps. Zero is the
+/// default and reproduces every row the outline does not group.
+/// </param>
+public sealed record PanelRow(GanttRowId RowId, IReadOnlyList<string?> Cells, int IndentLevel = 0);
 
 /// <summary>The resolved export style set for the data panel and its header.</summary>
 /// <param name="BodyFill">The cell background fill (section 3 <c>DataPanelFill</c>).</param>
@@ -324,6 +328,14 @@ public static class PanelBuilder
                 string? text = row.Cells[columnIndex];
                 if (!string.IsNullOrWhiteSpace(text))
                 {
+                    // The live sheet expresses a grouped child's indent as the cell's
+                    // IndentLevel; the export draws the cell as a shape, so the indent rides
+                    // the text primitive as a left inset. Only Description is indented — the
+                    // same column ExcelOutlineGroupWriter writes.
+                    double leftInsetPt = string.Equals(column.Name, _descriptionColumn, StringComparison.Ordinal)
+                        ? row.IndentLevel * HierarchyIndentation.ChildIndentWidthPt
+                        : 0d;
+
                     primitives.Add(
                         new SceneText(
                             ScenePrimitive.CreateId(owner, $"panel-text:{column.Name}"),
@@ -332,7 +344,8 @@ public static class PanelBuilder
                             text,
                             bounds,
                             request.Theme.BodyText,
-                            column.Alignment));
+                            column.Alignment,
+                            leftInsetPt: leftInsetPt));
                 }
 
                 x += column.WidthPt;

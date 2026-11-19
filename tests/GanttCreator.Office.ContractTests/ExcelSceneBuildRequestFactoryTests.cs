@@ -1884,12 +1884,13 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
-    /// The export keeps the measured anchor row — so the plot overhangs and closes exactly
-    /// as the live chart does — and no title reserves height above the plot, because the
-    /// drawn title shares the year band's row (owner ruling 2026-11-19).
+    /// The export trims the live anchor row — so the plot-spanning shapes stop on the
+    /// copied panel's last row instead of a few points below it — and no title reserves
+    /// height above the plot, because the drawn title shares the year band's row
+    /// (owner ruling 2026-11-19, superseding ADR-0068 D4).
     /// </summary>
     [Fact]
-    public void The_export_request_keeps_the_anchor_row_and_reserves_no_title_band()
+    public void The_export_request_trims_the_anchor_row_and_reserves_no_title_band()
     {
         PanelCellGrid grid = PanelCellGrid.TryCreate(
             [new PanelColumn("Id", 120)],
@@ -1917,10 +1918,18 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(withTitle.Succeeded, "Export request refused: " + withTitle.Refusal);
 
         SceneBuildRequest request = withoutTitle.Request!;
-        Assert.Equal(6, request.ChartAnchorRowHeightPt, 6);
 
-        // The anchor row extends the bottom margin only; the top is the outer padding.
-        Assert.Equal(request.ChartPadding.TopPt + 6, request.ChartPadding.BottomPt, 6);
+        // The export has no worksheet rows, so it does not overhang an anchor row.
+        Assert.Equal(0, request.ChartAnchorRowHeightPt, 6);
+
+        // ...and the bottom margin is the uniform outer padding, not padding + anchor.
+        Assert.Equal(request.ChartPadding.TopPt, request.ChartPadding.BottomPt, 6);
+
+        // The plot and the panel are one row set: their bottoms coincide.
+        Assert.Equal(
+            request.PlotBounds!.Value.Bottom,
+            request.PlotBounds!.Value.Y + request.Grid!.TotalRowHeightPt,
+            6);
 
         // A title adds no height above the plot: both requests place the plot at the same top.
         Assert.Equal(
@@ -1947,6 +1956,71 @@ public class ExcelSceneBuildRequestFactoryTests
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         Assert.Equal(20.0, outcome.Request!.PlotBounds!.Value.Height, 6);
+    }
+
+    /// <summary>
+    /// The built export scene ends the plot on the panel's last row, so the copied chart
+    /// and the copied table share a bottom edge (owner report 2026-11-19). This asserts
+    /// the SCENE, not the request: the previous test proves the request's height, while a
+    /// panel built from a different row set would still drift.
+    /// </summary>
+    [Fact]
+    public void The_export_scene_ends_the_plot_on_the_panels_last_row()
+    {
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", 120)],
+            [20.0, 20.0],
+            12.0,
+            ["Id"],
+            anchorRowHeightPt: 6).Grid!;
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        SceneBuildRequestOutcome request = factory.CreateExport(
+            [
+                Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19), rowNumber: 1),
+                Event(new DateOnly(2024, 1, 22), new DateOnly(2024, 2, 2), rowNumber: 2),
+            ],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>());
+        Assert.True(request.Succeeded, "request refused: " + request.Message);
+
+        ExportBoundsOutcome resolved = ExportBoundsResolver.TryResolve(
+            request.Request,
+            ExportPanelTheme.Resolve(),
+            ExportSelection.TablePlusChart);
+        Assert.True(resolved.Succeeded, "scene refused: " + resolved.Refusal + "/" + resolved.SceneRefusal);
+
+        GanttScene scene = resolved.Scene!;
+        double panelBottom = scene.Primitives
+            .OfType<SceneRect>()
+            .Where(rect => rect.PrimitiveId.Contains("panel-cell:", StringComparison.Ordinal))
+            .Max(rect => rect.Bounds.Bottom);
+
+        Assert.Equal(scene.PlotBounds.Bottom, panelBottom, 6);
+
+        // No plot-spanning band or grid line reaches below that shared edge...
+        Assert.All(
+            scene.Primitives.OfType<SceneRect>().Where(rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal)),
+            rect => Assert.True(rect.Bounds.Bottom <= scene.PlotBounds.Bottom + 1e-6, rect.PrimitiveId));
+        Assert.All(
+            scene.Primitives.OfType<SceneLine>().Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)),
+            line => Assert.True(line.To.Y <= scene.PlotBounds.Bottom + 1e-6, line.PrimitiveId));
+
+        // ...and there is no anchor-row closing line, because the export has no anchor row.
+        Assert.DoesNotContain(
+            scene.Primitives,
+            primitive => string.Equals(primitive.PrimitiveId, "chart:plot-closing", StringComparison.Ordinal));
+
+        // The plot's own bottom border is what closes the copy on that shared edge: without
+        // it the copied plot had no bottom rule at all once the anchor row stopped being
+        // carried across (owner report 2026-11-19).
+        SceneLine plotBottom = Assert.Single(
+            scene.Primitives.OfType<SceneLine>(),
+            line => string.Equals(line.PrimitiveId, "chart:plot:bottom", StringComparison.Ordinal));
+        Assert.Equal(scene.PlotBounds.Bottom, plotBottom.From!.Y, 6);
+        Assert.Equal(scene.PlotBounds.Left, plotBottom.From.X, 6);
+        Assert.Equal(scene.PlotBounds.Right, plotBottom.To!.X, 6);
     }
 
     /// <summary>Builds an export request over one event and the supplied measured grid.</summary>

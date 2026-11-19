@@ -111,7 +111,11 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                 return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
             }
 
-            columns.Add(new PanelColumn(name, width.Value));
+            // The exported panel must read the same alignment the live worksheet cells
+            // carry. Reading GanttTableAppearance (the authority Initialise/Repair write
+            // onto the cells) rather than defaulting every column to left is what keeps
+            // Start/Finish/Duration centred in the copy (owner report 2026-11-19).
+            columns.Add(new PanelColumn(name, width.Value, GanttTableAppearance.SceneAlignmentFor(name)));
         }
 
         // Every body row is measured individually and the body range's aggregate

@@ -2,6 +2,8 @@
 
 - **Status:** Accepted (owner ruling 2026-11-19, from a live comparison of a copy against its
   chart). Amends ADR-0030 D6, ADR-0031 D1/D2, ADR-0038 D1, ADR-0048 and guide §3/§10.
+  **Amended 2026-11-19** after a second live comparison: D4's anchor-row carry is superseded
+  by D9, and D10 records the copied panel's alignment and child indentation.
 - **Date:** 2026-11-19
 - **Related:** R6.1–R6.8 (the editable export), [`plans/R6.8-export-live-geometry-parity-plan.md`](../../plans/R6.8-export-live-geometry-parity-plan.md)
 
@@ -44,12 +46,14 @@ the zero-origin export grid aligns lane 1 with panel row 1 by construction. A hi
 *owned* a lane would be refused as a degenerate height; that cannot occur, because a collapsed
 row is a child drawing on its parent's lane.
 
-### D4 — The anchor row is carried into the copy
+### D4 — The anchor row is carried into the copy (superseded by D9)
 
 The export grid is rebuilt with the measured `AnchorRowHeightPt`, and the frame's bottom
 margin gains it, so plot-spanning bands overhang that row and the closing line is drawn as on
 the sheet. A zero-height anchor row remains a legitimate configuration and reproduces the
-pre-ADR-0038 geometry.
+pre-ADR-0038 geometry. **Superseded:** a second live copy showed the chart ending a few
+points below the table, because the exported panel draws no anchor row for the overhang to
+sit on. D9 trims it.
 
 ### D5 — The copied panel takes the workbook's grid-line width
 
@@ -79,11 +83,44 @@ mirrors the live rule that disables the title when no column is visible (ADR-006
 not a `SceneBuilder` rule: a caller that composes without the resolver keeps its title, which
 the equivalence table requires.
 
+### D9 — The copy ends where the panel ends (supersedes D4)
+
+The exported panel and the exported plot are **one row set**. The factory truncates the export
+grid's measured row heights to `events.Max(RowNumber)` — the rows the panel reproduces — and
+derives both the panel's bottom and the plot's height from that same grid, so their bottom
+edges coincide by construction rather than by a second sum. The export carries **no anchor
+row**: `ChartAnchorRowHeightPt` is zero, so the plot-spanning bands stop on the plot's own
+bottom edge, no closing line is drawn, and the frame's bottom margin is the same uniform outer
+padding as its other three sides. The live arrangement is unchanged — it still overhangs the
+reserved anchor row because a worksheet insert needs that cell anchor.
+
+### D10 — The copy reproduces the table's alignment and child indentation
+
+The exported panel reads `GanttTableAppearance.SceneAlignmentFor` for every measured column,
+so `Start`, `Finish` and `Duration` are centred in the copy exactly as they are on the sheet.
+A grouped child's `Description` cell reproduces the live `IndentLevel`: `PanelRowProjection`
+derives the same outline plan the worksheet uses and carries each row's indent on
+`PanelRow.IndentLevel`; `PanelBuilder` writes it as `SceneText.LeftInsetPt` on the
+Description text only; the Office renderer consumes it as `TextFrame2.MarginLeft`. The
+one-step width is `HierarchyIndentation.ChildIndentWidthPt`, a code constant rather than a
+catalogue metric so the catalogue hash does not move.
+
+### D11 — The plot's bottom border is drawn in every composition
+
+`chart:plot:bottom` is emitted for the live and the export compositions alike. D9 removed the
+copy's anchor row, and therefore its closing line, so the copy's plot was left open at the
+bottom (owner report 2026-11-19: the copied chart's bottom rule disappeared). On the live sheet
+the edge is inset by half its stroke **inside** the last body row, because that row's own fill
+clips the outer half. An export composition draws its own panel and has no cells to clip it, so
+the line lands exactly on `PlotBounds.Bottom` — the same edge as the panel's last row, closing
+the copied table and plot with one shared rule. The closing line keeps its own meaning: it
+terminates the band overhang and exists only while `ChartAnchorRowHeightPt` is non-zero.
+
 ## Not yet in force
 
 **Label-position parity** (the fourth reported fault: the delineator's description label
-flipping above the line in the copy). It is expected to follow from D4, because the below-line
-box has no room without the anchor-row overhang, so it is re-measured on the live copy before
+flipping above the line in the copy). D9 removed the anchor-row overhang, so it no longer
+supplies the below-line room D4 expected; the corner is re-measured on the live copy before
 any further rule is added.
 
 **One measured consequence of D3:** the reference fixture numbered its rows by worksheet row
@@ -93,8 +130,8 @@ test fixture re-bases them before composing. Production readers already send bod
 
 ## Consequences
 
-- The copy's chart bounds lose the title band's height above the plot and gain the anchor row
-  below it; the staged group and the live paste-size assertions move with them.
+- The copy's chart bounds lose the title band's height above the plot and no longer add the
+  anchor row below it; the staged group and the live paste-size assertions move with them.
 - `SplitterBuilder.BandBounds` is now the plot's rectangle, so a caller that read it for a
   panel-spanning extent must use `PanelLeftPt` through the label field instead.
 - The panel's border weight follows the workbook, so a themed chart and its copy stay equal.

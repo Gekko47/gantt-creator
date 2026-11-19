@@ -306,7 +306,8 @@ public class StyleWriteTests
         /// <summary>
         /// Overrides the base <c>ApplyText</c> to avoid the COM <c>TextFrame2</c>
         /// members that Castle DynamicProxy cannot proxy (<c>WordWrap</c>,
-        /// <c>AutoSize</c>). The modelled host records the writes directly.
+        /// <c>AutoSize</c>). The modelled host records the writes directly, mirroring
+        /// the base method's margin rule (left = the scene's resolved inset, the rest 0).
         /// </summary>
         internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
         {
@@ -314,7 +315,7 @@ public class StyleWriteTests
                 throw new InvalidOperationException("The host refused the text.");
             _host.VerticalAnchor = MsoVerticalAnchor.msoAnchorMiddle;
             _host.VerticalAnchorWrites++;
-            _host.MarginLeft = 0;
+            _host.MarginLeft = (float)request.LeftInsetPt;
             _host.MarginRight = 0;
             _host.MarginTop = 0;
             _host.MarginBottom = 0;
@@ -379,6 +380,35 @@ public class StyleWriteTests
         Assert.False(float.IsNaN(host.MarginBottom));
 
         Assert.Equal(0f, host.MarginLeft);
+        Assert.Equal(0f, host.MarginRight);
+        Assert.Equal(0f, host.MarginTop);
+        Assert.Equal(0f, host.MarginBottom);
+    }
+
+    /// <summary>
+    /// The scene's resolved left inset is written as the text frame's left margin, so a
+    /// grouped child's copied Description cell starts indented like the worksheet cell
+    /// (owner report 2026-11-19).
+    /// </summary>
+    [Fact]
+    public void A_text_request_with_a_left_inset_writes_it_as_the_frame_left_margin()
+    {
+        var host = new HostShape();
+        var writer = new TextBoxWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(new OfficeShapeRequest(
+            "row-1:child",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 18)),
+            ZLayer.Label,
+            Text: "Child",
+            TextColour: ColourHex.Parse("#000000"),
+            LeftInsetPt: 6));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(6f, host.MarginLeft);
+
+        // The other three margins stay zero: only the indent is a scene value.
         Assert.Equal(0f, host.MarginRight);
         Assert.Equal(0f, host.MarginTop);
         Assert.Equal(0f, host.MarginBottom);

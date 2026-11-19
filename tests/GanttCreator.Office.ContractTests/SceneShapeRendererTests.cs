@@ -618,6 +618,31 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// The scene's resolved left inset crosses the port verbatim, so the data-panel copy
+    /// can reproduce a grouped child's Description indent as a text-frame margin (owner
+    /// report 2026-11-19).
+    /// </summary>
+    [Fact]
+    public void The_scene_text_left_inset_reaches_the_request_unchanged()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:child",
+                RowOwner,
+                ZLayer.Label,
+                "Child",
+                new RectD(10, 20, 60, 12),
+                Style,
+                GanttTextAlignment.Left,
+                leftInsetPt: 6));
+
+        OfficeShapeRequest label = Assert.Single(renderer.Translate(scene).Requests);
+
+        Assert.Equal(6, label.LeftInsetPt);
+    }
+
+    /// <summary>
     /// The scene's label text colour crosses the port verbatim. Without this the
     /// renderer dropped the one member entity guide section 17's switch needs to
     /// reach the host, and every delay label would have rendered in whatever

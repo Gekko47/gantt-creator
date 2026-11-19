@@ -2390,7 +2390,13 @@ public class ExcelShapeWriter(
         // right of the bar it labels, and to make a Left-anchored one end short of
         // it. Verified against the installed interop assembly that all four members
         // are settable Single properties on TextFrame2.
-        frame.MarginLeft = 0f;
+        //
+        // The LEFT margin is the scene's resolved inset, not zero. A grouped child's
+        // data-panel Description cell carries a positive inset so the copied cell
+        // reproduces the worksheet's IndentLevel; every other primitive resolves zero
+        // and keeps the established behaviour exactly (SceneText.LeftInsetPt defaults
+        // to zero).
+        frame.MarginLeft = (float)request.LeftInsetPt;
         frame.MarginRight = 0f;
         frame.MarginTop = 0f;
         frame.MarginBottom = 0f;

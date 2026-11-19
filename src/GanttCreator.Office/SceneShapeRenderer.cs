@@ -482,5 +482,6 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             Text: text.Text,
             Alignment: text.Alignment,
             TextColour: text.Style.TextColour,
-            StrokeDash: text.Style.StrokeDash);
+            StrokeDash: text.Style.StrokeDash,
+            LeftInsetPt: text.LeftInsetPt);
 }

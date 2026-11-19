@@ -49,6 +49,12 @@ namespace GanttCreator.Office;
 /// <c>xlMoveAndSize</c> so Excel resizes it live on collapse/expand. The
 /// default is <see langword="false"/> (scene-owned, <c>xlMove</c>).
 /// </param>
+/// <param name="LeftInsetPt">
+/// The left inset applied inside the text bounds before the text starts, in points. Zero
+/// (the default) is the established textbox behaviour. A grouped child's data-panel
+/// <c>Description</c> cell carries a positive inset so the copied cell reproduces the
+/// worksheet's <c>IndentLevel</c>; the adapter writes it to <c>TextFrame2.MarginLeft</c>.
+/// </param>
 /// <remarks>
 /// Every value is a primitive or a Core-owned type. No interop type crosses
 /// this request, so the AddIn compilation never names
@@ -70,7 +76,8 @@ public sealed record OfficeShapeRequest(
     GanttTextAlignment? Alignment = null,
     ColourHex? TextColour = null,
     GanttStrokeDash StrokeDash = GanttStrokeDash.Solid,
-    bool HostOwnsExtent = false);
+    bool HostOwnsExtent = false,
+    double LeftInsetPt = 0);
 
 /// <summary>
 /// Narrow port over the live renderer's shape writes: create, update, and

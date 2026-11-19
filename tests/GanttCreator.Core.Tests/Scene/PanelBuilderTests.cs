@@ -459,6 +459,36 @@ public sealed class PanelBuilderTests
     private static bool IsSortOrFilterGlyph(char candidate) =>
         candidate is '\u25B2' or '\u25B3' or '\u25BC' or '\u25BD' or '\u25B6' or '\u25A0' or '\u25AC';
 
+    /// <summary>
+    /// A grouped child's <c>Description</c> text carries the scene inset, and no other cell
+    /// in the panel does (owner report 2026-11-19: the copy dropped the live IndentLevel).
+    /// </summary>
+    [Fact]
+    public void A_grouped_childs_description_carries_the_indent_and_its_other_cells_do_not()
+    {
+        PanelRow parent = Row(0, "Parent");
+        PanelRow child = Row(1, "Child") with { IndentLevel = HierarchyIndentation.ChildIndentLevel };
+
+        PanelBuildResult result = Build([parent, child]).Result!;
+        SceneText[] descriptions =
+        [
+            .. result.Primitives.OfType<SceneText>()
+                .Where(text => text.PrimitiveId.EndsWith(":panel-text:Description", StringComparison.Ordinal)),
+        ];
+
+        Assert.Equal(0, descriptions.Single(text => text.Text == "Parent").LeftInsetPt);
+        Assert.Equal(
+            HierarchyIndentation.ChildIndentLevel * HierarchyIndentation.ChildIndentWidthPt,
+            descriptions.Single(text => text.Text == "Child").LeftInsetPt,
+            6);
+
+        // Only Description is indented — the live pass writes the cell indent there alone.
+        Assert.All(
+            result.Primitives.OfType<SceneText>()
+                .Where(text => !text.PrimitiveId.EndsWith(":panel-text:Description", StringComparison.Ordinal)),
+            text => Assert.Equal(0, text.LeftInsetPt));
+    }
+
     private static PanelBuildOutcome Build(
         IReadOnlyList<PanelRow>? rows = null,
         IReadOnlyList<string>? blanks = null) =>
