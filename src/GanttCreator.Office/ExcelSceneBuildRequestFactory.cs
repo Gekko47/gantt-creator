@@ -1086,3 +1086,48 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
         ReadDouble(settings, _marginCmKey, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.DefaultCustomCm);
 }
+
+/// <summary>
+/// The editable-export request assembly entry (R6.8): the one seam the Copy Editable command
+/// calls, so a command never names the request factory or re-derives its inputs.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>One authority, one doorway.</b> The export assembly is the factory's
+/// <see cref="ExcelSceneBuildRequestFactory.CreateExport"/> variant, which pins lane
+/// anchoring off, the <see cref="SceneCompositionProfile.EditableExport"/> profile and the
+/// empty-table refusal in code. This wrapper carries no logic beyond that delegation: it
+/// exists so the architecture gate keeps its single-authority rule (the factory's users are
+/// the live orchestrator and the composition root) while the export pipeline enters through
+/// a named assembly seam.
+/// </para>
+/// <para>
+/// <b>Phase-7 reuse.</b> The same entry is what R7.6's Send to PowerPoint needs: the read →
+/// request → resolve chain is identical, and only the terminal action (paste instead of
+/// copy) differs.
+/// </para>
+/// </remarks>
+public static class EditableExportRequest
+{
+    /// <summary>Builds the export scene request from the workbook's measured inputs.</summary>
+    /// <param name="events">The validated events to compose.</param>
+    /// <param name="settings">The workbook's effective settings map.</param>
+    /// <param name="registry">The workbook's style registry.</param>
+    /// <param name="grid">The measured panel grid.</param>
+    /// <param name="themedMetrics">The workbook's themed metric values.</param>
+    /// <returns>The export request, or a typed refusal.</returns>
+    public static SceneBuildRequestOutcome Create(
+        IReadOnlyList<GanttEvent> events,
+        IReadOnlyDictionary<string, string> settings,
+        GanttStyleRegistry registry,
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics) =>
+        new ExcelSceneBuildRequestFactory(new AptosTextMetrics())
+            .CreateExport(events, settings, registry, grid, themedMetrics);
+
+    /// <summary>The visible schema columns the export panel measures.</summary>
+    /// <param name="settings">The workbook's effective settings map.</param>
+    /// <returns>The measured column display names, in panel order.</returns>
+    public static IReadOnlyList<string> MeasuredColumns(IReadOnlyDictionary<string, string> settings) =>
+        ExcelSceneBuildRequestFactory.MeasuredColumnsFor(settings);
+}
