@@ -260,6 +260,29 @@ public static class PanelBuilder
         }
     }
 
+    /// <summary>
+    /// Whether a panel row is a hidden worksheet row rather than a visible one.
+    /// </summary>
+    /// <param name="heightPt">The row's measured height, from <see cref="PanelCellGrid.RowHeightsPt"/>.</param>
+    /// <returns><see langword="true"/> when the row contributes no primitives.</returns>
+    /// <remarks>
+    /// <para>
+    /// Excel reports a hidden row's height as zero, and <see cref="PanelCellGrid"/> accepts
+    /// that value for exactly that reason. Section 3 reproduces the <em>visible</em> table,
+    /// so a hidden row keeps its positional slot and its zero height — which is what keeps
+    /// every later row's running-sum top correct — but describes nothing: no cell fill, no
+    /// text, and no border.
+    /// </para>
+    /// <para>
+    /// The editable export proved the rule the hard way (2026-11-19): a collapsed section's
+    /// panel cell was emitted as a 45x0 rectangle, and the shape writer refuses a
+    /// non-positive extent before any host call, so every Copy editable attempt failed on
+    /// the first hidden row. A zero-height entity has no pixels in either renderer, so
+    /// omitting it loses nothing visible and removes a primitive the host cannot represent.
+    /// </para>
+    /// </remarks>
+    private static bool IsHiddenRow(double heightPt) => heightPt <= 0;
+
     private static void AddBody(
         List<ScenePrimitive> primitives,
         PanelBuildRequest request,
@@ -273,8 +296,17 @@ public static class PanelBuilder
         for (int rowIndex = 0; rowIndex < request.Rows.Count; rowIndex++)
         {
             PanelRow row = request.Rows[rowIndex];
-            SceneOwnerId owner = SceneOwnerId.ForRow(row.RowId);
             double height = grid.RowHeightsPt[rowIndex];
+
+            // The slot and the zero height are kept: a zero height adds nothing to the
+            // running-sum top below, so the next visible row still lands where the grid
+            // measured it. Only the primitives are skipped.
+            if (IsHiddenRow(height))
+            {
+                continue;
+            }
+
+            SceneOwnerId owner = SceneOwnerId.ForRow(row.RowId);
             double x = panelLeft;
 
             for (int columnIndex = 0; columnIndex < grid.Columns.Count; columnIndex++)
@@ -358,7 +390,17 @@ public static class PanelBuilder
         {
             // The same running sum the cell bodies use, so a border can never land on
             // a different edge than the cell it frames when the heights differ.
-            y += grid.RowHeightsPt[index];
+            double height = grid.RowHeightsPt[index];
+            y += height;
+
+            // A hidden row's top and bottom edges coincide with the border already drawn
+            // for the row above, so drawing it again would put two coincident lines in
+            // the composition and in the editable copy.
+            if (IsHiddenRow(height))
+            {
+                continue;
+            }
+
             AddHorizontalBorder(primitives, request, $"panel-border-h:{index + 2}", panelLeft, right, y);
         }
     }

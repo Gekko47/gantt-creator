@@ -64,6 +64,7 @@
 | ADR-0064 | A user-authored `Activity ID` column leads the visible columns | Accepted | 2026-11-17 | [`adr/0064-activity-id-column.md`](adr/0064-activity-id-column.md) |
 | ADR-0065 | Zero visible table columns are a supported state, and the Columns control toggles all of them | Accepted | 2026-11-17 | [`adr/0065-zero-visible-columns.md`](adr/0065-zero-visible-columns.md) |
 | ADR-0066 | Deleting staging shapes after `ShapeRange.Copy` preserves the Office drawing clipboard format | Accepted | 2026-11-18 | [`adr/0066-copy-after-delete-preserves-the-drawing-format.md`](adr/0066-copy-after-delete-preserves-the-drawing-format.md) |
+| ADR-0067 | A hidden worksheet row contributes no data-panel primitives, while its plot shapes stay | Accepted | 2026-11-19 | [`adr/0067-hidden-rows-contribute-no-panel-primitives.md`](adr/0067-hidden-rows-contribute-no-panel-primitives.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,
@@ -109,6 +110,19 @@ a decision. This gap is reported, not filled.
 **R5.16a style-defined row glyph correction (owner live review, 2026-11-17).** The `pen` glyph proposed and first shipped for `Custom Activity` and `Custom Milestone` was rejected on the rendered surface: at 16 px its nib reads as a padlock beside the two genuine padlock glyphs, and on this tab a padlock states that the cells or the chart are locked, so the misreading is a state contradiction rather than a near-miss. `circle-dashed` — Lucide's draft ring — is adopted for both rows instead, which also states the concept more honestly: the row's style is not yet chosen. The three concept primaries follow the swap through `AddEntityPrimaryGlyph`, the checker's primary-glyph set names the ring, and the pen assets are deleted rather than left orphaned. This supersedes R4's `pen` choice in the entry above; the rest of R4 stands.
 
 **R5.16a second-pass rulings (owner, 2026-11-17).** **D1 — the catalogue is 17 types.** `EntityTypeCatalog.TypeCount` was authoritative and the prose was wrong: the entity guide's Type table omitted `Custom Milestone` and both it and the unknown-type validation message said 16. The table gains the row, the count sentence says 17, and the message says "one of the 17 catalogue display names"; no schema change, because every display name string is unchanged. **D2 — the critical pair gains one shared slash.** `Critical Interval` keeps the bar motif and `Critical Milestone` keeps the flag, and each gains a wide diagonal struck through it, which is how the chart draws a critical interval over a parent bar. Two slugs (`critical-span`, `critical-milestone`) rather than one, because a bar glyph on a milestone row names the wrong shape, and the add primaries follow both. The owner's approval is conditional on the diagonal reading at 16 px, which is a live-surface judgement and not something a test can settle. **D3 — the one-row Fix menu keeps no heading**: a section title above a single `Validate` row is ceremony. **D4 — the menu keytips are confirmed working on the host**, so the "scoped to the open menu" statement is observed behaviour rather than an inference.
+
+**ADR-0067 — a hidden row is not a data-panel row (owner ruling 2026-11-19).** Copy editable
+refused on every attempt for a workbook with an outline-collapsed section, while Refresh
+rendered the same workbook. The writer's new refusal record named the cause in one line: a
+`45x0` `panel-cell:Description` rectangle (`InvalidGeometry`, height 0). Excel reports a hidden
+row's height as zero and ADR-0034 made the grid accept it, so `PanelBuilder` was describing a
+row the sheet does not show. A zero-height row now keeps its positional slot and contributes
+no `panel-cell:`, `panel-text:` or `panel-border-h:` primitive; the plot shapes are unchanged,
+because the owner's ruling is that a collapsed row's plot content still shows while its data
+panel row does not. `Visible=false` is unaffected — it still reproduces its panel row (guide
+§4), because that row is not hidden. The copy command also stopped printing one generic
+sentence: it names the typed `ShapeWriteRefusal`, and no copy refusal advises a Refresh, which
+can neither delete a staging shape nor make a zero-area primitive creatable.
 
 ## ADR template
 

@@ -647,23 +647,28 @@ internal static class CopyEditableCommand
     {
         StagingLifecycleRefusal.CompositionRefused => outcome.Composition?.Refusal switch
         {
+            // Staging shapes are invisible to the live ownership scan, so a Refresh cannot
+            // remove one. The only remedy that exists is deleting the named shapes.
             StagingCompositionRefusal.StagingAlreadyPopulated =>
-                "Temporary copy shapes from an earlier attempt are still on the sheet. Run Refresh chart to clean them up, then copy again.",
+                "Temporary copy shapes from an earlier attempt are still on the sheet, named GanttCreatorStaging. Select and delete them, then copy again.",
             StagingCompositionRefusal.HostRejected =>
-                "Excel refused to create the copy. Run Refresh chart, then copy again.",
-            StagingCompositionRefusal.ExportRefused =>
-                "The copy could not be composed from the export bounds. Run Refresh chart, then copy again.",
+                TranslateWriteRefusal(outcome.Composition?.WriteRefusal),
+            // The resolution carries the real export refusal; restating it generically was
+            // the same defect one layer up.
+            StagingCompositionRefusal.ExportRefused => outcome.Composition?.Resolution is { } refusedResolution
+                ? TranslateBounds(refusedResolution)
+                : "The copy could not be composed from the export bounds. Run Fix, then copy again.",
             StagingCompositionRefusal.UnsupportedPrimitive =>
                 "A chart element could not be copied. Run Fix, then copy again.",
             StagingCompositionRefusal.InvalidSubScene =>
-                "The copy could not be composed. Run Refresh chart, then copy again.",
+                "The copy could not be composed. Run Fix, then copy again.",
             StagingCompositionRefusal.NullResolution
                 or StagingCompositionRefusal.NullPort
                 or StagingCompositionRefusal.MissingScene => ConstructionMessage,
-            _ => "The copy could not be composed. Run Refresh chart, then copy again.",
+            _ => "The copy could not be composed. Run Fix, then copy again.",
         },
         StagingLifecycleRefusal.GroupingRefused =>
-            "The copy could not be grouped. Try again; if the problem persists, run Refresh chart.",
+            "The copy could not be grouped. Try again; if the problem persists, run Fix.",
         // The R6.6 stage's detail already carries the actionable sentence (and the reader's
         // diagnostic token); the typed member is never parsed out of it.
         StagingLifecycleRefusal.CopyRefused =>
@@ -676,6 +681,42 @@ internal static class CopyEditableCommand
             or StagingLifecycleRefusal.NullGroupingPort
             or StagingLifecycleRefusal.NullResolution => ConstructionMessage,
         _ => ConstructionMessage,
+    };
+
+    /// <summary>Translates the write refusal behind a refused composition.</summary>
+    /// <param name="refusal">The port's typed refusal, when the composer carried one.</param>
+    /// <returns>One sentence naming the reason, never a remedy that cannot work.</returns>
+    /// <remarks>
+    /// <para>
+    /// The 2026-11-19 defect: every write refusal was reported as "Excel refused to create
+    /// the copy. Run Refresh chart, then copy again." A Refresh cannot remove a staging
+    /// shape (the live ownership scan never proves one) and cannot make a zero-area
+    /// primitive creatable, so the advice sent the user in a circle. The composer already
+    /// keeps the typed member on the outcome; this maps it.
+    /// </para>
+    /// <para>
+    /// Every member is enumerated, so a refusal added later is a compile-time reminder
+    /// rather than a silent fall-through to a generic sentence.
+    /// </para>
+    /// </remarks>
+    private static string TranslateWriteRefusal(ShapeWriteRefusal? refusal) => refusal switch
+    {
+        ShapeWriteRefusal.TargetProtected =>
+            "The worksheet is protected, so Excel refused the copy. Unprotect it, then copy again.",
+        ShapeWriteRefusal.AlreadyExists =>
+            "A temporary copy shape with the same name is already on the sheet. Select and delete the shapes named GanttCreatorStaging, then copy again.",
+        ShapeWriteRefusal.InvalidGeometry =>
+            "Part of the copy has no visible area, so Excel cannot create it. Run Fix, then copy again.",
+        ShapeWriteRefusal.UnsupportedIdentifierForm or ShapeWriteRefusal.BlankIdentifier =>
+            "The copy could not be composed from the table. Run Fix, then copy again.",
+        ShapeWriteRefusal.NoActiveWorkbook or ShapeWriteRefusal.WorksheetMissing =>
+            "The workbook with the Gantt table is not available. Open it, then copy again.",
+        ShapeWriteRefusal.HostRejected
+            or ShapeWriteRefusal.NotFound
+            or ShapeWriteRefusal.InvalidOwnershipTag
+            or ShapeWriteRefusal.NullRequest => "Excel refused to create the copy.",
+        null => "Excel refused to create the copy.",
+        _ => "Excel refused to create the copy.",
     };
 
     /// <summary>Maps a lifecycle refusal to the command's typed refusal.</summary>

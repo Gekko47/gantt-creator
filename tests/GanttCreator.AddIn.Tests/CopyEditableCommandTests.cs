@@ -270,6 +270,130 @@ public class CopyEditableCommandTests
         Assert.Empty(harness.Successes);
     }
 
+    /// <summary>
+    /// A refused composition names the typed write refusal instead of one generic
+    /// sentence, so the user is told what actually refused.
+    /// </summary>
+    /// <remarks>
+    /// The 2026-11-19 defect: every composition refusal printed "Excel refused to create
+    /// the copy. Run Refresh chart, then copy again.", and the typed reason (a zero-height
+    /// panel cell) was hidden on <c>StagingCompositionOutcome.WriteRefusal</c>.
+    /// </remarks>
+    [Theory]
+    [InlineData(nameof(ShapeWriteRefusal.TargetProtected), "Unprotect")]
+    [InlineData(nameof(ShapeWriteRefusal.AlreadyExists), "GanttCreatorStaging")]
+    [InlineData(nameof(ShapeWriteRefusal.InvalidGeometry), "no visible area")]
+    public void Run_names_the_typed_write_refusal_behind_a_refused_composition(
+        string refusalName,
+        string expectedFragment)
+    {
+        Harness harness = new();
+        harness.NextLifecycle = new StagingLifecycleOutcome(
+            new StagingCompositionOutcome(
+                [],
+                null,
+                StagingCompositionRefusal.HostRejected,
+                null,
+                Enum.Parse<ShapeWriteRefusal>(refusalName)),
+            null,
+            null,
+            StagingLifecycleRefusal.CompositionRefused,
+            []);
+
+        CopyEditableOutcome outcome = harness.Run();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(CopyEditableRefusal.CompositionRefused, outcome.Refusal);
+        Assert.Contains(
+            expectedFragment,
+            Assert.Single(harness.Failures),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A refused composition never advises a Refresh.
+    /// </summary>
+    /// <remarks>
+    /// A Refresh cannot remove a staging shape (the live ownership scan never proves one)
+    /// and cannot make a zero-area primitive creatable, so the old advice sent the user in
+    /// a circle — the exact report that opened this defect.
+    /// </remarks>
+    [Fact]
+    public void Run_does_not_advise_a_refresh_for_a_refused_composition()
+    {
+        Harness harness = new();
+        harness.NextLifecycle = new StagingLifecycleOutcome(
+            new StagingCompositionOutcome(
+                [],
+                null,
+                StagingCompositionRefusal.HostRejected,
+                null,
+                ShapeWriteRefusal.InvalidGeometry),
+            null,
+            null,
+            StagingLifecycleRefusal.CompositionRefused,
+            []);
+
+        _ = harness.Run();
+
+        Assert.DoesNotContain(
+            "Refresh",
+            Assert.Single(harness.Failures),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Leftover staging shapes are named, because deleting those shapes is the only
+    /// remedy that actually exists.
+    /// </summary>
+    [Fact]
+    public void Run_names_the_staging_shapes_when_an_earlier_attempt_left_some()
+    {
+        Harness harness = new();
+        harness.NextLifecycle = new StagingLifecycleOutcome(
+            new StagingCompositionOutcome(
+                [],
+                null,
+                StagingCompositionRefusal.StagingAlreadyPopulated,
+                null,
+                null),
+            null,
+            null,
+            StagingLifecycleRefusal.CompositionRefused,
+            []);
+
+        _ = harness.Run();
+
+        string message = Assert.Single(harness.Failures);
+        Assert.Contains("GanttCreatorStaging", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Refresh", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A composition refusal that is really an export refusal reuses the export message
+    /// rather than restating it generically.
+    /// </summary>
+    [Fact]
+    public void Run_reuses_the_bounds_message_for_a_composition_export_refusal()
+    {
+        Harness harness = new();
+        harness.NextLifecycle = new StagingLifecycleOutcome(
+            new StagingCompositionOutcome(
+                [],
+                null,
+                StagingCompositionRefusal.ExportRefused,
+                new ExportBoundsOutcome(null, ExportBoundsRefusal.EmptyVisibleTable, null),
+                null),
+            null,
+            null,
+            StagingLifecycleRefusal.CompositionRefused,
+            []);
+
+        _ = harness.Run();
+
+        Assert.Equal(ExportBoundsRefusalMessages.EmptyVisibleTable, Assert.Single(harness.Failures));
+    }
+
     [Fact]
     public void Run_does_not_report_success_when_the_copy_seam_never_ran()
     {

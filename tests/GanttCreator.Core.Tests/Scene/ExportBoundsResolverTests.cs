@@ -358,6 +358,18 @@ public sealed class ExportBoundsResolverTests
             expandedTable.Bounds!.Bounds.Height - collapsedTable.Bounds!.Bounds.Height,
             6);
 
+        // The defect this guard closes (2026-11-19): the collapsed rows' panel cells
+        // were emitted as zero-height rectangles, and the shape writer refuses a
+        // non-positive extent before any host call, so every editable copy failed on
+        // the first hidden row. The scene is the only geometry authority, so nothing in
+        // the export scene may be a request no renderer can create.
+        Assert.All(
+            collapsedTable.Scene!.Primitives.OfType<SceneRect>(),
+            rect => Assert.True(rect.Bounds.Width > 0 && rect.Bounds.Height > 0, rect.PrimitiveId));
+        Assert.All(
+            collapsedTable.Scene!.Primitives.OfType<SceneText>(),
+            text => Assert.True(text.TextBounds.Width > 0 && text.TextBounds.Height > 0, text.PrimitiveId));
+
         // ...and the Gantt itself never shrinks: the chart-only bounds do not read
         // row heights at all. The collapsed children still compose on their parent's
         // lane (R4.7B), which the successful resolution proves.

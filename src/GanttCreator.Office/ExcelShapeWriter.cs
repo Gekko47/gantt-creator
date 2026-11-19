@@ -273,6 +273,54 @@ public class ExcelShapeWriter(
                     ? ShapeWriteRefusal.NoActiveWorkbook
                     : ShapeWriteRefusal.TargetProtected);
 
+    /// <summary>
+    /// Records a refused create with the primitive it concerned and the typed reason, then
+    /// returns the refusal unchanged.
+    /// </summary>
+    /// <param name="request">The request that was refused.</param>
+    /// <param name="refusal">The typed reason the write refused.</param>
+    /// <param name="step">
+    /// The step that refused: <c>validate</c>, <c>name-length</c>, <c>guard</c>,
+    /// <c>resolve</c>, <c>already-exists</c>, <c>create</c>, <c>style</c>, or
+    /// <c>ownership</c>.
+    /// </param>
+    /// <returns>The refused outcome, unchanged.</returns>
+    /// <remarks>
+    /// The 2026-11-19 live defect drove this record. The editable copy refused
+    /// deterministically at one primitive of a full export composition: 24 creates
+    /// succeeded, the next refused, and the editable composer collapses every write
+    /// refusal to <see cref="StagingCompositionRefusal.HostRejected"/>, so the log held
+    /// no record of <em>which</em> primitive or <em>why</em>. One line per refusal makes
+    /// the next occurrence self-diagnosing without changing the typed outcome any caller
+    /// already handles.
+    /// </remarks>
+    private ShapeWriteOutcome RefuseCreate(OfficeShapeRequest request, ShapeWriteRefusal refusal, string step)
+    {
+        _trace?.Invoke(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.shape create-refused id={request.PrimitiveId} kind={request.Kind} refusal={refusal} step={step} {DescribeGeometry(request.Geometry)}"));
+        return ShapeWriteOutcome.Refused(refusal);
+    }
+
+    /// <summary>Renders a request's geometry into one bounded diagnostic field.</summary>
+    /// <param name="geometry">The request's geometry.</param>
+    /// <returns>A single-token description of the bounds or the line endpoints.</returns>
+    /// <remarks>
+    /// A zero extent is legal in <see cref="RectD"/> but refused by
+    /// <see cref="IsUsableBounds"/>, so the numbers themselves are the evidence for that
+    /// refusal; a summary such as "invalid" would hide the defect that produced it.
+    /// </remarks>
+    private static string DescribeGeometry(OfficeShapeGeometry geometry) => geometry switch
+    {
+        { Bounds: { } bounds } => string.Create(
+            CultureInfo.InvariantCulture,
+            $"b={bounds.X:0.###},{bounds.Y:0.###},{bounds.Width:0.###},{bounds.Height:0.###}"),
+        { From: { } from, To: { } to } => string.Create(
+            CultureInfo.InvariantCulture,
+            $"from={from.X:0.###},{from.Y:0.###} to={to.X:0.###},{to.Y:0.###}"),
+        _ => "b=none",
+    };
+
     /// <summary>Reads a shape's placement. Test seam over the COM property.</summary>
     /// <param name="shape">The live shape.</param>
     /// <returns>The host's placement for the shape.</returns>
@@ -317,7 +365,7 @@ public class ExcelShapeWriter(
 
         if (!Validate(request, out ShapeWriteRefusal? invalid))
         {
-            return ShapeWriteOutcome.Refused(invalid!.Value);
+            return RefuseCreate(request, invalid!.Value, "validate");
         }
 
         // Refused before any host call. The name is written during ApplyOwnership,
@@ -325,7 +373,7 @@ public class ExcelShapeWriter(
         // would place a shape on the sheet only to fail on the name write.
         if (NameFor(request.PrimitiveId).Length > MaxShapeNameLength)
         {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+            return RefuseCreate(request, ShapeWriteRefusal.HostRejected, "name-length");
         }
 
         // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
@@ -333,20 +381,20 @@ public class ExcelShapeWriter(
         // off for the whole pass, so the repeated query can only return the same answer.
         if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
-            return guardRefusal;
+            return RefuseCreate(request, guardRefusal.Refusal!.Value, "guard");
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
         if (shapes is null)
         {
-            return refusal!;
+            return RefuseCreate(request, refusal!.Refusal!.Value, "resolve");
         }
 
         long stepStart = _trace is null ? 0L : Stopwatch.GetTimestamp();
 
         if (FindShapeByName(shapes, NameFor(request.PrimitiveId)) is not null)
         {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.AlreadyExists);
+            return RefuseCreate(request, ShapeWriteRefusal.AlreadyExists, "already-exists");
         }
 
         if (_trace is not null)
@@ -359,7 +407,7 @@ public class ExcelShapeWriter(
         Excel.Shape? created = AddShape(shapes, request);
         if (created is null)
         {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+            return RefuseCreate(request, ShapeWriteRefusal.HostRejected, "create");
         }
 
         // The host must not own the shape's SIZE -- except for the one class that
@@ -398,7 +446,7 @@ public class ExcelShapeWriter(
         // the ownership stamp is never attempted.
         if (!ApplyStyleOrDiscard(created, request))
         {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+            return RefuseCreate(request, ShapeWriteRefusal.HostRejected, "style");
         }
 
         if (_trace is not null)
@@ -427,9 +475,10 @@ public class ExcelShapeWriter(
             // and the z-order preflight would otherwise look it up again (ADR-0054).
             _ = Remember(NameFor(request.PrimitiveId), created);
             TraceBandShape("create", created, request.PrimitiveId, before: null);
+            return stamped;
         }
 
-        return stamped;
+        return RefuseCreate(request, stamped.Refusal!.Value, "ownership");
     }
 
     /// <inheritdoc />

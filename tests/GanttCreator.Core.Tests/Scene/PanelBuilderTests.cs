@@ -171,6 +171,64 @@ public sealed class PanelBuilderTests
             [.. horizontals.Select(line => line.From.Y)]);
     }
 
+    /// <summary>
+    /// A hidden worksheet row contributes no cell, text, or border primitive, and the rows
+    /// around it keep the positions the measured grid gives them.
+    /// </summary>
+    /// <remarks>
+    /// Excel reports a hidden row's height as zero, and section 3 reproduces the visible
+    /// table. Emitting the zero-height cell anyway put a 45x0 rectangle into the editable
+    /// export, and the shape writer refuses a non-positive extent before any host call, so
+    /// every Copy editable attempt on a workbook with a collapsed section failed
+    /// (2026-11-19). The row keeps its positional slot; only its primitives are gone.
+    /// </remarks>
+    [Fact]
+    public void A_hidden_row_contributes_no_panel_primitive_and_moves_nothing()
+    {
+        PanelRow[] rows = [Row(1, "first"), Row(2, "second"), Row(3, "third")];
+
+        PanelBuildOutcome outcome = BuildWithHeights(rows, 12.0, 0.0, 15.0);
+
+        Assert.True(outcome.Succeeded, "Panel build refused: " + outcome.Refusal);
+        PanelBuildResult result = outcome.Result!;
+        SceneOwnerId hidden = SceneOwnerId.ForRow(rows[1].RowId);
+
+        // The hidden row owns nothing: no cell fill, no text, no border.
+        Assert.DoesNotContain(result.Primitives, primitive => primitive.OwnerId == hidden);
+
+        // The rows around it keep the exact positions the grid measured.
+        double bodyTop = _plotY - _yearBandHeight;
+        SceneRect first = CellOf(result, rows[0]);
+        SceneRect third = CellOf(result, rows[2]);
+        Assert.Equal(bodyTop, first.Bounds.Y);
+        Assert.Equal(12.0, first.Bounds.Height);
+        Assert.Equal(bodyTop + 12.0, third.Bounds.Y);
+        Assert.Equal(15.0, third.Bounds.Height);
+
+        // Panel top, header boundary, and one bottom edge per visible row: the hidden
+        // row's coincident edge is not drawn twice, and the panel bottom is the sum of
+        // the positive heights.
+        SceneLine[] horizontals = [.. result.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal))];
+        Assert.Equal(
+            [bodyTop - _headerHeight, bodyTop, bodyTop + 12.0, bodyTop + 27.0],
+            [.. horizontals.Select(line => line.From.Y)]);
+        Assert.Equal(bodyTop + 27.0, result.PanelBounds.Bottom);
+
+        // The class guard this defect needs: every cell and text the panel emits has a
+        // positive extent, so no request can reach a renderer that refuses it.
+        Assert.All(
+            result.Primitives.OfType<SceneRect>(),
+            rect => Assert.True(rect.Bounds.Width > 0 && rect.Bounds.Height > 0, rect.PrimitiveId));
+        Assert.All(
+            result.Primitives.OfType<SceneText>(),
+            text => Assert.True(text.TextBounds.Width > 0 && text.TextBounds.Height > 0, text.PrimitiveId));
+    }
+
+    private static SceneRect CellOf(PanelBuildResult result, PanelRow row) =>
+        result.Primitives.OfType<SceneRect>().Single(
+            rect => rect.PrimitiveId == ScenePrimitive.CreateId(SceneOwnerId.ForRow(row.RowId), "panel-cell:Id"));
+
     [Fact]
     public void A_row_count_that_disagrees_with_the_measured_heights_is_refused()
     {
