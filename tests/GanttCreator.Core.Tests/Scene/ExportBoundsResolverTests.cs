@@ -155,6 +155,34 @@ public sealed class ExportBoundsResolverTests
         Assert.Equal(bounds.PlacementDelta.Y, bounds.ChartBounds.Y, 6);
     }
 
+    /// <summary>
+    /// A composition with no data panel draws no title: the title sits over the table, so a
+    /// chart-only copy has nothing to title (owner ruling 2026-11-19, mirroring the live rule
+    /// that disables the title when no column is visible — ADR-0065 D4).
+    /// </summary>
+    [Fact]
+    public void A_chart_only_composition_draws_no_title_while_table_plus_chart_does()
+    {
+        ExportBoundsOutcome chartOnly = ExportBoundsResolver.TryResolve(
+            Request(),
+            _panelTheme,
+            ExportSelection.ChartOnly);
+        ExportBoundsOutcome withTable = ExportBoundsResolver.TryResolve(
+            Request(),
+            _panelTheme,
+            ExportSelection.TablePlusChart);
+
+        Assert.True(chartOnly.Succeeded, "Resolution refused: " + chartOnly.Refusal);
+        Assert.True(withTable.Succeeded, "Resolution refused: " + withTable.Refusal);
+
+        Assert.DoesNotContain(
+            chartOnly.Scene!.Primitives,
+            primitive => primitive.PrimitiveId is "chart:title-band" or "chart:title-text");
+        Assert.Contains(
+            withTable.Scene!.Primitives,
+            primitive => primitive.PrimitiveId == "chart:title-text");
+    }
+
     [Fact]
     public void The_title_shares_the_year_band_row_and_extends_no_bounds()
     {

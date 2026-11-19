@@ -151,6 +151,12 @@ public static class ExportBoundsResolver
         {
             Profile = SceneCompositionProfile.EditableExport,
             Panel = panelContributes ? panelTheme : null,
+
+            // Owner ruling 2026-11-19: the drawn title sits over the data panel, so a
+            // composition that carries no panel has no table to title. It mirrors the live
+            // rule that disables the title when no column is visible (ADR-0065 D4), rather
+            // than hanging a heading over a chart the user asked to copy alone.
+            Title = panelContributes ? request.Title : null,
         };
 
         SceneBuildOutcome build = SceneBuilder.TryBuild(exportRequest);

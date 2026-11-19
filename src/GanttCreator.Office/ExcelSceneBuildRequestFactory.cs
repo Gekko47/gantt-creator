@@ -419,6 +419,7 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
 
             measuredGrid = exportGrid;
             panelRightPt = measuredGrid.PanelRightPt;
+
             // The bottom margin is the outer padding PLUS the anchor row the plot overhangs
             // into, which is the live arrangement (ADR-0038 D1/D4): the frame closes below
             // the overhang and the closing line, not through them.
@@ -427,9 +428,22 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
                 TopPt: chrome,
                 RightPt: chrome,
                 BottomPt: chrome + measuredGrid.AnchorRowHeightPt);
+
             topPt = chrome + reservedBandsPt;
-            heightPt = measuredGrid.TotalRowHeightPt > 0
-                ? measuredGrid.TotalRowHeightPt
+
+            // The plot spans the rows the panel REPRODUCES — one per event — not every row
+            // the table measured. A trailing row that yields no event (blank, or a blocked
+            // row dropped by a partial render) made the plot one row longer than the panel,
+            // so their bottoms stopped aligning (owner report 2026-11-19).
+            int reproducedRows = events.Count == 0 ? 0 : events.Max(atEvent => atEvent.RowNumber);
+            double reproducedHeightPt = 0;
+            for (int index = 0; index < reproducedRows && index < measuredGrid.RowHeightsPt.Count; index++)
+            {
+                reproducedHeightPt += measuredGrid.RowHeightsPt[index];
+            }
+
+            heightPt = reproducedHeightPt > 0
+                ? reproducedHeightPt
                 : themedMetrics.GetValueOrDefault(
                     _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken));
         }

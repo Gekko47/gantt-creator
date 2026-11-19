@@ -1929,6 +1929,26 @@ public class ExcelSceneBuildRequestFactoryTests
             6);
     }
 
+    /// <summary>
+    /// The export plot spans the rows the panel reproduces — one per event — not every row the
+    /// table measured, so the panel's bottom and the plot's bottom align (owner report
+    /// 2026-11-19: a trailing row that yielded no event left the plot one row longer).
+    /// </summary>
+    [Fact]
+    public void The_export_plot_spans_the_rows_the_panel_reproduces()
+    {
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", 120)],
+            [20.0, 20.0],
+            12.0,
+            ["Id"]).Grid!;
+
+        SceneBuildRequestOutcome outcome = CreateExport(grid, new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(20.0, outcome.Request!.PlotBounds!.Value.Height, 6);
+    }
+
     /// <summary>Builds an export request over one event and the supplied measured grid.</summary>
     private static SceneBuildRequestOutcome CreateExport(
         PanelCellGrid grid,

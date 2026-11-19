@@ -63,6 +63,22 @@ Any future difference between the two profiles must be one of: the worksheet row
 chart stands on, the cells that are the live panel, or the sheet coordinate origin. A
 difference in a *drawing* rule is a defect in the copy.
 
+### D7 — The plot spans the rows the panel reproduces
+
+The export plot's height is the sum of the measured heights of the rows the panel actually
+reproduces (one per event), not the whole measured table. A trailing table row that yields no
+event — blank, or a blocked row dropped from a partial render — made the plot one row longer
+than the panel, and the two bottoms stopped aligning (owner report 2026-11-19: the panel is
+fixed, so the plot follows it).
+
+### D8 — A composition with no panel draws no title
+
+The drawn title sits over the data panel, so a chart-only composition has no table to title and
+draws none. The rule lives in `ExportBoundsResolver`, where the panel decision is made, and
+mirrors the live rule that disables the title when no column is visible (ADR-0065 D4). It is
+not a `SceneBuilder` rule: a caller that composes without the resolver keeps its title, which
+the equivalence table requires.
+
 ## Not yet in force
 
 **Label-position parity** (the fourth reported fault: the delineator's description label
