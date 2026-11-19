@@ -441,7 +441,9 @@ internal static class CopyEditableCommand
         ExportSelection selection = SelectExportSelection(config.Settings);
         ExportBoundsOutcome resolution = boundsResolver(
             exportRequest,
-            selection == ExportSelection.TablePlusChart ? ExportPanelTheme.Resolve() : null,
+            selection == ExportSelection.TablePlusChart
+                ? ExportPanelTheme.Resolve(config.Metrics)
+                : null,
             selection);
         if (!resolution.Succeeded)
         {

@@ -23,8 +23,14 @@ namespace GanttCreator.Office;
 public static class ExportPanelTheme
 {
     /// <summary>Builds the resolved export panel style set.</summary>
+    /// <param name="themedMetrics">
+    /// The workbook's themed metrics, or <see langword="null"/> to use the catalogue defaults.
+    /// The panel's border WIDTH comes from the same <c>GridLinePt</c> metric the live chart's
+    /// grid uses (owner ruling 2026-11-19); a catalogue default would leave a user who changed
+    /// "Grid line width" with a live grid and a copied panel of two different weights.
+    /// </param>
     /// <returns>The panel theme <see cref="ExportBoundsResolver"/> and the panel builder consume.</returns>
-    public static PanelTheme Resolve() =>
+    public static PanelTheme Resolve(IReadOnlyDictionary<string, double>? themedMetrics = null) =>
         new(
             new SceneStyle("DataPanelFill", fillColour: GanttTableAppearance.BodyFill),
             new SceneStyle(
@@ -42,5 +48,22 @@ public static class ExportPanelTheme
             new SceneStyle(
                 "Border",
                 strokeColour: GanttTableAppearance.BorderColour,
-                outlineWidthPt: GanttCatalogues.MetricDefault("GridLinePt")));
+                outlineWidthPt: BorderWidthFrom(themedMetrics)));
+
+    /// <summary>The panel border width: the workbook's grid-line metric, or the default.</summary>
+    /// <param name="themedMetrics">The workbook's themed metrics, or <see langword="null"/>.</param>
+    /// <returns>The width in points.</returns>
+    /// <remarks>
+    /// A missing or unusable value falls back to the catalogue default rather than refusing:
+    /// the border is presentation, and a panel with no border is worse than one at the
+    /// approved weight. The value is never zero, because a zero-width outline would delete the
+    /// shared cell edges the panel exists to reproduce.
+    /// </remarks>
+    private static double BorderWidthFrom(IReadOnlyDictionary<string, double>? themedMetrics) =>
+        themedMetrics is not null
+        && themedMetrics.TryGetValue("GridLinePt", out double gridLinePt)
+        && double.IsFinite(gridLinePt)
+        && gridLinePt > 0
+            ? gridLinePt
+            : GanttCatalogues.MetricDefault("GridLinePt");
 }

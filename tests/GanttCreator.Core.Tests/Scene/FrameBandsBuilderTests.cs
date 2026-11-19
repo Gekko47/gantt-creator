@@ -517,9 +517,14 @@ public sealed class FrameBandsBuilderTests
 
         Assert.True(outcome.Succeeded);
         ChartFrameGeometry geometry = outcome.Result!.Geometry;
-        Assert.Equal(new RectD(-6, 36, 412, 170), geometry.ChartBounds);
+
+        // The drawn title shares the year band's row over the panel (owner ruling
+        // 2026-11-19), so it no longer adds a band above the union: the chart starts at the
+        // year band's top instead of one title height above it.
+        Assert.Equal(new RectD(-6, 60, 412, 146), geometry.ChartBounds);
         Assert.Equal(new RectD(0, 66, 400, 134), geometry.ContentBounds);
-        Assert.Equal(new RectD(0, 42, 400, 24), geometry.TitleBounds);
+        Assert.Equal(geometry.YearBounds.Y, geometry.TitleBounds!.Value.Y);
+        Assert.Equal(geometry.YearBounds.Height, geometry.TitleBounds.Value.Height);
         Assert.All(outcome.Result.Primitives, primitive => Assert.Equal(SceneOwnerId.Chart, primitive.OwnerId));
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Background);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.AlternateBand);

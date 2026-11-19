@@ -165,8 +165,15 @@ public static class FrameBandsBuilder
             request.YearBandHeightPt
         );
         RectD contentBounds = Union(request.PanelBounds, yearBounds, periodBounds, request.PlotBounds);
+
+        // Owner ruling 2026-11-19: the drawn title sits where the LIVE title sits — over the
+        // data panel's columns, on the row the year band occupies — not as a full-width band
+        // above every band. The live title is an owned textbox with exactly this box
+        // (GanttRefreshOrchestrator), so the copy and the sheet read as one chart. A
+        // composition with no panel falls back to the plot's own columns, which is the only
+        // table-width field it has.
         RectD? titleBounds = request.ShowTitle
-            ? new RectD(contentBounds.X, contentBounds.Y - request.TitleBandHeightPt, contentBounds.Width, request.TitleBandHeightPt)
+            ? new RectD(request.PanelBounds.Left, yearBounds.Y, request.PanelBounds.Width, yearBounds.Height)
             : null;
         RectD unionBounds = titleBounds is { } title ? Union(contentBounds, title) : contentBounds;
         // Each side is padded independently (ADR-0031 D1). A live chart's top and

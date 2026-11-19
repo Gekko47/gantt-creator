@@ -124,21 +124,22 @@ public sealed class ExportBoundsResolverTests
         Assert.Equal(0, bounds.Bounds.Y);
         Assert.Equal(600 + (2 * Padding), bounds.Bounds.Width, 6);
 
-        // Vertically the union runs from the title band's top (110 - 20 - 16 - 14)
-        // to the plot's bottom (400): 340pt, padded once to 348.
-        Assert.Equal(340 + (2 * Padding), bounds.Bounds.Height, 6);
+        // Vertically the union runs from the year band's top (110 - 20 - 16) to the
+        // plot's bottom (400): 326pt, padded once to 334. The drawn title shares the year
+        // band's row, so it no longer adds a band above it (owner ruling 2026-11-19).
+        Assert.Equal(326 + (2 * Padding), bounds.Bounds.Height, 6);
 
         // The delta is the untranslated top-left corner, and it is carried rather
         // than discarded (entity guide section 1): the padding sits inside the
         // bounds, so a crop that ignored it would lose one margin on two sides.
         Assert.Equal(520 - Padding, bounds.PlacementDelta.X, 6);
-        Assert.Equal(60 - Padding, bounds.PlacementDelta.Y, 6);
+        Assert.Equal(74 - Padding, bounds.PlacementDelta.Y, 6);
         Assert.Equal(bounds.PlacementDelta.X, bounds.ChartBounds.X, 6);
         Assert.Equal(bounds.PlacementDelta.Y, bounds.ChartBounds.Y, 6);
     }
 
     [Fact]
-    public void The_title_band_extends_the_bounds_by_its_height_once()
+    public void The_title_shares_the_year_band_row_and_extends_no_bounds()
     {
         ExportBoundsOutcome withTitle = ExportBoundsResolver.TryResolve(
             Request(),
@@ -152,14 +153,13 @@ public sealed class ExportBoundsResolverTests
         Assert.True(withTitle.Succeeded, "Resolution refused: " + withTitle.Refusal);
         Assert.True(withoutTitle.Succeeded, "Resolution refused: " + withoutTitle.Refusal);
 
-        // The band is one title height, applied once.
-        Assert.Equal(TitleBandHeight, withTitle.Bounds!.ChartBounds.Height - withoutTitle.Bounds!.ChartBounds.Height, 6);
-
-        // Without a title the union starts at the year band (110 - 20 - 16 = 74),
-        // so the export height is 326 + 2 x padding and the delta moves down by the
-        // band height.
+        // Owner ruling 2026-11-19: the drawn title occupies the year band's row over the
+        // data panel, exactly where the live title sits, so it adds no height of its own.
+        // It used to be a band above every band, which pushed the composition one title
+        // height taller and shifted the placement delta by the same amount.
+        Assert.Equal(withTitle.Bounds!.ChartBounds, withoutTitle.Bounds!.ChartBounds);
+        Assert.Equal(withTitle.Bounds.PlacementDelta, withoutTitle.Bounds.PlacementDelta);
         Assert.Equal(326 + (2 * Padding), withoutTitle.Bounds.Bounds.Height, 6);
-        Assert.Equal(TitleBandHeight, withoutTitle.Bounds.PlacementDelta.Y - withTitle.Bounds.PlacementDelta.Y, 6);
     }
 
     [Fact]

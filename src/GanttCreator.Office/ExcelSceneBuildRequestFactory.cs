@@ -382,29 +382,29 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         // the sheet it was taken from.
         if (profile == SceneCompositionProfile.EditableExport)
         {
-            double titleBandHeightPt = themedMetrics.GetValueOrDefault(
-                _titleBandToken, GanttCatalogues.MetricDefault(_titleBandToken));
             double yearBandHeightPt = themedMetrics.GetValueOrDefault(
                 _yearBandToken, GanttCatalogues.MetricDefault(_yearBandToken));
             double periodBandHeightPt = themedMetrics.GetValueOrDefault(
                 _periodBandToken, GanttCatalogues.MetricDefault(_periodBandToken));
 
-            // The title band is drawn only when a title exists (SceneBuilder's profile
-            // check), so the plot top reserves it only then.
-            double reservedBandsPt = yearBandHeightPt + periodBandHeightPt
-                + (string.IsNullOrWhiteSpace(ReadString(settings, "ChartTitle"))
-                    ? 0
-                    : titleBandHeightPt);
+            // Only the year and period bands sit above the plot. The drawn title shares the
+            // year band's row over the data panel (owner ruling 2026-11-19), so it reserves
+            // no height of its own; reserving one left a blank strip above the chart.
+            double reservedBandsPt = yearBandHeightPt + periodBandHeightPt;
 
+            // The measured ANCHOR ROW rides across (owner ruling 2026-11-19): the live chart
+            // paints its plot-spanning bands through that row and closes the plot with its
+            // line, and the copy must read the same. Origin and worksheet padding stay zero
+            // because an export composition has no worksheet rows of its own.
             PanelCellGridCreationOutcome exportGridOutcome = PanelCellGrid.TryCreate(
                 measuredGrid.Columns,
                 measuredGrid.RowHeightsPt,
                 measuredGrid.HeaderHeightPt,
                 measuredGrid.RequiredColumns,
+                anchorRowHeightPt: measuredGrid.AnchorRowHeightPt,
 
-                // The export grid's own defaults ARE the export rule (origin zero, no
-                // worksheet padding or anchor row). An empty body is legal: the export's
-                // empty-table refusal belongs to ExportBoundsResolver, not the grid.
+                // An empty body is legal: the export's empty-table refusal belongs to
+                // ExportBoundsResolver, not the grid.
                 allowEmptyRows: true);
             if (exportGridOutcome.Grid is not { } exportGrid)
             {
@@ -415,7 +415,14 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
 
             measuredGrid = exportGrid;
             panelRightPt = measuredGrid.PanelRightPt;
-            padding = ChartPaddingPt.Uniform(chrome);
+            // The bottom margin is the outer padding PLUS the anchor row the plot overhangs
+            // into, which is the live arrangement (ADR-0038 D1/D4): the frame closes below
+            // the overhang and the closing line, not through them.
+            padding = new ChartPaddingPt(
+                LeftPt: chrome,
+                TopPt: chrome,
+                RightPt: chrome,
+                BottomPt: chrome + measuredGrid.AnchorRowHeightPt);
             topPt = chrome + reservedBandsPt;
             heightPt = measuredGrid.TotalRowHeightPt > 0
                 ? measuredGrid.TotalRowHeightPt

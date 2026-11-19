@@ -65,6 +65,7 @@
 | ADR-0065 | Zero visible table columns are a supported state, and the Columns control toggles all of them | Accepted | 2026-11-17 | [`adr/0065-zero-visible-columns.md`](adr/0065-zero-visible-columns.md) |
 | ADR-0066 | Deleting staging shapes after `ShapeRange.Copy` preserves the Office drawing clipboard format | Accepted | 2026-11-18 | [`adr/0066-copy-after-delete-preserves-the-drawing-format.md`](adr/0066-copy-after-delete-preserves-the-drawing-format.md) |
 | ADR-0067 | A hidden worksheet row contributes no data-panel primitives, while its plot shapes stay | Accepted | 2026-11-19 | [`adr/0067-hidden-rows-contribute-no-panel-primitives.md`](adr/0067-hidden-rows-contribute-no-panel-primitives.md) |
+| ADR-0068 | The editable copy composes with the live chart's geometry rules | Accepted | 2026-11-19 | [`adr/0068-the-copy-composes-with-the-live-geometry-rules.md`](adr/0068-the-copy-composes-with-the-live-geometry-rules.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,

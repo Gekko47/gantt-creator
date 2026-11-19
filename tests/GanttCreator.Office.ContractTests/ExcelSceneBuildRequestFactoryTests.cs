@@ -1869,6 +1869,68 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), theme.Border.OutlineWidthPt);
     }
 
+    /// <summary>
+    /// The copied panel's border takes the workbook's grid-line width, so a themed chart and
+    /// its copy carry one weight (owner ruling 2026-11-19).
+    /// </summary>
+    [Fact]
+    public void The_export_panel_border_takes_the_workbooks_grid_line_width()
+    {
+        PanelTheme themed = ExportPanelTheme.Resolve(
+            new Dictionary<string, double> { ["GridLinePt"] = 1.5 });
+        PanelTheme unusable = ExportPanelTheme.Resolve(
+            new Dictionary<string, double> { ["GridLinePt"] = 0 });
+
+        Assert.Equal(1.5, themed.Border.OutlineWidthPt!.Value, 6);
+        Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), unusable.Border.OutlineWidthPt!.Value, 6);
+    }
+
+    /// <summary>
+    /// The export keeps the measured anchor row — so the plot overhangs and closes exactly
+    /// as the live chart does — and no title reserves height above the plot, because the
+    /// drawn title shares the year band's row (owner ruling 2026-11-19).
+    /// </summary>
+    [Fact]
+    public void The_export_request_keeps_the_anchor_row_and_reserves_no_title_band()
+    {
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", 120)],
+            [18.0],
+            12.0,
+            ["Id"],
+            anchorRowHeightPt: 6).Grid!;
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        GanttEvent[] events = [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))];
+
+        SceneBuildRequestOutcome withoutTitle = factory.CreateExport(
+            events,
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>());
+        SceneBuildRequestOutcome withTitle = factory.CreateExport(
+            events,
+            new Dictionary<string, string> { ["ChartTitle"] = "T" },
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>());
+
+        Assert.True(withoutTitle.Succeeded, "Export request refused: " + withoutTitle.Refusal);
+        Assert.True(withTitle.Succeeded, "Export request refused: " + withTitle.Refusal);
+
+        SceneBuildRequest request = withoutTitle.Request!;
+        Assert.Equal(6, request.ChartAnchorRowHeightPt, 6);
+
+        // The anchor row extends the bottom margin only; the top is the outer padding.
+        Assert.Equal(request.ChartPadding.TopPt + 6, request.ChartPadding.BottomPt, 6);
+
+        // A title adds no height above the plot: both requests place the plot at the same top.
+        Assert.Equal(
+            withoutTitle.Request!.PlotBounds!.Value.Y,
+            withTitle.Request!.PlotBounds!.Value.Y,
+            6);
+    }
+
     /// <summary>Builds an export request over one event and the supplied measured grid.</summary>
     private static SceneBuildRequestOutcome CreateExport(
         PanelCellGrid grid,

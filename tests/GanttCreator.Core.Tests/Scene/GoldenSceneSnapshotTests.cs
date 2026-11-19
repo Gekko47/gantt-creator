@@ -29,9 +29,30 @@ public sealed class GoldenSceneSnapshotTests
     public void The_built_fixture_scene_matches_the_committed_golden_snapshot()
     {
         string built = SceneSnapshot.Serialize(SceneBuilderTests.BuildScene());
-        string golden = ReadGolden();
 
+        // Regeneration is EXPLICIT, never silent: set GANTTCREATOR_GOLDEN_OUT to the
+        // repository's golden file and this fact rewrites it, so a rule change is
+        // committed with its reason while an accidental change still fails here. It runs
+        // BEFORE the read so a regeneration run compares the file it just wrote.
+        RegenerateIfRequested(built);
+
+        string golden = ReadGolden();
         Assert.Equal(golden, built);
+    }
+
+    /// <summary>Rewrites the golden file when the regeneration path is supplied.</summary>
+    /// <param name="built">The scene serialisation the current rules produce.</param>
+    /// <remarks>
+    /// The path is an environment variable rather than a constant because the test's own
+    /// directory is a build output copy: a constant would rewrite the copy and leave the
+    /// repository's golden stale behind a passing run.
+    /// </remarks>
+    private static void RegenerateIfRequested(string built)
+    {
+        if (Environment.GetEnvironmentVariable("GANTTCREATOR_GOLDEN_OUT") is { Length: > 0 } path)
+        {
+            File.WriteAllText(path, built, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
     }
 
     [Fact]

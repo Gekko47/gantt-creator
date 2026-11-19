@@ -48,14 +48,15 @@ public sealed class SplitterBuilderTests
     }
 
     [Fact]
-    public void The_band_spans_the_data_panel_and_the_plot()
+    public void The_band_spans_the_plot_only()
     {
         SplitterResult result = Build(Request());
 
-        // §10: "occupies a complete lane across the included data panel and plot", so
-        // the band starts at the panel's left edge and ends at the plot's right edge
-        // rather than covering the plot alone.
-        Assert.Equal(0, result.BandBounds.X);
+        // Owner ruling 2026-11-19: §10's fill marks the splitter's lane across the PLOT.
+        // The band used to start at the data panel's left edge, which is invisible on the
+        // live sheet and painted a full-width stripe across the table the moment the
+        // export composition drew the panel.
+        Assert.Equal(_plot.Left, result.BandBounds.X);
         Assert.Equal(_plot.Right, result.BandBounds.Right);
         Assert.Equal(18, result.BandBounds.Height);
     }
