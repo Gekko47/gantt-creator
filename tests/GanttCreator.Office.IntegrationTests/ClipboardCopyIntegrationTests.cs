@@ -185,7 +185,7 @@ public sealed class ClipboardCopyIntegrationTests(ITestOutputHelper output)
     /// <param name="sheet">The test-owned worksheet.</param>
     /// <param name="expectedChildren">The staged set's child count.</param>
     /// <returns>What the materialisation produced.</returns>
-    private static ExcelPasteOutcome PasteIntoExcelAndVerify(
+    internal static ExcelPasteOutcome PasteIntoExcelAndVerify(
         OfficeFixture.ComScope scope,
         Excel.Worksheet sheet,
         int expectedChildren)
@@ -249,7 +249,7 @@ public sealed class ClipboardCopyIntegrationTests(ITestOutputHelper output)
     /// <param name="WidthPt">The pasted range's width in points.</param>
     /// <param name="HeightPt">The pasted range's height in points.</param>
     /// <param name="ChildCount">The editable children after ungrouping.</param>
-    private sealed record ExcelPasteOutcome(
+    internal sealed record ExcelPasteOutcome(
         int ShapeCount,
         int GroupItemCount,
         double WidthPt,
