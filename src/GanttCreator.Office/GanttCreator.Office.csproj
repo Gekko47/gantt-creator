@@ -6,6 +6,14 @@
       on a non-Windows host (no-op on Windows builds).
     -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!--
+      R6.6: WindowsClipboardFormatReader uses [LibraryImport] for the user32
+      clipboard surface. The generated marshalling emits function pointers, so
+      the compiler requires unsafe support; no unsafe code is written by hand.
+      (The Office integration-test project carries the same flag for the same
+      reason - its R6.7 probe uses the same route.)
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>GanttCreator.Office</RootNamespace>
     <AssemblyName>GanttCreator.Office</AssemblyName>
   </PropertyGroup>

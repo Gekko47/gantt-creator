@@ -27,6 +27,14 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
     <ProjectReference Include="..\..\src\GanttCreator.Office\GanttCreator.Office.csproj" />
+    <!--
+      R6.8: the one-click gate drives the production CopyEditableCommand, so the
+      integration project references the add-in assembly (test-only; the AddIn
+      grants this assembly internals visibility). Bodies call the command's
+      injectable Run with real adapters, never RunForExcel, so nothing touches
+      ExcelDnaUtil and the harness stays a plain COM Automation host.
+    -->
+    <ProjectReference Include="..\..\src\GanttCreator.AddIn\GanttCreator.AddIn.csproj" />
   </ItemGroup>
 
   <!--

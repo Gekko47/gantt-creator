@@ -27,7 +27,8 @@ public sealed class PanelRowProjectionTests
         GanttRowId? id = null,
         GanttRowId? laneId = null,
         bool visible = true,
-        string? description = "work") =>
+        string? description = "work",
+        GanttRowId? parentId = null) =>
         new(
             rowNumber,
             id ?? GanttRowId.New(),
@@ -37,7 +38,7 @@ public sealed class PanelRowProjectionTests
             description,
             null,
             null,
-            null,
+            parentId,
             null,
             null,
             null,
@@ -47,6 +48,30 @@ public sealed class PanelRowProjectionTests
 
     private static PanelRowProjectionResult Project(params GanttEvent[] events) =>
         PanelRowProjection.TryProject(events, Grid(), GanttDateDisplayFormat.DdMMyyyy);
+
+    /// <summary>
+    /// The panel row carries the SAME outline indent the live sheet writes, so the copied
+    /// Description cell is indented like the worksheet (owner report 2026-11-19).
+    /// </summary>
+    /// <remarks>
+    /// The indent is derived from the outline plan, not from <c>ParentId</c> alone: a child
+    /// the planner declines to group must not be indented.
+    /// </remarks>
+    [Fact]
+    public void A_grouped_child_carries_the_outline_indent_and_its_parent_does_not()
+    {
+        GanttRowId parent = GanttRowId.New();
+
+        PanelRowProjectionResult result = Project(
+            Event(1, id: parent),
+            Event(2, parentId: parent));
+
+        Assert.Null(result.Refusal);
+        Assert.Equal(0, result.Rows.Single(row => row.RowId == parent).IndentLevel);
+        Assert.Equal(
+            HierarchyIndentation.ChildIndentLevel,
+            result.Rows.Single(row => row.RowId != parent).IndentLevel);
+    }
 
     [Fact]
     public void Every_source_row_gets_a_panel_row_whatever_its_type_or_visibility()
@@ -117,7 +142,7 @@ public sealed class PanelRowProjectionTests
 
         PanelRowProjectionResult result = Project(hidden);
 
-        Assert.Single(result.Rows);
+        _ = Assert.Single(result.Rows);
         Assert.Equal("As-Built Activity", result.Rows[0].Cells[0]);
         Assert.Equal("still shown", result.Rows[0].Cells[1]);
     }
@@ -158,8 +183,8 @@ public sealed class PanelRowProjectionTests
         // per schema field plus a column the schema does not map.
         string[] names =
         [
-            "Id", "Type", "Activity ID", "Description", "Start", "Finish", "LaneId",
-            "StackIndex", "ParentId", "StyleKey", "LabelPosition", "FillColour",
+            "Id", "Type", "Activity ID", "Description", "Start", "Finish", "Duration",
+            "LaneId", "StackIndex", "ParentId", "StyleKey", "LabelPosition", "FillColour",
             "StrokeColour", "Visible", "SortOrder", "ApprovedNote",
         ];
         PanelCellGrid grid = PanelCellGrid.TryCreate(
@@ -179,6 +204,7 @@ public sealed class PanelRowProjectionTests
             parent, "Phase", position, "#112233", "#445566", true, 7)
         {
             ActivityId = "A-100",
+            DurationText = "12",
         };
         GanttEvent blank = new(
             2, GanttRowId.New(), null, null, GanttEntityType.AsPlannedMilestone, null, null, null,
@@ -196,6 +222,7 @@ public sealed class PanelRowProjectionTests
                 "work",
                 GanttDateFormatting.Format(start, GanttDateDisplayFormat.DdMMyyyy),
                 GanttDateFormatting.Format(finish, GanttDateDisplayFormat.DdMMyyyy),
+                "12",
                 lane.Value,
                 "2",
                 parent.Value,
@@ -215,7 +242,7 @@ public sealed class PanelRowProjectionTests
             [
                 result.Rows[1].RowId.Value,
                 EntityTypeCatalog.GetDefinition(GanttEntityType.AsPlannedMilestone)!.DisplayName,
-                null, null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
             ],
             result.Rows[1].Cells);
     }

@@ -697,6 +697,7 @@ public static class GanttRowValidator
             sortOrder)
         {
             ActivityId = row.ActivityId,
+            DurationText = row.DurationCell.Value,
             DateLabelPosition = dateLabelPosition,
             DateLabelPlacement = dateLabelPlacement
         };

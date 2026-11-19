@@ -35,6 +35,26 @@ public static class HierarchyIndentation
     public const int ChildIndentLevel = EntityHierarchyCatalog.MaxDepth - 1;
 
     /// <summary>
+    /// The width one indent step occupies in an exported data-panel cell, in points.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A code constant, not a catalogue metric.</b> It is presentation for the editable
+    /// copy only, exactly like <c>GanttTableAppearance.DefaultVisibleColumnWidthPt</c>: adding
+    /// it to the VeryHidden catalogue would move the catalogue hash and force an Initialise
+    /// for a value that changes no stored contract.
+    /// </para>
+    /// <para>
+    /// The live sheet writes Excel's <c>IndentLevel</c>, whose step is host- and font-derived
+    /// and is not exposed as a point value. The export draws the panel as shapes, so a point
+    /// inset must stand in for that step; one body character is the closest honest
+    /// equivalent at the body font size. It is an initial design default and may be tuned
+    /// without changing the storage schema.
+    /// </para>
+    /// </remarks>
+    public const double ChildIndentWidthPt = 6.0;
+
+    /// <summary>
     /// Plans the non-zero indent for every body row the outline groups.
     /// </summary>
     /// <param name="plan">The outline plan the same pass is applying.</param>

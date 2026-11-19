@@ -410,6 +410,18 @@ public static class DelineatorBuilder
             RectD box = CornerBox(
                 position, lineX, measurement, request.PlotBounds, request.LabelGapPt, stackOffsetPt);
 
+            // An EXPLICIT corner is honoured, never flipped or dropped (owner ruling
+            // 2026-11-19): the box is clamped inside the chart bounds instead. The live copy
+            // of a workbook whose delineator row names BottomLeft otherwise lost it, because
+            // an export composition has far less room below the plot than the sheet's own
+            // reserved rows give the chart, and a `continue` with one candidate emitted no
+            // label at all. `Auto` keeps its cascade and its fit rule.
+            if (request.LabelPosition != GanttLabelPosition.Auto
+                && !Contains(request.ChartBounds, box))
+            {
+                box = ClampInside(request.ChartBounds, box);
+            }
+
             if (!Contains(request.ChartBounds, box) || IntersectsAny(box, occupants))
             {
                 continue;
@@ -626,6 +638,26 @@ public static class DelineatorBuilder
         && double.IsFinite(bounds.Height)
         && bounds.Width > GeometryMath.Epsilon
         && bounds.Height > GeometryMath.Epsilon;
+
+    /// <summary>Clamps a box inside the given bounds, preferring the box's own size.</summary>
+    /// <param name="bounds">The bounds to stay inside.</param>
+    /// <param name="box">The box to clamp.</param>
+    /// <returns>The clamped box.</returns>
+    /// <remarks>
+    /// An explicit label corner is a user choice, so the box moves to stay visible instead of
+    /// flipping to another corner or disappearing. A box wider or taller than the bounds is
+    /// pinned to the top-left edge rather than inverted.
+    /// </remarks>
+    private static RectD ClampInside(RectD bounds, RectD box)
+    {
+        double maxX = Math.Max(bounds.Left, bounds.Right - box.Width);
+        double maxY = Math.Max(bounds.Top, bounds.Bottom - box.Height);
+        return new RectD(
+            Math.Clamp(box.X, bounds.Left, maxX),
+            Math.Clamp(box.Y, bounds.Top, maxY),
+            box.Width,
+            box.Height);
+    }
 
     private static bool Contains(RectD outer, RectD inner) =>
         inner.Left >= outer.Left - GeometryMath.Epsilon

@@ -24,11 +24,13 @@ namespace GanttCreator.Office;
 /// any other production file — and this is the one production caller it permits.
 /// </para>
 /// <para>
-/// <b>The composition profile is fixed to <see cref="SceneCompositionProfile.LiveExcel"/>
-/// here, in code, not by a caller remembering.</b> A live refresh's destination is
-/// the worksheet, whose own cells are the data panel; supplying one would draw a
-/// replica over the user's rows. <c>SceneBuilder</c> refuses a live request carrying
-/// a panel, so this is enforced rather than merely intended.
+/// <b>Each mode's composition profile is fixed here, in code, not by a caller
+/// remembering.</b> <see cref="Create"/> pins
+/// <see cref="SceneCompositionProfile.LiveExcel"/>: a live refresh's destination is the
+/// worksheet, whose own cells are the data panel, and <c>SceneBuilder</c> refuses a live
+/// request carrying a panel, so that is enforced rather than merely intended.
+/// <see cref="CreateExport"/> pins <see cref="SceneCompositionProfile.EditableExport"/>
+/// and leaves the panel to <see cref="ExportBoundsResolver"/>'s selection rule.
 /// </para>
 /// <para>
 /// Pure over its inputs and free of Excel: it reads no COM proxy, so a test supplies
@@ -193,12 +195,91 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     private const string _rowHeightToken = "GanttRowHeightPt";
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The live composition: lanes anchored to their measured worksheet rows
+    /// (ADR-0034), the live profile, and the calendar-year fallback for an empty table
+    /// (ADR-0050). Both pins live here, in code.
+    /// </remarks>
     public SceneBuildRequestOutcome Create(
         IReadOnlyList<GanttEvent> events,
         IReadOnlyDictionary<string, string> settings,
         GanttStyleRegistry registry,
         PanelCellGrid grid,
-        IReadOnlyDictionary<string, double> themedMetrics)
+        IReadOnlyDictionary<string, double> themedMetrics) =>
+        CreateCore(
+            events,
+            settings,
+            registry,
+            grid,
+            themedMetrics,
+            anchorLanesToRows: true,
+            SceneCompositionProfile.LiveExcel,
+            allowEmptyEvents: true);
+
+    /// <summary>
+    /// Builds the editable-export composition request (R6.3): the same measured inputs as
+    /// <see cref="Create"/>, with the live-only members pinned off.
+    /// </summary>
+    /// <param name="events">The validated events to compose.</param>
+    /// <param name="settings">The workbook's effective settings map.</param>
+    /// <param name="registry">The workbook's style registry.</param>
+    /// <param name="grid">The measured panel grid.</param>
+    /// <param name="themedMetrics">The workbook's themed metric values.</param>
+    /// <returns>The export request, or a typed refusal.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this cannot reuse the live request.</b> <c>SceneBuilder</c> gates lane
+    /// anchoring on the request member, not on the profile, so re-profiling a live
+    /// request to <see cref="SceneCompositionProfile.EditableExport"/> would silently
+    /// anchor the export's lanes to worksheet rows - geometry that depends on the sheet
+    /// the export was taken from. The export pins anchoring off here, in code, exactly as
+    /// the live path pins it on. <see cref="ExportBoundsResolver"/> also refuses an
+    /// anchored request as a second line of defence.
+    /// </para>
+    /// <para>
+    /// <b>No empty-table fallback.</b> The live profile draws a calendar-year chart for an
+    /// empty table (ADR-0050); the export contract refuses one (R6.1), so
+    /// <see cref="SceneBuildRequest.AllowEmptyEvents"/> is pinned false and the scene
+    /// builder's <see cref="SceneBuilderRefusal.EmptyEvents"/> surfaces for a chart-only
+    /// empty composition.
+    /// </para>
+    /// <para>
+    /// <see cref="SceneBuildRequest.Panel"/> stays null: the panel styles are supplied by
+    /// <see cref="ExportBoundsResolver"/> for the selection that contributes one.
+    /// </para>
+    /// </remarks>
+    public SceneBuildRequestOutcome CreateExport(
+        IReadOnlyList<GanttEvent> events,
+        IReadOnlyDictionary<string, string> settings,
+        GanttStyleRegistry registry,
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics) =>
+        CreateCore(
+            events,
+            settings,
+            registry,
+            grid,
+            themedMetrics,
+
+            // Owner ruling 2026-11-19: the export draws the data panel, so its lanes are
+            // anchored to the same grid the panel is laid out from. Stacking them drifted
+            // every lane off its panel row as soon as one row owned no lane.
+            anchorLanesToRows: true,
+            SceneCompositionProfile.EditableExport,
+            allowEmptyEvents: false);
+
+    /// <summary>
+    /// The shared request assembly both public modes delegate to.
+    /// </summary>
+    private SceneBuildRequestOutcome CreateCore(
+        IReadOnlyList<GanttEvent> events,
+        IReadOnlyDictionary<string, string> settings,
+        GanttStyleRegistry registry,
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics,
+        bool anchorLanesToRows,
+        SceneCompositionProfile profile,
+        bool allowEmptyEvents)
     {
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(settings);
@@ -295,6 +376,78 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
                 _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken));
         }
 
+        // R6.3: an export composition is assembled on EXPORT coordinates, not on the
+        // live sheet's measured ones. The export panel starts at the origin, its padding
+        // is the uniform outer margin, and the plot's top must leave room for the title,
+        // year and period bands drawn ABOVE it - with the live measured top those bands
+        // land at a negative Y, which Excel clamps to zero (measured on the reference
+        // host, 2026-11-18: chart top -28pt, every band and frame line clamped to 0).
+        // The measured column widths and row heights ARE reused: the export reproduces
+        // the sheet it was taken from.
+        if (profile == SceneCompositionProfile.EditableExport)
+        {
+            double yearBandHeightPt = themedMetrics.GetValueOrDefault(
+                _yearBandToken, GanttCatalogues.MetricDefault(_yearBandToken));
+            double periodBandHeightPt = themedMetrics.GetValueOrDefault(
+                _periodBandToken, GanttCatalogues.MetricDefault(_periodBandToken));
+
+            // Only the year and period bands sit above the plot. The drawn title shares the
+            // year band's row over the data panel (owner ruling 2026-11-19), so it reserves
+            // no height of its own; reserving one left a blank strip above the chart.
+            double reservedBandsPt = yearBandHeightPt + periodBandHeightPt;
+
+            // ONE ROW SET for the panel and the plot (owner report 2026-11-19): both span
+            // exactly the rows the panel reproduces, so their bottom edges coincide. The
+            // plot used to follow events.Max(RowNumber) while the panel followed every
+            // measured row, which left the chart a few points past the copied table.
+            int reproducedRows = events.Count == 0 ? 0 : events.Max(atEvent => atEvent.RowNumber);
+            int reproducedRowCount = Math.Min(reproducedRows, measuredGrid.RowHeightsPt.Count);
+            double[] reproducedHeights = [.. measuredGrid.RowHeightsPt.Take(reproducedRowCount)];
+
+            // The export has no worksheet rows of its own, so the ANCHOR ROW the live chart
+            // overhangs into is not carried across (owner ruling 2026-11-19, superseding
+            // ADR-0068 D4). Carrying it made the plot-spanning bands and the closing line
+            // end a few points below the copied panel's last row. Origin and worksheet
+            // padding stay zero because there is no sheet.
+            PanelCellGridCreationOutcome exportGridOutcome = PanelCellGrid.TryCreate(
+                measuredGrid.Columns,
+                reproducedHeights,
+                measuredGrid.HeaderHeightPt,
+                measuredGrid.RequiredColumns,
+                anchorRowHeightPt: 0d,
+
+                // An empty body is legal: the export's empty-table refusal belongs to
+                // ExportBoundsResolver, not the grid.
+                allowEmptyRows: true);
+            if (exportGridOutcome.Grid is not { } exportGrid)
+            {
+                return SceneBuildRequestOutcome.Refused(
+                    SceneBuildRequestRefusal.MeasurementRefused,
+                    "The export panel grid could not be rebuilt from the measured one.");
+            }
+
+            measuredGrid = exportGrid;
+            panelRightPt = measuredGrid.PanelRightPt;
+
+            // A uniform outer padding on all four sides: with no anchor row there is no
+            // overhang to close below, so the bottom margin equals the top and the frame
+            // keeps the same 4pt breathing room the other sides have.
+            padding = new ChartPaddingPt(
+                LeftPt: chrome,
+                TopPt: chrome,
+                RightPt: chrome,
+                BottomPt: chrome);
+
+            topPt = chrome + reservedBandsPt;
+
+            // The plot's height is the SAME summed row heights the panel is built from, so
+            // plot bottom == panel bottom by construction rather than by a second sum.
+            heightPt = measuredGrid.TotalRowHeightPt > 0
+                ? measuredGrid.TotalRowHeightPt
+                : themedMetrics.GetValueOrDefault(
+                    _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken));
+        }
+
         // R5.2: the plot margin, resolved once from the Margin/MarginCm settings and
         // subtracted TWICE from the width budget (owner ruling) so a visible, usable
         // plotting area is determined. The plot stays flush-left (ADR-0031 D2), so both
@@ -327,7 +480,9 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             // because that is what it is — width budget the plot gives up so its origin is
             // anchored in a visible column and its edge is drawable. The RIGHT chrome is
             // unchanged: the R5.2 margin (twice) plus the frame's own outer padding.
-            leftChromePt: GanttSheetLayout.LivePlotOriginInsetPt,
+            leftChromePt: profile == SceneCompositionProfile.LiveExcel
+                ? GanttSheetLayout.LivePlotOriginInsetPt
+                : 0,
             rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,
@@ -388,7 +543,10 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
                 padding,
                 metrics,
                 laneMetrics,
-                themedMetrics);
+                themedMetrics,
+                anchorLanesToRows,
+                profile,
+                allowEmptyEvents);
 
             return SceneBuildRequestOutcome.Ok(request);
         }
@@ -416,7 +574,10 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         ChartPaddingPt padding,
         ITextMetrics metrics,
         LaneLayoutMetrics laneMetrics,
-        IReadOnlyDictionary<string, double> themedMetrics) =>
+        IReadOnlyDictionary<string, double> themedMetrics,
+        bool anchorLanesToRows,
+        SceneCompositionProfile profile,
+        bool allowEmptyEvents) =>
         new()
         {
             Events = events,
@@ -428,19 +589,22 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             Grid = measuredGrid,
             PlotBounds = geometry.Geometry!.PlotBounds,
 
-            // ADR-0034 D1: the LIVE chart anchors every lane to its measured worksheet
-            // row, so a body row that owns no lane (a Delineator, a projected child)
-            // leaves its own band empty rather than pulling every later lane up one row.
-            // Set here, in code, for the same reason the profile is: a caller who forgot
-            // it would get silently stacked lanes, which is the reported defect.
-            AnchorLanesToRows = true,
+            // ADR-0034 D1: a lane is anchored to the measured row it renders on, so a body
+            // row that owns no lane (a Delineator, a projected child) leaves its own band
+            // empty rather than pulling every later lane up one row. Every composition that
+            // draws the data panel anchors (owner ruling 2026-11-19), because it reproduces
+            // the sheet row for row; only a panel-less composition keeps the R3.4 stacking.
+            // Set here, in code, for the same reason the profile is: a caller who forgot it
+            // would get silently stacked lanes, which is the reported defect.
+            AnchorLanesToRows = anchorLanesToRows,
 
-            // LiveExcel, chosen in code (D4). The panel stays null because the
-            // worksheet's own cells are the panel; SceneBuilder refuses a live
-            // request that supplies one, so this cannot drift into drawing a replica
-            // over the user's rows.
-            Profile = SceneCompositionProfile.LiveExcel,
-            AllowEmptyEvents = true,
+            // The profile is chosen in code (D4): LiveExcel for a refresh, EditableExport
+            // for the export assembly. The panel stays null because the worksheet's own
+            // cells are the live panel (SceneBuilder refuses a live request that supplies
+            // one), and the export's panel is supplied by ExportBoundsResolver's
+            // selection rule.
+            Profile = profile,
+            AllowEmptyEvents = allowEmptyEvents,
             Panel = null,
 
             PlotStart = plotStart,
@@ -946,4 +1110,49 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     /// </summary>
     private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
         ReadDouble(settings, _marginCmKey, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.DefaultCustomCm);
+}
+
+/// <summary>
+/// The editable-export request assembly entry (R6.8): the one seam the Copy Editable command
+/// calls, so a command never names the request factory or re-derives its inputs.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>One authority, one doorway.</b> The export assembly is the factory's
+/// <see cref="ExcelSceneBuildRequestFactory.CreateExport"/> variant, which pins lane
+/// anchoring off, the <see cref="SceneCompositionProfile.EditableExport"/> profile and the
+/// empty-table refusal in code. This wrapper carries no logic beyond that delegation: it
+/// exists so the architecture gate keeps its single-authority rule (the factory's users are
+/// the live orchestrator and the composition root) while the export pipeline enters through
+/// a named assembly seam.
+/// </para>
+/// <para>
+/// <b>Phase-7 reuse.</b> The same entry is what R7.6's Send to PowerPoint needs: the read →
+/// request → resolve chain is identical, and only the terminal action (paste instead of
+/// copy) differs.
+/// </para>
+/// </remarks>
+public static class EditableExportRequest
+{
+    /// <summary>Builds the export scene request from the workbook's measured inputs.</summary>
+    /// <param name="events">The validated events to compose.</param>
+    /// <param name="settings">The workbook's effective settings map.</param>
+    /// <param name="registry">The workbook's style registry.</param>
+    /// <param name="grid">The measured panel grid.</param>
+    /// <param name="themedMetrics">The workbook's themed metric values.</param>
+    /// <returns>The export request, or a typed refusal.</returns>
+    public static SceneBuildRequestOutcome Create(
+        IReadOnlyList<GanttEvent> events,
+        IReadOnlyDictionary<string, string> settings,
+        GanttStyleRegistry registry,
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics) =>
+        new ExcelSceneBuildRequestFactory(new AptosTextMetrics())
+            .CreateExport(events, settings, registry, grid, themedMetrics);
+
+    /// <summary>The visible schema columns the export panel measures.</summary>
+    /// <param name="settings">The workbook's effective settings map.</param>
+    /// <returns>The measured column display names, in panel order.</returns>
+    public static IReadOnlyList<string> MeasuredColumns(IReadOnlyDictionary<string, string> settings) =>
+        ExcelSceneBuildRequestFactory.MeasuredColumnsFor(settings);
 }

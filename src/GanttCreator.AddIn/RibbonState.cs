@@ -252,6 +252,10 @@ internal sealed record RibbonState(
         RibbonControlIds.RepairConfig => HasActiveWorkbook,
         RibbonControlIds.RefreshSheet =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        // R6.8: Copy Editable is a chart command with the same R5.16b gate as Refresh,
+        // so it is never offered against a different visible sheet.
+        RibbonControlIds.CopyEditable =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         RibbonControlIds.Warnings =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         RibbonControlIds.AddActivity =>
@@ -382,7 +386,8 @@ internal sealed record RibbonState(
             or RibbonControlIds.StyleThemeGroup
             or RibbonControlIds.PlotAreaGroup
             or RibbonControlIds.PlotSizeGroup
-            or RibbonControlIds.SheetGroup => Mode != RibbonMode.FirstRun,
+            or RibbonControlIds.SheetGroup
+            or RibbonControlIds.ExportGroup => Mode != RibbonMode.FirstRun,
         _ => false,
     };
 }

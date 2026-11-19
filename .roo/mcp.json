@@ -18,7 +18,8 @@
 			"type": "streamable-http",
 			"url": "https://learn.microsoft.com/api/mcp",
 			"alwaysAllow": [
-				"microsoft_docs_search"
+				"microsoft_docs_search",
+				"microsoft_docs_fetch"
 			]
 		},
 		"github": {

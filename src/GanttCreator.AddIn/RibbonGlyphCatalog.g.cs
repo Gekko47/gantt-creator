@@ -99,6 +99,7 @@ internal static class RibbonGlyphCatalog
         ["btnPlotStartCalendar"] = new Entry("calendar", 16),
         ["btnPlotFinishCalendar"] = new Entry("calendar", 16),
         ["btnRefreshSheet"] = new Entry("refresh-chart", 32),
+        ["btnCopyEditable"] = new Entry("copy-editable", 32),
         ["btnWarnings"] = new Entry("warnings", 16),
         ["btnDiagnostics"] = new Entry("diagnostics", 16),
         ["btnOpenLog"] = new Entry("open-log", 16),

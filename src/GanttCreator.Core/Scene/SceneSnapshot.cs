@@ -114,6 +114,11 @@ public static class SceneSnapshot
                 TextBounds = ToRect(text.TextBounds),
                 Style = ToStyle(text.Style),
                 Alignment = (int)text.Alignment,
+
+                // Written only when non-zero: the member was added for the exported
+                // panel's child indent, and an absent value keeps every existing
+                // snapshot byte-identical.
+                LeftInsetPt = text.LeftInsetPt == 0 ? null : text.LeftInsetPt,
             },
             SceneGroup group => new PrimitiveDocument
             {
@@ -208,7 +213,8 @@ public static class SceneSnapshot
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
-                document.SortOrder
+                document.SortOrder,
+                document.LeftInsetPt ?? 0
             ),
             "group" => new SceneGroup(
                 Required(document.PrimitiveId, "primitiveId"),
@@ -368,6 +374,10 @@ public static class SceneSnapshot
         public RectDocument? TextBounds { get; init; }
         public StyleDocument? Style { get; init; }
         public int? Alignment { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? LeftInsetPt { get; init; }
+
         public List<string>? ChildPrimitiveIds { get; init; }
     }
 

@@ -127,6 +127,30 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
     }
 
     /// <inheritdoc />
+    public bool? IsStatusBarVisible()
+    {
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return null;
+        }
+
+        // CA1031: this read runs on the Ribbon state path, where a propagating COM failure
+        // surfaces as a host error. A failed probe reports "not determinable", and the caller
+        // keeps the non-modal status-bar channel.
+#pragma warning disable CA1031
+        try
+        {
+            return application.DisplayStatusBar;
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <inheritdoc />
     public IDisposable SubscribeWorkbookStateChanged(Action handler)
     {
         ArgumentNullException.ThrowIfNull(handler);

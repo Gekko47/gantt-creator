@@ -526,6 +526,40 @@ public class ExcelShapeWriterTests
         Assert.Empty(writer.Created);
     }
 
+    /// <summary>
+    /// A refused create names the primitive, the typed reason, the step, and the geometry
+    /// in the technical record, so a live refusal is diagnosable from the log alone.
+    /// </summary>
+    /// <remarks>
+    /// The 2026-11-19 live defect drove this pin. The editable copy refused deterministically
+    /// at one primitive of a full export composition — 24 creates succeeded, the next
+    /// refused — and every write refusal is collapsed to <c>HostRejected</c> upstream, so
+    /// neither the dialog nor the log named the primitive or the reason. A zero-height
+    /// rectangle is the shape a collapsed panel row produces, so it is the regression
+    /// sample rather than a synthetic one.
+    /// </remarks>
+    [Fact]
+    public void Create_records_the_refused_primitive_reason_step_and_geometry()
+    {
+        List<string> records = [];
+        var writer = new ExcelShapeWriter(null, ClearGuard().Object, records.Add);
+        var request = new OfficeShapeRequest(
+            "row-1:bar",
+            OfficeShapeKind.Rectangle,
+            new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 0)),
+            ZLayer.ActivityBody);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
+        string record = Assert.Single(records);
+        Assert.Contains("gantt.shape create-refused", record, StringComparison.Ordinal);
+        Assert.Contains("id=row-1:bar", record, StringComparison.Ordinal);
+        Assert.Contains("refusal=InvalidGeometry", record, StringComparison.Ordinal);
+        Assert.Contains("step=validate", record, StringComparison.Ordinal);
+        Assert.Contains("b=10,20,100,0", record, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Create_refuses_a_line_with_a_non_finite_endpoint()
     {

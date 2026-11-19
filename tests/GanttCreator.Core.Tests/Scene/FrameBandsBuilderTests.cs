@@ -517,9 +517,14 @@ public sealed class FrameBandsBuilderTests
 
         Assert.True(outcome.Succeeded);
         ChartFrameGeometry geometry = outcome.Result!.Geometry;
-        Assert.Equal(new RectD(-6, 36, 412, 170), geometry.ChartBounds);
+
+        // The drawn title shares the year band's row over the panel (owner ruling
+        // 2026-11-19), so it no longer adds a band above the union: the chart starts at the
+        // year band's top instead of one title height above it.
+        Assert.Equal(new RectD(-6, 60, 412, 146), geometry.ChartBounds);
         Assert.Equal(new RectD(0, 66, 400, 134), geometry.ContentBounds);
-        Assert.Equal(new RectD(0, 42, 400, 24), geometry.TitleBounds);
+        Assert.Equal(geometry.YearBounds.Y, geometry.TitleBounds!.Value.Y);
+        Assert.Equal(geometry.YearBounds.Height, geometry.TitleBounds.Value.Height);
         Assert.All(outcome.Result.Primitives, primitive => Assert.Equal(SceneOwnerId.Chart, primitive.OwnerId));
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Background);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.AlternateBand);
@@ -999,6 +1004,34 @@ public sealed class FrameBandsBuilderTests
         // separates the labels (owner ruling 2026-11-15).
         Assert.Contains(lines, line => line.PrimitiveId.EndsWith(":border:top", StringComparison.Ordinal)
             && line.Style.StyleKey == "MajorGrid");
+    }
+
+    /// <summary>
+    /// An export composition has no anchor row, so it has no closing line; the plot's own
+    /// bottom border is what closes it, on the same edge as the copied panel's last row
+    /// (owner report 2026-11-19: the copied chart had no bottom rule at all).
+    /// </summary>
+    [Fact]
+    public void The_export_plot_is_closed_by_its_own_bottom_border()
+    {
+        FrameBandsRequest request = CreateRequest(chartAnchorRowHeightPt: 0);
+        FrameBandsResult result = Build(request).Result!;
+        SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+        SceneLine bottom = lines.Single(line => line.PrimitiveId == "chart:plot:bottom");
+
+        // No cells clip it in an export, so it sits exactly on the plot's own boundary.
+        Assert.Equal(request.PlotBounds.Bottom, bottom.From!.Y, 6);
+        Assert.Equal(request.PlotBounds.Left, bottom.From.X, 6);
+        Assert.Equal(request.PlotBounds.Right, bottom.To!.X, 6);
+
+        // It is the plot's edge, not the chart's frame margin.
+        SceneLine frameBottom = lines.Single(line => line.PrimitiveId == "chart:frame:bottom");
+        Assert.True(frameBottom.From!.Y > bottom.From.Y);
+
+        // The overhang termination does not exist without an anchor row; the plot's bottom
+        // border is the only rule closing the copy's plot.
+        Assert.DoesNotContain(lines, line => line.PrimitiveId == "chart:plot-closing");
     }
 
     [Fact]

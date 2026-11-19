@@ -273,6 +273,12 @@ $glyphs = [ordered]@{
         'M16 13H8'
         'M16 17H8'
     )
+    # R6.8: Copy Editable. Lucide `copy` - two overlapping cards, the standard
+    # "copy to clipboard" shape; the command puts a verified shape group there.
+    'copy-editable'     = @(
+        'rect:8,8,14,14,2'
+        'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'
+    )
 }
 
 # Control id -> glyph slug and pixel size. This is the single source for what the
@@ -312,6 +318,7 @@ $controlGlyphs = [ordered]@{
     btnPlotStartCalendar    = @{ Glyph = 'calendar'; Size = 16 }
     btnPlotFinishCalendar   = @{ Glyph = 'calendar'; Size = 16 }
     btnRefreshSheet         = @{ Glyph = 'refresh-chart'; Size = 32 }
+    btnCopyEditable         = @{ Glyph = 'copy-editable'; Size = 32 }
     btnWarnings             = @{ Glyph = 'warnings'; Size = 16 }
     btnDiagnostics          = @{ Glyph = 'diagnostics'; Size = 16 }
     btnOpenLog              = @{ Glyph = 'open-log'; Size = 16 }

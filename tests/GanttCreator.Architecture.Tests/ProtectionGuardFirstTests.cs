@@ -153,6 +153,14 @@ public sealed class ProtectionGuardFirstTests
         // the workbook and table and before the first flag write, because the
         // refusal must precede any mutation rather than interrupt it.
         new("src/GanttCreator.Office/ExcelColumnVisibilityPort.cs", "Apply"),
+        // R6.4: the grouping adapter creates, stamps, and ungroups shape groups on the
+        // user's VISIBLE worksheet - generated content, so a data mutation under
+        // ADR-0008 D4 (the `.Locked` assignment in ApplyGroupStamp is the discovered
+        // shape). Both mutating entry points carry their own guard query as their first
+        // host check - the discovery rule works per file, the order rule per entry
+        // point - and ResolveShapes repeats it against the resolved target.
+        new("src/GanttCreator.Office/ExcelShapeGrouper.cs", "GroupStaged"),
+        new("src/GanttCreator.Office/ExcelShapeGrouper.cs", "UngroupStaged"),
     ];
 
     /// <summary>
@@ -245,6 +253,60 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IShapeWritePort.cs",
         "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
         "src/GanttCreator.Office/ShapeWriteOutcome.cs",
+        // R6.2: the staging ownership scheme and its tag builder. Both are pure -- a name
+        // prefix and a SHA-256-derived tag computed from the shape name. No interop proxy,
+        // no workbook state, and nothing for a protection guard to authorise.
+        "src/GanttCreator.Office/ShapeOwnershipScheme.cs",
+        "src/GanttCreator.Office/ShapeStagingTag.cs",
+        // R6.4: the grouping port's declaration and its read-back record. A declaration
+        // plus a record -- no interop proxy, no statement, nothing to guard. Its mutating
+        // implementation is registered above.
+        "src/GanttCreator.Office/IShapeGroupingPort.cs",
+        // R6.4: the grouping stage. Like the staging composer and the reconciler it holds
+        // no COM proxy and performs no direct mutation: every group and ungroup goes
+        // through the injected IShapeGroupingPort, whose registered mutating
+        // implementation performs the guard-first ordering. A guard read here would be
+        // unreachable code rather than a missing guard.
+        "src/GanttCreator.Office/StagedShapeGrouper.cs",
+        // R6.2: the panel staging composer. It holds no COM proxy and issues no direct
+        // worksheet mutation: every create and delete goes through the injected
+        // IShapeWritePort, whose registered mutating implementation (ExcelShapeWriter)
+        // performs the guard-first ordering. Classifying it read-only here is the accurate
+        // statement that this file itself has nothing to guard.
+        "src/GanttCreator.Office/EditablePanelStagingComposer.cs",
+        // R6.5: the staging lifecycle. Like the composer and the grouper it holds no COM
+        // proxy and performs no direct mutation: compose, group, delete and the copy seam
+        // all go through the injected ports, whose registered mutating implementations
+        // perform the guard-first ordering. A guard read here would be unreachable code
+        // rather than a missing guard.
+        "src/GanttCreator.Office/StagingLifecycle.cs",
+        // R6.6: the shared staging-adapter base. It resolves the worksheet carrying
+        // tblGanttData and proves staging ownership, but performs no mutation of its own:
+        // every mutation goes through a derived adapter's registered entry point. Its
+        // protection reads (Query, QueryTarget) are the consultation the derived adapters'
+        // entry points own.
+        "src/GanttCreator.Office/StagingShapeAdapter.cs",
+        // R6.6: the copy adapter. Shape.Copy writes the clipboard, never the workbook, so
+        // the source-shape scan finds no data mutation here; the adapter still queries the
+        // guard first, the same declared shape as GanttRefreshOrchestrator (a
+        // read-only-classified file that consults protection at its boundary).
+        "src/GanttCreator.Office/ExcelShapeCopier.cs",
+        // R6.6: the copy port, the clipboard reader port and its two records. Declarations
+        // plus records - no interop proxy, no statement, nothing to guard.
+        "src/GanttCreator.Office/IShapeCopyPort.cs",
+        "src/GanttCreator.Office/IClipboardFormatReader.cs",
+        // R6.6: the Win32 clipboard reader. It observes the clipboard (open, enumerate,
+        // close) and touches no workbook or COM proxy at all.
+        "src/GanttCreator.Office/WindowsClipboardFormatReader.cs",
+        // R6.6: the verified copy stage. Like the composer and the grouper it holds no COM
+        // proxy and performs no direct mutation: the copy goes through the injected
+        // IShapeCopyPort, whose registered implementation performs the guard-first
+        // ordering.
+        "src/GanttCreator.Office/StagedShapeCopier.cs",
+
+        // Composes a style record from the code-owned catalogue; writes nothing and
+        // touches no COM object, so it is read-only and consults no guard.
+        "src/GanttCreator.Office/ExportPanelTheme.cs",
         "src/GanttCreator.Office/ShapeOwnershipTag.cs",
         "src/GanttCreator.Office/ShapeDeltaCache.cs",
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",
@@ -493,6 +555,11 @@ public sealed class ProtectionGuardFirstTests
         "ProtectStructure",
         ".Query(",
         "QueryTarget(",
+        // R6.6: the shared staging-adapter base owns the guard query. A mutating derived
+        // adapter calls this seam as its first host check, so the source-shape scan must
+        // recognise it as the consultation it is. The base is classified read-only, so its
+        // own Query/QueryTarget reads are not what satisfies the derived file's rule.
+        "CheckEntryGuard(",
     ];
 
     [Fact]

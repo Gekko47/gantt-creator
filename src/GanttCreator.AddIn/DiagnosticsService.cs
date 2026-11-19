@@ -7,6 +7,9 @@ using GanttCreator.Core.Logging;
 // Expose internals to the test project so contract tests can verify the
 // log-writing path without requiring the TaskDialog UI.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("GanttCreator.AddIn.Tests")]
+// R6.8: the Office integration harness drives the production CopyEditableCommand
+// directly (the one-click gate), so it needs the command and its request record.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("GanttCreator.Office.IntegrationTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DynamicProxyGenAssembly2")]
 
 namespace GanttCreator.AddIn;

@@ -949,6 +949,17 @@ internal class RibbonStateService
 #pragma warning restore CA1031
     }
 
+    /// <summary>
+    /// Gets whether Excel's status bar is visible, or <see langword="null"/> when unknown.
+    /// </summary>
+    /// <returns>
+    /// The adapter's measured fact, or <see langword="null"/> when no adapter is attached. A
+    /// caller routing an advisory message treats unknown as visible (the non-modal channel).
+    /// </returns>
+    /// <remarks>ADR-0020 D4: visibility is the user's setting, so a confirmation shown there must
+    /// not be the only channel a user who hid the status bar would see (R6.8 D9-5).</remarks>
+    internal bool? IsStatusBarVisible() => _applicationAdapter?.IsStatusBarVisible();
+
     /// <summary>Clears any add-in status-bar text so Excel resumes its automatic status.</summary>
     /// <remarks>Called after a successful refresh so a stale refusal message cannot persist.</remarks>
     internal static void ClearStatusBar()

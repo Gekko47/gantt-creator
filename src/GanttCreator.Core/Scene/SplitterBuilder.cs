@@ -77,10 +77,12 @@ public sealed record SplitterCreationOutcome(SplitterResult? Result, SplitterRef
 /// </summary>
 /// <remarks>
 /// <para>
-/// §10 geometry: the splitter "occupies a complete lane across the included data
-/// panel and plot", so the band spans <c>PanelLeftPt</c> to the plot's right edge
-/// rather than the plot alone. It has no date geometry, so no date is read and the
-/// horizontal extent is structural rather than time-scaled.
+/// §10 geometry, owner ruling 2026-11-19: the splitter occupies a complete lane across
+/// the PLOT. The band and its two borders span the plot's left edge to its right edge;
+/// <c>PanelLeftPt</c> remains the field the <c>DataPanelLeft</c> label position is
+/// measured in, and the two coincided until the export composition began drawing the
+/// data panel. It has no date geometry, so no date is read and the horizontal extent is
+/// structural rather than time-scaled.
 /// </para>
 /// <para>
 /// The band sits at <see cref="ZLayer.Section"/> (30), which the guide's z-order table
@@ -160,6 +162,21 @@ public static class SplitterBuilder
         }
 
         SceneOwnerId owner = SceneOwnerId.ForRow(request.Event.Id);
+
+        // §10's fill marks the splitter's lane across the PLOT (owner ruling 2026-11-19).
+        // The band started at the data panel's left edge, which is invisible on the live
+        // sheet — the panel there is the worksheet's own cells — and became a visible fault
+        // the moment the export composition drew the panel: every splitter painted a
+        // full-width stripe across the table. The band and its two borders span the plot.
+        RectD bandBounds = new RectD(
+            request.PlotBounds.Left,
+            lane.Top,
+            request.PlotBounds.Right - request.PlotBounds.Left,
+            lane.Height);
+
+        // The LABEL field keeps the panel's left edge, because the `DataPanelLeft` position
+        // is defined against the panel's own edge. It is the band's rectangle only while the
+        // composition carries no panel, which is why the two coexisted unnoticed.
         RectD bounds = new RectD(
             request.PanelLeftPt,
             lane.Top,
@@ -186,7 +203,7 @@ public static class SplitterBuilder
                 ScenePrimitive.CreateId(owner, BandRole),
                 owner,
                 ZLayer.Section,
-                bounds,
+                bandBounds,
                 request.Style),
             new SceneLine(
                 ScenePrimitive.CreateId(owner, $"{BandRole}:top"),
@@ -201,8 +218,8 @@ public static class SplitterBuilder
                 ScenePrimitive.CreateId(owner, $"{BandRole}:bottom"),
                 owner,
                 ZLayer.Frame,
-                new PointD(bounds.X, bounds.Bottom),
-                new PointD(bounds.Right, bounds.Bottom),
+                new PointD(bandBounds.X, bandBounds.Bottom),
+                new PointD(bandBounds.Right, bandBounds.Bottom),
                 borderStyle,
                 request.Event.Type,
                 lane.LaneOrder),
@@ -211,7 +228,7 @@ public static class SplitterBuilder
         GanttLabelPosition position = AddLabels(request, owner, lane, bounds, primitives);
 
         return new SplitterCreationOutcome(
-            new SplitterResult(primitives, bounds, position),
+            new SplitterResult(primitives, bandBounds, position),
             null);
     }
 

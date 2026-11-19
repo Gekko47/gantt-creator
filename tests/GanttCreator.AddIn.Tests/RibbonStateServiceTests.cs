@@ -371,6 +371,30 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void Copy_editable_is_enabled_and_visible_on_an_initialised_gantt_sheet()
+    {
+        // R6.8: the Export group joins the full surface, and its one member carries the
+        // same workbook + initialised + active-Gantt-sheet gate as every chart command.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([]));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.CopyEditable));
+        Assert.True(service.GetVisible(RibbonControlIds.ExportGroup));
+    }
+
+    [Fact]
+    public void Copy_editable_is_disabled_and_hidden_on_a_first_run_workbook()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = false },
+            GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.CopyEditable));
+        Assert.False(service.GetVisible(RibbonControlIds.ExportGroup));
+    }
+
+    [Fact]
     public void Structural_buttons_follow_the_row_under_the_active_cell()
     {
         // R5.9b: a child at the bottom of its run offers Promote and Remove,

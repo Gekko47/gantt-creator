@@ -47,6 +47,28 @@ public class ExcelApplicationAdapterTests
     }
 
     [Fact]
+    public void IsStatusBarVisible_reports_not_determinable_without_an_application_object()
+        => Assert.Null(new ExcelApplicationAdapter(null).IsStatusBarVisible());
+
+    [Fact]
+    public void IsStatusBarVisible_reports_the_host_value()
+    {
+        var application = new Mock<Excel.Application>();
+        application.SetupGet(a => a.DisplayStatusBar).Returns(false);
+
+        Assert.False(new ExcelApplicationAdapter(application.Object).IsStatusBarVisible());
+    }
+
+    [Fact]
+    public void IsStatusBarVisible_reports_not_determinable_when_the_probe_fails()
+    {
+        var application = new Mock<Excel.Application>();
+        application.SetupGet(a => a.DisplayStatusBar).Throws(new InvalidOperationException("probe failed"));
+
+        Assert.Null(new ExcelApplicationAdapter(application.Object).IsStatusBarVisible());
+    }
+
+    [Fact]
     public void SubscribeWorkbookStateChanged_rejects_a_null_handler()
     {
         // Positive test for the one argument guard on the adapter's port.

@@ -15,6 +15,12 @@ public sealed record SceneText : ScenePrimitive
     /// <param name="laneOrder">The lane ordering value, when known.</param>
     /// <param name="stackIndex">The stack ordering value, when known.</param>
     /// <param name="sortOrder">The explicit user ordering value, when known.</param>
+    /// <param name="leftInsetPt">
+    /// The left inset inside <paramref name="textBounds"/> the renderer applies before the
+    /// text starts, in points. Zero (the default) means the text begins at the bounds' left
+    /// edge. A grouped child's exported <c>Description</c> cell sets this to reproduce the
+    /// worksheet cell's <c>IndentLevel</c> as a text-frame margin.
+    /// </param>
     public SceneText(
         string primitiveId,
         SceneOwnerId ownerId,
@@ -26,7 +32,8 @@ public sealed record SceneText : ScenePrimitive
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
-        int? sortOrder = null
+        int? sortOrder = null,
+        double leftInsetPt = 0
     )
         : base(primitiveId, ownerId, zLayer, entityType, laneOrder, stackIndex, sortOrder)
     {
@@ -37,10 +44,16 @@ public sealed record SceneText : ScenePrimitive
             throw new ArgumentOutOfRangeException(nameof(alignment));
         }
 
+        if (!double.IsFinite(leftInsetPt) || leftInsetPt < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(leftInsetPt));
+        }
+
         Text = text;
         TextBounds = textBounds;
         Style = style;
         Alignment = alignment;
+        LeftInsetPt = leftInsetPt;
     }
 
     /// <summary>Gets the text content.</summary>
@@ -54,4 +67,16 @@ public sealed record SceneText : ScenePrimitive
 
     /// <summary>Gets the resolved text alignment.</summary>
     public GanttTextAlignment Alignment { get; }
+
+    /// <summary>
+    /// Gets the left inset the renderer applies inside <see cref="TextBounds"/> before the
+    /// text starts, in points.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SceneText"/> is the one primitive the data-panel export reuses for a
+    /// worksheet cell's text. The live sheet expresses a grouped child's indent as a cell
+    /// <c>IndentLevel</c>; the copy draws shapes, so the indent must travel on the primitive.
+    /// Zero is the default and leaves every existing text primitive byte-identical.
+    /// </remarks>
+    public double LeftInsetPt { get; }
 }

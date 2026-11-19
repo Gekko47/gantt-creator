@@ -277,6 +277,42 @@ public class GanttRibbon : ExcelRibbon
     private static void RunRefreshSheet() => RefreshSheetCommand.RunForExcel();
 
     /// <summary>
+    /// Called when the user clicks Copy Editable (R6.8). The callback is a thin error
+    /// boundary exactly like Refresh: the command runs across the project-wide
+    /// <see cref="CommandBoundary"/> and the ribbon state is refreshed afterwards.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnCopyEditableClick(IRibbonControl control)
+        => OnCopyEditableClick(control, CommandBoundary.Instance, RunCopyEditable, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Copy Editable command across an injected boundary. Internal so contract
+    /// tests can verify the routing with a deterministic boundary and a stub command
+    /// instead of the singleton and the real clipboard.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The copy command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    internal static void OnCopyEditableClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, nameof(OnCopyEditableClick)), command, nameof(OnCopyEditableClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>
+    /// The Copy Editable command: runs the production pipeline in the current Excel
+    /// session (R6.8).
+    /// </summary>
+    private static void RunCopyEditable() => CopyEditableCommand.RunForExcel();
+
+    /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): presses to flip whether the chart's elements
     /// can be dragged. One control replaces the old Unlock shape / Lock shapes pair, and its pressed
     /// state is the lock state, so it can always be found and always shows what is true.

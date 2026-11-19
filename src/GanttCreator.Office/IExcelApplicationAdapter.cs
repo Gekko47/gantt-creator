@@ -102,6 +102,23 @@ public interface IExcelApplicationAdapter
     void ClearStatusBar();
 
     /// <summary>
+    /// Gets whether Excel's status bar is currently visible, or <see langword="null"/> when the
+    /// fact cannot be determined.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the status bar is shown; <see langword="false"/> when the user
+    /// has hidden it; <see langword="null"/> when not determinable. The default implementation
+    /// reports <see langword="true"/>, the fail-open direction: a caller routing an advisory
+    /// message prefers the non-modal status bar when it cannot prove the status bar is hidden.
+    /// </returns>
+    /// <remarks>
+    /// ADR-0020 D4 makes status-bar visibility the user's setting, so a command that presents a
+    /// confirmation there must know whether the user can see it (R6.8 D9-5). This is a read of
+    /// an existing host property: no write, no state.
+    /// </remarks>
+    bool? IsStatusBarVisible() => true;
+
+    /// <summary>
     /// Subscribes <paramref name="handler"/> to application-level workbook state
     /// changes: a workbook becoming active, a workbook being deactivated, and a
     /// new workbook being created.

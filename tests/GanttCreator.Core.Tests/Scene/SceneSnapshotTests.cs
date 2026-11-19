@@ -52,6 +52,42 @@ public sealed class SceneSnapshotTests
         Assert.Equal(json, SceneSnapshot.Serialize(roundTripped));
     }
 
+    /// <summary>
+    /// A text primitive's left inset round-trips, and a zero inset is omitted so every
+    /// snapshot written before the member existed stays byte-identical.
+    /// </summary>
+    [Fact]
+    public void A_text_left_inset_round_trips_and_zero_omits_the_member()
+    {
+        var owner = SceneOwnerId.ForRow(GanttRowId.New());
+        var indented = new SceneText(
+            "row:child",
+            owner,
+            ZLayer.Label,
+            "Child",
+            new RectD(0, 0, 20, 10),
+            new SceneStyle("Text"),
+            GanttTextAlignment.Left,
+            leftInsetPt: 6);
+
+        string json = SceneSnapshot.Serialize(CreateScene([indented]));
+        Assert.Contains("LeftInsetPt", json, StringComparison.Ordinal);
+
+        SceneText roundTripped = Assert.IsType<SceneText>(
+            Assert.Single(SceneSnapshot.Deserialize(json).Primitives));
+        Assert.Equal(6, roundTripped.LeftInsetPt);
+
+        var flush = new SceneText(
+            "row:parent",
+            owner,
+            ZLayer.Label,
+            "Parent",
+            new RectD(0, 0, 20, 10),
+            new SceneStyle("Text"),
+            GanttTextAlignment.Left);
+        Assert.DoesNotContain("LeftInsetPt", SceneSnapshot.Serialize(CreateScene([flush])), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Serialize_is_byte_identical_for_three_shuffled_inputs()
     {

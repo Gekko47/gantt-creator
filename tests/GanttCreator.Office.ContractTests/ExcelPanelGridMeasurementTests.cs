@@ -39,13 +39,14 @@ public class ExcelPanelGridMeasurementTests
         double originLeftPt,
         double topPaddingHeightPt = 18.0,
         double bottomPaddingHeightPt = 27.5,
-        double anchorRowHeightPt = 0.25)
+        double anchorRowHeightPt = 0.25,
+        string columnName = ColumnName)
         : ExcelPanelGridMeasurement(application)
     {
         internal override Excel.ListObject? FindGanttTable(Excel.Sheets sheets) => table;
 
         internal override Excel.ListColumn? FindColumn(Excel.ListObject candidate, string name) =>
-            string.Equals(name, ColumnName, StringComparison.Ordinal) ? column : null;
+            string.Equals(name, columnName, StringComparison.Ordinal) ? column : null;
 
         // The row seams are substituted because Range.Rows.Item is a COM
         // parameterised property, which cannot appear in an expression tree
@@ -312,6 +313,38 @@ public class ExcelPanelGridMeasurementTests
         Assert.Equal([15d], outcome.Grid.RowHeightsPt);
         Assert.Equal(15d, outcome.Grid.HeaderHeightPt);
         Assert.Equal(64d, Assert.Single(outcome.Grid.Columns).WidthPt);
+    }
+
+    /// <summary>
+    /// The measured column carries the SAME alignment the live table writes, so the copy's
+    /// Start/Finish/Duration cells stay centred (owner report 2026-11-19).
+    /// </summary>
+    /// <remarks>
+    /// Before this, every measured column silently took <c>PanelColumn</c>'s default left
+    /// alignment, so the exported panel disagreed with the worksheet beside it.
+    /// </remarks>
+    [Theory]
+    [InlineData("Start", GanttTextAlignment.Centre)]
+    [InlineData("Finish", GanttTextAlignment.Centre)]
+    [InlineData("Duration", GanttTextAlignment.Centre)]
+    [InlineData("Description", GanttTextAlignment.Left)]
+    public void The_measured_column_carries_the_live_alignment(string columnName, GanttTextAlignment expected)
+    {
+        FakeTable table = TableReporting(64d, 15d);
+        var measurement = new TestableMeasurement(
+            ActiveApplication().Object,
+            table.Table,
+            table.Column,
+            table.BodyRowHeights,
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt,
+            columnName: columnName);
+
+        PanelGridOutcome outcome = measurement.Measure([columnName]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(expected, Assert.Single(outcome.Grid!.Columns).Alignment);
     }
 
     /// <summary>

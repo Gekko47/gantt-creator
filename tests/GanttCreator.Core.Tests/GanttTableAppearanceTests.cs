@@ -28,6 +28,21 @@ public sealed class GanttTableAppearanceTests
     }
 
     [Fact]
+    public void The_scene_alignment_is_the_cell_alignment_for_every_column()
+    {
+        // The exported panel draws the cell as a shape, so it must read the SAME authority
+        // the live sheet writes. If these ever disagree, the copy's Start/Finish/Duration
+        // cells render left-aligned beside centred worksheet cells (owner report 2026-11-19).
+        Assert.Equal(GanttTextAlignment.Centre, GanttTableAppearance.SceneAlignmentFor("Start"));
+        Assert.Equal(GanttTextAlignment.Centre, GanttTableAppearance.SceneAlignmentFor("Finish"));
+        Assert.Equal(GanttTextAlignment.Centre, GanttTableAppearance.SceneAlignmentFor("Duration"));
+        Assert.Equal(GanttTextAlignment.Left, GanttTableAppearance.SceneAlignmentFor("Type"));
+        Assert.Equal(GanttTextAlignment.Left, GanttTableAppearance.SceneAlignmentFor("Description"));
+        Assert.Equal(GanttTextAlignment.Left, GanttTableAppearance.SceneAlignmentFor("Id"));
+        Assert.Equal(GanttTextAlignment.Left, GanttTableAppearance.SceneAlignmentFor(null));
+    }
+
+    [Fact]
     public void The_centred_columns_all_exist_in_the_schema_and_are_visible_to_the_user()
     {
         // A typo in the list would leave a value column left-aligned with nothing failing, and

@@ -165,8 +165,15 @@ public static class FrameBandsBuilder
             request.YearBandHeightPt
         );
         RectD contentBounds = Union(request.PanelBounds, yearBounds, periodBounds, request.PlotBounds);
+
+        // Owner ruling 2026-11-19: the drawn title sits where the LIVE title sits — over the
+        // data panel's columns, on the row the year band occupies — not as a full-width band
+        // above every band. The live title is an owned textbox with exactly this box
+        // (GanttRefreshOrchestrator), so the copy and the sheet read as one chart. A
+        // composition with no panel falls back to the plot's own columns, which is the only
+        // table-width field it has.
         RectD? titleBounds = request.ShowTitle
-            ? new RectD(contentBounds.X, contentBounds.Y - request.TitleBandHeightPt, contentBounds.Width, request.TitleBandHeightPt)
+            ? new RectD(request.PanelBounds.Left, yearBounds.Y, request.PanelBounds.Width, yearBounds.Height)
             : null;
         RectD unionBounds = titleBounds is { } title ? Union(contentBounds, title) : contentBounds;
         // Each side is padded independently (ADR-0031 D1). A live chart's top and
@@ -547,24 +554,29 @@ public static class FrameBandsBuilder
             );
         }
 
-        // The plot's BOTTOM border, drawn inside the last body row (owner report
-        // 2026-11-15: "there is an edge line at the bottom and left of the plot which is
-        // not plotting"). The closing line below the plot terminates the band overhang and
-        // lives in the 0.25pt anchor row; it is not the plot's own bottom edge. This line is,
-        // and it sits inside the plot so its anchor is a populated row.
-        if (request.SheetCoordinates)
-        {
-            primitives.Add(
-                new SceneLine(
-                    "chart:plot:bottom",
-                    SceneOwnerId.Chart,
-                    ZLayer.Frame,
-                    new PointD(request.PlotBounds.Left, request.PlotBounds.Bottom - halfStroke),
-                    new PointD(request.PlotBounds.Right, request.PlotBounds.Bottom - halfStroke),
-                    request.Theme.MajorGrid
-                )
-            );
-        }
+        // The plot's BOTTOM border (owner report 2026-11-15: "there is an edge line at the
+        // bottom and left of the plot which is not plotting"). The closing line below the
+        // plot terminates the band overhang and lives in the 0.25pt anchor row; it is not
+        // the plot's own bottom edge. This line is.
+        //
+        // It is emitted in EVERY composition, because an export composition has no anchor
+        // row and therefore no closing line: without this edge the copy's plot was open at
+        // the bottom (owner report 2026-11-19, after the copy stopped carrying the anchor
+        // row). On the live sheet it is drawn half a stroke INSIDE the last body row,
+        // because that row's own fill clips the outer half. An export composition draws its
+        // own panel, has no cells to clip it, and ends that panel on the same boundary, so
+        // there it lands exactly on `PlotBounds.Bottom` and closes the plot and the copied
+        // table with one shared rule.
+        primitives.Add(
+            new SceneLine(
+                "chart:plot:bottom",
+                SceneOwnerId.Chart,
+                ZLayer.Frame,
+                new PointD(request.PlotBounds.Left, request.PlotBounds.Bottom - halfStroke),
+                new PointD(request.PlotBounds.Right, request.PlotBounds.Bottom - halfStroke),
+                request.Theme.MajorGrid
+            )
+        );
 
         // The plot's TOP edge - the period band's own bottom - completes the rectangle.
         // The band above it is a filled rect and the body below is the user's cells, so
@@ -611,6 +623,8 @@ public static class FrameBandsBuilder
         // With no anchor row there is no overhang and nothing to terminate, so no line
         // is emitted at all. Emitting one would draw a stroke across the plot's own
         // bottom edge with no band behind it -- a visible rule that closes nothing.
+        // The plot is still closed there: `chart:plot:bottom` (AddGrid) is emitted in
+        // every composition, and that is what gives an anchor-less export its bottom rule.
         if (!PlotSpanGeometry.HasAnchorRow(request.ChartAnchorRowHeightPt))
         {
             return;
