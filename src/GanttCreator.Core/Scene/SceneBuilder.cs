@@ -492,6 +492,13 @@ public static class SceneBuilder
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
 
         Dictionary<GanttRowId, SceneStyle> delineatorStyles = [];
+
+        // The resolved label position rides beside the style (owner ruling 2026-11-19): a
+        // custom style's DefaultLabelPosition is resolved by GanttStyleResolution and was then
+        // dropped, so a delineator row with a blank cell fell back to `Auto` and lost the
+        // corner the user chose. Delineators are plot-global, so their position travels in its
+        // own map rather than through ResolvedEventStyle, which only lane rows build.
+        Dictionary<GanttRowId, GanttLabelPosition> delineatorLabelPositions = [];
         foreach (GanttEvent @event in plotGlobalEntities)
         {
             // §24 draws the line from the resolved line style, but a Delineator has
@@ -499,9 +506,14 @@ public static class SceneBuilder
             // broken workbook: it falls back to the code-owned DefaultDelineator
             // preset rather than refusing the whole scene. Only Types that *have* a
             // default are refused when it cannot resolve.
-            delineatorStyles[@event.Id] = TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null
-                ? resolved.Style
+            bool delineatorResolved =
+                TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null;
+            delineatorStyles[@event.Id] = delineatorResolved
+                ? resolved!.Style
                 : CataloguePresetStyle("DefaultDelineator");
+            delineatorLabelPositions[@event.Id] = @event.LabelPosition
+                ?? resolved?.LabelPosition
+                ?? GanttCatalogues.GetPreset("DefaultDelineator").DefaultLabelPosition;
         }
 
         foreach (GanttEvent @event in laneParticipants)
@@ -564,7 +576,11 @@ public static class SceneBuilder
                 _ => 0,
             };
 
-            styles[@event.Id] = new ResolvedEventStyle(style, heightPt, resolved?.MilestoneSizePt ?? 0);
+            styles[@event.Id] = new ResolvedEventStyle(
+                style,
+                heightPt,
+                resolved?.MilestoneSizePt ?? 0,
+                resolved?.LabelPosition ?? GanttLabelPosition.Auto);
             _ = laneOwnerByEntity.TryGetValue(@event.Id, out GanttEvent? laneOwner);
             laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
@@ -631,7 +647,7 @@ public static class SceneBuilder
         // the offset cannot be applied twice.
         BuildSpans(placements, styles, timeScale, plotBounds, primitives, warnings, parentVisibleBounds);
         BuildOverlaysAndMilestones(request, placements, styles, timeScale, plotBounds, parentVisibleBounds, primitives, warnings);
-        return BuildFramePanelAndScene(request, timeScale, plotBounds, laneLayout, placements, laneParticipants, plotGlobalEntities, delineatorStyles, styles, parentVisibleBounds, primitives, warnings);
+        return BuildFramePanelAndScene(request, timeScale, plotBounds, laneLayout, placements, laneParticipants, plotGlobalEntities, delineatorStyles, delineatorLabelPositions, styles, parentVisibleBounds, primitives, warnings);
     }
 
 
@@ -648,7 +664,16 @@ public static class SceneBuilder
     /// created may name its own diamond size. A built-in style always follows
     /// the chart metric, so the chart knob stays live for it.
     /// </remarks>
-    private sealed record ResolvedEventStyle(SceneStyle Style, double HeightPt, double MilestoneSizePt);
+    /// <param name="LabelPosition">
+    /// The resolved label position: the row's own choice, or the style's default when the row
+    /// leaves it blank (owner ruling 2026-11-19 — it used to be discarded, so a custom style's
+    /// position never reached the delineator and span label builders).
+    /// </param>
+    private sealed record ResolvedEventStyle(
+        SceneStyle Style,
+        double HeightPt,
+        double MilestoneSizePt,
+        GanttLabelPosition LabelPosition = GanttLabelPosition.Auto);
 
     private static void BuildSpans(
         LaneEventLayoutResult placements,
@@ -897,6 +922,7 @@ public static class SceneBuilder
         IReadOnlyList<GanttEvent> laneParticipants,
         List<GanttEvent> plotGlobalEntities,
         Dictionary<GanttRowId, SceneStyle> delineatorStyles,
+        Dictionary<GanttRowId, GanttLabelPosition> delineatorLabelPositions,
         IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
         Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
@@ -1047,6 +1073,7 @@ public static class SceneBuilder
             frameResult.Geometry.ChartBounds,
             plotGlobalEntities,
             delineatorStyles,
+            delineatorLabelPositions,
             primitives,
             warnings);
 
@@ -1117,6 +1144,7 @@ public static class SceneBuilder
         RectD chartBounds,
         List<GanttEvent> delineators,
         Dictionary<GanttRowId, SceneStyle> delineatorStyles,
+        Dictionary<GanttRowId, GanttLabelPosition> delineatorLabelPositions,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
@@ -1186,7 +1214,7 @@ public static class SceneBuilder
                     chartBounds,
                     request.LabelGapPt,
                     request.Metrics!,
-                    @event.LabelPosition ?? GanttLabelPosition.Auto,
+                    delineatorLabelPositions[@event.Id],
                     LineBottomPt: lineBottomPt,
                     LineTopPt: lineTopPt,
                     LabelStyle: delineatorStyles[@event.Id].TextColour is { } delineatorTextColour
@@ -1319,7 +1347,7 @@ public static class SceneBuilder
                 new LabelRequest(
                     @event,
                     @event.Description,
-                    @event.LabelPosition ?? GanttLabelPosition.Auto,
+                    @event.LabelPosition ?? styles[@event.Id].LabelPosition,
                     shapeBounds,
                     insideLabelStyle,
                     request.Metrics!,

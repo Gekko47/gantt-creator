@@ -9,8 +9,9 @@ namespace GanttCreator.Office.IntegrationTests;
 
 /// <summary>
 /// R6.8 Office gate: the production Copy Editable command runs the whole pipeline on a real
-/// host — read, validate, measure, export request, selection, bounds, then the R6.5 lifecycle
-/// through the R6.6 verified copy — and leaves zero residue with the view and selection
+/// host — read, configuration, validate, measure, export request, selection, bounds, then the
+/// R6.5 lifecycle through the R6.6 verified copy — and leaves zero residue with the view and
+/// selection
 /// restored.
 /// </summary>
 /// <remarks>

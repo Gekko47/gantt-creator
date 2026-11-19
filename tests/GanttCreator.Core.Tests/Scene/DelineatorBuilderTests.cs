@@ -793,6 +793,38 @@ public sealed class DelineatorBuilderTests
     }
 
     [Fact]
+    public void An_explicit_corner_is_clamped_inside_the_chart_bounds_rather_than_dropped()
+    {
+        // Owner ruling 2026-11-19: a user-chosen corner is honoured. An export copy can give
+        // the chart less room below the plot than the sheet's own reserved rows do, and the old
+        // single-candidate path emitted no label at all when the corner box did not fit - which
+        // is how a custom BottomLeft delineator label disappeared from the copy.
+        //
+        // The chart still has to hold the BOX; it is the corner's position that overflows. It
+        // ends 5pt above the plot bottom, so the natural BottomLeft box hangs past it and only
+        // the clamp can place the label at all.
+        var shortChart = new RectD(0.0, 0.0, 400.0, Plot.Bottom - 5.0);
+        var outcome = DelineatorBuilder.TryBuild(
+            Req(Event(description: "Alpha"), position: GanttLabelPosition.BottomLeft) with
+            {
+                ChartBounds = shortChart,
+            },
+            Scale());
+
+        Assert.True(outcome.Succeeded, "Delineator build refused: " + outcome.Refusal);
+
+        // The single-corner build returns its placed description label directly; a
+        // `DelineatorResult` is not a collection of primitives (that is the GROUP result).
+        SceneText label = Assert.IsType<SceneText>(outcome.Result!.Label);
+        Assert.True(
+            label.TextBounds.Left >= shortChart.Left - 0.001
+            && label.TextBounds.Right <= shortChart.Right + 0.001
+            && label.TextBounds.Top >= shortChart.Top - 0.001
+            && label.TextBounds.Bottom <= shortChart.Bottom + 0.001,
+            $"The clamped label escaped the chart bounds: {label.TextBounds}");
+    }
+
+    [Fact]
     public void A_group_refuses_mismatched_members()
     {
         DelineatorRequest first = Req(Event());

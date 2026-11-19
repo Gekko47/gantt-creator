@@ -42,6 +42,73 @@ public class CopyEditableCommandTests
         Assert.Equal(2, harness.SeenEvents.Count);
     }
 
+    /// <summary>
+    /// Regression for the copy's label parity (2026-11-19): the composition must receive the
+    /// row's own <c>LabelPosition</c> for a style-key type, exactly as Refresh does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The defect this pins.</b> The command validated before reading the configuration, so
+    /// <see cref="GanttRowValidator"/> ran without <see cref="GanttStyleRegistry"/>. For a type
+    /// that requires a <c>StyleKey</c> (Custom Activity, Custom Milestone, Delineator) the
+    /// validator could not resolve the style and silently dropped the row's
+    /// <c>LabelPosition</c> (and its colour overrides); the scene then fell back to the
+    /// style's default position. Refresh passes <c>config.Styles</c> and kept the row value,
+    /// which is why the live chart and the copy disagreed.
+    /// </para>
+    /// <para>
+    /// The workbook's custom THEME always reached the copy (the export request factory receives
+    /// the registry directly), which is why colours looked right while a custom position did not.
+    /// Toolbar/selection changes were never involved: the loss happened in the command's own
+    /// input stage.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Run_keeps_a_style_key_rows_custom_label_position_by_validating_with_the_workbook_registry()
+    {
+        Harness harness = new();
+        harness.Rows =
+        [
+            new GanttRowDto(
+                1,
+                GanttRowId.New().Value,
+                null,
+                null,
+                "Custom Activity",
+                "Build",
+                _start,
+                _finish,
+                null,
+                "MyStyle",
+                nameof(GanttLabelPosition.Inside),
+                null,
+                null,
+                null,
+                null),
+        ];
+        harness.ConfigOutcome = ConfigReadOutcome.Ok(
+            "workbook-id",
+            harness.Settings,
+            new GanttStyleRegistry([
+                // Capability-only definition: this fact is about the validator's label
+                // check, not about resolved formatting.
+                new GanttStyleDefinition(
+                    "MyStyle",
+                    new HashSet<GanttLabelPosition>
+                    {
+                        GanttLabelPosition.Auto,
+                        GanttLabelPosition.Inside,
+                    },
+                    EntityColourCapability.Fill),
+            ]),
+            new Dictionary<string, double>());
+
+        _ = harness.Run();
+
+        GanttEvent composed = Assert.Single(harness.SeenEvents!);
+        Assert.Equal(GanttLabelPosition.Inside, composed.LabelPosition);
+    }
+
     [Fact]
     public void Run_sends_table_plus_chart_and_the_panel_theme_by_default()
     {

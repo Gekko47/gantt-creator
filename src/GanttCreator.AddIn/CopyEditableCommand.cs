@@ -186,8 +186,13 @@ internal sealed record CopyEditableRequest(
 /// <remarks>
 /// <para>
 /// <b>The command owns the pipeline order; each stage owns its own contract.</b> The order is
-/// pre-flight (read → validate → configuration → measurement → export request → selection →
+/// pre-flight (read → configuration → validate → measurement → export request → selection →
 /// bounds) then the R6.5 lifecycle (compose → group → copy → verified formats → cleanup).
+/// The configuration precedes validation because the validator needs the workbook's style
+/// registry to resolve a style-key row's capabilities; validating first silently dropped a
+/// Custom Activity / Custom Milestone / Delineator row's own <c>LabelPosition</c> (and its
+/// colour overrides), so the copy rendered the style's default position while Refresh
+/// rendered the row's — the reported live-versus-copy label defect (2026-11-19).
 /// Nothing in the pre-flight creates a shape, so every early refusal leaves the workbook
 /// untouched and no cleanup is owed; the lifecycle's <c>finally</c> is the inner cleanup
 /// guarantee for everything after the first create. A command test pins the order through the
@@ -381,10 +386,28 @@ internal static class CopyEditableCommand
             return Refuse(CopyEditableRefusal.TableReadRefused, message, 0, failurePresenter);
         }
 
-        // Step 2 — validate. Rows with blocking errors are excluded from the export's event
-        // set by the validator's own contract; the count is surfaced, never silently dropped
-        // (owner ruling 2026-11-19). A marked or invalid count is never inferred from the rows.
-        GanttValidationOutcome validation = GanttRowValidator.Validate(read.Rows);
+        // Step 2 — read the workbook configuration (settings, styles, metrics). It precedes
+        // validation because the validator must see the workbook's style registry: without it a
+        // style-key type (Custom Activity, Custom Milestone, Delineator) cannot resolve its
+        // capabilities, and the row's own LabelPosition and colour overrides are silently
+        // dropped. The live Refresh validates with config.Styles for exactly this reason; the
+        // copy now does the same (2026-11-19 label-parity fix).
+        ConfigReadOutcome config = configReader.Read();
+        if (!config.Succeeded)
+        {
+            string message = config.Refusal is { } configRefusal
+                ? TranslateConfig(configRefusal)
+                : ConstructionMessage;
+
+            // No validation has run yet, so no row has been dropped: zero, never inferred.
+            return Refuse(CopyEditableRefusal.ConfigReadRefused, message, 0, failurePresenter);
+        }
+
+        // Step 3 — validate with the workbook's registry. Rows with blocking errors are
+        // excluded from the export's event set by the validator's own contract; the count is
+        // surfaced, never silently dropped (owner ruling 2026-11-19). A marked or invalid count
+        // is never inferred from the rows.
+        GanttValidationOutcome validation = GanttRowValidator.Validate(read.Rows, config.Styles);
         int droppedRows = validation.Issues
             .Where(issue => issue.Severity == GanttValidationSeverity.Error)
             .Select(issue => issue.RowNumber)
@@ -395,16 +418,6 @@ internal static class CopyEditableCommand
             request.TechnicalRecord?.Invoke(string.Create(
                 CultureInfo.InvariantCulture,
                 $"gantt.copy rows-dropped={droppedRows}"));
-        }
-
-        // Step 3 — read the workbook configuration (settings, styles, metrics).
-        ConfigReadOutcome config = configReader.Read();
-        if (!config.Succeeded)
-        {
-            string message = config.Refusal is { } configRefusal
-                ? TranslateConfig(configRefusal)
-                : ConstructionMessage;
-            return Refuse(CopyEditableRefusal.ConfigReadRefused, message, droppedRows, failurePresenter);
         }
 
         // Step 4 — measure the live panel. The single-argument overload reads the host's
