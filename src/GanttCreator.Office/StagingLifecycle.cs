@@ -49,18 +49,31 @@ public enum StagingLifecycleRefusal
 }
 
 /// <summary>
-/// The minimal result carrier the R6.6 copy seam returns. R6.5 defines no clipboard
-/// behaviour; the real verified copy replaces this contract when R6.6 lands.
+/// The result carrier the R6.6 copy seam returns. R6.5 defines no clipboard behaviour; the
+/// verified copy (<see cref="StagedShapeCopier"/>) fills it.
 /// </summary>
 /// <param name="Succeeded">Whether the copy step reports success.</param>
-/// <param name="Detail">A free-text detail the seam wants the operation to carry.</param>
+/// <param name="Detail">
+/// The diagnostic detail: on success the verified formats and clipboard sequence number, on
+/// a refusal the actionable reason. Never schedule content.
+/// </param>
+/// <param name="Refusal">The stage's typed refusal, or <see langword="null"/> on success.</param>
+/// <param name="PortRefusal">
+/// The copy port's own refusal when the stage refused at the copy step, or
+/// <see langword="null"/>. Symmetric with <see cref="StagedGroupOutcome.GroupRefusal"/>, so a
+/// command maps messages on typed members rather than parsing text.
+/// </param>
 /// <remarks>
-/// Deliberately opaque: the measured drawing format, the clipboard sequence number and
-/// the paste-materialisation assertion belong to R6.6 (ADR-0066 D2). This type exists only
-/// so the lifecycle can order cleanup after the copy and carry a refusal without
-/// swallowing it.
+/// The R6.5 <c>Success</c> and <c>Refused(detail)</c> factories keep their signatures, so the
+/// lifecycle's own facts are unchanged by R6.6. The measured drawing format, the clipboard
+/// sequence number and the paste-materialisation assertion belong to R6.6 (ADR-0066 D2); this
+/// type carries a refusal without swallowing it.
 /// </remarks>
-public sealed record StagingCopyResult(bool Succeeded, string? Detail)
+public sealed record StagingCopyResult(
+    bool Succeeded,
+    string? Detail,
+    StagedCopyRefusal? Refusal = null,
+    ShapeWriteRefusal? PortRefusal = null)
 {
     /// <summary>Gets the successful, detail-free result.</summary>
     public static StagingCopyResult Success { get; } = new(true, null);

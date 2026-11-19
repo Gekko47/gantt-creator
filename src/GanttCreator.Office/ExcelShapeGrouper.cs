@@ -19,10 +19,11 @@ namespace GanttCreator.Office;
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
 /// <remarks>
 /// <para>
-/// <b>Target resolution mirrors <see cref="ExcelShapeWriter"/>.</b> The Gantt worksheet is
-/// the one carrying <c>tblGanttData</c> (the user may rename the sheet, the table name is
-/// the schema's identity), and the protection guard is queried against that resolved
-/// target, never the active sheet (ADR-0008 D4, R4.8 D3).
+/// <b>Target resolution is inherited from <see cref="StagingShapeAdapter"/>.</b> The Gantt
+/// worksheet is the one carrying <c>tblGanttData</c> (the user may rename the sheet, the
+/// table name is the schema's identity), and the protection guard is queried against that
+/// resolved target, never the active sheet (ADR-0008 D4, R4.8 D3). The R6.6 copy adapter
+/// shares the same resolution and ownership proof rather than restating them.
 /// </para>
 /// <para>
 /// <b>COM ownership.</b> The <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -49,11 +50,9 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelShapeGrouper(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IShapeGroupingPort
+    IWorksheetProtectionGuard? protectionGuard = null)
+    : StagingShapeAdapter(application, protectionGuard), IShapeGroupingPort
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
-    private readonly IWorksheetProtectionGuard _protectionGuard =
-        protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     /// <inheritdoc />
     public ShapeGroupReadback GroupStaged(IReadOnlyList<string> shapeNames)
@@ -78,9 +77,9 @@ public class ExcelShapeGrouper(
 
         // ADR-0008 D4's first host check, before any workbook access; the authoritative
         // per-target check runs again in ResolveShapes against the resolved worksheet.
-        if (_protectionGuard.Query() != ProtectionGuardOutcome.NotProtected)
+        if (CheckEntryGuard() is { } entryRefusal)
         {
-            return Refused(ShapeWriteRefusal.TargetProtected);
+            return Refused(entryRefusal);
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteRefusal? resolutionRefusal);
@@ -157,9 +156,9 @@ public class ExcelShapeGrouper(
 
         // ADR-0008 D4's first host check, before any workbook access; the authoritative
         // per-target check runs again in ResolveShapes against the resolved worksheet.
-        if (_protectionGuard.Query() != ProtectionGuardOutcome.NotProtected)
+        if (CheckEntryGuard() is { } entryRefusal)
         {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.TargetProtected);
+            return ShapeWriteOutcome.Refused(entryRefusal);
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteRefusal? resolutionRefusal);
@@ -168,20 +167,10 @@ public class ExcelShapeGrouper(
             return ShapeWriteOutcome.Refused(resolutionRefusal ?? ShapeWriteRefusal.WorksheetMissing);
         }
 
-        Excel.Shape? group = FindShapeByName(shapes, groupName);
+        Excel.Shape? group = FindOwnedStagingShape(shapes, groupName, out ShapeWriteRefusal? ownershipRefusal);
         if (group is null)
         {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
-        }
-
-        // Ownership is proved by recomputation from the LIVE name, exactly as every write
-        // operation proves it: a user's shape that happens to share the name is refused.
-        if (!string.Equals(
-                ReadAlternativeText(group),
-                ShapeStagingTag.ForStagedName(groupName),
-                StringComparison.Ordinal))
-        {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+            return ShapeWriteOutcome.Refused(ownershipRefusal ?? ShapeWriteRefusal.NotFound);
         }
 
         try
@@ -201,63 +190,6 @@ public class ExcelShapeGrouper(
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
-    }
-
-    /// <summary>
-    /// Resolves the shapes collection of the worksheet carrying <c>tblGanttData</c>, after
-    /// the protection guard has cleared the resolved target.
-    /// </summary>
-    /// <param name="refusal">The refusal to return when resolution fails.</param>
-    /// <returns>The shapes collection, or <see langword="null"/> with <paramref name="refusal"/> set.</returns>
-    private Excel.Shapes? ResolveShapes(out ShapeWriteRefusal? refusal)
-    {
-        refusal = null;
-
-        Excel.Application? application = _application;
-        if (application is null)
-        {
-            refusal = ShapeWriteRefusal.NoActiveWorkbook;
-            return null;
-        }
-
-        Excel.Workbook? workbook = GetActiveWorkbook(application);
-        if (workbook is null)
-        {
-            refusal = ShapeWriteRefusal.NoActiveWorkbook;
-            return null;
-        }
-
-        Excel.Sheets? sheets = GetSheets(workbook);
-        if (sheets is null)
-        {
-            refusal = ShapeWriteRefusal.WorksheetMissing;
-            return null;
-        }
-
-        Excel._Worksheet? gantt = FindGanttWorksheet(sheets);
-        if (gantt is null)
-        {
-            refusal = ShapeWriteRefusal.WorksheetMissing;
-            return null;
-        }
-
-        // The authoritative check is against the resolved target, not the active sheet: the
-        // Gantt worksheet is not necessarily the active one (R4.8 D3).
-        ProtectionGuardOutcome target = _protectionGuard.QueryTarget(gantt);
-        if (target != ProtectionGuardOutcome.NotProtected)
-        {
-            refusal = ShapeWriteRefusal.TargetProtected;
-            return null;
-        }
-
-        Excel.Shapes? shapes = GetShapes(gantt);
-        if (shapes is null)
-        {
-            refusal = ShapeWriteRefusal.WorksheetMissing;
-            return null;
-        }
-
-        return shapes;
     }
 
     /// <summary>
@@ -336,110 +268,6 @@ public class ExcelShapeGrouper(
 
     // ---- Test seams (internal virtual, per the ExcelShapeWriter pattern) ----
 
-    /// <summary>Reads the active workbook. Test seam over <c>Application.ActiveWorkbook</c>.</summary>
-    /// <param name="application">The application object.</param>
-    /// <returns>The workbook, or <see langword="null"/>.</returns>
-    internal virtual Excel.Workbook? GetActiveWorkbook(Excel.Application application) =>
-        application.ActiveWorkbook;
-
-    /// <summary>Reads a workbook's sheets. Test seam over <c>Workbook.Sheets</c>.</summary>
-    /// <param name="workbook">The workbook.</param>
-    /// <returns>The sheet collection, or <see langword="null"/>.</returns>
-    internal virtual Excel.Sheets? GetSheets(Excel.Workbook workbook) => workbook.Sheets;
-
-    /// <summary>Reads the sheet count. Test seam over <c>Sheets.Count</c>.</summary>
-    /// <param name="sheets">The sheet collection.</param>
-    /// <returns>The number of sheets.</returns>
-    internal virtual int GetSheetCount(Excel.Sheets sheets) => sheets.Count;
-
-    /// <summary>Reads one sheet by its 1-based index. Test seam over <c>Sheets.Item</c>.</summary>
-    /// <param name="sheets">The sheet collection.</param>
-    /// <param name="index">The 1-based sheet index.</param>
-    /// <returns>The sheet, or <see langword="null"/> when the index does not resolve.</returns>
-    internal virtual Excel._Worksheet? GetSheetAt(Excel.Sheets sheets, int index) =>
-        sheets[index] as Excel._Worksheet;
-
-    /// <summary>
-    /// Returns the worksheet carrying <c>tblGanttData</c>. Test seam over the
-    /// <c>ListObjects</c> indexed property and the <c>Name</c> read (CS0855).
-    /// </summary>
-    /// <param name="sheets">The workbook's sheet collection.</param>
-    /// <returns>The Gantt worksheet, or <see langword="null"/> when absent.</returns>
-    internal virtual Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets)
-    {
-        ArgumentNullException.ThrowIfNull(sheets);
-
-        int count = GetSheetCount(sheets);
-        for (int index = 1; index <= count; index++)
-        {
-            Excel._Worksheet? sheet = GetSheetAt(sheets, index);
-            if (sheet is not null && HasGanttTable(sheet))
-            {
-                return sheet;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>Whether a sheet carries <c>tblGanttData</c>. Test seam over the table collection.</summary>
-    /// <param name="sheet">The candidate worksheet.</param>
-    /// <returns><see langword="true"/> when the sheet carries the Gantt table.</returns>
-    internal virtual bool HasGanttTable(Excel._Worksheet sheet)
-    {
-        ArgumentNullException.ThrowIfNull(sheet);
-
-        Excel.ListObjects? objects = sheet.ListObjects;
-        if (objects is null)
-        {
-            return false;
-        }
-
-        int count = GetListObjectCount(objects);
-        for (int index = 1; index <= count; index++)
-        {
-            Excel.ListObject? table = GetListObjectAt(objects, index);
-            if (table is not null && GanttChartContract.IsDataTableNameExact(table.Name))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>Reads the table count. Test seam over <c>ListObjects.Count</c>.</summary>
-    /// <param name="objects">The table collection.</param>
-    /// <returns>The number of tables on the sheet.</returns>
-    internal virtual int GetListObjectCount(Excel.ListObjects objects) => objects.Count;
-
-    /// <summary>Reads one table by its 1-based index. Test seam over <c>ListObjects.Item</c>.</summary>
-    /// <param name="objects">The table collection.</param>
-    /// <param name="index">The 1-based table index.</param>
-    /// <returns>The table, or <see langword="null"/> when the index does not resolve.</returns>
-    internal virtual Excel.ListObject? GetListObjectAt(Excel.ListObjects objects, int index) =>
-        objects[index];
-
-    /// <summary>Reads a worksheet's shapes collection. Test seam over <c>_Worksheet.Shapes</c>.</summary>
-    /// <param name="sheet">The worksheet.</param>
-    /// <returns>The shapes collection, or <see langword="null"/>.</returns>
-    internal virtual Excel.Shapes? GetShapes(Excel._Worksheet sheet)
-    {
-        ArgumentNullException.ThrowIfNull(sheet);
-        return sheet.Shapes;
-    }
-
-    /// <summary>Reads the shape count. Test seam over <c>Shapes.Count</c>.</summary>
-    /// <param name="shapes">The shapes collection.</param>
-    /// <returns>The number of shapes on the sheet.</returns>
-    internal virtual int GetShapeCount(Excel.Shapes shapes) => shapes.Count;
-
-    /// <summary>Reads one shape by its 1-based index. Test seam over <c>Shapes.Item</c>.</summary>
-    /// <param name="shapes">The shapes collection.</param>
-    /// <param name="index">The 1-based shape index.</param>
-    /// <returns>The shape, or <see langword="null"/> when the index does not resolve.</returns>
-    internal virtual Excel.Shape? GetShapeAt(Excel.Shapes shapes, int index) => shapes.Item(index);
-
     /// <summary>
     /// Builds a shape range from exact names. Test seam over the parameterised
     /// <c>Shapes.Range</c> property, which cannot appear in a Moq expression (CS0855).
@@ -511,11 +339,6 @@ public class ExcelShapeGrouper(
     /// <returns>The height in points.</returns>
     internal virtual double ReadHeight(Excel.Shape shape) => shape.Height;
 
-    /// <summary>Reads a shape's alternative text. Test seam over <c>Shape.AlternativeText</c>.</summary>
-    /// <param name="shape">The shape.</param>
-    /// <returns>The alternative text, or <see langword="null"/>.</returns>
-    internal virtual string? ReadAlternativeText(Excel.Shape shape) => shape.AlternativeText;
-
     /// <summary>
     /// Writes the staging identity and the temporary-shape placement class onto the group.
     /// </summary>
@@ -545,34 +368,4 @@ public class ExcelShapeGrouper(
         _ = group.Ungroup();
     }
 
-    /// <summary>
-    /// Finds a shape by its exact name by scanning the collection, so an absent name is a
-    /// <see langword="null"/> rather than a raised COM miss.
-    /// </summary>
-    /// <param name="shapes">The shapes collection.</param>
-    /// <param name="name">The exact shape name.</param>
-    /// <returns>The shape, or <see langword="null"/> when absent.</returns>
-    /// <remarks>
-    /// A scan rather than the host's raising name indexer, deliberately: grouping runs once
-    /// per export over a bounded set, so the per-shape fast path the live writer needs
-    /// (ADR-0054 O4) would buy nothing here and the scan keeps the "null means absent"
-    /// contract without an exception per miss.
-    /// </remarks>
-    internal virtual Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name)
-    {
-        ArgumentNullException.ThrowIfNull(shapes);
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-
-        int count = GetShapeCount(shapes);
-        for (int index = 1; index <= count; index++)
-        {
-            Excel.Shape? shape = GetShapeAt(shapes, index);
-            if (shape is not null && string.Equals(shape.Name, name, StringComparison.Ordinal))
-            {
-                return shape;
-            }
-        }
-
-        return null;
-    }
 }

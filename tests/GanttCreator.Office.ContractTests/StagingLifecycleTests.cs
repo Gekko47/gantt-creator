@@ -308,6 +308,125 @@ public sealed class StagingLifecycleTests
     }
 
     [Fact]
+    public void A_verified_copy_success_names_the_formats_and_cleans_up()
+    {
+        // R6.6: the real stage fills the seam; success is reported only after the measured
+        // drawing pair is present, and cleanup still runs.
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        FakeShapeCopyPort copyPort = new();
+        FakeClipboardFormatReader reader = new()
+        {
+            Result = FakeClipboardFormatReader.Snapshot(
+                "Excel 2007 Internal Shape",
+                "Art::GVML ClipFormat",
+                "PNG"),
+        };
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            new RecordingGroupingPort(ExpectedGroupBounds(fixture.ChartBounds)),
+            fixture.Resolution,
+            Copy: group => StagedShapeCopier.Copy(group, copyPort, reader)));
+
+        Assert.True(outcome.Succeeded, "Lifecycle refused: " + outcome.Refusal);
+        Assert.NotNull(outcome.Copy);
+        Assert.True(outcome.Copy.Succeeded);
+        Assert.Null(outcome.Copy.Refusal);
+        Assert.Contains("Excel 2007 Internal Shape", outcome.Copy.Detail, StringComparison.Ordinal);
+        Assert.Equal([ShapeStagingTag.GroupName], copyPort.RequestedNames);
+        Assert.Equal(1, reader.ReadCalls);
+        Assert.Empty(outcome.Residue);
+        Assert.Empty(port.ListOwned());
+    }
+
+    [Fact]
+    public void A_copy_port_refusal_leaves_zero_residue_and_restores_state()
+    {
+        // R6.6 matrix row: a refused copy never reaches the clipboard read, and the
+        // lifecycle's finally still removes every staged shape.
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        FakeShapeCopyPort copyPort = new() { Refusal = ShapeWriteRefusal.NotFound };
+        FakeClipboardFormatReader reader = new();
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            new RecordingGroupingPort(ExpectedGroupBounds(fixture.ChartBounds)),
+            fixture.Resolution,
+            Copy: group => StagedShapeCopier.Copy(group, copyPort, reader)));
+
+        Assert.Equal(StagingLifecycleRefusal.CopyRefused, outcome.Refusal);
+        Assert.Equal(StagedCopyRefusal.CopyRefused, outcome.Copy!.Refusal);
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Copy.PortRefusal);
+        Assert.Equal(0, reader.ReadCalls);
+        Assert.Empty(outcome.Residue);
+        Assert.Empty(port.ListOwned());
+        Assert.True(scope.Disposed);
+    }
+
+    [Fact]
+    public void A_missing_drawing_format_leaves_zero_residue_and_restores_state()
+    {
+        // R6.6 matrix row: a copy that succeeded but left no verified format is a refusal,
+        // never a success, and cleanup still runs.
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        FakeShapeCopyPort copyPort = new();
+        FakeClipboardFormatReader reader = new()
+        {
+            Result = FakeClipboardFormatReader.Snapshot("PNG", "JFIF"),
+        };
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            new RecordingGroupingPort(ExpectedGroupBounds(fixture.ChartBounds)),
+            fixture.Resolution,
+            Copy: group => StagedShapeCopier.Copy(group, copyPort, reader)));
+
+        Assert.Equal(StagingLifecycleRefusal.CopyRefused, outcome.Refusal);
+        Assert.Equal(StagedCopyRefusal.ExpectedFormatAbsent, outcome.Copy!.Refusal);
+        Assert.Empty(outcome.Residue);
+        Assert.Empty(port.ListOwned());
+        Assert.True(scope.Disposed);
+    }
+
+    [Fact]
+    public void A_busy_clipboard_leaves_zero_residue_and_restores_state()
+    {
+        // R6.6 matrix row: the clipboard-unavailable failure is a typed refusal with the
+        // diagnostic token, and the lifecycle's cleanup is unaffected.
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        FakeShapeCopyPort copyPort = new();
+        FakeClipboardFormatReader reader = new()
+        {
+            Result = ClipboardFormatRead.ForFailure("clipboard-unavailable:0x00000005"),
+        };
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            new RecordingGroupingPort(ExpectedGroupBounds(fixture.ChartBounds)),
+            fixture.Resolution,
+            Copy: group => StagedShapeCopier.Copy(group, copyPort, reader)));
+
+        Assert.Equal(StagingLifecycleRefusal.CopyRefused, outcome.Refusal);
+        Assert.Equal(StagedCopyRefusal.ClipboardUnavailable, outcome.Copy!.Refusal);
+        Assert.Contains("clipboard-unavailable:0x00000005", outcome.Copy.Detail, StringComparison.Ordinal);
+        Assert.Empty(outcome.Residue);
+        Assert.Empty(port.ListOwned());
+        Assert.True(scope.Disposed);
+    }
+
+    [Fact]
     public void A_failed_cleanup_delete_is_reported_as_residue_never_success()
     {
         // Row 6: the injected delete failure cannot yield zero residue by construction,

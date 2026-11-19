@@ -280,6 +280,29 @@ public sealed class ProtectionGuardFirstTests
         // perform the guard-first ordering. A guard read here would be unreachable code
         // rather than a missing guard.
         "src/GanttCreator.Office/StagingLifecycle.cs",
+        // R6.6: the shared staging-adapter base. It resolves the worksheet carrying
+        // tblGanttData and proves staging ownership, but performs no mutation of its own:
+        // every mutation goes through a derived adapter's registered entry point. Its
+        // protection reads (Query, QueryTarget) are the consultation the derived adapters'
+        // entry points own.
+        "src/GanttCreator.Office/StagingShapeAdapter.cs",
+        // R6.6: the copy adapter. Shape.Copy writes the clipboard, never the workbook, so
+        // the source-shape scan finds no data mutation here; the adapter still queries the
+        // guard first, the same declared shape as GanttRefreshOrchestrator (a
+        // read-only-classified file that consults protection at its boundary).
+        "src/GanttCreator.Office/ExcelShapeCopier.cs",
+        // R6.6: the copy port, the clipboard reader port and its two records. Declarations
+        // plus records - no interop proxy, no statement, nothing to guard.
+        "src/GanttCreator.Office/IShapeCopyPort.cs",
+        "src/GanttCreator.Office/IClipboardFormatReader.cs",
+        // R6.6: the Win32 clipboard reader. It observes the clipboard (open, enumerate,
+        // close) and touches no workbook or COM proxy at all.
+        "src/GanttCreator.Office/WindowsClipboardFormatReader.cs",
+        // R6.6: the verified copy stage. Like the composer and the grouper it holds no COM
+        // proxy and performs no direct mutation: the copy goes through the injected
+        // IShapeCopyPort, whose registered implementation performs the guard-first
+        // ordering.
+        "src/GanttCreator.Office/StagedShapeCopier.cs",
 
         // Composes a style record from the code-owned catalogue; writes nothing and
         // touches no COM object, so it is read-only and consults no guard.
@@ -532,6 +555,11 @@ public sealed class ProtectionGuardFirstTests
         "ProtectStructure",
         ".Query(",
         "QueryTarget(",
+        // R6.6: the shared staging-adapter base owns the guard query. A mutating derived
+        // adapter calls this seam as its first host check, so the source-shape scan must
+        // recognise it as the consultation it is. The base is classified read-only, so its
+        // own Query/QueryTarget reads are not what satisfies the derived file's rule.
+        "CheckEntryGuard(",
     ];
 
     [Fact]

@@ -226,7 +226,7 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
         }
     }
 
-    private static (
+    internal static (
         Excel.Worksheet Sheet,
         Excel.Sheets Sheets,
         ExportBoundsOutcome Resolution,
@@ -320,7 +320,7 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
             sheetCountBefore);
     }
 
-    private static (int ScrollRow, int ScrollColumn, double Zoom, string Selection) CaptureView(
+    internal static (int ScrollRow, int ScrollColumn, double Zoom, string Selection) CaptureView(
         OfficeFixture fixture,
         OfficeFixture.ComScope scope)
     {
@@ -331,7 +331,7 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
         return (window.ScrollRow, window.ScrollColumn, window.Zoom, SelectionAddress(scope, fixture.Excel));
     }
 
-    private static void AssertViewRestored(
+    internal static void AssertViewRestored(
         OfficeFixture fixture,
         OfficeFixture.ComScope scope,
         Excel.Sheets sheets,
@@ -356,7 +356,7 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
         Assert.Equal(selection, SelectionAddress(scope, fixture.Excel));
     }
 
-    private static void CleanupLive(ExcelShapeWriter liveWriter, Excel.Shape sentinel)
+    internal static void CleanupLive(ExcelShapeWriter liveWriter, Excel.Shape sentinel)
     {
         foreach (string identifier in liveWriter.ListOwned())
         {
@@ -366,14 +366,14 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
         sentinel.Delete();
     }
 
-    private static OfficeShapeRequest LiveProbe(string id) =>
+    internal static OfficeShapeRequest LiveProbe(string id) =>
         new(
             id,
             OfficeShapeKind.Rectangle,
             new OfficeShapeGeometry(Bounds: new RectD(700, 480, 40, 12)),
             ZLayer.ActivityBody);
 
-    private static int CountStaged(OfficeFixture.ComScope scope, Excel.Worksheet sheet)
+    internal static int CountStaged(OfficeFixture.ComScope scope, Excel.Worksheet sheet)
     {
         Excel.Shapes shapes = scope.Track(sheet.Shapes);
         int count = 0;
