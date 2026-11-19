@@ -142,7 +142,7 @@ public sealed class PanelRowProjectionTests
 
         PanelRowProjectionResult result = Project(hidden);
 
-        Assert.Single(result.Rows);
+        _ = Assert.Single(result.Rows);
         Assert.Equal("As-Built Activity", result.Rows[0].Cells[0]);
         Assert.Equal("still shown", result.Rows[0].Cells[1]);
     }
@@ -183,8 +183,8 @@ public sealed class PanelRowProjectionTests
         // per schema field plus a column the schema does not map.
         string[] names =
         [
-            "Id", "Type", "Activity ID", "Description", "Start", "Finish", "LaneId",
-            "StackIndex", "ParentId", "StyleKey", "LabelPosition", "FillColour",
+            "Id", "Type", "Activity ID", "Description", "Start", "Finish", "Duration",
+            "LaneId", "StackIndex", "ParentId", "StyleKey", "LabelPosition", "FillColour",
             "StrokeColour", "Visible", "SortOrder", "ApprovedNote",
         ];
         PanelCellGrid grid = PanelCellGrid.TryCreate(
@@ -204,6 +204,7 @@ public sealed class PanelRowProjectionTests
             parent, "Phase", position, "#112233", "#445566", true, 7)
         {
             ActivityId = "A-100",
+            DurationText = "12",
         };
         GanttEvent blank = new(
             2, GanttRowId.New(), null, null, GanttEntityType.AsPlannedMilestone, null, null, null,
@@ -221,6 +222,7 @@ public sealed class PanelRowProjectionTests
                 "work",
                 GanttDateFormatting.Format(start, GanttDateDisplayFormat.DdMMyyyy),
                 GanttDateFormatting.Format(finish, GanttDateDisplayFormat.DdMMyyyy),
+                "12",
                 lane.Value,
                 "2",
                 parent.Value,
@@ -240,7 +242,7 @@ public sealed class PanelRowProjectionTests
             [
                 result.Rows[1].RowId.Value,
                 EntityTypeCatalog.GetDefinition(GanttEntityType.AsPlannedMilestone)!.DisplayName,
-                null, null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
             ],
             result.Rows[1].Cells);
     }

@@ -161,6 +161,10 @@ public static class PanelRowProjection
                 "Description" => atEvent.Description,
                 "Start" => atEvent.Start is { } start ? GanttDateFormatting.Format(start, dateFormat) : null,
                 "Finish" => atEvent.Finish is { } finish ? GanttDateFormatting.Format(finish, dateFormat) : null,
+                // Reproduce the worksheet's Duration text exactly. Duration is a derived,
+                // read-only column Refresh writes; the copy must not recompute it or it
+                // could disagree with the cell the user sees.
+                "Duration" => atEvent.DurationText,
                 "LaneId" => atEvent.LaneId?.Value,
                 "StackIndex" => atEvent.StackIndex?.ToString(CultureInfo.InvariantCulture),
                 "ParentId" => atEvent.ParentId?.Value,

@@ -54,6 +54,17 @@ public sealed record GanttEvent(
     public string? ActivityId { get; init; }
 
     /// <summary>
+    /// The worksheet's <c>Duration</c> cell text, or <see langword="null"/> when blank.
+    /// </summary>
+    /// <remarks>
+    /// Carried for the editable copy's data panel only. It is the text the row currently
+    /// shows on the worksheet (Refresh writes it), so the copied cell can reproduce it
+    /// without recomputing a duration and creating a second authority. Geometry never
+    /// reads this member.
+    /// </remarks>
+    public string? DurationText { get; init; }
+
+    /// <summary>
     /// The explicit date-label choice, or <see langword="null"/> when blank
     /// (blank and <c>Auto</c> both mean the type default, which is <c>None</c>
     /// since the 2026-11-13 ruling; <c>Both</c> is the explicit both-dates

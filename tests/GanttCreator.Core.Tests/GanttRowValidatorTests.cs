@@ -50,6 +50,41 @@ public class GanttRowValidatorTests
         );
 
     /// <summary>
+    /// The worksheet's Duration text reaches the event, so the editable copy's panel can
+    /// reproduce the value Refresh wrote instead of leaving the cell blank.
+    /// </summary>
+    [Fact]
+    public void The_duration_cell_text_reaches_the_validated_event()
+    {
+        GanttRowId id = GanttRowId.New();
+        GanttRowId lane = GanttRowId.New();
+        var row = new GanttRowDto(
+            2,
+            GanttCells.Value(id.Value),
+            GanttCells.Value(lane.Value),
+            GanttCells.Value<int?>(0),
+            GanttCells.Value("As-Planned Activity"),
+            GanttCells.Value("work"),
+            GanttCells.Value<DateOnly?>(new DateOnly(2026, 1, 5)),
+            GanttCells.Value<DateOnly?>(new DateOnly(2026, 1, 9)),
+            GanttCells.Value("12"),
+            GanttCells.Empty<string>(),
+            GanttCells.Value<int?>(null),
+            GanttCells.Empty<string>(),
+            GanttCells.Empty<string>(),
+            GanttCells.Empty<string>(),
+            GanttCells.Empty<string>(),
+            GanttCells.Empty<string>(),
+            GanttCells.Value<bool?>(true),
+            GanttCells.Empty<string>());
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        GanttEvent atEvent = Assert.Single(outcome.Events);
+        Assert.Equal("12", atEvent.DurationText);
+    }
+
+    /// <summary>
     /// The single message carried by the issue with <paramref name="code"/>.
     /// </summary>
     /// <remarks>
