@@ -1761,22 +1761,20 @@ public class ExcelSceneBuildRequestFactoryTests
     /// R6.3: the export request pins the live-only members off, in code.
     /// </summary>
     /// <remarks>
-    /// <c>SceneBuilder</c> gates lane anchoring on the request member, not on the
-    /// profile, so re-profiling a live request to <c>EditableExport</c> would silently
-    /// anchor the export's lanes to worksheet rows — geometry that depends on the sheet
-    /// the export was taken from. This pins the export assembly's own members, and the
-    /// live counterpart below pins the opposite values so a single shared default cannot
-    /// satisfy both.
+    /// Owner ruling 2026-11-19: the export draws the data panel and reproduces the sheet
+    /// row for row, so its lanes anchor to the same grid the panel is laid out from. The
+    /// earlier rule pinned anchoring OFF because an export has no worksheet rows of its own;
+    /// with the panel drawn, stacked lanes left every lane one row above its panel row.
     /// </remarks>
     [Fact]
-    public void The_export_request_pins_anchoring_off_and_the_export_profile()
+    public void The_export_request_anchors_its_lanes_and_pins_the_export_profile()
     {
         SceneBuildRequestOutcome outcome = CreateExport(Grid(), new Dictionary<string, double>());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         SceneBuildRequest request = outcome.Request!;
 
-        Assert.False(request.AnchorLanesToRows);
+        Assert.True(request.AnchorLanesToRows);
         Assert.Equal(SceneCompositionProfile.EditableExport, request.Profile);
         Assert.False(request.AllowEmptyEvents);
         Assert.Null(request.Panel);
@@ -1798,7 +1796,7 @@ public class ExcelSceneBuildRequestFactoryTests
             "The export plot top must leave room for the bands drawn above it.");
     }
 
-    /// <summary>The live request keeps the opposite pins, so the two modes cannot share one default.</summary>
+    /// <summary>The live request keeps its own pins, so the two modes cannot share one default.</summary>
     [Fact]
     public void The_live_request_keeps_its_anchoring_and_empty_table_fallback()
     {

@@ -31,20 +31,33 @@ textbox occupies (`GanttRefreshOrchestrator`). It is no longer a full-width band
 band, and it therefore reserves no height above the plot. A composition with no panel uses the
 plot's columns, the only table-width field it has.
 
-### D3 — The anchor row is carried into the copy
+### D3 — Every panel-drawing composition anchors its lanes
+
+Lane anchoring becomes a function of the composition, not of the caller: a composition that
+draws the data panel reproduces the sheet row for row, so its lanes are anchored to the same
+measured grid the panel is laid out from; a panel-less composition keeps the R3.4 stacking.
+`ExportBoundsResolver` refuses an unanchored request instead of composing a chart that cannot
+line up, and `EditableExportRequest` anchors. The reported fault — every lane one row above its
+panel row from the first row that owns no lane — disappears because `LaneRowAnchorResolver`
+already returns origin-relative row tops and `SceneBuilder` adds the plot top exactly once, so
+the zero-origin export grid aligns lane 1 with panel row 1 by construction. A hidden row that
+*owned* a lane would be refused as a degenerate height; that cannot occur, because a collapsed
+row is a child drawing on its parent's lane.
+
+### D4 — The anchor row is carried into the copy
 
 The export grid is rebuilt with the measured `AnchorRowHeightPt`, and the frame's bottom
 margin gains it, so plot-spanning bands overhang that row and the closing line is drawn as on
 the sheet. A zero-height anchor row remains a legitimate configuration and reproduces the
 pre-ADR-0038 geometry.
 
-### D4 — The copied panel takes the workbook's grid-line width
+### D5 — The copied panel takes the workbook's grid-line width
 
 `ExportPanelTheme` resolves the border width from the workbook's `GridLinePt` metric, falling
 back to the catalogue default only when the value is missing or unusable. A user who changed
 "Grid line width" must not get a chart and a copy of two different weights.
 
-### D5 — Geometry parity is a rule, not a coincidence
+### D6 — Geometry parity is a rule, not a coincidence
 
 Any future difference between the two profiles must be one of: the worksheet rows the live
 chart stands on, the cells that are the live panel, or the sheet coordinate origin. A
@@ -52,15 +65,15 @@ difference in a *drawing* rule is a defect in the copy.
 
 ## Not yet in force
 
-- **Lane anchoring** (the fourth reported fault: every lane one row above its panel row). The
-  copy must anchor its lanes to the same grid its panel is laid out from, as the live chart
-  does (ADR-0034 D1). Enabling it exposed a second problem — the assembled export request's
-  grid and the events' row numbers do not yet agree, so `LaneRowAnchorResolver` refuses
-  `UnresolvableLaneAnchor` — and that alignment is being fixed before the flag is flipped. The
-  rule and its sequence are recorded in the parity plan.
-- **Label-position parity** (the delineator's description label flipping above the line in the
-  copy) is expected to follow from D3, because the below-line box has no room without the
-  anchor-row overhang. It is re-measured on the live copy before any further rule is added.
+**Label-position parity** (the fourth reported fault: the delineator's description label
+flipping above the line in the copy). It is expected to follow from D4, because the below-line
+box has no room without the anchor-row overhang, so it is re-measured on the live copy before
+any further rule is added.
+
+**One measured consequence of D3:** the reference fixture numbered its rows by worksheet row
+(2 upwards) while `GanttEvent.RowNumber` is the reader's one-based body index, so the export
+test fixture re-bases them before composing. Production readers already send body indices, and
+`PanelRowProjection`/`LaneRowAnchorResolver` both require that spelling.
 
 ## Consequences
 

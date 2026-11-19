@@ -87,14 +87,16 @@ public static class ExportBoundsResolver
             return Refused(ExportBoundsRefusal.NullRequest);
         }
 
-        // R6.3: anchoring is a live-only rule. `SceneBuilder` gates it on the request
-        // member rather than the profile, so an anchored request re-profiled to
-        // EditableExport would silently compose an export scene whose lanes depend on
-        // worksheet rows - wrong geometry, and nothing else refuses it. The export
-        // assembly pins the member off; this guard covers every other caller.
-        if (request.AnchorLanesToRows)
+        // Anchoring is a PROFILE rule (owner ruling 2026-11-19). A composition that draws
+        // the data panel reproduces the sheet row for row, so its lanes must be anchored to
+        // the same grid the panel is laid out from; stacked lanes drift off their rows as
+        // soon as one row owns no lane, which is the live defect that reopened this model.
+        // The resolver pins the profile to EditableExport, which draws the panel, so an
+        // unanchored request is a caller that bypassed the export assembly rather than a
+        // composition choice.
+        if (!request.AnchorLanesToRows)
         {
-            return Refused(ExportBoundsRefusal.AnchoredRequest);
+            return Refused(ExportBoundsRefusal.UnanchoredRequest);
         }
 
         // Fail closed on an unrecognised value, for the same reason

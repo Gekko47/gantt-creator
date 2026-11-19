@@ -63,6 +63,19 @@ public sealed class ExportBoundsResolverTests
     {
         GanttValidationOutcome validated = ReferenceSceneFixture.LoadValidated();
         IReadOnlyList<GanttEvent> eventList = events ?? [.. validated.Events];
+
+        // The fixture file numbers its rows by WORKSHEET row (2 upwards, row 1 being the
+        // header); a `GanttEvent.RowNumber` is the reader's ONE-BASED BODY index, which is
+        // what `PanelRowProjection` orders by and what `LaneRowAnchorResolver` indexes the
+        // measured grid with (`RowNumber - 1`). Re-basing here is the fixture telling the
+        // truth in the contract's own terms, and it is what makes an anchored request
+        // resolvable at all (2026-11-19).
+        int firstRowNumber = eventList.Count == 0 ? 1 : eventList.Min(atEvent => atEvent.RowNumber);
+        if (firstRowNumber != 1)
+        {
+            eventList = [.. eventList.Select(atEvent => atEvent with { RowNumber = atEvent.RowNumber - (firstRowNumber - 1) })];
+        }
+
         IReadOnlyList<PanelColumn> gridColumns = columns ?? _columns;
 
         PanelCellGridCreationOutcome grid = PanelCellGrid.TryCreate(
@@ -81,6 +94,10 @@ public sealed class ExportBoundsResolverTests
             Events = eventList,
             Registry = ReferenceSceneBuilder.StyleRegistry,
             Grid = grid.Grid,
+
+            // Owner ruling 2026-11-19: the export draws the data panel, so its lanes are
+            // anchored to the same grid the panel is laid out from.
+            AnchorLanesToRows = true,
             PlotBounds = new RectD(520, 110, 600, 290),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
@@ -324,10 +341,19 @@ public sealed class ExportBoundsResolverTests
 
         // Tall enough that the panel, not the plot, governs the union's bottom, so a
         // collapsed group's zero-height rows are observable in the export bounds.
+        int firstRowNumber = validated.Events.Min(atEvent => atEvent.RowNumber);
         double[] expanded = [.. Enumerable.Repeat(tallRow, validated.Events.Count)];
         double[] collapsed = [.. expanded];
-        collapsed[^1] = 0;
-        collapsed[^2] = 0;
+
+        // A collapsed row is a CHILD hidden by its parent's outline, so it draws on its
+        // parent's lane and anchoring still resolves. (A hidden row that OWNED a lane would
+        // be refused as a degenerate height, and that cannot happen on a sheet.) The
+        // fixture's two critical intervals are exactly such children.
+        foreach (GanttEvent child in validated.Events.Where(
+            atEvent => atEvent.Type == GanttEntityType.CriticalInterval))
+        {
+            collapsed[child.RowNumber - firstRowNumber] = 0;
+        }
 
         ExportBoundsOutcome expandedTable = ExportBoundsResolver.TryResolve(
             Request(rowHeights: expanded),
@@ -468,19 +494,19 @@ public sealed class ExportBoundsResolverTests
     }
 
     [Fact]
-    public void An_anchored_request_is_refused_before_any_composition()
+    public void An_unanchored_request_is_refused_before_any_composition()
     {
-        // R6.3 hardening: SceneBuilder gates lane anchoring on the request member, not
-        // on the profile, so an anchored request re-profiled to EditableExport would
-        // silently compose export geometry that depends on worksheet rows. The model
-        // refuses it rather than producing a wrong scene that nothing else reports.
+        // Owner ruling 2026-11-19: the export draws the data panel and reproduces the sheet
+        // row for row, so its lanes must be anchored to the same grid. Stacked lanes left
+        // every lane one row above its panel row (the live defect). The model refuses an
+        // unanchored request rather than composing a chart that cannot line up.
         ExportBoundsOutcome outcome = ExportBoundsResolver.TryResolve(
-            Request() with { AnchorLanesToRows = true },
+            Request() with { AnchorLanesToRows = false },
             _panelTheme,
             ExportSelection.ChartOnly);
 
         Assert.False(outcome.Succeeded);
-        Assert.Equal(ExportBoundsRefusal.AnchoredRequest, outcome.Refusal);
+        Assert.Equal(ExportBoundsRefusal.UnanchoredRequest, outcome.Refusal);
         Assert.Null(outcome.Scene);
         Assert.Null(outcome.Bounds);
     }

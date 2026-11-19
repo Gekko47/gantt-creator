@@ -260,7 +260,11 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             registry,
             grid,
             themedMetrics,
-            anchorLanesToRows: false,
+
+            // Owner ruling 2026-11-19: the export draws the data panel, so its lanes are
+            // anchored to the same grid the panel is laid out from. Stacking them drifted
+            // every lane off its panel row as soon as one row owned no lane.
+            anchorLanesToRows: true,
             SceneCompositionProfile.EditableExport,
             allowEmptyEvents: false);
 
@@ -571,13 +575,13 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             Grid = measuredGrid,
             PlotBounds = geometry.Geometry!.PlotBounds,
 
-            // ADR-0034 D1: the LIVE chart anchors every lane to its measured worksheet
-            // row, so a body row that owns no lane (a Delineator, a projected child)
-            // leaves its own band empty rather than pulling every later lane up one row.
-            // Set here, in code, for the same reason the profile is: a caller who forgot
-            // it would get silently stacked lanes, which is the reported defect. The
-            // export mode pins it OFF and keeps the R3.4 stacking, because its geometry
-            // must not depend on the worksheet it is exported from.
+            // ADR-0034 D1: a lane is anchored to the measured row it renders on, so a body
+            // row that owns no lane (a Delineator, a projected child) leaves its own band
+            // empty rather than pulling every later lane up one row. Every composition that
+            // draws the data panel anchors (owner ruling 2026-11-19), because it reproduces
+            // the sheet row for row; only a panel-less composition keeps the R3.4 stacking.
+            // Set here, in code, for the same reason the profile is: a caller who forgot it
+            // would get silently stacked lanes, which is the reported defect.
             AnchorLanesToRows = anchorLanesToRows,
 
             // The profile is chosen in code (D4): LiveExcel for a refresh, EditableExport

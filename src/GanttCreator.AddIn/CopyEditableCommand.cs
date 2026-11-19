@@ -622,8 +622,8 @@ internal static class CopyEditableCommand
                 "The copy could not start because the export selection is not recognised.",
             ExportBoundsRefusal.InvalidBounds =>
                 "The chart has no area to copy. Adjust the chart dates, then copy again.",
-            ExportBoundsRefusal.AnchoredRequest =>
-                "The copy could not be composed from a live chart request.",
+            ExportBoundsRefusal.UnanchoredRequest =>
+                "The copy could not be composed from the chart's rows.",
             ExportBoundsRefusal.SceneBuildRefused => resolution.SceneRefusal switch
             {
                 SceneBuilderRefusal.EmptyEvents =>

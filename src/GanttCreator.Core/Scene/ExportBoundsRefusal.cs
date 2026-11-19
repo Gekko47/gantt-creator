@@ -34,16 +34,18 @@ public enum ExportBoundsRefusal
     SceneBuildRefused = 5,
 
     /// <summary>
-    /// The request asks for lane anchoring to worksheet rows, which is a live-only
-    /// composition rule (ADR-0034). An export or staged composition keeps the R3.4
-    /// stacking so its geometry does not depend on the worksheet it is exported from.
+    /// The request does not anchor its lanes, but the composition draws the data panel,
+    /// which reproduces the sheet row for row (owner ruling 2026-11-19).
     /// </summary>
     /// <remarks>
-    /// Raised before any composition runs. The live request factory pins anchoring in
-    /// code and the export assembly pins it off, so this refusal only fires for a caller
-    /// that bypassed both — the case a silent wrong export would otherwise occupy.
+    /// Raised before any composition runs. Every panel-drawing composition anchors to the
+    /// same grid its panel is laid out from (ADR-0034 D1); stacked lanes drift off their
+    /// rows as soon as one row owns no lane, which is the 2026-11-19 live defect. The
+    /// export assembly pins anchoring in code, so this refusal only fires for a caller
+    /// that bypassed it — the case a silently misaligned export would otherwise occupy.
+    /// A panel-less composition keeps the R3.4 stacking.
     /// </remarks>
-    AnchoredRequest = 6,
+    UnanchoredRequest = 6,
 }
 
 /// <summary>The actionable message the export contract attaches to a refusal.</summary>
