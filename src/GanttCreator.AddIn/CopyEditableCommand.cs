@@ -280,7 +280,12 @@ internal static class CopyEditableCommand
                 ExportBoundsResolver.TryResolve,
                 StagingLifecycle.Run,
                 scope,
-                new ExcelShapeWriter(application, guard, trace, ShapeOwnershipScheme.Staging),
+                new ExcelShapeWriter(
+                    application,
+                    guard,
+                    trace,
+                    ShapeOwnershipScheme.Staging,
+                    reuseTemplates: true),
                 new ExcelShapeGrouper(application, guard),
                 new ExcelShapeCopier(application, guard),
                 new WindowsClipboardFormatReader(),

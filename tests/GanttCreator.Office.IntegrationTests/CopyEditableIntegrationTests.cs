@@ -263,7 +263,14 @@ public sealed partial class CopyEditableIntegrationTests(ITestOutputHelper outpu
             ExportBoundsResolver.TryResolve,
             StagingLifecycle.Run,
             scope,
-            new ExcelShapeWriter(fixture.Excel, guard, trace, ShapeOwnershipScheme.Staging),
+            // Mirrors the production staging writer, including the batch template reuse
+            // that keeps the editable copy's create block off the per-shape style path.
+            new ExcelShapeWriter(
+                fixture.Excel,
+                guard,
+                trace,
+                ShapeOwnershipScheme.Staging,
+                reuseTemplates: true),
             new ExcelShapeGrouper(fixture.Excel, guard),
             new ExcelShapeCopier(fixture.Excel, guard),
             new WindowsClipboardFormatReader(),

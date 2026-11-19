@@ -94,6 +94,70 @@ public sealed class StagingLifecycleTests
     }
 
     [Fact]
+    public void A_group_delete_that_removes_the_children_skips_their_deletes()
+    {
+        // Measured host behaviour (Excel 16.0 x64, 2026-11-19): deleting the group
+        // removes its children, so the child loop would only pay a raising miss per
+        // child. One ownership read after the group delete proves the set is gone.
+        Fixture fixture = Build();
+        FakeShapeWritePort inner = new();
+        _ = inner.Unowned("User note");
+        GroupRemovesChildrenPort port = new(inner, leaveChildCount: 0);
+        using RecordingScope scope = new();
+        RecordingGroupingPort grouping = new(ExpectedGroupBounds(fixture.ChartBounds))
+        {
+            AfterGroup = () => _ = inner.Owned(ShapeStagingTag.GroupPrimitiveId),
+        };
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            grouping,
+            fixture.Resolution,
+            Copy: _ => StagingCopyResult.Success));
+
+        Assert.True(outcome.Succeeded, "Lifecycle refused: " + outcome.Refusal);
+        Assert.Empty(outcome.Residue);
+        Assert.Equal(["Delete:" + ShapeStagingTag.GroupPrimitiveId], port.Deletes);
+        Assert.Empty(inner.ListOwned());
+        Assert.True(inner.Survives("User note"));
+        Assert.True(scope.Disposed);
+    }
+
+    [Fact]
+    public void A_group_delete_that_leaves_children_deletes_only_the_survivors()
+    {
+        // A host that keeps its children still gets cleanup; only the survivors are
+        // attempted, newest-first, and absent siblings are not reported as residue.
+        Fixture fixture = Build();
+        FakeShapeWritePort inner = new();
+        GroupRemovesChildrenPort port = new(inner, leaveChildCount: 1);
+        using RecordingScope scope = new();
+        RecordingGroupingPort grouping = new(ExpectedGroupBounds(fixture.ChartBounds))
+        {
+            AfterGroup = () => _ = inner.Owned(ShapeStagingTag.GroupPrimitiveId),
+        };
+        string[] staged = StagedIds(fixture);
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            grouping,
+            fixture.Resolution,
+            Copy: _ => StagingCopyResult.Success));
+
+        Assert.True(outcome.Succeeded, "Lifecycle refused: " + outcome.Refusal);
+        Assert.Empty(outcome.Residue);
+        Assert.Empty(inner.ListOwned());
+
+        // Group first, then exactly the one child the wrapper left behind.
+        Assert.Equal("Delete:" + ShapeStagingTag.GroupPrimitiveId, port.Deletes[0]);
+        Assert.Equal(2, port.Deletes.Count);
+        string survivor = port.Deletes[1];
+        Assert.Contains(survivor, staged.Select(id => "Delete:" + id));
+    }
+
+    [Fact]
     public void An_empty_composition_runs_clean_without_grouping_or_copying()
     {
         // F7: a supported empty composition (nothing staged) is a clean run - the copy
@@ -700,6 +764,53 @@ public sealed class StagingLifecycleTests
             Calls.Add("Dispose");
             Disposed = true;
         }
+    }
+
+    /// <summary>
+    /// A port that models the measured host behaviour: deleting the group also removes
+    /// its children, except for the requested number kept to model a different host.
+    /// </summary>
+    private sealed class GroupRemovesChildrenPort(IShapeWritePort inner, int leaveChildCount) : IShapeWritePort
+    {
+        public List<string> Deletes { get; } = [];
+
+        public ShapeWriteOutcome Delete(string primitiveId)
+        {
+            ShapeWriteOutcome outcome = inner.Delete(primitiveId);
+            Deletes.Add("Delete:" + primitiveId);
+
+            if (outcome.Succeeded
+                && string.Equals(primitiveId, ShapeStagingTag.GroupPrimitiveId, StringComparison.Ordinal))
+            {
+                string[] children = [.. inner.ListOwned()];
+                int remove = Math.Max(0, children.Length - leaveChildCount);
+                for (int index = 0; index < remove; index++)
+                {
+                    _ = inner.Delete(children[index]);
+                }
+            }
+
+            return outcome;
+        }
+
+        public ShapeWriteOutcome Create(OfficeShapeRequest request) => inner.Create(request);
+
+        public ShapeWriteOutcome Update(OfficeShapeRequest request) => inner.Update(request);
+
+        public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) => inner.UpdateGeometry(request);
+
+        public IDisposable BeginBatch() => inner.BeginBatch();
+
+        public IReadOnlyList<string> ListOwned() => inner.ListOwned();
+
+        public ShapeWriteOutcome LockOwnedShapes() => inner.LockOwnedShapes();
+
+        public ShapeWriteOutcome UnlockShape(string primitiveId) => inner.UnlockShape(primitiveId);
+
+        public bool GeometryMatches(OfficeShapeRequest request) => inner.GeometryMatches(request);
+
+        public ShapeWriteOutcome ApplyZOrder(IReadOnlyList<string> backToFront) =>
+            inner.ApplyZOrder(backToFront);
     }
 
     /// <summary>A port that throws at the Nth create and forwards everything else.</summary>

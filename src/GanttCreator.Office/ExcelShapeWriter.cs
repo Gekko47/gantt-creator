@@ -30,6 +30,11 @@ namespace GanttCreator.Office;
 /// instead, so a staged composition and the live chart can share one worksheet without
 /// either ownership scan touching the other's shapes.
 /// </param>
+/// <param name="reuseTemplates">
+/// Whether an open batch may create a later shape by duplicating an earlier shape with
+/// the same appearance, or <see langword="false"/> to create every shape normally. The
+/// editable-export staging writer opts in; the live writer does not.
+/// </param>
 /// <remarks>
 /// <para>
 /// ADR-0008 D4: the protection guard is the first read-only check, before any
@@ -70,11 +75,32 @@ public class ExcelShapeWriter(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null,
     Action<string>? trace = null,
-    ShapeOwnershipScheme? ownershipScheme = null) : IShapeWritePort
+    ShapeOwnershipScheme? ownershipScheme = null,
+    bool reuseTemplates = false) : IShapeWritePort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <summary>
+    /// Whether a batch may create a later shape by duplicating an earlier one with the
+    /// same appearance (R6.8 follow-up, measured 2026-11-19).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Opt-in, and enabled only for the editable-export staging writer. Measured on the
+    /// 20-activity copy: a styled text box costs 34.6 ms to create and 8.6 ms to
+    /// duplicate-and-rewrite; a rectangle 24.9 ms against 2.3 ms; a line 14.4 ms against
+    /// 2.1 ms. The copy creates 340 shapes, so duplication is the only lever that
+    /// removes the style-write block (4.2 s of a 9.9 s lifecycle).
+    /// </para>
+    /// <para>
+    /// The live writer keeps creating every shape normally: a refresh creates only the
+    /// handful of shapes the scene gained, and the live path's behaviour stays exactly
+    /// as measured before this row.
+    /// </para>
+    /// </remarks>
+    private readonly bool _reuseTemplates = reuseTemplates;
 
     /// <summary>
     /// The ownership scheme this adapter stamps and proves: the live chart's scheme by
@@ -102,6 +128,73 @@ public class ExcelShapeWriter(
     /// successful lookups, not an authoritative list.
     /// </summary>
     private Dictionary<string, Excel.Shape>? _batchProxies;
+
+    /// <summary>
+    /// The first shape created for each appearance signature in the open batch. A later
+    /// create with the same signature duplicates this shape instead of paying
+    /// <c>AddShape</c> and the style writes again. Only shapes created in this batch are
+    /// cached, so a reconcile delete later in the same plan can never remove a template
+    /// a subsequent create still needs.
+    /// </summary>
+    private Dictionary<ShapeTemplateKey, Excel.Shape>? _batchTemplates;
+
+    /// <summary>
+    /// The appearance members a template duplicate must share with the request. Geometry,
+    /// primitive identifier, z-order, and text content are deliberately absent: each
+    /// duplicate rewrites the first three and the text is written per shape.
+    /// </summary>
+    /// <remarks>
+    /// For a line the two direction signs are part of the key. Excel's <c>Duplicate</c>
+    /// keeps the source line's drawing direction, and a left/top/width/height write does
+    /// not flip it, so a right-to-left source must not serve a left-to-right request.
+    /// </remarks>
+    private readonly record struct ShapeTemplateKey(
+        OfficeShapeKind Kind,
+        bool HostOwnsExtent,
+        ColourHex? FillColour,
+        ColourHex? StrokeColour,
+        double? LineWidthPt,
+        GanttHatchPattern HatchPattern,
+        GanttStrokeDash StrokeDash,
+        string? FontFamily,
+        double? FontSizePt,
+        bool? Bold,
+        GanttTextAlignment? Alignment,
+        ColourHex? TextColour,
+        double LeftInsetPt,
+        int LineDxSign,
+        int LineDySign)
+    {
+        internal static ShapeTemplateKey For(OfficeShapeRequest request)
+        {
+            int dx = 0;
+            int dy = 0;
+            if (request.Kind == OfficeShapeKind.Line
+                && request.Geometry.From is { } from
+                && request.Geometry.To is { } to)
+            {
+                dx = Math.Sign(to.X - from.X);
+                dy = Math.Sign(to.Y - from.Y);
+            }
+
+            return new ShapeTemplateKey(
+                request.Kind,
+                request.HostOwnsExtent,
+                request.FillColour,
+                request.StrokeColour,
+                request.LineWidthPt,
+                request.HatchPattern,
+                request.StrokeDash,
+                request.FontFamily,
+                request.FontSizePt,
+                request.Bold,
+                request.Alignment,
+                request.TextColour,
+                request.LeftInsetPt,
+                dx,
+                dy);
+        }
+    }
 
     // Per-step create timings for the open batch, in Stopwatch ticks (R5.18n). The live
     // trace reports one `write=` figure for the whole pass, which cannot distinguish
@@ -141,6 +234,7 @@ public class ExcelShapeWriter(
         _batchActive = true;
         _batchShapes = null;
         _batchProxies = new Dictionary<string, Excel.Shape>(StringComparer.Ordinal);
+        _batchTemplates = _reuseTemplates ? [] : null;
         _createTicksLookup = 0;
         _createTicksAdd = 0;
         _createTicksStyle = 0;
@@ -162,6 +256,7 @@ public class ExcelShapeWriter(
             owner._batchActive = false;
             owner._batchShapes = null;
             owner._batchProxies = null;
+            owner._batchTemplates = null;
             owner._batchNameIndexed = false;
         }
     }
@@ -404,6 +499,18 @@ public class ExcelShapeWriter(
             stepStart = now;
         }
 
+        // R6.8 follow-up: a batch that has already created a shape with the same
+        // appearance duplicates it instead of paying AddShape plus the style writes
+        // again. A host that refuses the duplicate falls through to the normal create,
+        // so this is an optimisation and never a new refusal path.
+        ShapeTemplateKey templateKey = ShapeTemplateKey.For(request);
+        if (_batchTemplates is not null
+            && _batchTemplates.TryGetValue(templateKey, out Excel.Shape? template)
+            && CreateFromTemplate(request, template) is { } duplicatedOutcome)
+        {
+            return duplicatedOutcome;
+        }
+
         Excel.Shape? created = AddShape(shapes, request);
         if (created is null)
         {
@@ -471,6 +578,14 @@ public class ExcelShapeWriter(
 
         if (stamped.Succeeded)
         {
+            // The first shape of this appearance is the batch's template. Only shapes
+            // created in this batch are cached: a reconcile delete later in the same plan
+            // could otherwise remove a template a later create still needs.
+            if (_batchTemplates is not null)
+            {
+                _ = _batchTemplates.TryAdd(templateKey, created);
+            }
+
             // The new shape is a valid proxy for the rest of the batch: the geometry check
             // and the z-order preflight would otherwise look it up again (ADR-0054).
             _ = Remember(NameFor(request.PrimitiveId), created);
@@ -479,6 +594,135 @@ public class ExcelShapeWriter(
         }
 
         return RefuseCreate(request, stamped.Refusal!.Value, "ownership");
+    }
+
+    /// <summary>
+    /// Creates one shape by duplicating a batch template with the same appearance, then
+    /// writing the per-shape geometry, placement, text, and ownership identity.
+    /// </summary>
+    /// <param name="request">The shape to create.</param>
+    /// <param name="template">A shape created earlier in this batch with the same appearance.</param>
+    /// <returns>
+    /// The create outcome, or <see langword="null"/> when the host did not produce a
+    /// duplicate, in which case the caller creates the shape normally.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Measured saving (2026-11-19, Excel 16.0 x64).</b> Duplicate plus the per-shape
+    /// writes costs 2.3 ms for a rectangle, 2.1 ms for a line and 8.6 ms for a text box,
+    /// against 24.9 / 14.4 / 34.6 ms to create the same shapes. On a 340-shape editable
+    /// copy the style block disappears almost entirely because the template already
+    /// carries the resolved fill, stroke, dash, and typography.
+    /// </para>
+    /// <para>
+    /// <b>What is deliberately not written again.</b> The template's fill, stroke, dash,
+    /// and text formatting are inherited from a request with the identical appearance
+    /// signature, so no style write is issued. The per-shape members - name, ownership
+    /// tag, geometry, placement, and text content - are written exactly as the normal
+    /// create path writes them. A failure after the duplicate exists discards it, the
+    /// same rule <see cref="AddShape"/> failures follow.
+    /// </para>
+    /// </remarks>
+    private ShapeWriteOutcome? CreateFromTemplate(OfficeShapeRequest request, Excel.Shape template)
+    {
+        long stepStart = _trace is null ? 0L : Stopwatch.GetTimestamp();
+
+        Excel.Shape? duplicate;
+        try
+        {
+            duplicate = DuplicateShape(template);
+        }
+        catch (Exception exception) when (exception is ArgumentException or COMException or InvalidOperationException)
+        {
+            // The host refused to duplicate. Fall back to the normal create rather than
+            // turning an optional optimisation into an operation failure.
+            duplicate = null;
+        }
+
+        if (duplicate is null)
+        {
+            return null;
+        }
+
+        if (!ApplyGeometry(duplicate, request.Kind, request.Geometry))
+        {
+            DiscardUnownedShape(duplicate);
+            return RefuseCreate(request, ShapeWriteRefusal.InvalidGeometry, "geometry");
+        }
+
+        // A duplicate inherits the template's placement class, and the template key
+        // includes HostOwnsExtent, so the write is skipped unless the host lost it.
+        if (ReadPlacement(duplicate) != RequiredPlacement(request))
+        {
+            ApplyPlacement(duplicate, request.HostOwnsExtent);
+        }
+
+        if (request.Kind == OfficeShapeKind.TextBox && !ApplyTextContentOrDiscard(duplicate, request))
+        {
+            return RefuseCreate(request, ShapeWriteRefusal.HostRejected, "text");
+        }
+
+        if (_trace is not null)
+        {
+            long now = Stopwatch.GetTimestamp();
+            _createTicksAdd += now - stepStart;
+            stepStart = now;
+        }
+
+        ShapeWriteOutcome stamped = ApplyDuplicateOwnershipOrDiscard(duplicate, request.PrimitiveId);
+        if (_trace is not null)
+        {
+            _createTicksOwnership += Stopwatch.GetTimestamp() - stepStart;
+            _createCount++;
+        }
+
+        if (!stamped.Succeeded)
+        {
+            return RefuseCreate(request, stamped.Refusal!.Value, "ownership");
+        }
+
+        _ = Remember(NameFor(request.PrimitiveId), duplicate);
+        TraceBandShape("create", duplicate, request.PrimitiveId, before: null);
+        return stamped;
+    }
+
+    /// <summary>
+    /// Stamps a duplicate's ownership identity, discarding it if the host refuses.
+    /// </summary>
+    /// <param name="shape">The duplicate.</param>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <returns>The typed result.</returns>
+    /// <remarks>
+    /// Same containment as <see cref="ApplyOwnershipOrDiscard"/>: a host refusal is a
+    /// typed refusal, and an identity-less duplicate must not survive on the sheet.
+    /// </remarks>
+    private ShapeWriteOutcome ApplyDuplicateOwnershipOrDiscard(Excel.Shape shape, string primitiveId)
+    {
+        // CA1031: see ApplyOwnershipOrDiscard.
+#pragma warning disable CA1031
+        try
+        {
+            ApplyDuplicateOwnershipStamp(shape, primitiveId);
+            return ShapeWriteOutcome.Ok();
+        }
+        catch (Exception)
+        {
+            DiscardUnownedShape(shape);
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Duplicates one shape. Test seam over <c>Shape.Duplicate</c>, which a Moq expression
+    /// cannot substitute because it is a parameterised COM method.
+    /// </summary>
+    /// <param name="template">The batch template to duplicate.</param>
+    /// <returns>The new shape, or <see langword="null"/> when the host produced none.</returns>
+    internal virtual Excel.Shape? DuplicateShape(Excel.Shape template)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        return template.Duplicate();
     }
 
     /// <inheritdoc />
@@ -1347,12 +1591,43 @@ public class ExcelShapeWriter(
         _ = ApplyOwnership(shape, primitiveId);
 
     /// <summary>
+    /// Stamps a duplicated shape's identity, healing the lock only if the host lost it.
+    /// </summary>
+    /// <param name="shape">The duplicate.</param>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <remarks>
+    /// Excel's <c>Duplicate</c> copies the template's <c>Locked</c> value (measured
+    /// 2026-11-19: a locked template yields locked duplicates), so writing it again is
+    /// one of the three ownership writes that the duplicate path can skip. The read is
+    /// kept as a heal: a host that does not copy the flag still gets a locked shape
+    /// before the batch ends, and the cost is one property read instead of a write.
+    /// </remarks>
+    internal virtual void ApplyDuplicateOwnershipStamp(Excel.Shape shape, string primitiveId)
+    {
+        _ = ApplyOwnership(shape, primitiveId, writeLock: false);
+        if (!ReadLocked(shape))
+        {
+            ApplyLock(shape);
+        }
+    }
+
+    /// <summary>
     /// Writes the two ADR-0019 ownership members onto a newly created shape.
     /// </summary>
     /// <param name="shape">The created shape.</param>
     /// <param name="primitiveId">The stable scene primitive identifier.</param>
     /// <returns>The typed result.</returns>
-    private ShapeWriteOutcome ApplyOwnership(Excel.Shape shape, string primitiveId)
+    private ShapeWriteOutcome ApplyOwnership(Excel.Shape shape, string primitiveId) =>
+        ApplyOwnership(shape, primitiveId, writeLock: true);
+
+    /// <summary>
+    /// Writes the ownership identity, optionally leaving the lock inherited from a template.
+    /// </summary>
+    /// <param name="shape">The shape to stamp.</param>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <param name="writeLock">Whether to write <c>Locked = true</c> as well.</param>
+    /// <returns>The typed result.</returns>
+    private ShapeWriteOutcome ApplyOwnership(Excel.Shape shape, string primitiveId, bool writeLock)
     {
         string name = NameFor(primitiveId);
         shape.Name = name;
@@ -1363,7 +1638,11 @@ public class ExcelShapeWriter(
         // separately; writing it here costs one property call on a path that already writes two,
         // and it means a new shape is locked from birth rather than on a later sweep.
         // The PIA types this property as Boolean, not MsoTriState.
-        shape.Locked = true;
+        if (writeLock)
+        {
+            shape.Locked = true;
+        }
+
         return ShapeWriteOutcome.Ok();
     }
 
@@ -2184,6 +2463,43 @@ public class ExcelShapeWriter(
     }
 
     /// <summary>
+    /// Writes only a duplicated text box's string, discarding it if the host refuses.
+    /// </summary>
+    /// <param name="shape">The duplicate, whose formatting came from the template.</param>
+    /// <param name="request">The request carrying the string to write.</param>
+    /// <returns>
+    /// <see langword="true"/> when the string landed; <see langword="false"/> when the
+    /// host refused it and the duplicate was discarded.
+    /// </returns>
+    /// <remarks>
+    /// A template duplicate already carries every formatting member the full
+    /// <see cref="ApplyText"/> writes: the template key includes the font family, size,
+    /// weight, alignment, text colour, and the left inset that expresses a grouped
+    /// child's indentation. Re-writing them cost 25.7 ms per text box on the measured
+    /// 20-activity copy and was 71% of the whole create block; the string is the only
+    /// member that differs. The first shape of each key still takes the full path, so
+    /// its formatting is never inherited from an empty host default.
+    /// </remarks>
+    private bool ApplyTextContentOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        // CA1031: same rule as ApplyTextOrDiscard - a host failure is a typed refusal,
+        // never an escaping COM exception, and the duplicate must not survive untagged.
+#pragma warning disable CA1031
+        try
+        {
+            ApplyTextContent(shape, request);
+        }
+        catch (Exception)
+        {
+            DiscardUnownedShape(shape);
+            return false;
+        }
+#pragma warning restore CA1031
+
+        return true;
+    }
+
+    /// <summary>
     /// Applies a text box's content on the update path, containing a host failure.
     /// </summary>
     /// <param name="shape">The owned shape whose content is rewritten.</param>
@@ -2469,6 +2785,39 @@ public class ExcelShapeWriter(
 
             textFill.Visible = MsoTriState.msoTrue;
         }
+    }
+
+    /// <summary>
+    /// Writes only a duplicated text box's string. Test seam over the one content write.
+    /// </summary>
+    /// <param name="shape">The duplicate, whose formatting came from its template.</param>
+    /// <param name="request">The request carrying the string to write.</param>
+    /// <remarks>
+    /// <para>
+    /// The template key guarantees the font family, size, weight, alignment, text colour,
+    /// and left inset are identical, so re-writing them would be a second authority over
+    /// values the host already holds. That re-write cost 25.7 ms per text box on the
+    /// measured 20-activity copy and was 71% of the create block.
+    /// </para>
+    /// <para>
+    /// The left inset is load-bearing for a grouped child's indentation: it is part of the
+    /// key, so a child never duplicates a non-indented template. A host that exposes no
+    /// text frame is a refusal, not a silent no-op: the duplicate would otherwise keep the
+    /// template's string.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when the host exposes no text frame or text range.</exception>
+    internal virtual void ApplyTextContent(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        ArgumentNullException.ThrowIfNull(request);
+
+        Excel.TextFrame2 frame = shape.TextFrame2
+            ?? throw new InvalidOperationException("The host did not expose a text frame for the duplicated text box.");
+        TextRange2 textRange = frame.TextRange
+            ?? throw new InvalidOperationException("The host did not expose a text range for the duplicated text box.");
+
+        textRange.Text = request.Text ?? string.Empty;
     }
 
     /// <summary>

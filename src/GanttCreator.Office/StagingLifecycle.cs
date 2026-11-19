@@ -378,7 +378,8 @@ public static class StagingLifecycle
     }
 
     /// <summary>
-    /// Deletes the verified group first and then every registered child, newest first.
+    /// Deletes the verified group first and then the registered children that survive it,
+    /// newest first.
     /// </summary>
     /// <param name="port">The staging shape write port.</param>
     /// <param name="registry">The registered primitive identifiers, in creation order.</param>
@@ -386,11 +387,20 @@ public static class StagingLifecycle
     /// <param name="residue">Receives each identifier whose delete failed.</param>
     /// <param name="technicalRecord">Receives one record per failed delete.</param>
     /// <remarks>
-    /// D2's order is reverse creation order: the group was created after every child. The
-    /// children are still attempted afterwards because the host's grouping-deletion
-    /// behaviour is design intent until the live probe records it; a child the group
-    /// already removed answers <see cref="ShapeWriteRefusal.NotFound"/>, which is the
-    /// goal state.
+    /// <para>
+    /// D2's order is reverse creation order: the group was created after every child.
+    /// </para>
+    /// <para>
+    /// <b>The children are only attempted when one survives the group delete (R6.8
+    /// follow-up, measured 2026-11-19).</b> On Excel 16.0 x64 the group delete removes
+    /// its children, so every child delete answered <see cref="ShapeWriteRefusal.NotFound"/>
+    /// and each miss cost ~7 ms (guard, worksheet resolution, and a raising name lookup):
+    /// 2.4 s of a 9.9 s copy. After a group delete that succeeded or reported the group
+    /// absent, one ownership-proven <see cref="IShapeWritePort.ListOwned"/> read decides
+    /// what remains; an empty set skips the child loop entirely. The caller's post-cleanup
+    /// verification read still runs, so zero residue remains structurally proven rather
+    /// than inferred. A host that keeps its children still gets the newest-first deletes.
+    /// </para>
     /// </remarks>
     private static void Cleanup(
         IShapeWritePort port,
@@ -399,9 +409,36 @@ public static class StagingLifecycle
         List<string> residue,
         Action<string>? technicalRecord)
     {
+        bool groupGone = false;
         if (groupPrimitiveId is not null)
         {
-            _ = TryDelete(port, groupPrimitiveId, residue, technicalRecord);
+            groupGone = TryDelete(port, groupPrimitiveId, residue, technicalRecord);
+        }
+
+        if (groupGone)
+        {
+            // One read answers whether the host removed the children with the group. A
+            // port that could not resolve the sheet reports no owned shapes; but it would
+            // also have refused the group delete above, so this read is only trusted after
+            // the delete resolved the same target.
+            HashSet<string> survivors = new(
+                port.ListOwned().Select(Normalize),
+                StringComparer.Ordinal);
+            if (survivors.Count == 0)
+            {
+                return;
+            }
+
+            for (int index = registry.Count - 1; index >= 0; index--)
+            {
+                string identifier = registry[index];
+                if (survivors.Contains(identifier))
+                {
+                    _ = TryDelete(port, identifier, residue, technicalRecord);
+                }
+            }
+
+            return;
         }
 
         for (int index = registry.Count - 1; index >= 0; index--)

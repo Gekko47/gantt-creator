@@ -101,16 +101,17 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
                 zoom,
                 selection);
 
-            // D2 probe: the group delete is first and succeeded; every child delete then
-            // answers either Succeeded or NotFound - never another refusal. The recorded
-            // answer says whether the host removed the children with the group.
+            // D2 probe: the group delete is first and succeeded. The host removed the
+            // children with the group (measured 2026-11-19), so the lifecycle skips the
+            // child loop after one ownership read; a host that kept any child would show
+            // its attempt here and it must be Succeeded or NotFound, never another refusal.
             Assert.NotEmpty(recording.Deletes);
             Assert.Equal(ShapeStagingTag.GroupPrimitiveId, recording.Deletes[0].Id);
             Assert.True(
                 recording.Deletes[0].Outcome.Succeeded,
                 $"Group delete refused: {recording.Deletes[0].Outcome.Refusal}");
 
-            bool childrenRemovedWithGroup = true;
+            bool childrenRemovedWithGroup = recording.Deletes.Count == 1;
             foreach ((string id, ShapeWriteOutcome delete) in recording.Deletes.Skip(1))
             {
                 Assert.True(
@@ -119,9 +120,11 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
                 childrenRemovedWithGroup &= delete.Refusal == ShapeWriteRefusal.NotFound;
             }
 
-            Assert.Equal(
-                outcome.Group.ChildOrder.Count,
-                recording.Deletes.Count - 1);
+            Assert.True(
+                recording.Deletes.Count == 1
+                    || recording.Deletes.Count == outcome.Group.ChildOrder.Count + 1,
+                "Cleanup must either skip the children the group removed or attempt every child; "
+                    + $"observed {recording.Deletes.Count} deletes for {outcome.Group.ChildOrder.Count} children.");
 
             _output.WriteLine(string.Create(
                 CultureInfo.InvariantCulture,
