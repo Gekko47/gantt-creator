@@ -785,11 +785,18 @@ line changes behaviour; both exist to size the changes below.
 
 **What the three remaining items need, so the next change can start without re-deriving it.**
 
-- *Lazy protection release* (31–54 ms of every converged pass): the window must be open before the
-  `sheet` phase, which writes outline levels, `Duration`, `StyleKey`s and the report **before** the
-  first shape write. Saving the open/close pair requires each of those four writers to answer
+- *Protection close* — **partly shipped 2026-11-20, on measurement rather than a guess.** The close
+  was split inside its own trace line and the AC-mode run answered it: across **142 protects**,
+  `unlockms` **7.3 ms median** (max 75.2), `protectms` **2.0 ms** (max 8.5), `outlinems` **0.1 ms** —
+  so the table-cell unlock is ~75 % of the close and the `Protect` call itself is noise. Nothing in
+  the add-in re-locks those cells; Initialise and every explicit Refresh unlock them. So
+  `IWorksheetProtectionPort.Protect(bool repairCells)` and `WorksheetProtectionWindow.Open(bool
+  repairCells)` gained a declining path, and only the automatic pass uses it — the same trade as the
+  column classification, with the same repair path.
+  **What is still blocked:** removing the *open* (2.4 ms median) and the Protect call (2.0 ms) means
+  not opening the window at all on a pass that writes nothing, which needs the `sheet` phase to answer
   "nothing to do" from pure inputs — a plan/apply split across four adapters plus the orchestrator.
-  It is one change, not a flag.
+  Those two together are ~4 ms; the split is no longer worth its risk.
 - *Column classification on the automatic path* — **shipped 2026-11-20, with no persisted stamp.**
   The owner accepted the trade in the words "the quicker option that still looks largely correct,
   where a full refresh can fix it", so `IColumnPresentationPort.EnsureClassification(bool repair)`

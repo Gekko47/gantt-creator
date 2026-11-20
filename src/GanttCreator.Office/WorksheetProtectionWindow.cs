@@ -40,6 +40,16 @@ public sealed class WorksheetProtectionWindow(
     private int _depth;
 
     /// <summary>
+    /// Whether the outermost scope unlocks the table's cells when it re-applies protection.
+    /// </summary>
+    /// <remarks>
+    /// Recorded at depth 0, so a nested window cannot change the decision the outermost one made. An
+    /// automatic pass declines it: the unlock measured 7.3 ms median of a 9.7 ms close, nothing
+    /// re-locks those cells, and the explicit Refresh repairs a cell the user locked.
+    /// </remarks>
+    private bool _repairCellsOnClose = true;
+
+    /// <summary>
     /// Opens the window: the inner scope runs with the sheet released, and the outermost scope
     /// re-applies protection when it disposes.
     /// </summary>
@@ -58,8 +68,13 @@ public sealed class WorksheetProtectionWindow(
     /// the host then refuses the write and reports it, which is a truer signal than silence here.
     /// </para>
     /// </remarks>
-    public IDisposable Open()
+    public IDisposable Open(bool repairCells = true)
     {
+        if (_depth == 0)
+        {
+            _repairCellsOnClose = repairCells;
+        }
+
         if (_depth == 0 && _state.IsArmed)
         {
             // The release is one host call and it is on the click-to-plot path, so its cost is
@@ -88,7 +103,7 @@ public sealed class WorksheetProtectionWindow(
         if (_depth == 0 && _state.IsArmed)
         {
             long started = Stopwatch.GetTimestamp();
-            ProtectionWriteOutcome protectedOutcome = _port.Protect();
+            ProtectionWriteOutcome protectedOutcome = _port.Protect(_repairCellsOnClose);
             Record(protectedOutcome, "window protect");
             _trace?.Invoke(string.Create(
                 CultureInfo.InvariantCulture,

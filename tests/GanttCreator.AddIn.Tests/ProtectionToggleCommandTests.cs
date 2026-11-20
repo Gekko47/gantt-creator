@@ -251,8 +251,9 @@ public class ProtectionToggleCommandTests
 
         public WorksheetProtectionState? Read() => new(ContentsProtected: false, ShapesProtected: false);
 
-        public ProtectionWriteOutcome Protect()
+        public ProtectionWriteOutcome Protect(bool repairCells = true)
         {
+            _ = repairCells;
             ProtectCount++;
             return ProtectRefusal is { } refusal
                 ? ProtectionWriteOutcome.Refused(refusal)

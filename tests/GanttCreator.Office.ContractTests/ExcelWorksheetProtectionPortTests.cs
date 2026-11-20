@@ -35,6 +35,9 @@ public class ExcelWorksheetProtectionPortTests
         /// <summary>Whether the host raises on protect, as a refusing host would.</summary>
         public bool RefuseProtect { get; set; }
 
+        /// <summary>Whether the last protect was asked to unlock the table's cells.</summary>
+        public bool? ProtectRepairCells { get; private set; }
+
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
             ganttWorksheetPresent ? new Mock<Excel._Worksheet>().Object : null;
 
@@ -42,8 +45,10 @@ public class ExcelWorksheetProtectionPortTests
 
         internal override bool ReadShapesProtected(Excel._Worksheet sheet) => shapesProtected;
 
-        internal override void ProtectWorksheet(Excel._Worksheet sheet)
+        internal override void ProtectWorksheet(Excel._Worksheet sheet, bool repairCells = true)
         {
+            ProtectRepairCells = repairCells;
+
             if (RefuseProtect)
             {
                 // An InvalidOperationException rather than a COMException, because CA2201 reserves
@@ -66,6 +71,28 @@ public class ExcelWorksheetProtectionPortTests
         var application = new Mock<Excel.Application>();
         _ = application.Setup(a => a.ActiveWorkbook).Returns(workbook.Object);
         return application;
+    }
+
+    /// <summary>
+    /// A protect that declines the repair does not unlock the table's cells; the default does.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-20. The unlock measured 7.3 ms median of a 9.7 ms close across 142 live
+    /// protects, and nothing in the add-in re-locks those cells, so an automatic pass declines it and
+    /// the explicit Refresh repairs. The default-true half is the positive control: a port that always
+    /// skipped would satisfy the first assertion and fail the second.
+    /// </remarks>
+    [Fact]
+    public void A_protect_that_declines_the_repair_does_not_unlock_the_table_cells()
+    {
+        var repairing = new TestablePort(ActiveApplication().Object, ganttWorksheetPresent: true);
+        var declining = new TestablePort(ActiveApplication().Object, ganttWorksheetPresent: true);
+
+        _ = repairing.Protect();
+        _ = declining.Protect(repairCells: false);
+
+        Assert.True(repairing.ProtectRepairCells);
+        Assert.False(declining.ProtectRepairCells);
     }
 
     [Fact]

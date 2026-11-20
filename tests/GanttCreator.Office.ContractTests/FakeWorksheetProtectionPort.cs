@@ -29,6 +29,9 @@ internal sealed class FakeWorksheetProtectionPort : IWorksheetProtectionPort
     /// <summary>How many times the sheet was protected.</summary>
     public int ProtectCount => Calls.Count(call => call == "Protect");
 
+    /// <summary>Whether the last <see cref="Protect"/> was asked to unlock the table's cells.</summary>
+    public bool? RepairCellsRequested { get; private set; }
+
     /// <summary>How many times the sheet was unprotected.</summary>
     public int UnprotectCount => Calls.Count(call => call == "Unprotect");
 
@@ -40,9 +43,10 @@ internal sealed class FakeWorksheetProtectionPort : IWorksheetProtectionPort
     }
 
     /// <inheritdoc />
-    public ProtectionWriteOutcome Protect()
+    public ProtectionWriteOutcome Protect(bool repairCells = true)
     {
         Calls.Add("Protect");
+        RepairCellsRequested = repairCells;
         OnProtect?.Invoke();
         if (ProtectRefusal is { } refusal)
         {

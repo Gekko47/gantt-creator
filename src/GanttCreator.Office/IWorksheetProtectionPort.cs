@@ -84,13 +84,27 @@ public interface IWorksheetProtectionPort
     /// Protects the Gantt worksheet with shape protection, content protection and
     /// interface-only restriction, and no password.
     /// </summary>
+    /// <param name="repairCells">
+    /// <see langword="true"/> to unlock the visible table's cells first, so the table stays editable
+    /// while the sheet is protected; <see langword="false"/> to trust the state the last explicit
+    /// Refresh left behind and skip that unlock.
+    /// </param>
     /// <returns>The typed result.</returns>
     /// <remarks>
+    /// <para>
     /// The host raises when protection is already applied, so a caller that wants to re-apply
     /// <c>UserInterfaceOnly</c> must <see cref="Unprotect"/> first. That policy is the caller's
     /// precisely because "already protected" is not an error and this method must not guess.
+    /// </para>
+    /// <para>
+    /// <b>Why the unlock is separable.</b> It measured 7.3 ms median of the close's 9.7 ms (2026-11-20,
+    /// 142 protects, AC power) - the single largest term left in an automatic pass - and nothing in
+    /// the add-in re-locks those cells. Initialise and every explicit Refresh set them, so an
+    /// automatic pass can decline the repair exactly as it declines the column classification: a user
+    /// who locks a table cell gets it unlocked by the next explicit Refresh.
+    /// </para>
     /// </remarks>
-    ProtectionWriteOutcome Protect();
+    ProtectionWriteOutcome Protect(bool repairCells = true);
 
     /// <summary>Removes protection from the Gantt worksheet.</summary>
     /// <returns>The typed result.</returns>

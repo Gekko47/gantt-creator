@@ -79,7 +79,7 @@ public class ExcelWorksheetProtectionPort(
     }
 
     /// <inheritdoc />
-    public ProtectionWriteOutcome Protect()
+    public ProtectionWriteOutcome Protect(bool repairCells = true)
     {
         Excel._Worksheet? worksheet = TryResolveWorksheet(out ProtectionWriteRefusal? refusal);
         if (worksheet is null)
@@ -89,7 +89,7 @@ public class ExcelWorksheetProtectionPort(
 
         try
         {
-            ProtectWorksheet(worksheet);
+            ProtectWorksheet(worksheet, repairCells);
             return ProtectionWriteOutcome.Ok();
         }
         catch (Exception exception) when (exception is COMException or InvalidOperationException)
@@ -361,7 +361,12 @@ public class ExcelWorksheetProtectionPort(
     /// refuses the property once the sheet is protected, and it is set on every protect for the same
     /// "not saved" reason — the window's close is the only protect the product performs.
     /// </remarks>
-    internal virtual void ProtectWorksheet(Excel._Worksheet sheet)
+    /// <param name="repairCells">
+    /// Whether to unlock the visible table's cells first. An automatic pass declines it: the unlock
+    /// measured 7.3 ms median of a 9.7 ms close, nothing re-locks those cells, and the explicit
+    /// Refresh repairs one the user locked (owner ruling 2026-11-20).
+    /// </param>
+    internal virtual void ProtectWorksheet(Excel._Worksheet sheet, bool repairCells = true)
     {
         ArgumentNullException.ThrowIfNull(sheet);
 
@@ -422,7 +427,7 @@ public class ExcelWorksheetProtectionPort(
         // the three-call outline-symbol dance. Guessing which one to remove is how a protection
         // change becomes a regression; the split says which.
         long unlockStarted = Stopwatch.GetTimestamp();
-        bool cellsUnlocked = UnlockTableCells(sheet);
+        bool? cellsUnlocked = repairCells ? UnlockTableCells(sheet) : null;
 
         long protectStarted = Stopwatch.GetTimestamp();
         bool setBefore = SetOutlineSymbolsEnabled(sheet);
@@ -478,9 +483,14 @@ public class ExcelWorksheetProtectionPort(
             return value is { } flag ? (flag ? "true" : "false") : "unreadable";
         }
 
-        static string DescribeAttempt(bool landed)
+        static string DescribeAttempt(bool? landed)
         {
-            return landed ? "ok" : "refused";
+            return landed switch
+            {
+                true => "ok",
+                false => "refused",
+                _ => "skipped",
+            };
         }
 
         // Three states, not two: a skipped cycle is the GOOD outcome on a warm pass, and

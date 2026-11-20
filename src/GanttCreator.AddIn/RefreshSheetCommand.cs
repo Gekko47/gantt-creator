@@ -167,7 +167,9 @@ internal static class RefreshSheetCommand
         // Range.Select(), and that restore has to happen before the tab restore below.
         GanttRefreshOutcome outcome;
         long refreshCompleted;
-        using (IDisposable window = ProtectionWindowFor(application).Open())
+        // The explicit Refresh repairs everything it is given: the classification and the table's
+        // cell locks. That is what makes the automatic pass's declining of both safe.
+        using (IDisposable window = ProtectionWindowFor(application).Open(repairCells: true))
         {
             GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
                 application,
@@ -233,11 +235,11 @@ internal static class RefreshSheetCommand
         // the tab restore below.
         GanttRefreshOutcome outcome;
         long refreshCompleted;
-        using (IDisposable window = ProtectionWindowFor(application).Open())
+        // The automatic pass declines both repairs it can safely decline (owner ruling 2026-11-20):
+        // the column classification (19-45 ms) and the table's cell unlock (7.3 ms median of a 9.7 ms
+        // close). The explicit Refresh owns them, and the chart reads whichever state it finds.
+        using (IDisposable window = ProtectionWindowFor(application).Open(repairCells: false))
         {
-            // The automatic pass declines the column-classification repair: it measured 19-45 ms per
-            // pass, the explicit Refresh owns that repair, and the chart reads whichever columns are
-            // visible either way (owner ruling 2026-11-20).
             GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
                 application,
                 useDeltaCache: true,
