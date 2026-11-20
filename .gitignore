@@ -121,6 +121,10 @@ project.fragment.lock.json
 # one in each project directory; they are tracked by Git and NOT ignored.
 artifacts/
 .artifacts/
+# Agent scratch scripts written at the repository root. Same class as the two
+# above: local measurement and verification aids, never part of the build. An
+# untracked directory here also blocks verify.ps1's working-tree hygiene step.
+_artifacts/
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
