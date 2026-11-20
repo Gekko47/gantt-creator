@@ -149,7 +149,10 @@ internal static class EquivalenceFields
             [
                 new("background", ScenePrimitive.CreateId(SceneOwnerId.Chart, "background")),
                 new("band", ScenePrimitive.CreateId(SceneOwnerId.Chart, "band:1")),
-                new("grid", ScenePrimitive.CreateId(SceneOwnerId.Chart, "grid:820")),
+                // The sample is one interior line of the reference band sequence, named by the date
+                // its band ends on. A position here would be the very thing the identifier stopped
+                // being on 2026-11-20, and it would change again with the panel width.
+                new("grid", ScenePrimitive.CreateId(SceneOwnerId.Chart, "grid:2026-02-28")),
                 new("frame", ScenePrimitive.CreateId(SceneOwnerId.Chart, "frame:top")),
             ],
             [

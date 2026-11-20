@@ -912,15 +912,20 @@ public sealed class FrameBandsBuilderTests
         double plotBandHeaderOverlapPt = 0.5,
         double chartAnchorRowHeightPt = 0.25,
         bool sheetCoordinates = false,
-        RectD? dataPanelBounds = null)
+        RectD? dataPanelBounds = null,
+        double plotWidthPt = 300)
     {
-        TimeScale scale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400).Scale!;
+        TimeScale scale = TimeScale.TryCreate(
+            new DateOnly(2024, 1, 1),
+            new DateOnly(2024, 3, 31),
+            100,
+            100 + plotWidthPt).Scale!;
         return new FrameBandsRequest(
             scale,
             GanttTimeScale.Month,
             GanttPeriodLabelFormat.MMM,
             new RectD(0, 100, 100, 100),
-            new RectD(100, 100, 300, 100),
+            new RectD(100, 100, plotWidthPt, 100),
             ChartPaddingPt.Uniform(6),
             24,
             18,
@@ -940,6 +945,46 @@ public sealed class FrameBandsBuilderTests
             DataPanelBounds: dataPanelBounds
         );
     }
+
+    /// <summary>
+    /// A panel width change moves the grid lines instead of renaming them.
+    /// </summary>
+    /// <remarks>
+    /// The identifier used to be the line's x position, so a column toggle renamed every interior line
+    /// and reconciliation deleted and re-created the whole grid: the owner's 2026-11-20 trace shows ten
+    /// `chart:grid:<x>` deletions and ten creations per toggle, 446-1325 ms for a control that only
+    /// changes the plot's width. Keyed by the date each band ends on, the same months keep their ids
+    /// across a width change, so reconciliation moves them. The geometry assertion is what stops this
+    /// passing on a request where the width never changed.
+    /// </remarks>
+    [Fact]
+    public void A_width_change_moves_the_grid_lines_without_renaming_them()
+    {
+        FrameBandsResult wide = Build(CreateRequest(plotWidthPt: 300)).Result!;
+        FrameBandsResult narrow = Build(CreateRequest(plotWidthPt: 180)).Result!;
+
+        string[] wideIds = InteriorGridIds(wide);
+        string[] narrowIds = InteriorGridIds(narrow);
+
+        Assert.NotEmpty(wideIds);
+        Assert.Equal(wideIds, narrowIds);
+        Assert.False(
+            wideIds.Length == 0 || InteriorGridXs(wide).SequenceEqual(InteriorGridXs(narrow)),
+            "The width did not change the geometry, so the identifier assertion proves nothing.");
+    }
+
+    private static string[] InteriorGridIds(FrameBandsResult result) =>
+        [.. result.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
+                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal))
+            .Select(line => line.PrimitiveId)
+            .OrderBy(id => id, StringComparer.Ordinal)];
+
+    private static double[] InteriorGridXs(FrameBandsResult result) =>
+        [.. result.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
+                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal))
+            .Select(line => line.From.X)];
 
     [Fact]
     public void On_the_live_sheet_every_frame_stroke_is_drawn_inside_the_outline()

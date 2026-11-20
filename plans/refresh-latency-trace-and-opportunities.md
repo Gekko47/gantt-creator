@@ -807,10 +807,21 @@ line changes behaviour; both exist to size the changes below.
   Measured cost removed: `columns=19`, `22.4`, `27.3`, `45.1` ms across four passes in the owner's
   20:1x run. Cost accepted: a column the user unhid stays visible until the next explicit Refresh,
   and the chart still renders from the columns it measures.
-- *Grid identifier stability* (column-toggle passes at 460–1325 ms): `chart:grid:{x}` renames every
-  interior line when the panel width changes, so a toggle deletes and re-creates 14–28 primitives.
-  Keying by band ordinal turns that into a geometry update, but identifiers are pinned by ADR-0013
-  and the reference golden, so it needs a contract ruling and a reviewed golden regeneration.
+- *Grid identifier stability* (column-toggle passes at 460–1325 ms): **shipped 2026-11-20.** The
+  old id was the line's own x, so every width change renamed every interior line and a toggle
+  deleted and re-created 14–28 primitives. An interior line is now identified by the date its band
+  ENDS on (`chart:grid:{yyyy-MM-dd}`) and the plot's two edges by which edge they are
+  (`chart:grid:edge:{left,right}`) — identity, not position. `FrameBandsBuilder.AddGrid` keys its
+  dictionary by those names and emits in x order as before. A new Core fact,
+  `A_width_change_moves_the_grid_lines_without_renaming_them`, pins the behaviour: the same 40pt
+  width change that used to rename every line now moves `From.X` while the id set is unchanged.
+  The identifier's *formatting* was already declared non-normative in the entity guide and R3.16, but
+  **which value** is interpolated was not, so the guide's identifier-scope note now states that rule
+  and the reason. Golden regenerated as a dedicated commit; proven ids-only, not by eye: the five grid
+  ids were remapped by geometry and the other 77 primitives compared byte-identical at the same index,
+  and the only array reordering is the two edge lines swapping slots because
+  `GanttScene.Order`'s final tie-break is `PrimitiveId` ordinal (`edge:1120` < `edge:520` became
+  `edge:left` < `edge:right`).
 
 ## 7. Acceptance criteria for the next step
 

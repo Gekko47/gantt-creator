@@ -490,11 +490,18 @@ public static class FrameBandsBuilder
         BandSequence sequence,
         RectD plotSpan)
     {
-        Dictionary<double, bool> lines = [];
+        // KEYED BY WHAT THE LINE MEANS, NOT BY WHERE IT LANDS. The key used to be the x position, so any
+        // change to the panel width renamed every interior line and reconciliation deleted and
+        // re-created the whole grid instead of moving it: the owner's 22:0x trace shows a column toggle
+        // producing ten `chart:grid:<x>` deletions and ten creations, 446-1325 ms for a control that is
+        // only supposed to change the plot's width. A period is identified by the date its band ends on,
+        // which is stable across a width change and still distinguishes every line; the two plot edges
+        // are identified by which edge they are, which is stable by definition.
+        Dictionary<string, (double X, bool Major)> lines = [];
         if (request.ShowMajorGrid)
         {
-            AddGridLine(lines, request.PlotBounds.Left, true);
-            AddGridLine(lines, request.PlotBounds.Right, true);
+            AddGridLine(lines, "edge:left", request.PlotBounds.Left, major: true);
+            AddGridLine(lines, "edge:right", request.PlotBounds.Right, major: true);
         }
 
         foreach (BandInterval period in sequence.Periods)
@@ -504,7 +511,7 @@ public static class FrameBandsBuilder
                 bool major = request.ShowMajorGrid && period.Finish.Month == 12;
                 if (request.ShowMinorGrid || major)
                 {
-                    AddGridLine(lines, period.Right, major);
+                    AddGridLine(lines, PeriodKey(period), period.Right, major);
                 }
             }
         }
@@ -526,14 +533,14 @@ public static class FrameBandsBuilder
             ? (request.Theme.MajorGrid.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
             : 0d;
 
-        foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
+        foreach (KeyValuePair<string, (double X, bool Major)> line in lines.OrderBy(pair => pair.Value.X))
         {
-            string key = line.Key.ToString("R", CultureInfo.InvariantCulture);
-            bool isEdge = line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right;
-            double x = line.Key;
+            bool isLeftEdge = string.Equals(line.Key, "edge:left", StringComparison.Ordinal);
+            bool isEdge = isLeftEdge || string.Equals(line.Key, "edge:right", StringComparison.Ordinal);
+            double x = line.Value.X;
             if (isEdge && halfStroke > 0d)
             {
-                x = line.Key == request.PlotBounds.Left ? x + halfStroke : x - halfStroke;
+                x = isLeftEdge ? x + halfStroke : x - halfStroke;
             }
 
             // The two EDGE lines close the plot, so they belong to the frame's layer, not
@@ -544,12 +551,12 @@ public static class FrameBandsBuilder
             // interior lines stay at Grid: they sit between bands, never over them.
             primitives.Add(
                 new SceneLine(
-                    isEdge ? $"chart:grid:edge:{key}" : $"chart:grid:{key}",
+                    isEdge ? $"chart:grid:edge:{(isLeftEdge ? "left" : "right")}" : $"chart:grid:{line.Key}",
                     SceneOwnerId.Chart,
                     isEdge ? ZLayer.Frame : ZLayer.Grid,
                     new PointD(x, plotSpan.Y),
                     new PointD(x, plotSpan.Bottom),
-                    line.Value || isEdge ? request.Theme.MajorGrid : request.Theme.MinorGrid
+                    line.Value.Major || isEdge ? request.Theme.MajorGrid : request.Theme.MinorGrid
                 )
             );
         }
@@ -651,17 +658,32 @@ public static class FrameBandsBuilder
         );
     }
 
-    private static void AddGridLine(Dictionary<double, bool> lines, double x, bool major)
+    private static void AddGridLine(
+        Dictionary<string, (double X, bool Major)> lines,
+        string key,
+        double x,
+        bool major)
     {
-        if (lines.TryGetValue(x, out bool existingMajor))
+        if (lines.TryGetValue(key, out (double X, bool Major) existing))
         {
-            lines[x] = existingMajor || major;
+            lines[key] = (existing.X, existing.Major || major);
         }
         else
         {
-            lines.Add(x, major);
+            lines.Add(key, (x, major));
         }
     }
+
+    /// <summary>Identifies one interior grid line by the date its band ends on.</summary>
+    /// <param name="period">The band interval the line closes.</param>
+    /// <returns>The identifier fragment, for example <c>2026-11-30</c>.</returns>
+    /// <remarks>
+    /// A date, not a position. The position changes with the panel width, so a width change used to
+    /// rename every line and force a delete-and-create cycle across the whole grid; the date is stable
+    /// across a width change and still unique within a band sequence (each period ends on its own date).
+    /// </remarks>
+    private static string PeriodKey(BandInterval period) =>
+        period.Finish.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static void AddOuterFrame(List<ScenePrimitive> primitives, FrameBandsRequest request, RectD bounds)
     {
