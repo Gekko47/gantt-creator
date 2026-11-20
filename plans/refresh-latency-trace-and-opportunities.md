@@ -822,6 +822,15 @@ line changes behaviour; both exist to size the changes below.
   and the only array reordering is the two edge lines swapping slots because
   `GanttScene.Order`'s final tie-break is `PrimitiveId` ordinal (`edge:1120` < `edge:520` became
   `edge:left` < `edge:right`).
+  **Closure measured on the owner's like-for-like re-run (23:42, 23 automatic passes):** **zero** grid
+  primitives created or deleted on any automatic pass, against **ten created and ten deleted on every
+  toggle pass** before the change (70 grid creates across the seven passes at 22:18:14–22:18:27).
+  **`command` on those passes did not improve** — 124–197 ms before, 165–188 ms after — because the two
+  runs toggled different hidden-column sets, so the later one moved 124–140 shapes per pass instead of
+  108–110. The 446–1325 ms range this section quoted from the earlier trace therefore does not describe
+  this workbook at 132–150 shapes: what the change removes is a guaranteed 20-shape create/delete
+  cycle, not a measured 400 ms. The churn the cleaner log now exposes on the same passes is
+  `chart:period:{yyyy-MM-dd}:label` ×9 plus `ChartTitle`, in both runs.
 
 ## 7. Acceptance criteria for the next step
 
