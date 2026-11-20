@@ -64,6 +64,20 @@ public enum ShapeUpdateScope
 
     /// <summary>Re-apply geometry and placement only, because nothing else changed.</summary>
     Geometry = 1,
+
+    /// <summary>
+    /// Re-apply geometry, placement, and text content only. The appearance and typography
+    /// were already written by the grouped appearance pass, so this scope must not repeat
+    /// them.
+    /// </summary>
+    /// <remarks>
+    /// The group pass writes the same secondary-format properties the full update would
+    /// write, once per identical appearance. The per-shape pass then writes the box and the
+    /// string, which cannot be shared. A caller that receives this scope without the group
+    /// pass would leave the shape's style untouched; <see cref="ShapeReconciler"/> emits it
+    /// only immediately after a successful <see cref="IShapeWritePort.ApplyGroupAppearance"/>.
+    /// </remarks>
+    Content = 2,
 }
 
 /// <summary>One planned reconciliation operation.</summary>
@@ -137,6 +151,27 @@ public sealed record ShapeReconcileRequest(
 {
     /// <summary>Optional prior successful payload signatures for no-op update elimination.</summary>
     public ShapeDeltaSnapshot? PreviousSnapshot { get; init; }
+
+    /// <summary>
+    /// Whether a cached, payload-identical shape may be skipped without reading the host.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Opt-in, and only ever set by a caller that has PROVED the anchors did not move.</b> The
+    /// orchestrator sets it when the measured layout fingerprint equals the one the last successful
+    /// pass recorded. Excel moves an <c>xlMove</c> shape only when its rows or columns change
+    /// (insert, delete, hide, row height, column width, origin), and every one of those is an input
+    /// to that fingerprint.
+    /// </para>
+    /// <para>
+    /// <b>Owner ruling 2026-11-20.</b> An automatic pass must not repair a shape the user dragged:
+    /// the chart's shapes are locked by default, and a user who unlocks them and moves one is asking
+    /// for a manual edit, which the explicit Refresh repairs. The explicit Refresh runs without a
+    /// snapshot, so it never sets this flag and always verifies. The cost is that the 148 x 5
+    /// geometry reads on a converged automatic pass disappear — measured `verify` 12-25 ms.
+    /// </para>
+    /// </remarks>
+    public bool SkipLiveGeometryCheck { get; init; }
 }
 
 /// <summary>Why a reconciliation stopped without completing.</summary>
@@ -170,6 +205,44 @@ public enum ShapeReconcileRefusal
 /// <param name="PrimitiveId">The scene identifier the step addressed.</param>
 /// <param name="Refusal">The refusal the port reported.</param>
 public sealed record ShapeReconcileFailure(string PrimitiveId, ShapeWriteRefusal Refusal);
+
+/// <summary>The typed result of the grouped appearance pass.</summary>
+/// <param name="Succeeded">Whether every group's appearance was written.</param>
+/// <param name="Refusal">The first refusal, or <see langword="null"/> on success.</param>
+/// <param name="FailedPrimitiveId">
+/// The scene identifier whose group was being written when the refusal occurred, or
+/// <see langword="null"/> on success.
+/// </param>
+/// <param name="Mismatched">
+/// The primitive identifiers whose geometry or text content still differs from the host,
+/// or <see langword="null"/> when the port did not perform that verification. The
+/// reconciler runs the per-shape dispatch only for an identifier in this list; an empty
+/// list means the grouped pass verified everything and no per-shape write is needed.
+/// </param>
+/// <remarks>
+/// A single outcome for the whole pass, not one per group: the reconciler stops at the first
+/// refusal, exactly as it does for a per-shape operation, and reports the group's first
+/// primitive so the user sees a name rather than "a group failed".
+/// </remarks>
+public sealed record ShapeGroupWriteOutcome(
+    bool Succeeded,
+    ShapeWriteRefusal? Refusal,
+    string? FailedPrimitiveId,
+    IReadOnlyList<string>? Mismatched = null)
+{
+    /// <summary>Creates a successful group outcome.</summary>
+    /// <param name="mismatched">The identifiers the per-shape dispatch must still visit.</param>
+    /// <returns>The success outcome.</returns>
+    public static ShapeGroupWriteOutcome Ok(IReadOnlyList<string>? mismatched = null) =>
+        new(true, null, null, mismatched);
+
+    /// <summary>Creates a refused group outcome.</summary>
+    /// <param name="primitiveId">The group's first primitive identifier.</param>
+    /// <param name="refusal">The host refusal.</param>
+    /// <returns>The refusal outcome.</returns>
+    public static ShapeGroupWriteOutcome Refused(string primitiveId, ShapeWriteRefusal refusal) =>
+        new(false, refusal, primitiveId);
+}
 
 /// <summary>The typed result of executing one reconciliation.</summary>
 /// <param name="Refusal">Why it stopped, or <see langword="null"/> on success.</param>
@@ -215,4 +288,33 @@ public sealed record ShapeReconcileOutcome(
     /// the ordering cost from the per-shape writes.
     /// </summary>
     public double ZOrderMilliseconds { get; init; }
+
+    /// <summary>Gets how many owned shapes the host reported for this reconciliation.</summary>
+    /// <remarks>
+    /// The count is the denominator every per-shape cost in the phase trace needs. It is read
+    /// from the same <c>ListOwned</c> call the plan already consumed, never a second scan.
+    /// </remarks>
+    public int OwnedCount { get; init; }
+
+    /// <summary>Gets how long the owned-shape scan took, in milliseconds.</summary>
+    /// <remarks>
+    /// Zero when the caller supplied the owned set, because no host scan ran. The phase trace
+    /// reports the figure beside the verification and operation costs so the no-op floor can be
+    /// attributed to reads rather than writes.
+    /// </remarks>
+    public double OwnedMilliseconds { get; init; }
+
+    /// <summary>Gets how long the live-geometry verification took, in milliseconds.</summary>
+    /// <remarks>
+    /// This is the cost of proving a cached skip is still correct against the host
+    /// (ADR-0052/ADR-0054). It is a read-only phase and is reported separately from the writes.
+    /// </remarks>
+    public double VerifyMilliseconds { get; init; }
+
+    /// <summary>Gets how long the update/create/delete operations took, in milliseconds.</summary>
+    /// <remarks>
+    /// Excludes the z-order pass, whose own figure is <see cref="ZOrderMilliseconds"/>. On a
+    /// per-shape profile this is the figure the round-trip budget is measured against.
+    /// </remarks>
+    public double OperationMilliseconds { get; init; }
 }

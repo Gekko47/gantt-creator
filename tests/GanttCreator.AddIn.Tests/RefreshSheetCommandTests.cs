@@ -41,6 +41,23 @@ public class RefreshSheetCommandTests
         orchestrator.Verify(o => o.Refresh(), Times.Once);
     }
 
+    /// <summary>
+    /// The live factory enables batch template reuse, so a create-heavy refresh does not pay
+    /// the per-shape style block the staging copy path already removed.
+    /// </summary>
+    /// <remarks>
+    /// The flag is opt-in and has no behavioural effect outside a reconcile batch; this pin
+    /// exists because a live caller that forgets it silently keeps the old create cost while
+    /// every test stays green.
+    /// </remarks>
+    [Fact]
+    public void The_live_shape_writer_reuses_create_templates()
+    {
+        ExcelShapeWriter writer = RefreshSheetCommand.CreateLiveShapeWriter(null, _ => { });
+
+        Assert.True(writer.ReusesTemplates);
+    }
+
     /// <summary>A successful refresh presents nothing.</summary>
     [Fact]
     public void Run_presents_nothing_when_the_refresh_succeeded()

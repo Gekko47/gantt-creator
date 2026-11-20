@@ -165,6 +165,133 @@ public class ShapeReconcilerTests
     }
 
     /// <summary>
+    /// A group pass that verified every member's geometry and content skips the
+    /// per-shape dispatch entirely.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The grouped appearance write already carried the style and the typography; the
+    /// only remaining per-shape work is the content write, and the port verifies
+    /// geometry and text while it preflights the range. When it reports no mismatches,
+    /// an <c>UpdateContent</c> per shape would be a second read of state that was just
+    /// proved correct — the expensive half of a converged refresh spent for nothing.
+    /// </para>
+    /// <para>
+    /// This is the positive half of the mismatch contract: an empty list must produce an
+    /// empty dispatch. The <see langword="null"/> case is covered by
+    /// <see cref="An_appearance_only_change_re_applies_the_whole_shape"/>, which models a
+    /// port that verifies nothing and therefore keeps the old per-shape behaviour.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_fully_verified_group_pass_skips_the_per_shape_content_dispatch()
+    {
+        OfficeShapeRequest[] previous = [Request("row-2:bar", fill: "#3366CC")];
+        OfficeShapeRequest[] desired = [Request("row-2:bar", fill: "#FF0000")];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-2:bar");
+        port.MismatchedForGroup = [];
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        _ = Assert.Single(port.GroupAppearanceCalls);
+        Assert.Empty(port.ShapeCalls);
+    }
+
+    /// <summary>
+    /// A member the group pass could not converge is still dispatched per shape.
+    /// </summary>
+    /// <remarks>
+    /// The skip must be evidence-led: an identifier the port did not verify, or verified
+    /// and found differing, receives its content write. Without this half, a port bug that
+    /// reported "all converged" unconditionally would leave those shapes wrong forever.
+    /// </remarks>
+    [Fact]
+    public void A_group_pass_that_reports_a_mismatch_still_dispatches_that_shape()
+    {
+        OfficeShapeRequest[] previous = [Request("row-2:bar", fill: "#3366CC")];
+        OfficeShapeRequest[] desired = [Request("row-2:bar", fill: "#FF0000")];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-2:bar");
+        port.MismatchedForGroup = ["row-2:bar"];
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Update:row-2:bar"], port.ShapeCalls);
+    }
+
+    /// <summary>
+    /// A pass that has proved the layout is unchanged skips the live geometry verification.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Owner ruling 2026-11-20: an automatic pass must not repair a shape the user dragged, because
+    /// the chart's shapes are locked and a drag means the user unlocked and edited them. The caller
+    /// sets <see cref="ShapeReconcileRequest.SkipLiveGeometryCheck"/> only when the measured layout
+    /// fingerprint equals the one its last successful pass recorded, and an unchanged layout is the
+    /// proof that Excel moved nothing: an insert, delete, hide, row height, column width or origin
+    /// change all alter the fingerprint and put this verification back.
+    /// </para>
+    /// <para>
+    /// The assertion is the absence of host reads: every cached match is skipped without a single
+    /// geometry read, which is the ~12-25 ms `verify` term on the owner's converged workbook.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_layout_unchanged_pass_skips_the_live_geometry_check()
+    {
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(desired, layout: "layout-1");
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired)
+            {
+                PreviousSnapshot = cache.Snapshot,
+                SkipLiveGeometryCheck = true,
+            });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(port.ShapeCalls);
+        Assert.Equal(0, port.GeometryMatchChecks);
+    }
+
+    /// <summary>
+    /// Without the proof the same request still verifies, so the skip cannot be reached by accident.
+    /// </summary>
+    /// <remarks>
+    /// The positive control for the test above: identical inputs, only the flag differs, and the two
+    /// geometry reads come back. It also pins that the flag defaults to
+    /// <see langword="false"/>, which is what makes the explicit Refresh (no snapshot, no flag) the
+    /// repair pass.
+    /// </remarks>
+    [Fact]
+    public void Without_the_layout_proof_the_same_pass_still_verifies_geometry()
+    {
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(desired, layout: "layout-1");
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, port.GeometryMatchChecks);
+    }
+
+    /// <summary>
     /// A KIND change is never routed through the move-only path.
     /// </summary>
     /// <remarks>

@@ -56,6 +56,35 @@ public sealed class ExcelTypeChangeNormaliserTests
         Assert.Empty(fixture.Writes);
     }
 
+    /// <summary>
+    /// The ten column names are resolved from ONE walk of the live columns.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The adapter resolved each of ten names by scanning the whole collection, which is
+    /// 10 x N COM <c>Name</c> reads per refresh - 260 reads on the 26-column schema. The
+    /// owner's 2026-11-20 trace measured `types` at 7.2-26.7 ms (median 12.5) for ten
+    /// rows, and the same defect had already been fixed twice elsewhere:
+    /// <c>StagingShapeAdapter</c> and <c>ExcelColumnPresentationRestorer</c>.
+    /// </para>
+    /// <para>
+    /// The assertion is one read per live column, which the counter makes exact: any
+    /// per-name scan would multiply it by the number of names.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_column_names_resolve_with_one_read_per_live_column()
+    {
+        GanttEntityType type = FirstType(definition => definition.Kind == EntityKind.Span);
+        EntityTypeDefinition definition = Definition(type);
+        Fixture fixture = new(_allColumns);
+        fixture.Row(("Type", definition.DisplayName));
+
+        _ = fixture.Normalise();
+
+        Assert.Equal(_allColumns.Length, fixture.ColumnReads);
+    }
+
     [Fact]
     public void A_type_that_can_use_none_of_the_optional_values_has_all_of_them_cleared()
     {
@@ -490,11 +519,15 @@ public sealed class ExcelTypeChangeNormaliserTests
                 ? value
                 : null;
 
+        /// <summary>How many live columns the adapter read, one <c>Name</c> read each.</summary>
+        public int ColumnReads { get; private set; }
+
         /// <summary>Substitutes the column-index seam.</summary>
         /// <param name="index">The one-based column index.</param>
         /// <returns>The mocked list column.</returns>
         public Excel.ListColumn ColumnAt(int index)
         {
+            ColumnReads++;
             Mock<Excel.ListColumn> column = new();
             _ = column.SetupGet(c => c.Name).Returns(_columns[index - 1]);
             return column.Object;

@@ -64,7 +64,8 @@ public sealed class GanttRefreshOrchestrator(
     bool useDeltaCache = true,
     Action<string>? trace = null,
     ProtectionOwnershipSource? protectionOwnership = null,
-    WorksheetProtectionArming? protectionArming = null)
+    WorksheetProtectionArming? protectionArming = null,
+    bool repairColumnClassification = true)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -131,6 +132,18 @@ public sealed class GanttRefreshOrchestrator(
     private readonly ChangeTracker? _changeTracker = changeTracker;
     private readonly ShapeDeltaCache? _shapeDeltaCache = shapeDeltaCache;
     private readonly bool _useDeltaCache = useDeltaCache;
+
+    /// <summary>
+    /// Whether this pass re-asserts the column classification, or trusts what the initialiser and the
+    /// last explicit Refresh left behind.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="true"/>, so every existing caller keeps the repairing behaviour and
+    /// only the add-in's automatic path opts out. Owner ruling 2026-11-20: the flag verification
+    /// measured 19-45 ms per pass, the explicit Refresh repairs a column a user unhid, and the
+    /// automatic pass exists to keep the chart right rather than to police presentation.
+    /// </remarks>
+    private readonly bool _repairColumnClassification = repairColumnClassification;
 
     /// <summary>
     /// Optional diagnostic sink for one refresh's delta and geometry decisions, or
@@ -258,6 +271,8 @@ public sealed class GanttRefreshOrchestrator(
                 : Refuse(GanttRefreshRefusal.TableMissing, Describe(readRefusal));
         }
 
+        long tableRead = Stopwatch.GetTimestamp();
+
         ConfigReadOutcome config = _configReader.Read();
         if (!config.Succeeded)
         {
@@ -272,6 +287,8 @@ public sealed class GanttRefreshOrchestrator(
             _trace?.Invoke("gantt.refresh config refused=" + configRefusal);
             return Refuse(GanttRefreshRefusal.ConfigurationUnreadable, Describe(configRefusal));
         }
+
+        long configRead = Stopwatch.GetTimestamp();
 
         // Step 2b. Arm the add-in's own protection, BEFORE the guard below, because arming is what
         // makes the guard's authorisation true for the sheet it protects. It runs once per session:
@@ -312,6 +329,8 @@ public sealed class GanttRefreshOrchestrator(
                     : "The Gantt worksheet is protected, so the chart cannot be updated. Unprotect it and try again.");
         }
 
+        long guardCompleted = Stopwatch.GetTimestamp();
+
         // Step 4. The managed columns' hidden/locked classification, restored before
         // anything is validated or measured. A user who unhid an engine column would
         // otherwise keep seeing it, and the panel measurement that follows would
@@ -319,7 +338,8 @@ public sealed class GanttRefreshOrchestrator(
         // Initialise and records that this repair belongs to R4.8A.
         if (_columnPresentation is { } columns)
         {
-            ColumnPresentationOutcome presentation = columns.EnsureClassification();
+            ColumnPresentationOutcome presentation =
+                columns.EnsureClassification(_repairColumnClassification);
             if (!presentation.Succeeded)
             {
                 return Refuse(
@@ -327,6 +347,8 @@ public sealed class GanttRefreshOrchestrator(
                     "The managed columns could not be restored to their schema state.");
             }
         }
+
+        long columnsCompleted = Stopwatch.GetTimestamp();
 
         // Step 5. Row identity: a row with no usable Id, or a duplicate one, cannot be
         // validated or projected, so it is seeded here rather than surfacing as a
@@ -367,6 +389,8 @@ public sealed class GanttRefreshOrchestrator(
             }
         }
 
+        long identityCompleted = Stopwatch.GetTimestamp();
+
         // Step 5b. Normalise type-dependent engine-hidden columns so a Type
         // change does not leave stale values the validator would reject. Writes
         // land on the sheet, so rows are re-read afterwards — exactly as identity
@@ -393,7 +417,8 @@ public sealed class GanttRefreshOrchestrator(
             }
         }
 
-        long readCompleted = Stopwatch.GetTimestamp();
+        long typesCompleted = Stopwatch.GetTimestamp();
+        long readCompleted = typesCompleted;
 
         // Step 6. Validate every row before derived worksheet writes or shape
         // mutation. This is required on both explicit and automatic refreshes.
@@ -463,6 +488,8 @@ public sealed class GanttRefreshOrchestrator(
             TraceRefresh("gantt.refresh blocked-validation empty-chart ownedShapes=0");
         }
 
+        long reportCompleted = Stopwatch.GetTimestamp();
+
         // The events carry each row's StyleKey straight from column K as read at
         // step 1. If the user changed a row's Type since the last Refresh, that cell
         // still holds the previous row's style key until we rewrite it here. The
@@ -487,6 +514,8 @@ public sealed class GanttRefreshOrchestrator(
             return Refuse(GanttRefreshRefusal.OutlineRefused, "The row outline groups could not be updated.");
         }
 
+        long outlineCompleted = Stopwatch.GetTimestamp();
+
         // Step 7. Duration. Calculated in Core and written in one bulk pass; an
         // already-correct column produces no write at all.
         DurationWritePlan plan = DurationCalculator.Plan(
@@ -497,6 +526,8 @@ public sealed class GanttRefreshOrchestrator(
         {
             return Refuse(GanttRefreshRefusal.DurationWriteRefused, "The Duration column could not be written.");
         }
+
+        long durationCompleted = Stopwatch.GetTimestamp();
 
         // Step 7b. StyleKey: column K matches each row's current Type. A row whose
         // cell already carries its type's default is absent from the plan, so a
@@ -589,6 +620,8 @@ public sealed class GanttRefreshOrchestrator(
             measuredBodyHeights = heights.BodyHeightsPt;
         }
 
+        long heightsCompleted = Stopwatch.GetTimestamp();
+
         // Step 9-10. Measure the live panel, then resolve the scene
         // inputs. The measurement is a read; the factory performs no host call
         // of its own.
@@ -635,6 +668,8 @@ public sealed class GanttRefreshOrchestrator(
                 validation.Issues,
                 duration.CellsWritten);
         }
+
+        long requestCompleted = Stopwatch.GetTimestamp();
 
         // Step 11. Build the scene. A refusal here is still before any shape write.
         // The request is held once: it is also what reports the range the scene
@@ -742,6 +777,16 @@ public sealed class GanttRefreshOrchestrator(
         // here the reconciliation stops at the first refusal (D3).
         ShapeDeltaSnapshot? previousSnapshot = _useDeltaCache ? _shapeDeltaCache?.Snapshot : null;
 
+        // The layout the shapes were placed against, fingerprinted from the measurement that
+        // produced them. Two passes with the same fingerprint describe the same anchors, so a
+        // cached, payload-identical shape is still where the last pass left it — the only way it
+        // could have moved is a hand drag, and owner ruling 2026-11-20 makes an automatic pass
+        // leave that for the explicit Refresh. A pass that WROTE a height cannot vouch for its own
+        // measurement, which the fingerprint's written-count input enforces.
+        string layoutFingerprint = ShapeDeltaCache.LayoutFingerprint(grid.Grid!, rowHeightsWritten);
+        bool layoutUnchanged = previousSnapshot is not null
+            && string.Equals(previousSnapshot.Layout, layoutFingerprint, StringComparison.Ordinal);
+
         // The snapshot is a cheap first filter, not a verdict: the reconciler verifies
         // every candidate skip against the live shape's geometry and placement before
         // honouring it (see ShapeReconciler). That verification is what makes a
@@ -759,12 +804,16 @@ public sealed class GanttRefreshOrchestrator(
         // mutation boundary so an unexpected exception cannot leave a cache
         // describing a partially changed shape collection.
         _shapeDeltaCache?.Invalidate();
+        long reconcileStarted = Stopwatch.GetTimestamp();
         ShapeReconcileOutcome reconcile = ShapeReconciler.Reconcile(
             _shapeWriter,
             new ShapeReconcileRequest(desired, HasBlockingErrors: false)
             {
                 PreviousSnapshot = previousSnapshot,
+                SkipLiveGeometryCheck = layoutUnchanged,
             });
+
+        long written = Stopwatch.GetTimestamp();
 
         TraceReconcileResult(
             reconcile,
@@ -776,12 +825,40 @@ public sealed class GanttRefreshOrchestrator(
                 worksheetWritesCompleted,
                 measurementCompleted,
                 buildCompleted,
-                Stopwatch.GetTimestamp()));
+                written));
+
+        // R4.10: the sub-phase line. The existing timings line answers "which coarse
+        // phase is expensive"; this one separates the reads that share a phase and the
+        // three write costs that share `write`. It also names the configuration input
+        // that moves the panel (HiddenColumns) and the exact ids a churn pass created or
+        // deleted, which is what a create/delete oscillation needs to be attributable.
+        TraceRefreshPhases(
+            reconcile,
+            config.Settings,
+            new PhaseTimings(
+                refreshStarted,
+                tableRead,
+                configRead,
+                guardCompleted,
+                columnsCompleted,
+                identityCompleted,
+                typesCompleted,
+                validationCompleted,
+                reportCompleted,
+                outlineCompleted,
+                durationCompleted,
+                worksheetWritesCompleted,
+                heightsCompleted,
+                measurementCompleted,
+                requestCompleted,
+                buildCompleted,
+                reconcileStarted,
+                written));
 
         if (reconcile.Succeeded)
         {
             _changeTracker?.Reset();
-            _shapeDeltaCache?.Commit(desired);
+            _shapeDeltaCache?.Commit(desired, layoutFingerprint);
 
             // R5.1a: the rendered range rides on the outcome so the ribbon can
             // repaint an AUTO end's displayed date from the pass it just ran,
@@ -951,6 +1028,108 @@ public sealed class GanttRefreshOrchestrator(
         long Measured,
         long Built,
         long Written);
+
+    /// <summary>
+    /// Timestamp boundaries of one refresh at sub-phase granularity (R4.10).
+    /// </summary>
+    /// <param name="Started">When the pipeline started.</param>
+    /// <param name="TableRead">After the table read.</param>
+    /// <param name="ConfigRead">After the configuration read.</param>
+    /// <param name="Guard">After the protection guard.</param>
+    /// <param name="Columns">After the column presentation check.</param>
+    /// <param name="Identity">After identity repair (and its conditional re-read).</param>
+    /// <param name="Types">After type normalisation (and its conditional re-read).</param>
+    /// <param name="Validated">After row validation.</param>
+    /// <param name="Report">After validation reporting and the all-invalid branch.</param>
+    /// <param name="Outline">After the outline write.</param>
+    /// <param name="Duration">After the Duration write.</param>
+    /// <param name="StyleKey">After the StyleKey write.</param>
+    /// <param name="Heights">After row-height normalisation.</param>
+    /// <param name="Grid">After the panel measurement.</param>
+    /// <param name="Request">After the scene-request composition.</param>
+    /// <param name="Built">After the scene build and translation.</param>
+    /// <param name="ReconcileStarted">Before the first shape mutation.</param>
+    /// <param name="Written">After the reconciliation completed.</param>
+    private readonly record struct PhaseTimings(
+        long Started,
+        long TableRead,
+        long ConfigRead,
+        long Guard,
+        long Columns,
+        long Identity,
+        long Types,
+        long Validated,
+        long Report,
+        long Outline,
+        long Duration,
+        long StyleKey,
+        long Heights,
+        long Grid,
+        long Request,
+        long Built,
+        long ReconcileStarted,
+        long Written);
+
+    /// <summary>
+    /// Writes the sub-phase timing line and the inputs a churn pass needs to be attributed.
+    /// </summary>
+    /// <param name="reconcile">The reconciliation result, carrying its own read/write split.</param>
+    /// <param name="settings">The workbook's effective settings, read once at step 2.</param>
+    /// <param name="timings">The sub-phase boundaries of this pass.</param>
+    /// <remarks>
+    /// <para>
+    /// The existing <c>gantt.refresh timings</c> line answers "which coarse phase is
+    /// expensive". This line separates the reads that share <c>read</c> and the three write
+    /// costs that share <c>write</c>, and it names the two things a create/delete oscillation
+    /// cannot otherwise be attributed without: the effective <c>HiddenColumns</c> setting
+    /// (the panel-width input) and the exact ids the pass created and deleted.
+    /// </para>
+    /// <para>
+    /// The id lists are bounded to ten entries so a full rebuild cannot flood the log. They
+    /// are taken in plan order, which is deterministic (desired order for creates, ordinal
+    /// order for deletes).
+    /// </para>
+    /// </remarks>
+    private void TraceRefreshPhases(
+        ShapeReconcileOutcome reconcile,
+        IReadOnlyDictionary<string, string> settings,
+        PhaseTimings timings)
+    {
+        if (_trace is null)
+        {
+            return;
+        }
+
+        string hiddenColumns = settings.TryGetValue(GanttColumnVisibility.SettingKey, out string? raw)
+            ? raw
+            : string.Empty;
+        ShapeReconcilePlan plan = reconcile.Plan;
+        TraceRefresh(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh phases ms table={ElapsedMs(timings.Started, timings.TableRead):0.#} config={ElapsedMs(timings.TableRead, timings.ConfigRead):0.#} guard={ElapsedMs(timings.ConfigRead, timings.Guard):0.#} columns={ElapsedMs(timings.Guard, timings.Columns):0.#} identity={ElapsedMs(timings.Columns, timings.Identity):0.#} types={ElapsedMs(timings.Identity, timings.Types):0.#} validate={ElapsedMs(timings.Types, timings.Validated):0.#} report={ElapsedMs(timings.Validated, timings.Report):0.#} outline={ElapsedMs(timings.Report, timings.Outline):0.#} duration={ElapsedMs(timings.Outline, timings.Duration):0.#} stylekey={ElapsedMs(timings.Duration, timings.StyleKey):0.#} heights={ElapsedMs(timings.StyleKey, timings.Heights):0.#} grid={ElapsedMs(timings.Heights, timings.Grid):0.#} request={ElapsedMs(timings.Grid, timings.Request):0.#} prewrite={ElapsedMs(timings.Built, timings.ReconcileStarted):0.#} ownedms={reconcile.OwnedMilliseconds:0.#} verify={reconcile.VerifyMilliseconds:0.#} ops={reconcile.OperationMilliseconds:0.#} hiddenColumns=\"{hiddenColumns}\" owned={reconcile.OwnedCount} createdIds={IdSample(plan.Of(ShapeReconcileAction.Create))} deletedIds={IdSample(plan.Of(ShapeReconcileAction.Delete))}"));
+    }
+
+    /// <summary>
+    /// Joins up to ten primitive identifiers from one operation list, or <c>-</c> when empty.
+    /// </summary>
+    /// <param name="operations">The operations whose identifiers are wanted.</param>
+    /// <returns>A comma-separated, bounded, deterministic sample.</returns>
+    private static string IdSample(IReadOnlyList<ShapeReconcileOperation> operations)
+    {
+        if (operations.Count == 0)
+        {
+            return "-";
+        }
+
+        int count = Math.Min(operations.Count, 10);
+        string[] ids = new string[count];
+        for (int index = 0; index < count; index++)
+        {
+            ids[index] = operations[index].PrimitiveId;
+        }
+
+        return string.Join(',', ids);
+    }
 
     /// <summary>
     /// Writes one diagnostic line naming what the reconciliation actually planned and

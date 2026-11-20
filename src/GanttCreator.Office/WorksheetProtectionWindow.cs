@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Globalization;
+
 namespace GanttCreator.Office;
 
 /// <summary>
@@ -59,9 +62,15 @@ public sealed class WorksheetProtectionWindow(
     {
         if (_depth == 0 && _state.IsArmed)
         {
+            // The release is one host call and it is on the click-to-plot path, so its cost is
+            // recorded rather than inferred: `command - total - post` attributed ~31-54 ms per
+            // converged pass to "the window or the ribbon", and this separates the two.
+            long started = Stopwatch.GetTimestamp();
             ProtectionWriteOutcome released = _port.Unprotect();
             Record(released, "window release");
-            _trace?.Invoke("gantt.protection window open released=" + released.Succeeded);
+            _trace?.Invoke(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.protection window open released={released.Succeeded} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
         }
 
         _depth++;
@@ -78,9 +87,12 @@ public sealed class WorksheetProtectionWindow(
         _depth--;
         if (_depth == 0 && _state.IsArmed)
         {
+            long started = Stopwatch.GetTimestamp();
             ProtectionWriteOutcome protectedOutcome = _port.Protect();
             Record(protectedOutcome, "window protect");
-            _trace?.Invoke("gantt.protection window close protected=" + protectedOutcome.Succeeded);
+            _trace?.Invoke(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.protection window close protected={protectedOutcome.Succeeded} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
         }
     }
 

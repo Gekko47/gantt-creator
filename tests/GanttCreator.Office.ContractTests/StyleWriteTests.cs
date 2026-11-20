@@ -61,9 +61,20 @@ public class StyleWriteTests
                 var fillMock = (Mock<Excel.FillFormat>)Mock.Get(fill);
                 _ = fillMock.SetupGet(f => f.ForeColor).Returns(foreColour.Object);
                 _ = fillMock.SetupGet(f => f.BackColor).Returns(backColour.Object);
-                _ = fillMock.Setup(f => f.Solid()).Callback(() => FillCalls.Add("Solid"));
+                _ = fillMock.SetupGet(f => f.Type).Returns(() => FillType);
+                _ = fillMock.SetupGet(f => f.Pattern).Returns(() => FillPattern);
+                _ = fillMock.Setup(f => f.Solid()).Callback(() =>
+                {
+                    FillType = MsoFillType.msoFillSolid;
+                    FillCalls.Add("Solid");
+                });
                 _ = fillMock.Setup(f => f.Patterned(It.IsAny<MsoPatternType>()))
-                    .Callback<MsoPatternType>(pattern => FillCalls.Add($"Patterned:{pattern}"));
+                    .Callback<MsoPatternType>(pattern =>
+                    {
+                        FillType = MsoFillType.msoFillPatterned;
+                        FillPattern = pattern;
+                        FillCalls.Add($"Patterned:{pattern}");
+                    });
                 _ = fillMock.SetupGet(f => f.Visible).Returns(() => FillVisible);
                 _ = fillMock.SetupSet(f => f.Visible = It.IsAny<MsoTriState>())
                     .Callback<MsoTriState>(value => FillVisible = value);
@@ -103,6 +114,18 @@ public class StyleWriteTests
             var shape = new Mock<Excel.Shape>();
             _ = shape.SetupGet(s => s.Fill).Returns(fill);
             _ = shape.SetupGet(s => s.Line).Returns(line);
+            _ = shape.SetupGet(s => s.Left).Returns(() => (float)Left);
+            _ = shape.SetupSet(s => s.Left = It.IsAny<float>())
+                .Callback<float>(value => { Left = value; GeometryWrites++; });
+            _ = shape.SetupGet(s => s.Top).Returns(() => (float)Top);
+            _ = shape.SetupSet(s => s.Top = It.IsAny<float>())
+                .Callback<float>(value => { Top = value; GeometryWrites++; });
+            _ = shape.SetupGet(s => s.Width).Returns(() => (float)Width);
+            _ = shape.SetupSet(s => s.Width = It.IsAny<float>())
+                .Callback<float>(value => { Width = value; GeometryWrites++; });
+            _ = shape.SetupGet(s => s.Height).Returns(() => (float)Height);
+            _ = shape.SetupSet(s => s.Height = It.IsAny<float>())
+                .Callback<float>(value => { Height = value; GeometryWrites++; });
             _ = shape.SetupGet(s => s.Name).Returns(primitiveId);
             _ = shape.SetupGet(s => s.AlternativeText)
                 .Returns(() => ShapeOwnershipTag.ForPrimitiveId(primitiveId));
@@ -115,8 +138,17 @@ public class StyleWriteTests
             // and ~3.6pt top/bottom, which would silently displace it from the
             // box the scene resolved.
             var frame = new Mock<Excel.TextFrame2>();
-            _ = frame.SetupSet(f => f.WordWrap = It.IsAny<MsoTriState>());
-            _ = frame.SetupSet(f => f.AutoSize = It.IsAny<MsoAutoSize>());
+            _ = frame.SetupSet(f => f.WordWrap = It.IsAny<MsoTriState>())
+                .Callback<MsoTriState>(value => WordWrap = value);
+            _ = frame.SetupGet(f => f.WordWrap).Returns(() => WordWrap);
+            _ = frame.SetupSet(f => f.AutoSize = It.IsAny<MsoAutoSize>())
+                .Callback<MsoAutoSize>(value => AutoSize = value);
+            _ = frame.SetupGet(f => f.AutoSize).Returns(() => AutoSize);
+            _ = frame.SetupGet(f => f.VerticalAnchor).Returns(() => VerticalAnchor);
+            _ = frame.SetupGet(f => f.MarginLeft).Returns(() => MarginLeft);
+            _ = frame.SetupGet(f => f.MarginRight).Returns(() => MarginRight);
+            _ = frame.SetupGet(f => f.MarginTop).Returns(() => MarginTop);
+            _ = frame.SetupGet(f => f.MarginBottom).Returns(() => MarginBottom);
             _ = frame.SetupSet(f => f.MarginLeft = It.IsAny<float>())
                 .Callback<float>(value => MarginLeft = value);
             _ = frame.SetupSet(f => f.MarginRight = It.IsAny<float>())
@@ -161,6 +193,32 @@ public class StyleWriteTests
 
         public List<string> FillCalls { get; } = [];
 
+        /// <summary>Clears every write counter so one fact can measure one pass.</summary>
+        public void ResetWriteCounters()
+        {
+            FillCalls.Clear();
+            GeometryWrites = 0;
+            VerticalAnchorWrites = 0;
+        }
+
+        /// <summary>The live box the modelled shape reports.</summary>
+        public double Left { get; private set; }
+
+        /// <summary>The live box the modelled shape reports.</summary>
+        public double Top { get; private set; }
+
+        /// <summary>The live box the modelled shape reports.</summary>
+        public double Width { get; private set; }
+
+        /// <summary>The live box the modelled shape reports.</summary>
+        public double Height { get; private set; }
+
+        /// <summary>How many geometry members the adapter wrote.</summary>
+        public int GeometryWrites { get; private set; }
+
+        /// <summary>The string the modelled text box currently carries.</summary>
+        public string Text { get; set; } = string.Empty;
+
         public bool Deleted { get; private set; }
 
         public int FillRgb { get; private set; }
@@ -170,6 +228,12 @@ public class StyleWriteTests
         public float FillTransparency { get; private set; }
 
         public MsoTriState FillVisible { get; private set; }
+
+        /// <summary>The live fill type the modelled shape reports.</summary>
+        public MsoFillType FillType { get; private set; } = MsoFillType.msoFillSolid;
+
+        /// <summary>The live fill pattern the modelled shape reports.</summary>
+        public MsoPatternType FillPattern { get; private set; }
 
         public int LineRgb { get; private set; }
 
@@ -193,6 +257,12 @@ public class StyleWriteTests
 
         /// <summary>The bottom internal margin the writer last wrote.</summary>
         public float MarginBottom { get; internal set; } = float.NaN;
+
+        /// <summary>The frame's word-wrap flag the live-read comparison reads back.</summary>
+        public MsoTriState WordWrap { get; private set; } = MsoTriState.msoFalse;
+
+        /// <summary>The frame's auto-size member the live-read comparison reads back.</summary>
+        public MsoAutoSize AutoSize { get; private set; } = MsoAutoSize.msoAutoSizeNone;
 
         /// <summary>
         /// The vertical anchor the adapter last wrote, or the host default when it
@@ -313,6 +383,7 @@ public class StyleWriteTests
         {
             if (_host.FailTextWriteCalled)
                 throw new InvalidOperationException("The host refused the text.");
+            _host.Text = request.Text ?? string.Empty;
             _host.VerticalAnchor = MsoVerticalAnchor.msoAnchorMiddle;
             _host.VerticalAnchorWrites++;
             _host.MarginLeft = (float)request.LeftInsetPt;
@@ -320,6 +391,21 @@ public class StyleWriteTests
             _host.MarginTop = 0;
             _host.MarginBottom = 0;
         }
+
+        /// <summary>
+        /// Models the live-read comparison without touching the COM members Castle cannot
+        /// proxy (<c>WordWrap</c>, <c>AutoSize</c>).
+        /// </summary>
+        internal override bool TextFormattingMatches(Excel.Shape shape, OfficeShapeRequest request) =>
+            _host.VerticalAnchor == MsoVerticalAnchor.msoAnchorMiddle
+            && _host.MarginLeft == (float)request.LeftInsetPt
+            && _host.MarginRight == 0
+            && _host.MarginTop == 0
+            && _host.MarginBottom == 0;
+
+        /// <summary>Compares the modelled string, so a converged pass is expressible.</summary>
+        internal override bool TextMatches(Excel.Shape shape, string? expected) =>
+            string.Equals(_host.Text, expected ?? string.Empty, StringComparison.Ordinal);
     }
 
     private sealed class ClearGuard : IWorksheetProtectionGuard
@@ -482,6 +568,49 @@ public class StyleWriteTests
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Equal(MsoVerticalAnchor.msoAnchorMiddle, host.VerticalAnchor);
+    }
+
+    /// <summary>
+    /// The read-back verification: a shape whose live style and box already match the
+    /// request pays reads and no writes. This is the converged case the live trace says
+    /// dominates a manual refresh (ADR-0054 amendment 2026-11-20).
+    /// </summary>
+    [Fact]
+    public void A_converged_shape_rewrites_neither_style_nor_geometry()
+    {
+        var host = new HostShape();
+        var writer = new StyleWriter(host, shapeAlreadyExists: true);
+        OfficeShapeRequest request = Request(fill: "#92D050", stroke: "#548235", width: 0.75);
+
+        Assert.True(writer.Update(request).Succeeded);
+        host.ResetWriteCounters();
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.Empty(host.FillCalls);
+        Assert.Equal(0, host.GeometryWrites);
+    }
+
+    /// <summary>
+    /// The typography and string halves of the same verification, for a label.
+    /// </summary>
+    [Fact]
+    public void A_converged_label_rewrites_neither_typography_nor_text()
+    {
+        var host = new HostShape(primitiveId: "row-1:label");
+        var writer = new TextBoxWriter(host, shapeAlreadyExists: true);
+        OfficeShapeRequest request = new(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 18)),
+            ZLayer.Label,
+            Text: "abc");
+
+        Assert.True(writer.Update(request).Succeeded);
+        host.ResetWriteCounters();
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.Equal(0, host.VerticalAnchorWrites);
+        Assert.Equal(0, host.GeometryWrites);
     }
 
     /// <summary>

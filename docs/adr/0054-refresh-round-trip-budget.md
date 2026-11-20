@@ -125,3 +125,31 @@ unusable-position stacks.
 Live gate: one Excel session with the same action script, measured with
 `scripts/_artifacts/analyze-refresh-log.ps1`, comparing **within-session** per-primitive and
 z-order ratios only. `Not run` at the time of writing — no host session in this change.
+
+## Amendment 2026-11-20 — read-back verification replaces blind re-application
+
+The 148-primitive live trace (`gantt.shape group-appearance`) showed a full refresh
+spending **969 ms on style** and **364 ms on typography**, because the host applies a
+`ShapeRange` style block *per member* (6.5–7.3 ms per shape) whatever the API shape; the
+148-shape preflight was only 9.6 ms. Batching more cannot reduce that cost.
+
+`ExcelShapeWriter` now compares the live values before writing:
+
+- **geometry** — the four live members are compared with the same tolerance
+  `GeometryMatches` uses, including the wider host-owned extent acceptance, and the four
+  writes are skipped when they match;
+- **style** — fill visibility/type/pattern/fore/back/transparency and line
+  visibility/fore/weight/dash/transparency are read, and the block is skipped when every
+  requested member matches;
+- **typography** — word wrap, auto-size, vertical anchor, the four margins, alignment, font
+  name/size/bold and font fill are read, and the block is skipped when they match;
+- **content** — `TextRange.Text` is compared before writing.
+
+Only non-null requested members are compared, so `null` still means "the scene resolved no
+value" (R4.7 D5). The earlier rejection of appearance skipping is superseded only where the
+live value can be read back; an unobservable member is still written. Reads are 3–10×
+cheaper than writes (see the table above), so a converged refresh trades ~2.4 s of writes
+for ~150 ms of reads. Tests:
+`StyleWriteTests.A_converged_shape_rewrites_neither_style_nor_geometry` and
+`A_converged_label_rewrites_neither_typography_nor_text`; every existing mismatch fact
+still pins that a changed member takes the block.

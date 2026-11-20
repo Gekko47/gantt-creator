@@ -194,6 +194,9 @@ public class ExcelWorksheetProtectionPortTests
         /// <summary>Gets or sets the host's outline-symbol option.</summary>
         public bool OutlineEnabled { get; set; }
 
+        /// <summary>Gets or sets whether the host refuses to report the option at all.</summary>
+        public bool OutlineUnreadable { get; set; }
+
         /// <summary>Gets how many times the host refused the option.</summary>
         public int RefusedSets { get; private set; }
 
@@ -235,8 +238,12 @@ public class ExcelWorksheetProtectionPortTests
         /// <summary>Gets or sets whether the host refuses to release the protection (a password).</summary>
         public bool RefuseUnprotect { get; set; }
 
+        /// <summary>Gets how many times the port released the protection.</summary>
+        public int UnprotectCalls { get; private set; }
+
         internal override void UnprotectWorksheet(Excel._Worksheet sheet)
         {
+            UnprotectCalls++;
             if (RefuseUnprotect)
             {
                 // The same refusal shape the adapter already catches: a sheet protected with a
@@ -247,7 +254,8 @@ public class ExcelWorksheetProtectionPortTests
             Protected = false;
         }
 
-        internal override bool? ReadOutlineSymbolsEnabled(Excel._Worksheet sheet) => OutlineEnabled;
+        internal override bool? ReadOutlineSymbolsEnabled(Excel._Worksheet sheet) =>
+            OutlineUnreadable ? null : OutlineEnabled;
 
         internal override bool SetOutlineSymbolsEnabled(Excel._Worksheet sheet)
         {
@@ -314,6 +322,69 @@ public class ExcelWorksheetProtectionPortTests
         // That is the sibling test's pinned behaviour and is why the before-set is the one that
         // has to land for the option to be repaired at all.
         Assert.Equal(1, port.RefusedSets);
+        Assert.Equal(1, port.UnprotectCalls);
+    }
+
+    /// <summary>
+    /// A protect on a sheet that still reports the outline option ON does not cycle the protection.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the warm-pass case, and it was the hot path: the writer closes its protection window
+    /// on every refresh, the sheet is always protected by then, so every pass released and
+    /// re-protected twice — once for the window's close and once inside this cycle. The live trace
+    /// recorded `protectedBefore=True ... cycled=ok` on every converged close.
+    /// </para>
+    /// <para>
+    /// The cycle is only needed when the option was LOST, which is what a reopened workbook
+    /// produces (`EnableOutlining` is not saved). An unreadable reading keeps the cycle, so the
+    /// healing path is unchanged; this test pins the case where the host proves it is unnecessary.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_protect_that_finds_the_outline_option_on_does_not_cycle_the_protection()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: true, trace)
+        {
+            OutlineEnabled = true,
+        };
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(0, port.UnprotectCalls);
+
+        string line = Assert.Single(trace);
+        Assert.Contains("protectedBefore=True", line, StringComparison.Ordinal);
+        Assert.Contains("cycled=skipped", line, StringComparison.Ordinal);
+        Assert.Contains("enabledAfter=true", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A protect whose outline option cannot be READ keeps the cycle, because unknown is not "on".
+    /// </summary>
+    /// <remarks>
+    /// The refusal-to-read case is exactly the state a protected sheet can be in, so treating it as
+    /// "already enabled" would silently drop the repair for the reopened workbook this cycle exists
+    /// for.
+    /// </remarks>
+    [Fact]
+    public void A_protect_whose_outline_option_is_unreadable_still_cycles()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: true, trace)
+        {
+            OutlineUnreadable = true,
+        };
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(1, port.UnprotectCalls);
+
+        string line = Assert.Single(trace);
+        Assert.Contains("cycled=ok", line, StringComparison.Ordinal);
     }
 
     /// <summary>

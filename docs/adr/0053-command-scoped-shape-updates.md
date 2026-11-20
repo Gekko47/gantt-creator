@@ -59,6 +59,14 @@ D5), so intent is unobservable after a write and a read-back cannot prove the sh
 matches. Geometry has no such member, which is exactly why ADR-0052 could verify it and why
 this ADR can safely move it.
 
+**Amendment 2026-11-20.** That rejection is narrowed, not reversed: a member the scene
+actually resolved (non-null) **can** be read back and compared before writing, and
+`ExcelShapeWriter` now does so for geometry, style, typography and text content (ADR-0054
+amendment 2026-11-20). `null` still means "leave the host alone" and is never compared, so
+intent remains unobservable only where the scene stated none. The live 148-primitive trace
+showed the host applying style per member, so this read-back is the remaining win where
+batching is not.
+
 ## Consequences
 
 - A relocation, a row-height change, or a date edit inside the existing plot scale costs a

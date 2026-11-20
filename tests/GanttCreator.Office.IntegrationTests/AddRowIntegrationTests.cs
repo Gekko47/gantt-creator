@@ -5,11 +5,27 @@ using Excel = Microsoft.Office.Interop.Excel;
 namespace GanttCreator.Office.IntegrationTests;
 
 /// <summary>Live-Excel acceptance gate for the R2.8 add-row commands.</summary>
+/// <remarks>
+/// <para>
+/// <b>Deliberately no <c>RegisterXll</c> in this class.</b> These facts drive the Office adapters
+/// directly, and the packed add-in is a second actor in the same Excel instance: its scheduler
+/// coalesces a refresh on <c>Initialise</c>'s own cell writes. At a 100 ms first-change window that
+/// pass lands while these assertions run, which failed
+/// <c>Insert_appends_all_three_command_rows_without_rendering</c> (it asserts the owned set is
+/// EMPTY, and the pass had already built a complete chart) and then
+/// <c>An_outside_table_selection_appends_and_still_reserves_the_padding_row</c>. Both were always
+/// racing the scheduler; the 300 ms window only outlasted them.
+/// </para>
+/// <para>
+/// Nothing here needs the add-in: <c>Initialise</c>, <c>GanttRowInserter.Insert</c>,
+/// <c>ExcelShapeWriter.ListOwned</c>, the TypeOptions defined name and the Type-column validation are
+/// all plain Office API. The same deliberate omission is documented on
+/// <c>ColumnVisibilityRoundTripIntegrationTests</c> and <c>ProtectionArmingIntegrationTests</c>.
+/// </para>
+/// </remarks>
 public class AddRowIntegrationTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;
-
-    private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
 
     private static GanttRowId FixedId(char suffix) =>
         GanttRowId.Parse("G-0123456789abcdef0123456789abcde" + suffix);
@@ -22,18 +38,11 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             ExcelWorkbookInitialiser initialiser = new(fixture.Excel);
             WorkbookInitialiseOutcome initialised = initialiser.Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
-
-            // ADR-0055: the pack this test loads would otherwise protect the sheet on its own
-            // background refresh and refuse this test's next insert with TargetProtected. This test
-            // is about the inserter, so it turns the chart lock off through the user switch.
-            OfficeFixture.DisableChartProtection(workbook);
 
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
@@ -112,12 +121,9 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            OfficeFixture.DisableChartProtection(workbook);
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
 
@@ -175,16 +181,12 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook first = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            OfficeFixture.DisableChartProtection(first);
 
             Excel.Workbook second = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            OfficeFixture.DisableChartProtection(second);
 
             using var scope = new OfficeFixture.ComScope();
             var sheet = (Excel.Worksheet)scope.Track(second.Sheets[GanttWorkbookContract.GanttSheetLabel]);
@@ -231,12 +233,9 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            OfficeFixture.DisableChartProtection(workbook);
 
             // The workbook is NOT tracked: CreateWorkbook hands that proxy to the
             // fixture, which closes and releases it during teardown, and tracking it
@@ -364,27 +363,27 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     /// real worksheet-row insert below the table reserves a fresh padding row.
     /// </summary>
     /// <remarks>
-/// <para>
-/// This covers the branch that was never exercised against a live host. Every
-/// contract test substitutes <c>InsertWorksheetRowBelowTable</c>, so the COM call
-/// itself -- the only thing that actually moves the padding row -- had no coverage
-/// at all. It is the exact path that produces "the padding row still takes data",
-/// and its failure mode was four silent returns that all reported success.
-/// </para>
-/// <para>
-/// The append is driven by an active cell on a DIFFERENT SHEET, which is the owner's
-/// "anywhere else" rule stated in its strongest form. Asserting
-/// <c>PaddingRowReserved</c> is what distinguishes the row insert having happened
-/// from the host having silently refused it, which no count-based assertion could.
-/// </para>
-/// <para>
-/// Padding-row emptiness and the moved index are asserted in this same body on
-/// purpose: the COM-proxy leak ratchet counts forced kills per test body, so
-/// splitting this narrative would add a kill to a ceiling the repository records as
-/// not raisable.
-/// </para>
-/// </remarks>
-[Trait("Category", "OfficeIntegration")]
+    /// <para>
+    /// This covers the branch that was never exercised against a live host. Every
+    /// contract test substitutes <c>InsertWorksheetRowBelowTable</c>, so the COM call
+    /// itself -- the only thing that actually moves the padding row -- had no coverage
+    /// at all. It is the exact path that produces "the padding row still takes data",
+    /// and its failure mode was four silent returns that all reported success.
+    /// </para>
+    /// <para>
+    /// The append is driven by an active cell on a DIFFERENT SHEET, which is the owner's
+    /// "anywhere else" rule stated in its strongest form. Asserting
+    /// <c>PaddingRowReserved</c> is what distinguishes the row insert having happened
+    /// from the host having silently refused it, which no count-based assertion could.
+    /// </para>
+    /// <para>
+    /// Padding-row emptiness and the moved index are asserted in this same body on
+    /// purpose: the COM-proxy leak ratchet counts forced kills per test body, so
+    /// splitting this narrative would add a kill to a ceiling the repository records as
+    /// not raisable.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task An_outside_table_selection_appends_and_still_reserves_the_padding_row()
     {
@@ -392,12 +391,9 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            OfficeFixture.DisableChartProtection(workbook);
 
             using var scope = new OfficeFixture.ComScope();
             var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
@@ -542,8 +538,6 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             WorkbookInitialiseOutcome initialised = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
@@ -611,18 +605,11 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(
-                fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             ExcelWorkbookInitialiser initialiser = new(fixture.Excel);
             WorkbookInitialiseOutcome initialised = initialiser.Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
-
-            // ADR-0055: the loaded pack protects the sheet on its own background refresh,
-            // which would refuse this test's insert with TargetProtected.
-            OfficeFixture.DisableChartProtection(workbook);
 
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];

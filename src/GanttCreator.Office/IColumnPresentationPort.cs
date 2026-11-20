@@ -76,6 +76,25 @@ public sealed record ColumnPresentationOutcome(int ColumnsRestored, ColumnPresen
 public interface IColumnPresentationPort
 {
     /// <summary>Restores the hidden and locked state of every managed column.</summary>
+    /// <param name="repair">
+    /// <see langword="true"/> to read the live flags and rewrite any that drifted; <see langword="false"/>
+    /// to trust what the initialiser and the last explicit Refresh left behind, making no host call.
+    /// </param>
     /// <returns>How many columns were written, or the refusal reason.</returns>
-    ColumnPresentationOutcome EnsureClassification();
+    /// <remarks>
+    /// <para>
+    /// <b>Why an automatic pass may decline.</b> The flag verification measured 19-45 ms per pass on
+    /// the owner's workbook (2026-11-20: `columns=19`, `22.4`, `27.3`, `45.1`), and the only things
+    /// that can change the state are a user unhiding an engine column or unlocking its cells. Owner
+    /// ruling 2026-11-20: an automatic pass keeps the chart's geometry and content correct and does
+    /// not re-assert presentation, because the explicit Refresh repairs it — the same division of
+    /// labour the drag ruling already applies to shape geometry.
+    /// </para>
+    /// <para>
+    /// <b>What that costs.</b> A column the user unhid stays visible until the next explicit Refresh.
+    /// The chart still renders from the columns it measures, so the result is "largely correct" and
+    /// one click repairs it — which is the trade the owner accepted rather than the 19-45 ms.
+    /// </para>
+    /// </remarks>
+    ColumnPresentationOutcome EnsureClassification(bool repair = true);
 }

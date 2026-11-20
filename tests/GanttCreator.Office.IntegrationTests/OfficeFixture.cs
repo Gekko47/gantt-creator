@@ -507,9 +507,11 @@ internal class OfficeFixture : IAsyncLifetime
     /// <b>Why this exists.</b> Every live test that calls <see cref="RegisterXll"/> loads the real
     /// add-in into the same Excel instance, and the add-in's scheduler coalesces an automatic
     /// refresh on the test's own cell writes. Since ADR-0055 that refresh arms and PROTECTS the
-    /// sheet, so the test's next direct-adapter write is refused <c>TargetProtected</c> — measured:
-    /// <c>AddRowIntegrationTests</c> loses its second insert to exactly that, and the failure set
-    /// moved between three consecutive gate runs. The product is behaving; the test is racing it.
+    /// sheet, so the test's next direct-adapter write is refused <c>TargetProtected</c> — measured
+    /// 2026-11-20: <c>AddRowIntegrationTests</c> lost its second insert to exactly that, and its
+    /// failure set moved between three consecutive gate runs. That family now loads no pack at all
+    /// (its own remarks say why); every other caller here still does. The product is behaving; the
+    /// test is racing it.
     /// </para>
     /// <para>
     /// This uses the switch that already exists for the purpose (<c>ProtectGanttSheet</c>, schema

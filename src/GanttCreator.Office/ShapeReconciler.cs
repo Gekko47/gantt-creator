@@ -237,12 +237,17 @@ public static partial class ShapeReconciler
         // the same answer.
         using IDisposable batch = writer.BeginBatch();
 
+        // Diagnostic boundaries (R4.10). Each figure is an elapsed-tick reading used only by
+        // the phase trace; none of them changes a decision or the host calls a pass makes.
+        long ownedStarted = Stopwatch.GetTimestamp();
         IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
+        double ownedMilliseconds = Stopwatch.GetElapsedTime(ownedStarted).TotalMilliseconds;
         ShapeDeltaSnapshot? previous = request.PreviousSnapshot;
         bool cacheMatchesOwned = previous is not null
             && owned.Count == previous.Signatures.Count
             && owned.All(previous.Signatures.ContainsKey);
         HashSet<string>? unchangedIds = null;
+        long verifyStarted = 0L;
         if (cacheMatchesOwned && previous is not null)
         {
             unchangedIds = new HashSet<string>(StringComparer.Ordinal);
@@ -254,6 +259,17 @@ public static partial class ShapeReconciler
                     _ = unchangedIds.Add(item.PrimitiveId);
                 }
             }
+
+            // The skip proof and the geometry-only classification together are the
+            // read-only "is the host still where we left it" phase. Measure them as one
+            // block so the no-op floor can be attributed to reads, not writes.
+            //
+            // Owner ruling 2026-11-20: this phase is SKIPPED when the caller has proved the
+            // measured layout is unchanged, because an automatic pass must not repair a
+            // shape the user dragged on an unlocked chart; the explicit Refresh (no
+            // snapshot) always runs it. Skipping leaves every cached match marked
+            // unchanged, so nothing is written for it at all.
+            verifyStarted = Stopwatch.GetTimestamp();
 
             // Verify the candidate skips against the LIVE host before trusting them.
             //
@@ -267,7 +283,7 @@ public static partial class ShapeReconciler
             // colour means "leave the host alone"; four absolute numbers carry no such
             // ambiguity), so the check is sound and costs a handful of property reads per
             // unchanged shape instead of a rewrite.
-            if (unchangedIds.Count > 0)
+            if (!request.SkipLiveGeometryCheck && unchangedIds.Count > 0)
             {
                 List<string> drifted = [];
                 foreach (OfficeShapeRequest item in request.Desired)
@@ -295,7 +311,10 @@ public static partial class ShapeReconciler
         // writing the style is the honest repair, and a full update is what the verified
         // skip's counterpart has always done.
         Dictionary<string, ShapeUpdateScope>? scopes = null;
-        if (unchangedIds is not null && previous is not null && previous.Parts.Count > 0)
+        if (!request.SkipLiveGeometryCheck
+            && unchangedIds is not null
+            && previous is not null
+            && previous.Parts.Count > 0)
         {
             foreach (OfficeShapeRequest item in request.Desired)
             {
@@ -338,7 +357,48 @@ public static partial class ShapeReconciler
             }
         }
 
+        double verifyMilliseconds = verifyStarted == 0L
+            ? 0d
+            : Stopwatch.GetElapsedTime(verifyStarted).TotalMilliseconds;
+
         ShapeReconcilePlan plan = Plan(request.Desired, owned, unchangedIds, scopes);
+
+        long operationsStarted = Stopwatch.GetTimestamp();
+
+        // The grouped appearance pass: every appearance-changing update is written once
+        // per identical appearance and, where the port supports it, geometry and content
+        // are verified in the same pass. The reconciler then runs the per-shape dispatch
+        // only for the identifiers the port reports as still differing; a port that does
+        // not verify reports null and keeps the previous behaviour (every shape runs).
+        // A line that moved has Scope.Geometry and keeps its own move-only path.
+        IReadOnlyList<OfficeShapeRequest> appearanceUpdates = [.. plan.Operations
+            .Where(operation => operation.Action == ShapeReconcileAction.Update
+                && operation.Scope != ShapeUpdateScope.Geometry)
+            .Select(operation => operation.Request!)];
+        HashSet<string>? contentPending = null;
+        if (appearanceUpdates.Count > 0)
+        {
+            ShapeGroupWriteOutcome grouped = writer.ApplyGroupAppearance(appearanceUpdates);
+            if (!grouped.Succeeded)
+            {
+                return new ShapeReconcileOutcome(
+                    ShapeReconcileRefusal.OperationRefused,
+                    plan,
+                    new ShapeReconcileFailure(grouped.FailedPrimitiveId!, grouped.Refusal!.Value),
+                    0)
+                {
+                    OwnedCount = owned.Count,
+                    OwnedMilliseconds = ownedMilliseconds,
+                    VerifyMilliseconds = verifyMilliseconds,
+                    OperationMilliseconds = Stopwatch.GetElapsedTime(operationsStarted).TotalMilliseconds,
+                };
+            }
+
+            if (grouped.Mismatched is { } mismatched)
+            {
+                contentPending = new HashSet<string>(mismatched, StringComparer.Ordinal);
+            }
+        }
 
         int completed = 0;
         foreach (ShapeReconcileOperation operation in plan.Operations)
@@ -347,7 +407,9 @@ public static partial class ShapeReconciler
             {
                 ShapeReconcileAction.Update when operation.Scope == ShapeUpdateScope.Geometry =>
                     writer.UpdateGeometry(operation.Request!),
-                ShapeReconcileAction.Update => writer.Update(operation.Request!),
+                ShapeReconcileAction.Update when contentPending is not null
+                    && !contentPending.Contains(operation.PrimitiveId) => ShapeWriteOutcome.Ok(),
+                ShapeReconcileAction.Update => writer.UpdateContent(operation.Request!),
                 ShapeReconcileAction.Create => writer.Create(operation.Request!),
                 ShapeReconcileAction.Delete => writer.Delete(operation.PrimitiveId),
                 _ => throw new InvalidOperationException(
@@ -364,11 +426,19 @@ public static partial class ShapeReconciler
                     plan,
                     new ShapeReconcileFailure(operation.PrimitiveId, outcome.Refusal!.Value),
                     completed
-                );
+                )
+                {
+                    OwnedCount = owned.Count,
+                    OwnedMilliseconds = ownedMilliseconds,
+                    VerifyMilliseconds = verifyMilliseconds,
+                    OperationMilliseconds = Stopwatch.GetElapsedTime(operationsStarted).TotalMilliseconds,
+                };
             }
 
             completed++;
         }
+
+        double operationMilliseconds = Stopwatch.GetElapsedTime(operationsStarted).TotalMilliseconds;
 
         // The z-order pass runs only once every shape write has succeeded, so a
         // half-applied plan is never stacked as though it were complete.
@@ -385,15 +455,29 @@ public static partial class ShapeReconciler
                 {
                     ZOrderApplied = true,
                     ZOrderMilliseconds = zOrderMilliseconds,
+                    OwnedCount = owned.Count,
+                    OwnedMilliseconds = ownedMilliseconds,
+                    VerifyMilliseconds = verifyMilliseconds,
+                    OperationMilliseconds = operationMilliseconds,
                 }
                 : new ShapeReconcileOutcome(ShapeReconcileRefusal.ZOrderRefused, plan, null, completed)
                 {
                     ZOrderApplied = true,
                     ZOrderMilliseconds = zOrderMilliseconds,
+                    OwnedCount = owned.Count,
+                    OwnedMilliseconds = ownedMilliseconds,
+                    VerifyMilliseconds = verifyMilliseconds,
+                    OperationMilliseconds = operationMilliseconds,
                 };
         }
 
-        return new ShapeReconcileOutcome(null, plan, null, completed);
+        return new ShapeReconcileOutcome(null, plan, null, completed)
+        {
+            OwnedCount = owned.Count,
+            OwnedMilliseconds = ownedMilliseconds,
+            VerifyMilliseconds = verifyMilliseconds,
+            OperationMilliseconds = operationMilliseconds,
+        };
     }
 
     /// <summary>

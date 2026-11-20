@@ -1494,6 +1494,17 @@ public class ExcelShapeWriterTests
         /// <summary>How many alternative-text reads the ownership scan issued.</summary>
         public int AlternativeTextReads { get; private set; }
 
+        /// <summary>How many shape-name reads the walked collections issued.</summary>
+        /// <remarks>
+        /// Counted because the owned walk and the batch name index are two different passes
+        /// over the same collection, and the second one is pure duplication: both read every
+        /// shape's <c>Name</c>, one to find the owned set and one to answer name lookups.
+        /// </remarks>
+        public int NameReads { get; private set; }
+
+        /// <summary>The live alternative text of each modelled shape, so a test can edit one.</summary>
+        private readonly Dictionary<string, string> _tags = new(StringComparer.Ordinal);
+
         /// <summary>How many placement writes the adapter issued.</summary>
         public int PlacementWrites { get; private set; }
 
@@ -1516,12 +1527,18 @@ public class ExcelShapeWriterTests
             Excel.XlPlacement placement = Excel.XlPlacement.xlMove)
         {
             Excel.XlPlacement currentPlacement = placement;
+            string currentTag = alternativeText ?? string.Empty;
+            _tags[name] = currentTag;
             var shape = new Mock<Excel.Shape>();
-            _ = shape.SetupGet(s => s.Name).Returns(name);
+            _ = shape.SetupGet(s => s.Name).Returns(() =>
+            {
+                NameReads++;
+                return name;
+            });
             _ = shape.SetupGet(s => s.AlternativeText).Returns(() =>
             {
                 AlternativeTextReads++;
-                return alternativeText ?? string.Empty;
+                return _tags[name];
             });
             _ = shape.SetupGet(s => s.Placement).Returns(() => currentPlacement);
             _ = shape.SetupSet(s => s.Placement = It.IsAny<Excel.XlPlacement>())
@@ -1540,6 +1557,16 @@ public class ExcelShapeWriterTests
             _byName[name] = shape;
             _ordered.Add(shape);
             _zOrder.Add(name);
+            return this;
+        }
+
+        /// <summary>Edits a modelled shape's alternative text, as the user can.</summary>
+        /// <param name="name">The shape to edit.</param>
+        /// <param name="alternativeText">The new text.</param>
+        /// <returns>This writer, for chaining.</returns>
+        public BatchWriter EditTag(string name, string alternativeText)
+        {
+            _tags[name] = alternativeText;
             return this;
         }
 
@@ -1896,6 +1923,79 @@ public class ExcelShapeWriterTests
 
         // One read for the candidate, none for the user's shape.
         Assert.Equal(1, writer.AlternativeTextReads);
+    }
+
+    /// <summary>
+    /// The owned walk and the geometry verification share one read of each name and tag
+    /// inside a batch.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two passes were reading the same facts from the same collection: the owned-set walk
+    /// read every name and every candidate's tag, and the reconcile's first name lookup
+    /// walked every name again to build the batch index, after which each verified shape
+    /// re-read its tag. On the owner's 148-shape workbook that was
+    /// <c>ownedms=29.6</c> and <c>verify=31.9</c> of a 195 ms automatic pass.
+    /// </para>
+    /// <para>
+    /// The counters are the assertion: two shapes, one name read and one tag read each for
+    /// the whole pass. Before the walk fed the memos this was 4 and 3.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_owned_walk_feeds_the_batch_name_index_and_the_tag_memo()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"))
+            .Add("row-2:bar", ShapeOwnershipTag.ForPrimitiveId("row-2:bar"));
+
+        using (writer.BeginBatch())
+        {
+            Assert.Equal(["row-1:bar", "row-2:bar"], writer.ListOwned());
+            _ = writer.GeometryMatches(RectangleRequest("row-1:bar"));
+            _ = writer.GeometryMatches(RectangleRequest("row-2:bar"));
+        }
+
+        Assert.Equal(2, writer.NameReads);
+        Assert.Equal(2, writer.AlternativeTextReads);
+        Assert.Equal(0, writer.IndexedNameLookups);
+    }
+
+    /// <summary>
+    /// The remembered ownership answer never outlives the batch that read it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the R4.8 guarantee the memo must not weaken: a user edits a shape's
+    /// alternative text between two refreshes, and the next refresh must see the edit and
+    /// stop treating the shape as owned. A cache that survived the batch would keep
+    /// styling and would eventually delete the user's own annotation.
+    /// </para>
+    /// <para>
+    /// It is also the positive control for the test above: if the memo were global rather
+    /// than batch-scoped, that test would still pass while this one fails.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_tag_memo_does_not_outlive_the_batch()
+    {
+        var writer = new BatchWriter().Add("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+
+        using (writer.BeginBatch())
+        {
+            Assert.Equal(["row-1:bar"], writer.ListOwned());
+        }
+
+        // The user edits the tag between two refreshes.
+        _ = writer.EditTag("row-1:bar", "a note the user typed");
+
+        using (writer.BeginBatch())
+        {
+            Assert.Empty(writer.ListOwned());
+        }
+
+        // Two batches, two reads of the live tag: nothing was served from the first batch.
+        Assert.Equal(2, writer.AlternativeTextReads);
     }
 
     /// <summary>

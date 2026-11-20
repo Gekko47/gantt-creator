@@ -100,7 +100,16 @@ public class ExcelShapeWriter(
     /// as measured before this row.
     /// </para>
     /// </remarks>
-    private readonly bool _reuseTemplates = reuseTemplates;
+    /// <summary>
+    /// Gets whether an open batch may create a shape by duplicating an earlier shape with
+    /// the same appearance, rather than by calling <c>AddShape</c> and re-applying the style.
+    /// </summary>
+    /// <remarks>
+    /// Opt-in, because the staging and live compositions own their create paths separately. A
+    /// caller that builds the writer without the flag silently keeps the old create cost, so
+    /// the live factory is pinned by a test rather than read from its constructor call.
+    /// </remarks>
+    internal bool ReusesTemplates { get; } = reuseTemplates;
 
     /// <summary>
     /// The ownership scheme this adapter stamps and proves: the live chart's scheme by
@@ -128,6 +137,37 @@ public class ExcelShapeWriter(
     /// successful lookups, not an authoritative list.
     /// </summary>
     private Dictionary<string, Excel.Shape>? _batchProxies;
+
+    /// <summary>
+    /// The ownership answer already read for a shape name in the open batch, so one walk
+    /// can answer every later ownership question without a second host read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Empty outside a batch, and that is the contract.</b> Only a batch fills it, and
+    /// both batch boundaries clear it, because a remembered "owned" answer would be a
+    /// correctness defect the moment a user edited a shape's alternative text between two
+    /// standalone calls — R4.8's near-miss case. A non-batch call therefore always reads
+    /// the host, as it did before this field existed.
+    /// </para>
+    /// <para>
+    /// <b>Why it is sound inside a batch, and what would break it.</b> The answer is
+    /// reusable only because nothing but this writer can change a shape's alternative text
+    /// while the batch runs: events are off for the whole refresh (ADR-0020), the refresh
+    /// is a single STA call, and the writer maintains this memo at the two points that can
+    /// change ownership — <see cref="ApplyOwnershipStamp"/> writes a tag and
+    /// <see cref="Delete"/> removes a shape. The name index carries the same argument and
+    /// states it in the same terms.
+    /// </para>
+    /// <para>
+    /// <b>Measured reason.</b> A converged pass read every owned shape's tag twice: once in
+    /// <see cref="ListOwned"/> to build the owned set, and once per shape in the geometry
+    /// verification; and the first name lookup also walked every shape's <c>Name</c> a
+    /// second time to build the batch index. On the owner's 148-shape workbook those were
+    /// <c>ownedms=29.6</c> and <c>verify=31.9</c> of a 195 ms automatic pass.
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<string, bool> _batchTags = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The first shape created for each appearance signature in the open batch. A later
@@ -196,6 +236,70 @@ public class ExcelShapeWriter(
         }
     }
 
+    /// <summary>
+    /// The members a Fill/Line write depends on. Deliberately excludes every typography
+    /// member: a style write cannot change them, so two shapes that differ only in font or
+    /// text colour can share one style range.
+    /// </summary>
+    private readonly record struct StyleGroupKey(
+        OfficeShapeKind Kind,
+        bool HostOwnsExtent,
+        ColourHex? FillColour,
+        ColourHex? StrokeColour,
+        double? LineWidthPt,
+        GanttHatchPattern HatchPattern,
+        GanttStrokeDash StrokeDash,
+        int LineDxSign,
+        int LineDySign)
+    {
+        internal static StyleGroupKey For(OfficeShapeRequest request)
+        {
+            int dx = 0;
+            int dy = 0;
+            if (request.Kind == OfficeShapeKind.Line
+                && request.Geometry.From is { } from
+                && request.Geometry.To is { } to)
+            {
+                dx = Math.Sign(to.X - from.X);
+                dy = Math.Sign(to.Y - from.Y);
+            }
+
+            return new StyleGroupKey(
+                request.Kind,
+                request.HostOwnsExtent,
+                request.FillColour,
+                request.StrokeColour,
+                request.LineWidthPt,
+                request.HatchPattern,
+                request.StrokeDash,
+                dx,
+                dy);
+        }
+    }
+
+    /// <summary>
+    /// The members a <c>TextFrame2</c> write depends on. Deliberately excludes Fill/Line:
+    /// a typography write cannot change the shape's fill or stroke, so two text boxes that
+    /// differ only in fill can share one typography range.
+    /// </summary>
+    private readonly record struct TypographyGroupKey(
+        string? FontFamily,
+        double? FontSizePt,
+        bool? Bold,
+        GanttTextAlignment? Alignment,
+        ColourHex? TextColour,
+        double LeftInsetPt)
+    {
+        internal static TypographyGroupKey For(OfficeShapeRequest request) =>
+            new(
+                request.FontFamily,
+                request.FontSizePt,
+                request.Bold,
+                request.Alignment,
+                request.TextColour,
+                request.LeftInsetPt);
+    }
+
     // Per-step create timings for the open batch, in Stopwatch ticks (R5.18n). The live
     // trace reports one `write=` figure for the whole pass, which cannot distinguish
     // "Excel is slow at AddShape" from "we issue too many round trips per shape": a
@@ -234,7 +338,8 @@ public class ExcelShapeWriter(
         _batchActive = true;
         _batchShapes = null;
         _batchProxies = new Dictionary<string, Excel.Shape>(StringComparer.Ordinal);
-        _batchTemplates = _reuseTemplates ? [] : null;
+        _batchTags.Clear();
+        _batchTemplates = ReusesTemplates ? [] : null;
         _createTicksLookup = 0;
         _createTicksAdd = 0;
         _createTicksStyle = 0;
@@ -256,6 +361,7 @@ public class ExcelShapeWriter(
             owner._batchActive = false;
             owner._batchShapes = null;
             owner._batchProxies = null;
+            owner._batchTags.Clear();
             owner._batchTemplates = null;
             owner._batchNameIndexed = false;
         }
@@ -644,7 +750,7 @@ public class ExcelShapeWriter(
             return null;
         }
 
-        if (!ApplyGeometry(duplicate, request.Kind, request.Geometry))
+        if (!ApplyGeometry(duplicate, request.Kind, request.Geometry, request.HostOwnsExtent))
         {
             DiscardUnownedShape(duplicate);
             return RefuseCreate(request, ShapeWriteRefusal.InvalidGeometry, "geometry");
@@ -729,7 +835,256 @@ public class ExcelShapeWriter(
     public ShapeWriteOutcome Update(OfficeShapeRequest request) => UpdateCore(request, applyAppearance: true);
 
     /// <inheritdoc />
-    public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) => UpdateCore(request, applyAppearance: false);
+    public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) =>
+        UpdateCore(request, applyAppearance: false, applyContent: false);
+
+    /// <inheritdoc />
+    public ShapeWriteOutcome UpdateContent(OfficeShapeRequest request) =>
+        UpdateCore(request, applyAppearance: false, applyContent: true);
+
+    /// <inheritdoc />
+    public ShapeGroupWriteOutcome ApplyGroupAppearance(IReadOnlyList<OfficeShapeRequest> requests)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        if (requests.Count == 0)
+        {
+            return ShapeGroupWriteOutcome.Ok();
+        }
+
+        // Diagnostic: the grouped pass only wins when shapes actually share an appearance.
+        // The live full-refresh trace said 148 updates still cost ~10-18 ms each, which is
+        // the per-shape figure, so the group cardinality is the fact that decides whether
+        // the key is too granular. Recorded only; it changes no decision.
+        long groupStarted = Stopwatch.GetTimestamp();
+
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        {
+            return ShapeGroupWriteOutcome.Refused(requests[0].PrimitiveId, guardRefusal.Refusal!.Value);
+        }
+
+        Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
+        if (shapes is null)
+        {
+            return ShapeGroupWriteOutcome.Refused(requests[0].PrimitiveId, refusal!.Refusal!.Value);
+        }
+
+        // Two independent buckets, because the two write families touch disjoint members:
+        // a Fill/Line write never touches TextFrame2, and a TextFrame2 write never touches
+        // Fill/Line. The CREATION key must match on both (a duplicate inherits both), but an
+        // UPDATE can coalesce further by bucketing each family on the members it actually
+        // writes. Measured on the owner's 148-shape workbook: the combined key produced 22
+        // groups and the group pass cost 1.35-1.53 s; a text group costs ~36-40 ms while a
+        // style group is ~8-10 ms, so merging text groups that differ only by fill (and
+        // style groups that differ only by typography) removes the expensive groups without
+        // skipping or repeating a single property write.
+        Dictionary<StyleGroupKey, List<OfficeShapeRequest>> styleGroups = [];
+        List<StyleGroupKey> styleOrder = [];
+        Dictionary<TypographyGroupKey, List<OfficeShapeRequest>> textGroups = [];
+        List<TypographyGroupKey> textOrder = [];
+        Dictionary<string, Excel.Shape> resolvedShapes = new(requests.Count, StringComparer.Ordinal);
+        List<string> mismatched = [];
+
+        long preflightStarted = Stopwatch.GetTimestamp();
+        foreach (OfficeShapeRequest request in requests)
+        {
+            if (!Validate(request, out ShapeWriteRefusal? invalid))
+            {
+                return ShapeGroupWriteOutcome.Refused(request.PrimitiveId, invalid!.Value);
+            }
+
+            // Resolve and ownership-prove every shape before writing any of it. A missing
+            // or user-retagged shape refuses the whole pass rather than styling the rest
+            // and then reporting a failure against a half-written set.
+            Excel.Shape? shape = FindShapeByName(shapes, NameFor(request.PrimitiveId));
+            if (shape is null || !CarriesOwnershipTagFor(shape, request.PrimitiveId))
+            {
+                return ShapeGroupWriteOutcome.Refused(request.PrimitiveId, ShapeWriteRefusal.NotFound);
+            }
+
+            resolvedShapes[request.PrimitiveId] = shape;
+
+            // Geometry and content are verified here too, so a fully matching shape never
+            // reaches the per-shape dispatch. The reads are the same ones UpdateContent
+            // would perform; doing them once, in this pass, removes a second tag read and
+            // a second dispatch per shape. A mismatch is named and the reconciler sends
+            // only that shape down the write path.
+            bool geometryDiffers = !MatchesGeometry(shape, request);
+            bool contentDiffers = request.Kind == OfficeShapeKind.TextBox
+                && !TextMatches(shape, request.Text);
+            if (geometryDiffers || contentDiffers)
+            {
+                mismatched.Add(request.PrimitiveId);
+            }
+
+            StyleGroupKey styleKey = StyleGroupKey.For(request);
+            if (!styleGroups.TryGetValue(styleKey, out List<OfficeShapeRequest>? styleGroup))
+            {
+                styleGroup = [];
+                styleGroups.Add(styleKey, styleGroup);
+                styleOrder.Add(styleKey);
+            }
+
+            styleGroup.Add(request);
+
+            if (request.Kind == OfficeShapeKind.TextBox)
+            {
+                TypographyGroupKey textKey = TypographyGroupKey.For(request);
+                if (!textGroups.TryGetValue(textKey, out List<OfficeShapeRequest>? textGroup))
+                {
+                    textGroup = [];
+                    textGroups.Add(textKey, textGroup);
+                    textOrder.Add(textKey);
+                }
+
+                textGroup.Add(request);
+            }
+        }
+
+        double preflightMilliseconds = Stopwatch.GetElapsedTime(preflightStarted).TotalMilliseconds;
+
+        long styleStarted = Stopwatch.GetTimestamp();
+        foreach (StyleGroupKey key in styleOrder)
+        {
+            // Read-back verification: a converged group is read, not written.
+            if (!AnyStyleDiffers(styleGroups[key], resolvedShapes))
+            {
+                continue;
+            }
+
+            if (!WriteGroup(styleGroups[key], ApplyStyle, ApplyStyleToRange, shapes, resolvedShapes, out ShapeGroupWriteOutcome? refused))
+            {
+                return refused!;
+            }
+        }
+
+        double styleMilliseconds = Stopwatch.GetElapsedTime(styleStarted).TotalMilliseconds;
+
+        long textStarted = Stopwatch.GetTimestamp();
+        foreach (TypographyGroupKey key in textOrder)
+        {
+            if (!AnyTextFormattingDiffers(textGroups[key], resolvedShapes))
+            {
+                continue;
+            }
+
+            if (!WriteGroup(textGroups[key], ApplyTextFormatting, ApplyTextFormattingToRange, shapes, resolvedShapes, out ShapeGroupWriteOutcome? textRefused))
+            {
+                return textRefused!;
+            }
+        }
+
+        double textMilliseconds = Stopwatch.GetElapsedTime(textStarted).TotalMilliseconds;
+
+        if (_trace is not null)
+        {
+            int largestStyle = 0;
+            foreach (StyleGroupKey key in styleOrder)
+            {
+                largestStyle = Math.Max(largestStyle, styleGroups[key].Count);
+            }
+
+            int largestText = 0;
+            foreach (TypographyGroupKey key in textOrder)
+            {
+                largestText = Math.Max(largestText, textGroups[key].Count);
+            }
+
+            _trace(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.shape group-appearance shapes={requests.Count} stylegroups={styleOrder.Count} textgroups={textOrder.Count} maxstyle={largestStyle} maxtext={largestText} preflightms={preflightMilliseconds:0.0} stylems={styleMilliseconds:0.0} textms={textMilliseconds:0.0} ms={Stopwatch.GetElapsedTime(groupStarted).TotalMilliseconds:0.0}"));
+        }
+
+        return ShapeGroupWriteOutcome.Ok(mismatched);
+    }
+
+    /// <summary>Writes one same-appearance bucket through one shape or one range.</summary>
+    /// <param name="group">The requests sharing this bucket's written members.</param>
+    /// <param name="single">The single-shape writer for this family.</param>
+    /// <param name="range">The range writer for this family.</param>
+    /// <param name="shapes">The resolved shapes collection.</param>
+    /// <param name="resolvedShapes">The ownership-proven proxies, keyed by primitive id.</param>
+    /// <param name="refused">The typed refusal, or null on success.</param>
+    /// <returns><see langword="true"/> when the bucket was written.</returns>
+    private bool WriteGroup(
+        List<OfficeShapeRequest> group,
+        Action<Excel.Shape, OfficeShapeRequest> single,
+        Action<Excel.ShapeRange, OfficeShapeRequest> range,
+        Excel.Shapes shapes,
+        Dictionary<string, Excel.Shape> resolvedShapes,
+        out ShapeGroupWriteOutcome? refused)
+    {
+        OfficeShapeRequest first = group[0];
+        refused = null;
+#pragma warning disable CA1031 // A host refusal is a typed group result, not an escaped exception.
+        try
+        {
+            if (group.Count == 1)
+            {
+                single(resolvedShapes[first.PrimitiveId], first);
+                return true;
+            }
+
+            string[] names = new string[group.Count];
+            for (int index = 0; index < group.Count; index++)
+            {
+                names[index] = NameFor(group[index].PrimitiveId);
+            }
+
+            range(GetShapeRange(shapes, names), first);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // A scene value with no host mapping is a contract fault, not a host failure;
+            // it must not be swallowed into a group refusal.
+            throw;
+        }
+        catch (Exception)
+        {
+            refused = ShapeGroupWriteOutcome.Refused(first.PrimitiveId, ShapeWriteRefusal.HostRejected);
+            return false;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Whether any shape in a style bucket no longer matches its request.</summary>
+    /// <param name="group">The bucket's requests.</param>
+    /// <param name="resolvedShapes">The ownership-proven proxies, keyed by primitive id.</param>
+    /// <returns><see langword="true"/> when the bucket needs the block write.</returns>
+    private static bool AnyStyleDiffers(
+        List<OfficeShapeRequest> group,
+        Dictionary<string, Excel.Shape> resolvedShapes)
+    {
+        foreach (OfficeShapeRequest request in group)
+        {
+            Excel.Shape shape = resolvedShapes[request.PrimitiveId];
+            if (!StyleMatches(shape.Fill, shape.Line, OfficeStyleMapper.Map(request)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether any text box in a typography bucket no longer matches its request.</summary>
+    /// <param name="group">The bucket's requests.</param>
+    /// <param name="resolvedShapes">The ownership-proven proxies, keyed by primitive id.</param>
+    /// <returns><see langword="true"/> when the bucket needs the block write.</returns>
+    private bool AnyTextFormattingDiffers(
+        List<OfficeShapeRequest> group,
+        Dictionary<string, Excel.Shape> resolvedShapes)
+    {
+        foreach (OfficeShapeRequest request in group)
+        {
+            if (!TextFormattingMatches(resolvedShapes[request.PrimitiveId], request))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// The shared update path: authorise, move, and — for a full update — re-apply the
@@ -741,8 +1096,12 @@ public class ExcelShapeWriter(
     /// is the move-only path, used when the payload cache proves nothing but the box
     /// changed (ADR-0053).
     /// </param>
+    /// <param name="applyContent">
+    /// Whether to write a text box's string without repeating its formatting. The grouped
+    /// update uses this after <see cref="ApplyGroupAppearance"/>; a full update implies it.
+    /// </param>
     /// <returns>The typed result.</returns>
-    private ShapeWriteOutcome UpdateCore(OfficeShapeRequest request, bool applyAppearance)
+    private ShapeWriteOutcome UpdateCore(OfficeShapeRequest request, bool applyAppearance, bool applyContent = false)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -788,7 +1147,7 @@ public class ExcelShapeWriter(
         }
 
         string? bandBefore = DescribeBandShape(existing, request.PrimitiveId);
-        if (!ApplyGeometry(existing, request.Kind, request.Geometry))
+        if (!ApplyGeometry(existing, request.Kind, request.Geometry, request.HostOwnsExtent))
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.InvalidGeometry);
         }
@@ -807,66 +1166,75 @@ public class ExcelShapeWriter(
             ApplyPlacement(existing, request.HostOwnsExtent);
         }
 
-        TraceBandShape(applyAppearance ? "update" : "move", existing, request.PrimitiveId, bandBefore);
+        TraceBandShape(
+            applyAppearance ? "update" : (applyContent ? "content" : "move"),
+            existing,
+            request.PrimitiveId,
+            bandBefore);
 
-        // The move-only path stops here. Everything below writes generated appearance
-        // (text, fill, stroke, hatch, typography) which the caller has already proven
-        // unchanged; re-applying it would cost the ~15–18 ms a full update costs for a
-        // shape that only changed where it sits. A hand-edited fill is deliberately NOT
-        // repaired here — the explicit Refresh does that (ADR-0053).
-        if (!applyAppearance)
+        // The full update writes the whole shape: content and style. It is the path a
+        // caller takes when it has no grouped appearance pass (the tests, and any future
+        // single-shape caller).
+        if (applyAppearance)
         {
-            return ShapeWriteOutcome.Ok();
+            // R4.4: a text box's CONTENT is owned generated data, exactly as its
+            // geometry is, so an update re-applies it. Without this, a refresh that
+            // changed a label's string, font, or alignment would move the box and
+            // leave the stale text on the sheet - the shape would sit in the right
+            // place saying the wrong thing, which is the silent-staleness class this
+            // project treats as a defect. R4.7 reaches this path on every reconcile
+            // that finds an existing shape.
+            //
+            // This is deliberately NOT the same treatment as the name and tag below.
+            // A user never authors a label's text; the scene does, so overwriting it
+            // is correct. The name is the reconciliation KEY and the tag is the
+            // ownership PROOF, and re-stamping those would silently "repair" a shape
+            // a user edited, which is R9.4's job to report, not R4.7's to hide.
+            //
+            // Both writes are contained, on the same reasoning as the create path's
+            // ApplyTextOrDiscard and ApplyStyleOrDiscard: a COM write the host refuses
+            // must not escape an update as an unhandled COMException from inside a
+            // render command. R4.7's reconciler acts on the typed result, so a
+            // HostRejected is what it needs to report - an escaping exception is not.
+            //
+            // A contract fault still propagates: MapHatchPattern and MapAlignment
+            // throw ArgumentOutOfRangeException for a scene value with no host
+            // mapping, which is a drift defect between the guide and the adapter, not
+            // a host failure, and swallowing it into a refusal would hide exactly the
+            // thing the ratchet exists to surface.
+            //
+            // Containment is NOT a rollback. ApplyGeometry has already run, so a
+            // refused text or style write leaves the shape at its new geometry with
+            // its old content or colour. That is the deliberate trade: the shape stays
+            // on the sheet under its ownership tag, so the next reconcile reaches it
+            // again, where deleting and recreating an owned shape to undo a refusal
+            // would throw away the user's work the moment the host was briefly busy.
+            // The refusal is reported rather than hidden, so a chart that never
+            // converges is visible instead of silent.
+            if (request.Kind == OfficeShapeKind.TextBox && !TryApplyContent(existing, request))
+            {
+                return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+            }
+
+            // R4.6. An update re-applies the style for the same reason it re-applies
+            // the text: the fill, stroke, width, and hatch are owned generated data.
+            // Without this, a refresh that changed only a colour would move the shape
+            // and leave the old colour behind - the shape would sit in the right place
+            // looking wrong, which is invisible to every other assertion in this
+            // class because geometry and content would both be correct.
+            return TryApplyStyle(existing, request)
+                ? ShapeWriteOutcome.Ok()
+                : ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
-        // R4.4: a text box's CONTENT is owned generated data, exactly as its
-        // geometry is, so an update re-applies it. Without this, a refresh that
-        // changed a label's string, font, or alignment would move the box and
-        // leave the stale text on the sheet - the shape would sit in the right
-        // place saying the wrong thing, which is the silent-staleness class this
-        // project treats as a defect. R4.7 reaches this path on every reconcile
-        // that finds an existing shape.
-        //
-        // This is deliberately NOT the same treatment as the name and tag below.
-        // A user never authors a label's text; the scene does, so overwriting it
-        // is correct. The name is the reconciliation KEY and the tag is the
-        // ownership PROOF, and re-stamping those would silently "repair" a shape
-        // a user edited, which is R9.4's job to report, not R4.7's to hide.
-        //
-        // Both writes are contained, on the same reasoning as the create path's
-        // ApplyTextOrDiscard and ApplyStyleOrDiscard: a COM write the host refuses
-        // must not escape an update as an unhandled COMException from inside a
-        // render command. R4.7's reconciler acts on the typed result, so a
-        // HostRejected is what it needs to report - an escaping exception is not.
-        //
-        // A contract fault still propagates: MapHatchPattern and MapAlignment
-        // throw ArgumentOutOfRangeException for a scene value with no host
-        // mapping, which is a drift defect between the guide and the adapter, not
-        // a host failure, and swallowing it into a refusal would hide exactly the
-        // thing the ratchet exists to surface.
-        //
-        // Containment is NOT a rollback. ApplyGeometry has already run, so a
-        // refused text or style write leaves the shape at its new geometry with
-        // its old content or colour. That is the deliberate trade: the shape stays
-        // on the sheet under its ownership tag, so the next reconcile reaches it
-        // again, where deleting and recreating an owned shape to undo a refusal
-        // would throw away the user's work the moment the host was briefly busy.
-        // The refusal is reported rather than hidden, so a chart that never
-        // converges is visible instead of silent.
-        if (request.Kind == OfficeShapeKind.TextBox && !TryApplyContent(existing, request))
-        {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
-        }
-
-        // R4.6. An update re-applies the style for the same reason it re-applies
-        // the text: the fill, stroke, width, and hatch are owned generated data.
-        // Without this, a refresh that changed only a colour would move the shape
-        // and leave the old colour behind - the shape would sit in the right place
-        // looking wrong, which is invisible to every other assertion in this
-        // class because geometry and content would both be correct.
-        return TryApplyStyle(existing, request)
+        // The grouped path: the appearance and typography were written once for the
+        // group, so only the string is left for a text box. The move-only path stops
+        // at the geometry.
+        return (!applyContent || request.Kind != OfficeShapeKind.TextBox)
             ? ShapeWriteOutcome.Ok()
-            : ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+            : TryApplyTextContent(existing, request)
+                ? ShapeWriteOutcome.Ok()
+                : ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
     }
 
     /// <inheritdoc />
@@ -904,10 +1272,13 @@ public class ExcelShapeWriter(
         existing.Delete();
 
         // A deleted name must not be served from the batch memo afterwards: a later create
-        // in the same batch legitimately reuses it.
+        // in the same batch legitimately reuses it. The remembered ownership answer goes
+        // with it, or the new shape would be judged by the old shape's tag.
         if (_batchProxies is not null)
         {
-            _ = _batchProxies.Remove(NameFor(primitiveId));
+            string deletedName = NameFor(primitiveId);
+            _ = _batchProxies.Remove(deletedName);
+            _ = _batchTags.Remove(deletedName);
         }
 
         return ShapeWriteOutcome.Ok();
@@ -951,6 +1322,15 @@ public class ExcelShapeWriter(
                 owned.Add(name);
             }
 
+            // This walk already visits every shape and reads every name, which is exactly
+            // what EnsureBatchNameIndex would spend a second pass doing. Feeding it here
+            // means the reconcile's first name lookup is a dictionary hit rather than
+            // another full scan with a Name read per shape.
+            if (_batchProxies is not null)
+            {
+                _ = _batchProxies.TryAdd(name, shape);
+            }
+
             // Phase-0 inventory: a chart-shaped shape that is NOT owned, or any
             // splitter band, is logged once per shape per refresh. Names carry the
             // chart's own "<rowId>:<role>" form, so a shape the reconciler cannot see
@@ -964,6 +1344,13 @@ public class ExcelShapeWriter(
                 TraceInventoryShape(shape, name, ownedTag);
                 inventoryLogged++;
             }
+        }
+
+        if (_batchProxies is not null)
+        {
+            // The loop above covered index 1..Count, so every name the host holds is now
+            // in the memo and an absent name can be answered without a host call.
+            _batchNameIndexed = true;
         }
 
         // Ordinal sort so the returned order is a property of the shape names
@@ -1083,18 +1470,26 @@ public class ExcelShapeWriter(
         }
 
         Excel.Shape? shape = FindShapeByName(shapes, NameFor(request.PrimitiveId));
-        if (shape is null || !CarriesOwnershipTagFor(shape, request.PrimitiveId))
-        {
-            return false;
-        }
+        return shape is not null
+            && CarriesOwnershipTagFor(shape, request.PrimitiveId)
+            && MatchesGeometry(shape, request, desired);
+    }
 
-        // Placement is part of the match, and the required placement is the request's
-        // class. A scene-owned shape still on the host's default xlMoveAndSize can be
-        // resized by a row-visibility change at any moment, so skipping it would preserve
-        // exactly the drift this verification exists to catch; the rewrite re-places it
-        // with xlMove. The reverse holds for a host-owned shape: it must carry
-        // xlMoveAndSize, or the live stretch ADR-0052 D6 exists to restore is absent, and
-        // the rewrite re-places it (ADR-0052 D7).
+    /// <summary>Compares one resolved shape's live box and placement with the request.</summary>
+    /// <param name="shape">The resolved shape.</param>
+    /// <param name="request">The desired shape.</param>
+    /// <param name="desired">The request's bounding box, already derived.</param>
+    /// <returns><see langword="true"/> when the host already holds it.</returns>
+    /// <remarks>
+    /// Placement is part of the match, and the required placement is the request's class. A
+    /// scene-owned shape still on the host's default xlMoveAndSize can be resized by a
+    /// row-visibility change at any moment, so skipping it would preserve exactly the drift
+    /// this verification exists to catch; the rewrite re-places it with xlMove. The reverse
+    /// holds for a host-owned shape: it must carry xlMoveAndSize, or the live stretch
+    /// ADR-0052 D6 exists to restore is absent.
+    /// </remarks>
+    private static bool MatchesGeometry(Excel.Shape shape, OfficeShapeRequest request, RectD desired)
+    {
         if (shape.Placement != RequiredPlacement(request))
         {
             return false;
@@ -1103,16 +1498,14 @@ public class ExcelShapeWriter(
         // The host-resized extent is the one member the host is allowed to have moved for
         // a host-owned shape: Excel resizes an xlMoveAndSize shape proportionally, so a
         // collapse/expand cycle (height) or a column resize (width) can leave a fraction
-        // of a point of drift that is not a scene change and must not be rewritten on
-        // every pass. The wider tolerance is stated (D8), not tuned.
+        // of a point of drift that is not a scene change. The wider tolerance is stated
+        // (ADR-0052 D8), not tuned.
         //
         // A host-owned LINE takes it on both axes, because a line has a near-zero extent
-        // on the axis it does not span: a vertical delineator's width and a horizontal
-        // rule's height are both the stroke, so a 0.5pt acceptance there can never hide a
-        // real difference. A host-owned RECT keeps the strict width, because the host
-        // never resizes a band's width and a mismatch there IS a real difference. Left and
-        // top keep the strict tolerance for every class: the host moves a shape, it does
-        // not reposition it within its own anchor.
+        // on the axis it does not span; a host-owned RECT keeps the strict width, because
+        // the host never resizes a band's width and a mismatch there IS a real difference.
+        // Left and top keep the strict tolerance for every class: the host moves a shape,
+        // it does not reposition it within its own anchor.
         bool hostOwnsWidth = request.HostOwnsExtent && request.Kind == OfficeShapeKind.Line;
         return MatchesLive(shape.Left, desired.X)
             && MatchesLive(shape.Top, desired.Y)
@@ -1123,6 +1516,12 @@ public class ExcelShapeWriter(
                 ? MatchesLiveWithin(shape.Height, desired.Height, HostOwnedGeometry.HostResizeTolerancePt)
                 : MatchesLive(shape.Height, desired.Height));
     }
+
+    /// <summary>Compares one resolved shape's live box and placement with the request.</summary>
+    private static bool MatchesGeometry(Excel.Shape shape, OfficeShapeRequest request) =>
+        request.Geometry is not null
+        && TryGetBoundingBox(request.Geometry, out RectD desired)
+        && MatchesGeometry(shape, request, desired);
 
     /// <summary>The tolerance for a live-versus-scene geometry comparison, in points.</summary>
     /// <remarks>
@@ -1561,10 +1960,25 @@ public class ExcelShapeWriter(
         ArgumentNullException.ThrowIfNull(shape);
         ArgumentException.ThrowIfNullOrWhiteSpace(shapeName);
 
-        return string.Equals(
+        // One read per name per batch: the owned-set walk and the geometry/content
+        // verification both ask the same question about the same shape, and the answer
+        // cannot change while the batch runs (see _batchTags).
+        if (_batchTags.TryGetValue(shapeName, out bool known))
+        {
+            return known;
+        }
+
+        bool owned = string.Equals(
             shape.AlternativeText,
             _ownership.TagForName(shapeName),
             StringComparison.Ordinal);
+
+        if (_batchActive)
+        {
+            _batchTags[shapeName] = owned;
+        }
+
+        return owned;
     }
 
     /// <summary>
@@ -1632,6 +2046,15 @@ public class ExcelShapeWriter(
         string name = NameFor(primitiveId);
         shape.Name = name;
         shape.AlternativeText = _ownership.TagForName(name);
+
+        // The batch remembers what it just wrote. A shape created in this plan is then
+        // found by name and proved owned without either host read repeating (see
+        // _batchTags and EnsureBatchNameIndex).
+        _ = Remember(name, shape);
+        if (_batchActive)
+        {
+            _batchTags[name] = true;
+        }
 
         // ADR-0055: an owned shape is locked by default, so the user cannot drag it out of place
         // by accident. `Locked` is inert until the worksheet is protected, which the refresh arms
@@ -1728,12 +2151,17 @@ public class ExcelShapeWriter(
     }
 
     /// <summary>
-    /// Writes a geometry onto an existing shape at the single rounding boundary.
+    /// Writes a geometry onto an existing shape at the single rounding boundary, unless
+    /// the live box already matches it.
     /// </summary>
     /// <param name="shape">The shape to update.</param>
     /// <param name="kind">The shape kind, which selects which members are written.</param>
     /// <param name="geometry">The scene geometry, in points.</param>
-    /// <returns><see langword="true"/> when every member was written.</returns>
+    /// <param name="hostOwnsExtent">
+    /// Whether the host owns the vertical extent (ADR-0052 D6–D8), which widens the
+    /// width/height acceptance exactly as <see cref="GeometryMatches"/> does.
+    /// </param>
+    /// <returns><see langword="true"/> when the box matches or every member was written.</returns>
     /// <remarks>
     /// <b>See <see cref="ApplyPlacement"/> for why the shape is placed with
     /// <c>xlMove</c> and not <c>xlMoveAndSize</c>.</b>
@@ -1756,7 +2184,11 @@ public class ExcelShapeWriter(
     /// than silently ignoring the requested geometry.
     /// </para>
     /// </remarks>
-    private static bool ApplyGeometry(Excel.Shape shape, OfficeShapeKind kind, OfficeShapeGeometry geometry)
+    private static bool ApplyGeometry(
+        Excel.Shape shape,
+        OfficeShapeKind kind,
+        OfficeShapeGeometry geometry,
+        bool hostOwnsExtent)
     {
         ArgumentNullException.ThrowIfNull(geometry);
 
@@ -1765,51 +2197,66 @@ public class ExcelShapeWriter(
             return false;
         }
 
-        switch (kind)
+        double left;
+        double top;
+        double width;
+        double height;
+        if (kind == OfficeShapeKind.Line)
         {
-            case OfficeShapeKind.Rectangle:
-            case OfficeShapeKind.TextBox:
-                RectD bounds = geometry.Bounds!.Value;
-                shape.Left = GeometryMath.SnapToDisplayPrecision(bounds.X);
-                shape.Top = GeometryMath.SnapToDisplayPrecision(bounds.Y);
-                shape.Width = GeometryMath.SnapToDisplayPrecision(bounds.Width);
-                shape.Height = GeometryMath.SnapToDisplayPrecision(bounds.Height);
-                return true;
-
-            case OfficeShapeKind.Line:
-                // Probed 2026-09-27: a created line carries its absolute endpoints,
-                // but the Shape surface exposes only the bounding box, so an update
-                // is expressed as left/top/width/height. A negative-width line
-                // (right-to-left) is normalised here rather than rejected, because
-                // the host's own bounding box cannot represent it.
-                PointD from = geometry.From!.Value;
-                PointD to = geometry.To!.Value;
-                double left = Math.Min(from.X, to.X);
-                double top = Math.Min(from.Y, to.Y);
-                shape.Left = GeometryMath.SnapToDisplayPrecision(left);
-                shape.Top = GeometryMath.SnapToDisplayPrecision(top);
-                shape.Width = GeometryMath.SnapToDisplayPrecision(Math.Abs(to.X - from.X));
-                shape.Height = GeometryMath.SnapToDisplayPrecision(Math.Abs(to.Y - from.Y));
-                return true;
-
-            case OfficeShapeKind.Diamond:
-                // A diamond auto-shape is positioned exactly like any other
-                // auto-shape, so an in-place update only has to move and resize
-                // it. The vertices are derived from the box by the host, so
-                // there is no vertex collection to rewrite.
-                RectD diamond = geometry.Bounds!.Value;
-                shape.Left = GeometryMath.SnapToDisplayPrecision(diamond.X);
-                shape.Top = GeometryMath.SnapToDisplayPrecision(diamond.Y);
-                shape.Width = GeometryMath.SnapToDisplayPrecision(diamond.Width);
-                shape.Height = GeometryMath.SnapToDisplayPrecision(diamond.Height);
-                return true;
-
-            default:
-                // An undefined kind is not expressible. Returning false here
-                // makes the limitation explicit rather than silently ignoring
-                // the requested geometry.
-                return false;
+            // Probed 2026-09-27: a created line carries its absolute endpoints,
+            // but the Shape surface exposes only the bounding box, so an update
+            // is expressed as left/top/width/height. A negative-width line
+            // (right-to-left) is normalised here rather than rejected, because
+            // the host's own bounding box cannot represent it.
+            PointD from = geometry.From!.Value;
+            PointD to = geometry.To!.Value;
+            left = Math.Min(from.X, to.X);
+            top = Math.Min(from.Y, to.Y);
+            width = Math.Abs(to.X - from.X);
+            height = Math.Abs(to.Y - from.Y);
         }
+        else if (kind is OfficeShapeKind.Rectangle or OfficeShapeKind.TextBox or OfficeShapeKind.Diamond)
+        {
+            // A diamond auto-shape is positioned exactly like any other
+            // auto-shape, so an in-place update only has to move and resize it.
+            // The vertices are derived from the box by the host, so there is no
+            // vertex collection to rewrite.
+            RectD bounds = geometry.Bounds!.Value;
+            left = bounds.X;
+            top = bounds.Y;
+            width = bounds.Width;
+            height = bounds.Height;
+        }
+        else
+        {
+            // An undefined kind is not expressible. Returning false here makes
+            // the limitation explicit rather than silently ignoring the request.
+            return false;
+        }
+
+        // Read-back verification (ADR-0054 amendment 2026-11-20): a converged shape pays
+        // four reads and no write. The tolerances are the same ones GeometryMatches uses,
+        // including the host-owned extent's wider acceptance, so the skip decision and the
+        // write path cannot disagree about "already correct".
+        bool hostOwnsWidth = hostOwnsExtent && kind == OfficeShapeKind.Line;
+        bool matches = MatchesLive(shape.Left, left)
+            && MatchesLive(shape.Top, top)
+            && (hostOwnsWidth
+                ? MatchesLiveWithin(shape.Width, width, HostOwnedGeometry.HostResizeTolerancePt)
+                : MatchesLive(shape.Width, width))
+            && (hostOwnsExtent
+                ? MatchesLiveWithin(shape.Height, height, HostOwnedGeometry.HostResizeTolerancePt)
+                : MatchesLive(shape.Height, height));
+        if (matches)
+        {
+            return true;
+        }
+
+        shape.Left = GeometryMath.SnapToDisplayPrecision(left);
+        shape.Top = GeometryMath.SnapToDisplayPrecision(top);
+        shape.Width = GeometryMath.SnapToDisplayPrecision(width);
+        shape.Height = GeometryMath.SnapToDisplayPrecision(height);
+        return true;
     }
 
     /// <summary>
@@ -2021,6 +2468,27 @@ public class ExcelShapeWriter(
     /// <param name="index">The 1-based shape index.</param>
     /// <returns>The shape, or <see langword="null"/> when the index does not resolve.</returns>
     internal virtual Excel.Shape? GetShapeAt(Excel.Shapes shapes, int index) => shapes.Item(index);
+
+    /// <summary>
+    /// Resolves a set of shape names into one <c>ShapeRange</c>. Test seam over
+    /// <c>Shapes.Range</c>, which takes a SAFEARRAY of names.
+    /// </summary>
+    /// <param name="shapes">The shapes collection.</param>
+    /// <param name="names">The exact shape names, already ownership-proven by the caller.</param>
+    /// <returns>The range the group style is written through.</returns>
+    internal virtual Excel.ShapeRange GetShapeRange(Excel.Shapes shapes, IReadOnlyList<string> names)
+    {
+        ArgumentNullException.ThrowIfNull(shapes);
+        ArgumentNullException.ThrowIfNull(names);
+
+        object[] indices = new object[names.Count];
+        for (int index = 0; index < names.Count; index++)
+        {
+            indices[index] = names[index];
+        }
+
+        return shapes.Range[indices];
+    }
 
     /// <summary>
     /// Finds a shape by its exact name. Test seam over the name lookup, which
@@ -2272,9 +2740,136 @@ public class ExcelShapeWriter(
         ArgumentNullException.ThrowIfNull(shape);
         ArgumentNullException.ThrowIfNull(request);
 
+        // Read-back verification (ADR-0054 amendment 2026-11-20). The live trace measured
+        // 969 ms of style writes for 148 shapes through ShapeRange, i.e. the host applies
+        // the block per member; a converged shape therefore pays four-to-ten reads and no
+        // writes. The comparison covers every member ApplyStyleCore writes, so a mismatch
+        // still takes the full block and the two paths cannot disagree.
         OfficeShapeStyle style = OfficeStyleMapper.Map(request);
-
         Excel.FillFormat? fill = shape.Fill;
+        Excel.LineFormat? line = shape.Line;
+        if (StyleMatches(fill, line, style))
+        {
+            return;
+        }
+
+        ApplyStyleCore(fill, line, style);
+    }
+
+    /// <summary>
+    /// Applies the same style to a group of shapes through one <c>ShapeRange</c>.
+    /// </summary>
+    /// <param name="range">The group's range.</param>
+    /// <param name="request">The request whose resolved style the group shares.</param>
+    /// <remarks>
+    /// Microsoft documents that setting a secondary format object's properties on a
+    /// <c>ShapeRange</c> applies them to every shape in the range. The live probe measured
+    /// 8.5–9.7 ms for 20 rectangles against 65.8–77.5 ms shape by shape, with zero
+    /// read-back mismatches. <see cref="ApplyStyleCore"/> is the same code the single-shape
+    /// path uses, so the two cannot drift.
+    /// </remarks>
+    internal virtual void ApplyStyleToRange(Excel.ShapeRange range, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        ArgumentNullException.ThrowIfNull(request);
+
+        ApplyStyleCore(range.Fill, range.Line, OfficeStyleMapper.Map(request));
+    }
+
+    /// <summary>
+    /// Whether the live fill and line already carry every member the mapped style writes.
+    /// </summary>
+    /// <param name="fill">The shape's fill, or null when the host exposes none.</param>
+    /// <param name="line">The shape's line, or null when the host exposes none.</param>
+    /// <param name="style">The style the request resolved to.</param>
+    /// <returns><see langword="true"/> when no write is needed.</returns>
+    /// <remarks>
+    /// Only members the mapper actually resolves are compared, so a <c>null</c> token still
+    /// means "the scene resolved no value" rather than "match anything" (R4.7 D5).
+    /// </remarks>
+    private static bool StyleMatches(Excel.FillFormat? fill, Excel.LineFormat? line, OfficeShapeStyle style)
+    {
+        if (fill is not null)
+        {
+            bool fillVisible = fill.Visible == MsoTriState.msoTrue;
+            if (fillVisible != style.FillVisible)
+            {
+                return false;
+            }
+
+            if (style.FillVisible)
+            {
+                if (style.FillRgb is { } foreground
+                    && fill.ForeColor is { } foreColour
+                    && foreColour.RGB != foreground)
+                {
+                    return false;
+                }
+
+                if (style.FillBackgroundRgb is { } background
+                    && fill.BackColor is { } backColour
+                    && backColour.RGB != background)
+                {
+                    return false;
+                }
+
+                if (!ApproximatelyEqual(fill.Transparency, style.FillTransparency, 0.001f))
+                {
+                    return false;
+                }
+
+                if (style.HatchPattern is { } hatch)
+                {
+                    if (fill.Type != MsoFillType.msoFillPatterned || fill.Pattern != MapHatchPattern(hatch))
+                    {
+                        return false;
+                    }
+                }
+                else if (fill.Type != MsoFillType.msoFillSolid)
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (line is null)
+        {
+            return true;
+        }
+
+        bool lineVisible = line.Visible == MsoTriState.msoTrue;
+        if (lineVisible != style.LineVisible)
+        {
+            return false;
+        }
+
+        if (!style.LineVisible)
+        {
+            return true;
+        }
+
+        bool strokeMatches = style.LineRgb is not { } stroke
+            || line.ForeColor is not { } strokeColour
+            || strokeColour.RGB == stroke;
+        bool weightMatches = style.LineWeightPt is not { } weight
+            || ApproximatelyEqual(line.Weight, weight, 0.01f);
+
+        return strokeMatches
+            && weightMatches
+            && line.DashStyle == MapDashStyle(style.StrokeDash)
+            && ApproximatelyEqual(line.Transparency, style.LineTransparency, 0.001f);
+    }
+
+    /// <summary>Compares two host float values within an explicit tolerance.</summary>
+    private static bool ApproximatelyEqual(float actual, float expected, float tolerance) =>
+        Math.Abs(actual - expected) <= tolerance;
+
+    /// <summary>Writes the resolved style onto one fill/line pair.</summary>
+    /// <param name="fill">The shape's or range's fill, or null when the host exposes none.</param>
+    /// <param name="line">The shape's or range's line, or null when the host exposes none.</param>
+    /// <param name="style">The request's mapped style.</param>
+    private static void ApplyStyleCore(Excel.FillFormat? fill, Excel.LineFormat? line, OfficeShapeStyle style)
+    {
         if (fill is not null)
         {
             if (!style.FillVisible)
@@ -2316,7 +2911,6 @@ public class ExcelShapeWriter(
             }
         }
 
-        Excel.LineFormat? line = shape.Line;
         if (line is null)
         {
             return;
@@ -2528,11 +3122,47 @@ public class ExcelShapeWriter(
 #pragma warning disable CA1031
         try
         {
+            // Read-back verification: a shape whose live typography and string already
+            // match the request pays reads and no writes (ADR-0054 amendment 2026-11-20).
+            if (TextFormattingMatches(shape, request) && TextMatches(shape, request.Text))
+            {
+                return true;
+            }
+
             ApplyText(shape, request);
         }
         catch (ArgumentOutOfRangeException)
         {
             throw;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+#pragma warning restore CA1031
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes only the string of a text box whose formatting the grouped pass already applied.
+    /// </summary>
+    /// <param name="shape">The owned text box.</param>
+    /// <param name="request">The request carrying the string.</param>
+    /// <returns><see langword="true"/> when the string landed; otherwise a host refusal.</returns>
+    private bool TryApplyTextContent(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        // CA1031: the same rule as TryApplyContent - a host refusal is a typed result,
+        // never an escaping COM exception from inside a render command.
+#pragma warning disable CA1031
+        try
+        {
+            if (TextMatches(shape, request.Text))
+            {
+                return true;
+            }
+
+            ApplyTextContent(shape, request);
         }
         catch (Exception)
         {
@@ -2679,6 +3309,179 @@ public class ExcelShapeWriter(
             return;
         }
 
+        TextRange2? textRange = frame.TextRange;
+        if (textRange is null)
+        {
+            return;
+        }
+
+        ApplyTextFormatting(frame, textRange, request);
+
+        // Verbatim: the scene already applied the overflow policy.
+        textRange.Text = request.Text ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Writes a text box's formatting without writing its string.
+    /// </summary>
+    /// <param name="shape">The text box whose formatting is re-applied.</param>
+    /// <param name="request">The request whose typography is applied.</param>
+    internal virtual void ApplyTextFormatting(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        ArgumentNullException.ThrowIfNull(request);
+
+        Excel.TextFrame2? frame = shape.TextFrame2;
+        if (frame is null)
+        {
+            return;
+        }
+
+        TextRange2? textRange = frame.TextRange;
+        if (textRange is null)
+        {
+            return;
+        }
+
+        ApplyTextFormatting(frame, textRange, request);
+    }
+
+    /// <summary>
+    /// Writes a group's text formatting once, without writing any string.
+    /// </summary>
+    /// <param name="range">The group's range.</param>
+    /// <param name="request">The request whose typography the group shares.</param>
+    /// <remarks>
+    /// The host requires a single shape for <c>TextRange.Text</c>, so content stays
+    /// per-shape; every formatting member can be applied to the range. The live probe
+    /// measured 35.9–37.9 ms for 15 text boxes against 164.7–211.5 ms shape by shape,
+    /// with zero read-back mismatches.
+    /// </remarks>
+    internal virtual void ApplyTextFormattingToRange(Excel.ShapeRange range, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        ArgumentNullException.ThrowIfNull(request);
+
+        Excel.TextFrame2? frame = range.TextFrame2;
+        if (frame is null)
+        {
+            return;
+        }
+
+        TextRange2? textRange = frame.TextRange;
+        if (textRange is null)
+        {
+            return;
+        }
+
+        ApplyTextFormatting(frame, textRange, request);
+    }
+
+    /// <summary>
+    /// Whether the live text frame and font already carry every member the typography
+    /// write sets.
+    /// </summary>
+    /// <param name="shape">The text box to compare.</param>
+    /// <param name="request">The request whose typography would be written.</param>
+    /// <returns><see langword="true"/> when no typography write is needed.</returns>
+    internal virtual bool TextFormattingMatches(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        Excel.TextFrame2? frame = shape.TextFrame2;
+        if (frame is null)
+        {
+            return false;
+        }
+
+        TextRange2? textRange = frame.TextRange;
+        if (textRange is null)
+        {
+            return false;
+        }
+
+        if (frame.WordWrap != MsoTriState.msoFalse
+            || frame.AutoSize != MsoAutoSize.msoAutoSizeNone
+            || frame.VerticalAnchor != MsoVerticalAnchor.msoAnchorMiddle)
+        {
+            return false;
+        }
+
+        if (!ApproximatelyEqual(frame.MarginLeft, (float)request.LeftInsetPt, 0.01f)
+            || !ApproximatelyEqual(frame.MarginRight, 0f, 0.01f)
+            || !ApproximatelyEqual(frame.MarginTop, 0f, 0.01f)
+            || !ApproximatelyEqual(frame.MarginBottom, 0f, 0.01f))
+        {
+            return false;
+        }
+
+        if (request.Alignment is { } alignment
+            && textRange.ParagraphFormat is { } paragraph
+            && paragraph.Alignment != MapAlignment(alignment))
+        {
+            return false;
+        }
+
+        if (textRange.Font is not { } font)
+        {
+            return true;
+        }
+
+        if (request.FontFamily is { } family && !string.Equals(font.Name, family, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (request.FontSizePt is { } size && !ApproximatelyEqual(font.Size, (float)size, 0.01f))
+        {
+            return false;
+        }
+
+        if (request.Bold is { } bold)
+        {
+            bool liveBold = font.Bold == MsoTriState.msoTrue;
+            if (liveBold != bold)
+            {
+                return false;
+            }
+        }
+
+        if (request.TextColour is { } textColour && font.Fill is { } fontFill)
+        {
+            int rgb = OfficeStyleMapper.ToOfficeRgb(textColour);
+            if (fontFill.ForeColor is { } fore && fore.RGB != rgb)
+            {
+                return false;
+            }
+
+            if (fontFill.Visible != MsoTriState.msoTrue)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Whether a text box's live string already equals the request's.</summary>
+    /// <param name="shape">The text box to compare.</param>
+    /// <param name="expected">The scene's string, or null for an empty one.</param>
+    /// <returns><see langword="true"/> when the string needs no write.</returns>
+    internal virtual bool TextMatches(Excel.Shape shape, string? expected)
+    {
+        Excel.TextFrame2? frame = shape.TextFrame2;
+        TextRange2? textRange = frame?.TextRange;
+        return textRange is not null
+            && string.Equals(textRange.Text ?? string.Empty, expected ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    /// <summary>Writes the shared text formatting onto one frame/text-range pair.</summary>
+    /// <param name="frame">The shape's or range's text frame.</param>
+    /// <param name="textRange">The frame's text range.</param>
+    /// <param name="request">The request whose typography is applied.</param>
+    private static void ApplyTextFormatting(
+        Excel.TextFrame2 frame,
+        TextRange2 textRange,
+        OfficeShapeRequest request)
+    {
         frame.WordWrap = MsoTriState.msoFalse;
         frame.AutoSize = MsoAutoSize.msoAutoSizeNone;
 
@@ -2716,15 +3519,6 @@ public class ExcelShapeWriter(
         frame.MarginRight = 0f;
         frame.MarginTop = 0f;
         frame.MarginBottom = 0f;
-
-        TextRange2? textRange = frame.TextRange;
-        if (textRange is null)
-        {
-            return;
-        }
-
-        // Verbatim: the scene already applied the overflow policy.
-        textRange.Text = request.Text ?? string.Empty;
 
         if (request.Alignment is { } alignment && textRange.ParagraphFormat is { } paragraphFormat)
         {

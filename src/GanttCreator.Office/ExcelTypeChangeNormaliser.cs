@@ -39,16 +39,22 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
             return GanttTypeChangeNormaliseOutcome.Ok(0);
         }
 
-        int typeIndex = FindColumnIndex(table, "Type");
-        int styleKeyIndex = FindColumnIndex(table, "StyleKey");
-        int labelPositionIndex = FindColumnIndex(table, "LabelPosition");
-        int dateLabelPositionIndex = FindColumnIndex(table, "DateLabelPosition");
-        int fillColourIndex = FindColumnIndex(table, "FillColour");
-        int strokeColourIndex = FindColumnIndex(table, "StrokeColour");
-        int parentIdIndex = FindColumnIndex(table, "ParentId");
-        int laneIdIndex = FindColumnIndex(table, "LaneId");
-        int stackIndexIndex = FindColumnIndex(table, "StackIndex");
-        int siblingOrderIndex = FindColumnIndex(table, "SiblingOrder");
+        // ONE walk of the columns, not one walk per name. Ten names resolved by scanning
+        // the collection each time is 10 x 26 = 260 COM `Name` reads per refresh; the
+        // owner's 2026-11-20 trace measured `types` at 7.2-26.7 ms (median 12.5) for ten
+        // rows of data. The same defect was already fixed in StagingShapeAdapter and in
+        // ExcelColumnPresentationRestorer; this was the third instance.
+        Dictionary<string, int> columnIndexes = BuildColumnIndexMap(table);
+        int typeIndex = IndexOf(columnIndexes, "Type");
+        int styleKeyIndex = IndexOf(columnIndexes, "StyleKey");
+        int labelPositionIndex = IndexOf(columnIndexes, "LabelPosition");
+        int dateLabelPositionIndex = IndexOf(columnIndexes, "DateLabelPosition");
+        int fillColourIndex = IndexOf(columnIndexes, "FillColour");
+        int strokeColourIndex = IndexOf(columnIndexes, "StrokeColour");
+        int parentIdIndex = IndexOf(columnIndexes, "ParentId");
+        int laneIdIndex = IndexOf(columnIndexes, "LaneId");
+        int stackIndexIndex = IndexOf(columnIndexes, "StackIndex");
+        int siblingOrderIndex = IndexOf(columnIndexes, "SiblingOrder");
 
         if (typeIndex < 0)
         {
@@ -235,19 +241,45 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
         }
     }
 
-    private int FindColumnIndex(Excel.ListObject table, string name)
+    /// <summary>
+    /// Builds the live column name to zero-based index map with one <c>Name</c> read per
+    /// column.
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>Each column name and its zero-based offset.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Zero-based</b> because every use of an index here is as an offset into the
+    /// body's <c>Value2</c> matrix, which is zero-based, while a <c>ListColumns</c> index
+    /// is one-based. The scan this replaces returned <c>index - 1</c> for the same
+    /// reason, and <see cref="IndexOf"/> preserves it exactly.
+    /// </para>
+    /// <para>
+    /// <b>First match wins.</b> The scan it replaces returned the first column carrying
+    /// the name, so <c>TryAdd</c> is the faithful translation rather than an overwrite.
+    /// A duplicated header is not a state the schema produces, but the behaviour is
+    /// unchanged if one ever appears.
+    /// </para>
+    /// </remarks>
+    private Dictionary<string, int> BuildColumnIndexMap(Excel.ListObject table)
     {
         Excel.ListColumns columns = table.ListColumns;
         int count = columns.Count;
+        Dictionary<string, int> map = new(count, StringComparer.Ordinal);
         for (int index = 1; index <= count; index++)
         {
-            if (string.Equals(GetColumnAt(columns, index).Name, name, StringComparison.Ordinal))
-            {
-                return index - 1;
-            }
+            _ = map.TryAdd(GetColumnAt(columns, index).Name, index - 1);
         }
-        return -1;
+
+        return map;
     }
+
+    /// <summary>The zero-based offset of a named column, or -1 when the table lacks it.</summary>
+    /// <param name="map">The column map.</param>
+    /// <param name="name">The schema column name.</param>
+    /// <returns>The zero-based offset, or -1.</returns>
+    private static int IndexOf(Dictionary<string, int> map, string name) =>
+        map.TryGetValue(name, out int index) ? index : -1;
 
     private static string ToText(object? value) =>
         Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;

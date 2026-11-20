@@ -218,6 +218,11 @@ public class ProtectionToggleCommandTests
 
         public ShapeWriteOutcome Update(OfficeShapeRequest request) => ShapeWriteOutcome.Ok();
 
+        public ShapeWriteOutcome UpdateContent(OfficeShapeRequest request) => ShapeWriteOutcome.Ok();
+
+        public ShapeGroupWriteOutcome ApplyGroupAppearance(IReadOnlyList<OfficeShapeRequest> requests) =>
+            ShapeGroupWriteOutcome.Ok();
+
         public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) => ShapeWriteOutcome.Ok();
 
         public ShapeWriteOutcome Delete(string primitiveId) => ShapeWriteOutcome.Ok();

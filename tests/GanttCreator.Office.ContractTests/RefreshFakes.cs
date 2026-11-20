@@ -342,6 +342,34 @@ internal sealed class RefreshFakes
     /// <summary>How many unsafe changed-row reads were requested.</summary>
     public int TargetedTableReadCount { get; private set; }
 
+    /// <summary>Whether the last classification step was asked to repair the flags.</summary>
+    public bool? ColumnRepairRequested { get; private set; }
+
+    /// <summary>Builds the orchestrator over these fakes, declining the classification repair.</summary>
+    /// <returns>The composed orchestrator.</returns>
+    /// <remarks>
+    /// The shape of an automatic pass: it renders, but it does not re-assert the managed columns'
+    /// hidden/locked state, because the explicit Refresh owns that repair (owner ruling 2026-11-20).
+    /// </remarks>
+    public GanttRefreshOrchestrator BuildOrchestratorDecliningColumnRepair() =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            null,
+            repairColumnClassification: false);
+
     /// <summary>Builds the orchestrator over these fakes.</summary>
     /// <returns>The composed orchestrator.</returns>
     public GanttRefreshOrchestrator BuildOrchestrator() =>
@@ -782,9 +810,10 @@ internal sealed class RefreshFakes
 
     private sealed class FakeColumnPresentation(RefreshFakes owner) : IColumnPresentationPort
     {
-        public ColumnPresentationOutcome EnsureClassification()
+        public ColumnPresentationOutcome EnsureClassification(bool repair = true)
         {
             owner.Steps.Add("Columns");
+            owner.ColumnRepairRequested = repair;
             return owner.ColumnPresentationRefused
                 ? ColumnPresentationOutcome.Refused(ColumnPresentationRefusalReason.TargetProtected)
                 : ColumnPresentationOutcome.Ok(0);

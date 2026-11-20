@@ -217,6 +217,65 @@ public interface IShapeWritePort
     ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request);
 
     /// <summary>
+    /// Re-applies one existing owned shape's geometry, placement, and text content, without
+    /// repeating the appearance or typography the grouped appearance pass already wrote.
+    /// </summary>
+    /// <param name="request">The shape to update.</param>
+    /// <returns>The typed result; a missing or unowned shape is <see cref="ShapeWriteRefusal.NotFound"/>.</returns>
+    /// <remarks>
+    /// The per-shape half of the grouped update: the box and the string are unique to each
+    /// shape, while the fill, stroke, and text formatting are shared by every shape with the
+    /// same appearance. <see cref="ApplyGroupAppearance"/> writes the shared half once; this
+    /// method writes the unique half. It must never be used without a successful group pass
+    /// for the same request, or the shape's style would be left stale.
+    /// <para>
+    /// A caller that has read <see cref="ShapeGroupWriteOutcome.Mismatched"/> must dispatch
+    /// this method only for an identifier the group pass reported, and only when that list is
+    /// not <see langword="null"/>. The group pass already compared the box, placement and
+    /// string for every member, so a converged shape needs no second read or write.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome UpdateContent(OfficeShapeRequest request);
+
+    /// <summary>
+    /// Writes the shared appearance and typography of a set of update requests, once per
+    /// identical appearance group.
+    /// </summary>
+    /// <param name="requests">The appearance-changing updates from one reconciliation.</param>
+    /// <returns>The typed group result; on a refusal no group after the failing one was written.</returns>
+    /// <remarks>
+    /// <para>
+    /// The requests are bucketed into two independent families, because the two writes touch
+    /// disjoint members: a <c>Fill</c>/<c>Line</c> write cannot change <c>TextFrame2</c>, and
+    /// a <c>TextFrame2</c> write cannot change the fill or stroke. The style bucket is keyed by
+    /// kind, the host-owned extent, fill, stroke, line width, hatch, dash, and a line's
+    /// direction; the typography bucket is keyed by font family/size/weight, alignment, text
+    /// colour, and the left inset. A text box that differs only in fill therefore shares its
+    /// typography range, and one that differs only in text colour shares its style range.
+    /// Each bucket is written through one <c>ShapeRange</c> where it has more than one shape,
+    /// and through the single shape otherwise. Every shape is resolved and ownership-proven
+    /// before the first write, so a missing or user-edited shape refuses the pass rather than
+    /// styling the rest of it.
+    /// </para>
+    /// <para>
+    /// This method does not write text content or geometry, but it does VERIFY both while it
+    /// preflights the range, and it returns the identifiers that still differ in
+    /// <see cref="ShapeGroupWriteOutcome.Mismatched"/>. The caller follows the pass with
+    /// <see cref="UpdateContent"/> for those identifiers only, so a converged shape pays the
+    /// verification reads once instead of a tag read, a re-resolution and a no-op write. A
+    /// port that does not verify returns <see langword="null"/> and the caller keeps the older
+    /// behaviour of visiting every request.
+    /// </para>
+    /// <para>
+    /// Before writing a bucket, every member of every shape in it is compared with the live
+    /// value; a bucket whose shapes all match is read and not written. Reads are 3-10 times
+    /// cheaper than writes, so a converged pass trades the style block for verification
+    /// reads (ADR-0054 amendment 2026-11-20).
+    /// </para>
+    /// </remarks>
+    ShapeGroupWriteOutcome ApplyGroupAppearance(IReadOnlyList<OfficeShapeRequest> requests);
+
+    /// <summary>
     /// Locks every shape this add-in owns, so the user cannot drag or delete it (ADR-0055).
     /// </summary>
     /// <returns>The same typed result the other write operations return.</returns>

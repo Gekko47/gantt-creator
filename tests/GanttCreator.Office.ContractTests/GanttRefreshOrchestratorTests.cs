@@ -256,6 +256,36 @@ public class GanttRefreshOrchestratorTests
     private static int s_nextId;
 
     /// <summary>A refresh whose rows are valid, over the fresh fakes.</summary>
+    /// <summary>
+    /// An automatic pass runs the classification step but declines its repair.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-20. The step still runs, so the pass order and the phase trace are
+    /// unchanged; what changes is that the port makes no host call. The positive control beside it
+    /// proves the flag is not simply always false.
+    /// </remarks>
+    [Fact]
+    public void An_automatic_pass_declines_the_column_classification_repair()
+    {
+        RefreshFakes fakes = new();
+
+        _ = fakes.BuildOrchestratorDecliningColumnRepair().Refresh();
+
+        Assert.False(fakes.ColumnRepairRequested);
+        Assert.Contains("Columns", fakes.Steps);
+    }
+
+    /// <summary>An explicit Refresh still repairs the column classification.</summary>
+    [Fact]
+    public void An_explicit_refresh_still_repairs_the_column_classification()
+    {
+        RefreshFakes fakes = new();
+
+        _ = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(fakes.ColumnRepairRequested);
+    }
+
     private static (RefreshFakes Fakes, GanttRefreshOrchestrator Orchestrator) Ready()
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
@@ -394,6 +424,47 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// A refresh writes the sub-phase line the performance investigation reads: the split
+    /// reads, the three write costs, the visibility input, and the exact ids a churn pass
+    /// moved.
+    /// </summary>
+    /// <remarks>
+    /// The existing <c>timings</c> line cannot say which read is expensive or whether a
+    /// create/delete pass is following a column-visibility change, because it aggregates
+    /// six steps into <c>read</c> and does not name the setting that moves the panel. This
+    /// fact pins the fields the log parser depends on, not their values.
+    /// </remarks>
+    [Fact]
+    public void A_refresh_traces_its_sub_phases_and_the_visibility_input()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Settings = new Dictionary<string, string>
+            {
+                [GanttColumnVisibility.SettingKey] = "Description",
+            },
+        };
+        List<string> trace = [];
+
+        GanttRefreshOutcome outcome = fakes
+            .BuildOrchestratorWithDeltaCache(new ShapeDeltaCache(), trace: trace.Add)
+            .Refresh();
+
+        Assert.True(outcome.Succeeded, "refresh refused: " + outcome.Refusal);
+        string phases = Assert.Single(
+            trace,
+            line => line.StartsWith("gantt.refresh phases ms ", StringComparison.Ordinal));
+        Assert.Contains("hiddenColumns=\"Description\"", phases, StringComparison.Ordinal);
+        Assert.Contains(" owned=", phases, StringComparison.Ordinal);
+        Assert.Contains("ownedms=", phases, StringComparison.Ordinal);
+        Assert.Contains("verify=", phases, StringComparison.Ordinal);
+        Assert.Contains("ops=", phases, StringComparison.Ordinal);
+        Assert.Contains("createdIds=", phases, StringComparison.Ordinal);
+        Assert.Contains("deletedIds=", phases, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A scheduled refresh does not blindly rewrite every shape just because it wrote
     /// row structure: it verifies the live shapes and writes only the drifted ones.
     /// </summary>
@@ -430,11 +501,17 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// A scheduled refresh rewrites a shape the host moved on its own, even though the
-    /// scene payload is byte-identical — the case that left the splitter band stale.
+    /// An explicit refresh rewrites a shape whose live geometry drifted, even though the
+    /// scene payload is byte-identical.
     /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-20 moved this repair off the scheduled path: the chart's shapes are
+    /// locked, so a shape that moved while the measured layout is unchanged can only have been
+    /// moved by hand, and the explicit Refresh is what repairs a manual edit. This test pins the
+    /// repair itself, on the path that owns it.
+    /// </remarks>
     [Fact]
-    public void A_refresh_rewrites_a_shape_whose_live_geometry_drifted()
+    public void An_explicit_refresh_rewrites_a_shape_whose_live_geometry_drifted()
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
         ShapeDeltaCache cache = new();
@@ -444,13 +521,51 @@ public class GanttRefreshOrchestratorTests
         string drifted = fakes.Shapes.Requests.Keys.First();
         _ = fakes.Shapes.DriftedGeometry.Add(drifted);
 
-        GanttRefreshOutcome second = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+        GanttRefreshOutcome second = fakes
+            .BuildOrchestratorWithDeltaCache(cache, useDeltaCache: false)
+            .Refresh();
 
         Assert.True(second.Succeeded, "refused: " + second.Refusal + " " + second.Message);
         Assert.Contains(
             fakes.Shapes.ShapeCalls,
             call => string.Equals(call, "Update:" + drifted, StringComparison.Ordinal));
         Assert.True(fakes.Shapes.ShapeCalls.Count > writesAfterFirst);
+    }
+
+    /// <summary>
+    /// A scheduled refresh whose measured layout is unchanged does not repair a hand-moved shape.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Owner ruling 2026-11-20: the shapes are locked, so a hand-moved shape means the user
+    /// deliberately unlocked the chart and edited it, and an automatic pass must not fight that.
+    /// The visible win is that the 148 geometry verifications a converged pass used to pay
+    /// disappear — and the lose-nothing argument is that host-driven drift (an inserted, deleted,
+    /// hidden or re-heighted row, a resized column) changes the measured layout, which makes the
+    /// fingerprint differ and puts the verification back.
+    /// </para>
+    /// <para>
+    /// This is the positive test for that claim: it asserts the scheduled pass reads NO geometry,
+    /// which also proves the fingerprint was recorded and matched.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_scheduled_pass_with_an_unchanged_layout_does_not_repair_a_hand_moved_shape()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache).Refresh().Succeeded);
+        int writesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+        int checksAfterFirst = fakes.Shapes.GeometryMatchChecks;
+        string moved = fakes.Shapes.Requests.Keys.First();
+        _ = fakes.Shapes.DriftedGeometry.Add(moved);
+
+        GanttRefreshOutcome second = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(second.Succeeded, "refused: " + second.Refusal + " " + second.Message);
+        Assert.Equal(writesAfterFirst, fakes.Shapes.ShapeCalls.Count);
+        Assert.Equal(checksAfterFirst, fakes.Shapes.GeometryMatchChecks);
     }
 
     [Fact]

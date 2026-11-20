@@ -466,6 +466,11 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
 
         public ShapeWriteOutcome Update(OfficeShapeRequest request) => inner.Update(request);
 
+        public ShapeWriteOutcome UpdateContent(OfficeShapeRequest request) => inner.UpdateContent(request);
+
+        public ShapeGroupWriteOutcome ApplyGroupAppearance(IReadOnlyList<OfficeShapeRequest> requests) =>
+            inner.ApplyGroupAppearance(requests);
+
         public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) => inner.UpdateGeometry(request);
 
         public ShapeWriteOutcome Delete(string primitiveId)
@@ -503,6 +508,11 @@ public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
         }
 
         public ShapeWriteOutcome Update(OfficeShapeRequest request) => inner.Update(request);
+
+        public ShapeWriteOutcome UpdateContent(OfficeShapeRequest request) => inner.UpdateContent(request);
+
+        public ShapeGroupWriteOutcome ApplyGroupAppearance(IReadOnlyList<OfficeShapeRequest> requests) =>
+            inner.ApplyGroupAppearance(requests);
 
         public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) => inner.UpdateGeometry(request);
 

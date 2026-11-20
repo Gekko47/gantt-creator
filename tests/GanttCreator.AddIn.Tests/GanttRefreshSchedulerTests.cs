@@ -337,6 +337,190 @@ public sealed class GanttRefreshSchedulerTests
         Assert.Same(AutoRefreshPreferences.Shared, scheduler.GetAutoRefreshSource());
     }
 
+    /// <summary>
+    /// The first-change window is shorter than the burst window, and shorter than nothing else's
+    /// ordering violates. Pinned as a relationship rather than an absolute figure so tuning either
+    /// window stays deliberate.
+    /// </summary>
+    [Fact]
+    public void The_single_cell_window_is_shorter_than_the_burst_window()
+    {
+        Assert.True(GanttRefreshScheduler.SingleCellDebounce > TimeSpan.Zero);
+        Assert.True(GanttRefreshScheduler.SingleCellDebounce < GanttRefreshScheduler.CellDebounce);
+        Assert.True(GanttRefreshScheduler.CommandDebounce < GanttRefreshScheduler.SingleCellDebounce);
+    }
+
+    /// <summary>
+    /// A lone cell edit asks for the short window.
+    /// </summary>
+    /// <remarks>
+    /// The assertion is on the due time the scheduler REQUESTED, not on when a callback arrived. The
+    /// first version polled wall-clock arrival against a 250 ms deadline and failed once in
+    /// `verify-quick` while the machine was also running the analyzer and script gates: a correct
+    /// 100 ms timer arrived at 279 ms under load. A test of a timer policy must not depend on the
+    /// scheduler thread being prompt.
+    /// </remarks>
+    [Fact]
+    public void A_single_cell_change_is_queued_on_the_short_window()
+    {
+        Action<string?>? onChanged = null;
+        List<int> requested = [];
+        Mock<IExcelApplicationAdapter> adapter = new();
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            _ => { },
+            () => { },
+            preferences: null,
+            autoRefresh: null,
+            trace: null,
+            timerFactory: (milliseconds, _) =>
+            {
+                requested.Add(milliseconds);
+                return new System.Threading.Timer(_ => { }, null, Timeout.Infinite, Timeout.Infinite);
+            });
+        scheduler.Activate();
+
+        Assert.NotNull(onChanged);
+        onChanged!("\"book|Sheet\"!D5");
+
+        int only = Assert.Single(requested);
+        Assert.Equal((int)GanttRefreshScheduler.SingleCellDebounce.TotalMilliseconds, only);
+    }
+
+    /// <summary>
+    /// The second change in the same burst escalates to the burst window.
+    /// </summary>
+    /// <remarks>
+    /// This is the half that keeps a paste coalescing into one render. Both changes are raised
+    /// back to back, so the short timer cannot have fired between them.
+    /// </remarks>
+    [Fact]
+    public void A_second_change_in_the_same_burst_escalates_to_the_burst_window()
+    {
+        Action<string?>? onChanged = null;
+        List<int> requested = [];
+        Mock<IExcelApplicationAdapter> adapter = new();
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            _ => { },
+            () => { },
+            preferences: null,
+            autoRefresh: null,
+            trace: null,
+            timerFactory: (milliseconds, _) =>
+            {
+                requested.Add(milliseconds);
+                return new System.Threading.Timer(_ => { }, null, Timeout.Infinite, Timeout.Infinite);
+            });
+        scheduler.Activate();
+
+        Assert.NotNull(onChanged);
+        onChanged!("\"book|Sheet\"!D5");
+        onChanged!("\"book|Sheet\"!D6");
+
+        // Two requests, in order: the short window first, then the burst window that replaces it.
+        // This is the load-bearing half - a scheduler that ignored the escalation would ask for the
+        // short window twice and a paste would render several times.
+        Assert.Equal(2, requested.Count);
+        Assert.Equal((int)GanttRefreshScheduler.SingleCellDebounce.TotalMilliseconds, requested[0]);
+        Assert.Equal((int)GanttRefreshScheduler.CellDebounce.TotalMilliseconds, requested[1]);
+    }
+
+    /// <summary>
+    /// A cell burst reports the analyzer cost it paid before the debounce and the target that was
+    /// scheduled, because neither is visible in the pipeline's own timings.
+    /// </summary>
+    [Fact]
+    public void A_cell_burst_traces_detect_cost_and_the_scheduled_target()
+    {
+        Action<string?>? onChanged = null;
+        List<string> lines = [];
+        ConcurrentQueue<ExcelAction> macros = new();
+        int analyzerCalls = 0;
+        Mock<IExcelApplicationAdapter> adapter = new();
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer
+            .Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>()))
+            .Callback(() => analyzerCalls++)
+            .Returns(true);
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            macros.Enqueue,
+            () => { },
+            preferences: null,
+            autoRefresh: null,
+            trace: line => lines.Add(line));
+        scheduler.Activate();
+
+        Assert.NotNull(onChanged);
+        onChanged!("\"Book|Sheet1\"!D5");
+        onChanged!("\"Book|Sheet1\"!D6");
+
+        Assert.True(
+            SpinWait.SpinUntil(() => macros.Count == 1, TimeSpan.FromSeconds(5)),
+            "The burst did not queue a pass.");
+        Assert.True(macros.TryDequeue(out ExcelAction? macro));
+        macro!();
+
+        string line = Assert.Single(lines);
+        Assert.Contains("gantt.refresh detect source=cell", line, StringComparison.Ordinal);
+        Assert.Contains("events=2", line, StringComparison.Ordinal);
+        Assert.Contains("detectms=", line, StringComparison.Ordinal);
+        Assert.Contains("queuedms=", line, StringComparison.Ordinal);
+        Assert.Contains("scheduled=\"Book|Sheet1\"", line, StringComparison.Ordinal);
+        Assert.Equal(2, analyzerCalls);
+    }
+
+    /// <summary>
+    /// A command pass reports zero analysed events and no cell target, so a reader can tell the two
+    /// scheduling paths apart in the log.
+    /// </summary>
+    [Fact]
+    public void A_command_refresh_traces_zero_detect_events()
+    {
+        List<string> lines = [];
+        ConcurrentQueue<ExcelAction> macros = new();
+        using GanttRefreshScheduler scheduler = new(
+            Mock.Of<IExcelApplicationAdapter>(),
+            Mock.Of<ISheetChangeAnalyzer>(),
+            macros.Enqueue,
+            () => { },
+            preferences: null,
+            autoRefresh: null,
+            trace: line => lines.Add(line));
+
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => macros.Count == 1, TimeSpan.FromSeconds(5)),
+            "The command did not queue a pass.");
+        Assert.True(macros.TryDequeue(out ExcelAction? macro));
+        macro!();
+
+        string line = Assert.Single(lines);
+        Assert.Contains("gantt.refresh detect source=command events=0", line, StringComparison.Ordinal);
+        Assert.Contains("detectms=0 ", line, StringComparison.Ordinal);
+        Assert.Contains("scheduled=\"\"", line, StringComparison.Ordinal);
+    }
+
     private static GanttRefreshScheduler CreateScheduler(Action<ExcelAction> queue, Action refresh) =>
         new(
             Mock.Of<IExcelApplicationAdapter>(),

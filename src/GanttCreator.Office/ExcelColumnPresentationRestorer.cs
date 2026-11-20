@@ -62,8 +62,16 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     /// <inheritdoc />
-    public ColumnPresentationOutcome EnsureClassification()
+    public ColumnPresentationOutcome EnsureClassification(bool repair = true)
     {
+        if (!repair)
+        {
+            // Owner ruling 2026-11-20: an automatic pass does not re-assert presentation. This is the
+            // whole 19-45 ms the flag verification costs, and it is returned without a single host
+            // call, so the phase measures zero rather than "cheap". The explicit Refresh repairs.
+            return ColumnPresentationOutcome.Ok(0);
+        }
+
         Excel.Application? app = _application;
         Excel.Workbook? workbook = app?.ActiveWorkbook;
         if (workbook is null)
@@ -116,10 +124,16 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         // Resolving every required column first makes the refusal genuinely precede
         // any mutation, which is the ADR-0008 D4 contract the rest of the adapter
         // already follows.
+        // Resolve every required column in ONE walk. The former per-name scan was
+        // O(N^2) COM `Name` reads (26 schema columns x 26 live columns = 676 reads on
+        // every pass); the live trace measured `columns` at 35-119 ms, the largest
+        // phase inside `read` once the write work was removed. A single map is one
+        // read per live column with the same ordinal name match.
+        Dictionary<string, Excel.ListColumn> liveColumns = BuildColumnMap(columns);
         List<Excel.ListColumn> resolved = new(schema.Count);
         for (int index = 0; index < schema.Count; index++)
         {
-            if (!TryFindColumnByName(columns, schema[index].Name, out Excel.ListColumn? live) || live is null)
+            if (!liveColumns.TryGetValue(schema[index].Name, out Excel.ListColumn? live) || live is null)
             {
                 return ColumnPresentationOutcome.Refused(
                     ColumnPresentationRefusalReason.SchemaColumnMissing);
@@ -197,12 +211,10 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
     }
 
     /// <summary>
-    /// Finds a live table column by its header name.
+    /// Builds the live column map with one COM <c>Name</c> read per column.
     /// </summary>
     /// <param name="columns">The table's list columns.</param>
-    /// <param name="name">The schema column name to find.</param>
-    /// <param name="column">The found column, or <see langword="null"/>.</param>
-    /// <returns><see langword="true"/> when the live table carries the column.</returns>
+    /// <returns>The live columns keyed by header name.</returns>
     /// <remarks>
     /// <para>
     /// <b>Ordinal comparison.</b> A worksheet header is text the schema owns, not a
@@ -216,24 +228,17 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
     /// a user's addition to the table.
     /// </para>
     /// </remarks>
-    private bool TryFindColumnByName(
-        Excel.ListColumns columns,
-        string name,
-        out Excel.ListColumn? column)
+    private Dictionary<string, Excel.ListColumn> BuildColumnMap(Excel.ListColumns columns)
     {
         int count = columns.Count;
+        Dictionary<string, Excel.ListColumn> map = new(count, StringComparer.Ordinal);
         for (int index = 1; index <= count; index++)
         {
             Excel.ListColumn candidate = GetColumnAt(columns, index);
-            if (string.Equals(GetColumnName(candidate), name, StringComparison.Ordinal))
-            {
-                column = candidate;
-                return true;
-            }
+            _ = map.TryAdd(GetColumnName(candidate), candidate);
         }
 
-        column = null;
-        return false;
+        return map;
     }
 
     /// <summary>

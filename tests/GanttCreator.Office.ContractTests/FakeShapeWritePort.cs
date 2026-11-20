@@ -239,6 +239,59 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
     /// </summary>
     /// <param name="request">The scene's desired shape.</param>
     /// <returns>The typed result.</returns>
+    /// <summary>
+    /// The grouped-appearance calls this reconcile made, in order. A test asserts the
+    /// grouping contract from this list; the fake does not model fill/line values.
+    /// </summary>
+    public List<IReadOnlyList<OfficeShapeRequest>> GroupAppearanceCalls { get; } = [];
+
+    /// <summary>
+    /// The identifiers the grouped pass is to report as still differing on geometry or
+    /// content, or <see langword="null"/> to model a port that verifies nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The real port compares every member's live geometry and text while it preflights the
+    /// grouped range, and returns the ones that still need the per-shape content write. The
+    /// reconciler must dispatch <c>UpdateContent</c> only for those identifiers, so this knob
+    /// is what lets a contract test prove both halves: an empty list means the group pass
+    /// already converged the sheet and no per-shape call is made, while a listed identifier
+    /// still receives exactly one.
+    /// </para>
+    /// <para>
+    /// <see langword="null"/> is the default and keeps the pre-verification behaviour the older
+    /// tests were written against — every appearance update is dispatched per shape. That
+    /// default is deliberate: a fake that silently claimed "all converged" would make an
+    /// untested reconciler look faster than it is.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string>? MismatchedForGroup { get; set; }
+
+    /// <inheritdoc />
+    public ShapeGroupWriteOutcome ApplyGroupAppearance(IReadOnlyList<OfficeShapeRequest> requests)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        if (requests.Count == 0)
+        {
+            return ShapeGroupWriteOutcome.Ok();
+        }
+
+        GroupAppearanceCalls.Add([.. requests]);
+        Calls.Add("ApplyGroupAppearance:" + string.Join('|', requests.Select(request => request.PrimitiveId)));
+        return RefusalFor("ApplyGroupAppearance", requests[0].PrimitiveId) is { } refusal
+            ? ShapeGroupWriteOutcome.Refused(requests[0].PrimitiveId, refusal)
+            : ShapeGroupWriteOutcome.Ok(MismatchedForGroup);
+    }
+
+    /// <summary>
+    /// The content half of the grouped update. Delegates to <see cref="Update"/> so the
+    /// existing ownership and refusal model applies unchanged; the real port's difference
+    /// is the style it does not repeat, which this fake does not model.
+    /// </summary>
+    /// <param name="request">The shape to update.</param>
+    /// <returns>The typed result.</returns>
+    public ShapeWriteOutcome UpdateContent(OfficeShapeRequest request) => Update(request);
+
     public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);

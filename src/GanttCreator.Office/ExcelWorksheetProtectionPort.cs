@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using GanttCreator.Core;
 
@@ -386,8 +388,14 @@ public class ExcelWorksheetProtectionPort(
         // locked" until a refresh. Cycling the protection is the only way to set a property the
         // host refuses in the current state: release, set, re-protect — with the same DrawingObjects
         // and Contents arguments, so the protection the user had is the protection they get back.
-        bool cycled = false;
-        if (protectedBefore)
+        // The cycle is for a sheet whose option was LOST: one protected by a previous session,
+        // where EnableOutlining was never persisted. When the host still reports the option ON,
+        // cycling releases and re-protects for nothing — two protection state changes on every
+        // automatic pass (measured: `protectedBefore=True ... cycled=ok` on every converged close,
+        // ~25 ms of a 195 ms pass). An unreadable reading keeps the old behaviour, because an
+        // unknown state is not evidence that the option is on.
+        bool? cycled = null;
+        if (protectedBefore && enabledBefore is not true)
         {
             try
             {
@@ -399,6 +407,7 @@ public class ExcelWorksheetProtectionPort(
                 // A password we do not have. The sheet stays as it was; protecting below is then a
                 // no-op and the caller's guard reports what it can prove, which is the existing
                 // behaviour rather than a new failure.
+                cycled = false;
                 _ = exception;
             }
         }
@@ -407,14 +416,33 @@ public class ExcelWorksheetProtectionPort(
         // chart is locked. This must precede Protect — Locked is a format write the host refuses on
         // a protected sheet — and it is deliberately not fatal: a sheet we cannot release simply
         // stays as locked as it was.
+        //
+        // Timed separately from the Protect call because the close measured 17-31 ms on every
+        // automatic pass and this method makes seven host calls: the unlock, the Protect itself and
+        // the three-call outline-symbol dance. Guessing which one to remove is how a protection
+        // change becomes a regression; the split says which.
+        long unlockStarted = Stopwatch.GetTimestamp();
         bool cellsUnlocked = UnlockTableCells(sheet);
 
+        long protectStarted = Stopwatch.GetTimestamp();
         bool setBefore = SetOutlineSymbolsEnabled(sheet);
 
         ApplyProtect(sheet, chartLocked, sheetCellsLocked);
+        long protectDone = Stopwatch.GetTimestamp();
 
         bool setAfter = SetOutlineSymbolsEnabled(sheet);
         bool? enabledAfter = ReadOutlineSymbolsEnabled(sheet);
+        long outlineDone = Stopwatch.GetTimestamp();
+
+        // Appended to the ONE line this method already emits, not a second one: every protection fact
+        // asserts a single trace record, and a separate timing line would break all nine of them for
+        // no diagnostic gain.
+        string unlockMs = Stopwatch.GetElapsedTime(unlockStarted, protectStarted)
+            .TotalMilliseconds.ToString("0.#", CultureInfo.InvariantCulture);
+        string protectMs = Stopwatch.GetElapsedTime(protectStarted, protectDone)
+            .TotalMilliseconds.ToString("0.#", CultureInfo.InvariantCulture);
+        string outlineMs = Stopwatch.GetElapsedTime(protectDone, outlineDone)
+            .TotalMilliseconds.ToString("0.#", CultureInfo.InvariantCulture);
 
         // One line, emitted after the last read, so a live log answers the question the reports
         // keep re-opening: was the sheet already protected (which is what makes a set a no-op),
@@ -437,7 +465,13 @@ public class ExcelWorksheetProtectionPort(
             + " enabledAfter="
             + Describe(enabledAfter)
             + " cycled="
-            + DescribeAttempt(cycled));
+            + DescribeCycle(cycled)
+            + " unlockms="
+            + unlockMs
+            + " protectms="
+            + protectMs
+            + " outlinems="
+            + outlineMs);
 
         static string Describe(bool? value)
         {
@@ -447,6 +481,18 @@ public class ExcelWorksheetProtectionPort(
         static string DescribeAttempt(bool landed)
         {
             return landed ? "ok" : "refused";
+        }
+
+        // Three states, not two: a skipped cycle is the GOOD outcome on a warm pass, and
+        // recording it as "refused" would make every converged close look like a failure.
+        static string DescribeCycle(bool? cycle)
+        {
+            return cycle switch
+            {
+                true => "ok",
+                false => "refused",
+                _ => "skipped",
+            };
         }
     }
 

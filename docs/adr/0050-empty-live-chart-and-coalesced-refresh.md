@@ -92,3 +92,33 @@ hidden columns, protection re-arm and error fills are reconciled only by a pass,
 list keeps the last render's findings; R5.20 records this and the control's supertip states it. A
 version-24 workbook reports a catalogue-hash mismatch and is repaired by Initialise (ADR-0029 D6,
 no migration).
+
+## Amendment 2026-11-20 — D3: the coalescing window is sized by the burst
+
+**Decision.** One cell window becomes two. The **first** accepted cell change of a burst waits
+**100 ms**; a **second** change in the same burst escalates the window to **300 ms**, which is what
+keeps a paste or a fill collapsing into one render. A command keeps its **50 ms**, and the burst
+counter resets when a burst's timer fires, so the next lone edit is fast again.
+
+**Why.** The 13:3x trace split click-to-plot into **300 ms of debounce + 10–115 ms of macro queue +
+164–1072 ms of pipeline**, making the fixed window the largest single term for a one-cell edit, while
+`events=9–10` on the same log showed the bursts that need coalescing are pastes whose events arrive
+together (nine inside 3.4 ms). The escalation only has to win that ~0.4 ms gap, so 100 ms is ample
+margin for a slow host delivering an event late.
+
+**Why it needed a prerequisite, and what that was.** A first attempt at this amendment was
+implemented, contract-tested and then **withdrawn**, because the live gate failed two different
+`AddRowIntegrationTests`. Those facts asserted row arrangement and shape set immediately after an
+insert and had always been racing the scheduler — the 300 ms window merely outlasted them; at 100 ms
+the add-in's scheduled pass, triggered by `Initialise`'s own cell writes, landed mid-assertion. The
+amendment therefore lands with that family made **scheduler-independent**: it no longer calls
+`RegisterXll`, because nothing in it needs the add-in (it drives the Office adapters directly), which
+is the same deliberate omission already documented on `ColumnVisibilityRoundTripIntegrationTests` and
+`ProtectionArmingIntegrationTests`.
+
+**Residual trade, recorded rather than hidden.** Two edits 100–300 ms apart now render twice instead
+of once. That is one action per render, and each render is 130–250 ms of write work.
+
+**Measured effect.** ~200 ms off the perceived latency of a one-cell edit on the automatic path, with
+paste coalescing unchanged. Evidence and the per-burst trace columns are in
+`plans/refresh-latency-trace-and-opportunities.md` §P.

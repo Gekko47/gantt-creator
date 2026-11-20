@@ -169,11 +169,15 @@ internal static class RefreshSheetCommand
         long refreshCompleted;
         using (IDisposable window = ProtectionWindowFor(application).Open())
         {
-            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: false);
+            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
+                application,
+                useDeltaCache: false,
+                repairColumnClassification: true);
             outcome = orchestrator.Refresh();
             refreshCompleted = Stopwatch.GetTimestamp();
         }
 
+        long ribbonStarted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service so the warnings
@@ -197,8 +201,10 @@ internal static class RefreshSheetCommand
         // pulled the user off the add-in tab). It runs on a refused refresh too: the user
         // is still on this sheet. The call is guarded by Ready + the Gantt sheet being
         // active, so it is a no-op everywhere else.
+        long tabsStarted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.ActivateGanttTab();
 
+        TracePostSteps(refreshCompleted, ribbonStarted, tabsStarted);
         TracePostPass(refreshCompleted);
         TraceCommand(commandStarted, automatic: false);
     }
@@ -229,11 +235,18 @@ internal static class RefreshSheetCommand
         long refreshCompleted;
         using (IDisposable window = ProtectionWindowFor(application).Open())
         {
-            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: true);
+            // The automatic pass declines the column-classification repair: it measured 19-45 ms per
+            // pass, the explicit Refresh owns that repair, and the chart reads whichever columns are
+            // visible either way (owner ruling 2026-11-20).
+            GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
+                application,
+                useDeltaCache: true,
+                repairColumnClassification: false);
             outcome = orchestrator.Refresh();
             refreshCompleted = Stopwatch.GetTimestamp();
         }
 
+        long ribbonStarted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service — same as RunForExcel.
@@ -270,8 +283,10 @@ internal static class RefreshSheetCommand
         // same ordering reason — the protection window has closed, so its selection
         // restore (a Range.Select() inside the table) has already happened and cannot
         // re-activate the Table Design tab afterwards.
+        long tabsStarted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.ActivateGanttTab();
 
+        TracePostSteps(refreshCompleted, ribbonStarted, tabsStarted);
         TracePostPass(refreshCompleted);
         TraceCommand(commandStarted, automatic: true);
     }
@@ -331,6 +346,23 @@ internal static class RefreshSheetCommand
             $"gantt.refresh post ms={Stopwatch.GetElapsedTime(since).TotalMilliseconds:0.#}"));
 
     /// <summary>
+    /// Splits the post-pipeline work into the ribbon-state writes and the tab restore.
+    /// </summary>
+    /// <param name="since">The timestamp taken when the pipeline returned.</param>
+    /// <param name="ribbonStarted">The timestamp taken before the first ribbon write.</param>
+    /// <param name="tabsStarted">The timestamp taken before the tab restore.</param>
+    /// <remarks>
+    /// The owner's 18:23 and 18:4x traces put `post` at 17-50 ms per pass, and it is the last
+    /// unmeasured term inside the command: the ribbon state work and the tab restore are the only
+    /// two things there, and a single figure could not say which one to attack. Neither is render
+    /// work, so neither can be found in the pipeline's own phases.
+    /// </remarks>
+    private static void TracePostSteps(long since, long ribbonStarted, long tabsStarted) =>
+        CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh post-steps ms=state={Stopwatch.GetElapsedTime(since, ribbonStarted).TotalMilliseconds:0.#} tabs={Stopwatch.GetElapsedTime(ribbonStarted, tabsStarted).TotalMilliseconds:0.#}"));
+
+    /// <summary>
     /// Shows the message, degrading to no dialog if the host refuses one.
     /// </summary>
     /// <param name="presenter">The user-facing presenter.</param>
@@ -360,7 +392,14 @@ internal static class RefreshSheetCommand
 #pragma warning disable CA2000
     /// <param name="application">The Excel application object.</param>
     /// <param name="useDeltaCache">Whether this scheduled refresh may skip unchanged payload writes.</param>
-    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, bool useDeltaCache)
+    /// <param name="repairColumnClassification">
+    /// Whether this pass re-asserts the managed columns' hidden/locked state. False for a scheduled
+    /// pass, which leaves that repair to the explicit Refresh (owner ruling 2026-11-20).
+    /// </param>
+    private static GanttRefreshOrchestrator CreateLiveOrchestrator(
+        object? application,
+        bool useDeltaCache,
+        bool repairColumnClassification)
     {
         // One sink for the refresh's delta/geometry decisions and the row-structure
         // writes in the same run. It goes to the rolling log, which degrades internally
@@ -370,8 +409,7 @@ internal static class RefreshSheetCommand
         // Constructed once and shared: the arming policy locks the owned shapes through the same
         // writer the reconciliation uses (ADR-0055), so both must see the same guard and the same
         // trace sink.
-        ExcelShapeWriter shapeWriter =
-            new(application, new ExcelWorksheetProtectionGuard(application), trace);
+        ExcelShapeWriter shapeWriter = CreateLiveShapeWriter(application, trace);
 
         return new GanttRefreshOrchestrator(
             new ExcelGanttTableReader(application),
@@ -442,7 +480,32 @@ internal static class RefreshSheetCommand
                 new ExcelWorksheetProtectionPort(application, trace),
                 shapeWriter,
                 _protectionArming,
-                trace));
+                trace),
+            repairColumnClassification: repairColumnClassification);
     }
 #pragma warning restore CA2000
+
+    /// <summary>
+    /// Builds the live shape writer with batch template reuse enabled.
+    /// </summary>
+    /// <param name="application">The Excel application object.</param>
+    /// <param name="trace">The non-null diagnostic sink.</param>
+    /// <returns>The writer the live reconciliation uses.</returns>
+    /// <remarks>
+    /// A shape whose appearance matches an earlier shape in the same reconcile batch is
+    /// created by duplicating that template and writing only its geometry, content, and
+    /// identity. The staging writer has used this flag since R6.8; enabling it on the live
+    /// path removes the per-shape style block from every create-heavy refresh. The measured
+    /// per-shape costs are 2.3 ms (rectangle) and 8.6 ms (text box) against 24.9 / 34.6 ms
+    /// to create them, and a host that refuses the duplicate falls back to a normal create.
+    /// </remarks>
+    internal static ExcelShapeWriter CreateLiveShapeWriter(object? application, Action<string> trace)
+    {
+        ArgumentNullException.ThrowIfNull(trace);
+        return new ExcelShapeWriter(
+            application,
+            new ExcelWorksheetProtectionGuard(application),
+            trace,
+            reuseTemplates: true);
+    }
 }

@@ -100,6 +100,24 @@ public sealed class ExcelColumnPresentationRestorerTests
         internal override Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
     }
 
+    /// <summary>Counts every header-name read the schema resolution makes.</summary>
+    private sealed class CountingRestorer(
+        object? application,
+        IWorksheetProtectionGuard guard,
+        Excel.ListObject table,
+        Excel.Worksheet worksheet,
+        List<string> recorded)
+        : TestableRestorer(application, guard, table, worksheet, recorded)
+    {
+        public int NameReads { get; private set; }
+
+        internal override string GetColumnName(Excel.ListColumn column)
+        {
+            NameReads++;
+            return base.GetColumnName(column);
+        }
+    }
+
     private static Excel.Worksheet Worksheet()
     {
         Mock<Excel.Worksheet> worksheet = new();
@@ -149,6 +167,56 @@ public sealed class ExcelColumnPresentationRestorerTests
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.ColumnsRestored);
+        Assert.Empty(recorded);
+    }
+
+    /// <summary>
+    /// The schema resolves with ONE header-name read per live column, not one per
+    /// schema-name lookup. The former scan was O(N^2) COM reads (26x26 = 676 per
+    /// refresh) and was the largest phase inside `read` on the live trace.
+    /// </summary>
+    [Fact]
+    public void The_schema_resolves_with_one_header_name_read_per_live_column()
+    {
+        List<string> recorded = [];
+        CountingRestorer restorer = new(
+            Application().Object,
+            Guard(ProtectionGuardOutcome.NotProtected).Object,
+            new Mock<Excel.ListObject>().Object,
+            Worksheet(),
+            recorded);
+
+        ColumnPresentationOutcome outcome = restorer.EnsureClassification();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, restorer.NameReads);
+    }
+
+    /// <summary>
+    /// An automatic pass declines the repair and pays no host call at all.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-20: the flag verification measured 19-45 ms per pass, and the explicit
+    /// Refresh is what repairs a column the user unhid. The zero header reads are the load-bearing
+    /// assertion — an implementation that returned early only AFTER resolving the schema would still
+    /// pay the 26 reads and pass a naive "returned zero" test.
+    /// </remarks>
+    [Fact]
+    public void An_automatic_pass_reads_no_column_flags_and_writes_nothing()
+    {
+        List<string> recorded = [];
+        CountingRestorer restorer = new(
+            Application().Object,
+            Guard(ProtectionGuardOutcome.NotProtected).Object,
+            new Mock<Excel.ListObject>().Object,
+            Worksheet(),
+            recorded);
+
+        ColumnPresentationOutcome outcome = restorer.EnsureClassification(repair: false);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.ColumnsRestored);
+        Assert.Equal(0, restorer.NameReads);
         Assert.Empty(recorded);
     }
 
