@@ -2,7 +2,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using Microsoft.CSharp.RuntimeBinder;
+using OfficeCore = Microsoft.Office.Core;
+using PowerPoint = Microsoft.Office.Interop.PowerPoint;
 
 namespace GanttCreator.Office.IntegrationTests;
 
@@ -31,56 +32,46 @@ internal sealed record PowerPointPasteOutcome(
 internal sealed record PowerPointUngroupOutcome(int ChildCount, bool WasGroup);
 
 /// <summary>
-/// Test-only PowerPoint host for the R6.7 copy-after-delete spike.
+/// Test-only PowerPoint host: the typed replacement for the late-bound R6.7 fixture.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Late-bound COM, deliberately.</b> The work item's D5 default route takes no new
-/// package: the fixture resolves <c>PowerPoint.Application</c> through
-/// <see cref="Type.GetTypeFromProgID(string)"/> and drives the minimum member surface
-/// verified against the Microsoft VBA object-model documentation — <c>Presentations.Add</c>,
-/// <c>Slides.Add</c> (blank layout), <c>Shapes.PasteSpecial</c> with <c>ppPasteShape</c>
-/// (value 11), <c>ShapeRange.Count/Width/Height</c>, <c>Shape.Type</c> with
-/// <c>msoGroup</c> (value 6), <c>ShapeRange.Ungroup</c>, and
-/// <c>Application.DisplayAlerts</c> with <c>ppAlertsNone</c> (value 1). It creates no
-/// production adapter; R7.1 owns that.
+/// <b>Typed PIA, no binder.</b> The fixture drives the same members the production adapter
+/// does, through <c>Microsoft.Office.Interop.PowerPoint</c>: <c>Presentations.Add</c>,
+/// <c>Slides.Add</c> (blank layout), <c>Shapes.PasteSpecial</c> with <c>ppPasteShape</c>,
+/// <c>ShapeRange.Count/Width/Height</c>, <c>Shape.Type</c> with <c>msoGroup</c>,
+/// <c>ShapeRange.Ungroup</c>, and <c>Application.DisplayAlerts</c>. No <c>dynamic</c> and no
+/// <c>Microsoft.CSharp</c> binder call remains (ADR-0069).
 /// </para>
 /// <para>
-/// <b>Ownership mirrors <see cref="OfficeFixture"/>.</b> The pre-existing
-/// <c>POWERPNT.EXE</c> processes are recorded as user-owned before launch; only the
-/// process the launch created is polled after <c>Quit()</c> and only it may be killed,
-/// after re-confirming its process start time. Every proxy is held in a local and
-/// released once, in reverse order. Cleanup is best-effort by design: a release or a
-/// close that fails must not escape a <c>finally</c> into the host.
+/// <b>Ownership mirrors <see cref="OfficeFixture"/> and never destroys a user session.</b>
+/// The pre-existing <c>POWERPNT.EXE</c> processes are recorded as user-owned before launch;
+/// only the process the launch created is adopted, and it is recorded in the shared owned-PID
+/// manifest so <c>verify-office.ps1</c> can sweep it on a timeout. <c>Quit</c> runs only when
+/// the fixture started the process; a presentation is always fixture-created and is closed
+/// unsaved. Every proxy is held in the shared
+/// <see cref="PowerPointProxyOwnership"/> tracker and released once, in reverse order.
 /// </para>
 /// </remarks>
 internal sealed class PowerPointFixture : IAsyncDisposable
 {
-    private const string ProcessName = "POWERPNT";
+    private const string _processName = "POWERPNT";
 
     /// <summary>The PowerPoint <c>msoGroup</c> shape type identifier.</summary>
-    private const int MssoGroupShapeType = 6;
+    private const int _mssoGroupShapeType = 6;
 
-    /// <summary>The PowerPoint <c>ppLayoutBlank</c> slide layout identifier.</summary>
-    private const int PpLayoutBlank = 12;
-
-    /// <summary>The PowerPoint <c>ppPasteShape</c> clipboard data type identifier.</summary>
-    private const int PpPasteShape = 11;
-
-    /// <summary>The PowerPoint <c>ppAlertsNone</c> alert level.</summary>
-    private const int PpAlertsNone = 1;
-
-    private static readonly TimeSpan GracefulExitTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan _gracefulExitTimeout = TimeSpan.FromSeconds(10);
 
     private readonly List<int> _ownedProcessIds = [];
     private readonly Dictionary<int, long> _ownedProcessStartTicks = [];
-    private readonly List<object> _proxies = [];
+    private readonly PowerPointProxyOwnership _ownership = new();
 
-    private object? _application;
-    private object? _presentation;
-    private object? _slide;
-    private object? _lastPasteRange;
-    private object? _lastPastedGroup;
+    private PowerPoint.Application? _application;
+    private PowerPoint.Presentation? _presentation;
+    private PowerPoint.Slide? _slide;
+    private PowerPoint.ShapeRange? _lastPasteRange;
+    private PowerPoint.Shape? _lastPastedGroup;
+    private bool _startedByUs;
     private bool _disposed;
 
     /// <summary>
@@ -93,32 +84,26 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     /// Starts or attaches to desktop PowerPoint and creates the test-owned
     /// presentation and blank slide the spike pastes into.
     /// </summary>
-    /// <exception cref="InvalidOperationException">PowerPoint is not installed, or the presentation could not be created.</exception>
+    /// <exception cref="InvalidOperationException">PowerPoint could not be created.</exception>
     internal void Initialize()
     {
-        Type applicationType = Type.GetTypeFromProgID("PowerPoint.Application")
-            ?? throw new InvalidOperationException(
-                "PowerPoint is not installed: the PowerPoint.Application ProgID is not registered.");
-
         Dictionary<int, long> before = SnapshotPowerPointProcesses();
-        object instance = Activator.CreateInstance(applicationType)
-            ?? throw new InvalidOperationException("Activator.CreateInstance returned null for PowerPoint.Application.");
-        _application = Track(instance);
+        _application = _ownership.Acquire(new PowerPoint.Application());
         AdoptOwnedProcesses(before);
         BuildDescription = DescribeOwnedBuild();
 
         // ppAlertsNone: ungroup/paste prompts must surface as COM errors, never as a
         // modal dialog that hangs the harness. The alert level is the documented member.
-        ((dynamic)_application).DisplayAlerts = PpAlertsNone;
+        _application.DisplayAlerts = PowerPoint.PpAlertLevel.ppAlertsNone;
 
         // WithWindow = msoFalse: the test-owned presentation has no window, which is the
         // documented way to keep the automation out of the user's view without relying on
         // Application.Visible (PowerPoint does not honour an invisible application).
-        dynamic presentations = Track(((dynamic)_application).Presentations);
-        _presentation = Track(presentations.Add(0));
+        PowerPoint.Presentations presentations = _ownership.Acquire(_application.Presentations);
+        _presentation = _ownership.Acquire(presentations.Add(OfficeCore.MsoTriState.msoFalse));
 
-        dynamic slides = Track(((dynamic)_presentation).Slides);
-        _slide = Track(slides.Add(1, PpLayoutBlank));
+        PowerPoint.Slides slides = _ownership.Acquire(_presentation.Slides);
+        _slide = _ownership.Acquire(slides.Add(1, PowerPoint.PpSlideLayout.ppLayoutBlank));
         _lastPasteRange = null;
         _lastPastedGroup = null;
     }
@@ -137,15 +122,16 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             throw new InvalidOperationException("Initialize must run before PasteSpecialShape.");
         }
 
-        dynamic shapes = Track(((dynamic)_slide).Shapes);
-        dynamic range = Track(shapes.PasteSpecial(PpPasteShape));
+        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        PowerPoint.ShapeRange range = _ownership.Acquire(
+            shapes.PasteSpecial(PowerPoint.PpPasteDataType.ppPasteShape));
         _lastPasteRange = range;
 
-        int shapeCount = (int)range.Count;
-        double widthPt = (double)range.Width;
-        double heightPt = (double)range.Height;
+        int shapeCount = range.Count;
+        double widthPt = range.Width;
+        double heightPt = range.Height;
         int groupItemCount = 0;
-        object? pastedGroup = null;
+        PowerPoint.Shape? pastedGroup = null;
         List<string> descriptions = [];
 
         // Measured on the reference host: pasting an Excel group with ppPasteShape returns
@@ -153,19 +139,19 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         // must be located within the range rather than assumed to be the only item.
         for (int index = 1; index <= shapeCount; index++)
         {
-            dynamic item = Track(range.Item(index));
-            string name = (string)item.Name;
+            PowerPoint.Shape item = _ownership.Acquire(range[index]);
+            string name = item.Name;
             int shapeType = (int)item.Type;
-            double itemWidth = (double)item.Width;
-            double itemHeight = (double)item.Height;
+            double itemWidth = item.Width;
+            double itemHeight = item.Height;
             descriptions.Add(string.Create(
                 CultureInfo.InvariantCulture,
                 $"{index}:name={name}:type={shapeType}:width={itemWidth}:height={itemHeight}"));
 
-            if (shapeType == MssoGroupShapeType && pastedGroup is null)
+            if (shapeType == _mssoGroupShapeType && pastedGroup is null)
             {
-                dynamic groupItems = Track(item.GroupItems);
-                groupItemCount = (int)groupItems.Count;
+                PowerPoint.GroupShapes groupItems = _ownership.Acquire(item.GroupItems);
+                groupItemCount = groupItems.Count;
                 pastedGroup = item;
             }
         }
@@ -187,17 +173,17 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             throw new InvalidOperationException("PasteSpecialShape must run before UngroupPastedShapes.");
         }
 
-        dynamic range = _lastPasteRange;
+        PowerPoint.ShapeRange range = _lastPasteRange;
         if (_lastPastedGroup is not null)
         {
-            dynamic children = Track(((dynamic)_lastPastedGroup).Ungroup());
-            int childCount = (int)children.Count;
+            PowerPoint.ShapeRange children = _ownership.Acquire(_lastPastedGroup.Ungroup());
+            int childCount = children.Count;
             _lastPasteRange = children;
             _lastPastedGroup = null;
             return new PowerPointUngroupOutcome(childCount, WasGroup: true);
         }
 
-        return new PowerPointUngroupOutcome((int)range.Count, WasGroup: false);
+        return new PowerPointUngroupOutcome(range.Count, WasGroup: false);
     }
 
     /// <summary>Deletes the last pasted shapes so repeated cycles start clean.</summary>
@@ -215,11 +201,11 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             // the host refuses.
             if (_lastPastedGroup is not null)
             {
-                ((dynamic)_lastPastedGroup).Delete();
+                _lastPastedGroup.Delete();
             }
             else
             {
-                ((dynamic)_lastPasteRange).Delete();
+                _lastPasteRange.Delete();
             }
         }
         catch (COMException)
@@ -304,32 +290,26 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         {
             try
             {
-                // Saved=true then Close(): the test-owned presentation is discarded, never
+                // Saved=msoTrue then Close(): the test-owned presentation is discarded, never
                 // saved or overwritten, and no save prompt is raised.
-                ((dynamic)_presentation).Saved = true;
-                ((dynamic)_presentation).Close();
+                _presentation.Saved = OfficeCore.MsoTriState.msoTrue;
+                _presentation.Close();
             }
             catch (COMException)
             {
                 // Best-effort: the owned process is polled and killed below if the close fails.
             }
-            catch (RuntimeBinderException)
-            {
-                // Same reason: a member the host refuses must not escape teardown.
-            }
         }
 
-        if (_application is not null)
+        if (_startedByUs && _application is not null)
         {
             try
             {
-                ((dynamic)_application).Quit();
+                // Only a host this fixture started is quit. A pre-existing PowerPoint and its
+                // open presentations are never closed or terminated (work item D2, ADR-0069).
+                _application.Quit();
             }
             catch (COMException)
-            {
-                // Polled and escalated below.
-            }
-            catch (RuntimeBinderException)
             {
                 // Polled and escalated below.
             }
@@ -344,11 +324,7 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     }
 
     private T Track<T>(T proxy)
-        where T : notnull
-    {
-        _proxies.Add(proxy);
-        return proxy;
-    }
+        where T : class => _ownership.Acquire(proxy);
 
     private void AdoptOwnedProcesses(Dictionary<int, long> before)
     {
@@ -359,8 +335,11 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             {
                 _ownedProcessIds.Add(processId);
                 _ownedProcessStartTicks[processId] = startTicks;
+                OfficeFixture.RecordOwnedProcessId(processId);
             }
         }
+
+        _startedByUs = _ownedProcessIds.Count > 0;
     }
 
     private string DescribeOwnedBuild()
@@ -398,7 +377,7 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     private static Dictionary<int, long> SnapshotPowerPointProcesses()
     {
         Dictionary<int, long> processes = [];
-        foreach (Process process in Process.GetProcessesByName(ProcessName))
+        foreach (Process process in Process.GetProcessesByName(_processName))
         {
             using (process)
             {
@@ -423,28 +402,7 @@ internal sealed class PowerPointFixture : IAsyncDisposable
 
     private void ReleaseProxies()
     {
-        for (int index = _proxies.Count - 1; index >= 0; index--)
-        {
-            object proxy = _proxies[index];
-            try
-            {
-                if (Marshal.IsComObject(proxy))
-                {
-                    _ = Marshal.ReleaseComObject(proxy);
-                }
-            }
-            catch (ArgumentException)
-            {
-                // Already released or never a COM object: releasing twice is not a defect
-                // worth failing teardown over.
-            }
-            catch (InvalidComObjectException)
-            {
-                // Same.
-            }
-        }
-
-        _proxies.Clear();
+        _ownership.ReleaseAll();
         _application = null;
         _presentation = null;
         _slide = null;
@@ -459,7 +417,7 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             return;
         }
 
-        DateTime deadline = DateTime.UtcNow + GracefulExitTimeout;
+        DateTime deadline = DateTime.UtcNow + _gracefulExitTimeout;
         while (DateTime.UtcNow < deadline && AnyOwnedProcessAlive())
         {
             await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);

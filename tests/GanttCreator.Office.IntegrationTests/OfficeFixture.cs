@@ -1307,9 +1307,9 @@ internal class OfficeFixture : IAsyncLifetime
     /// when the fixture is exercised directly rather than through
     /// <c>verify-office.ps1</c>) this is a no-op.
     /// </summary>
-    /// <param name="processId">The owned Excel process ID, or zero when it
+    /// <param name="processId">The owned Excel or PowerPoint process ID, or zero when it
     /// could not be identified.</param>
-    private static void RecordOwnedProcessId(int processId)
+    internal static void RecordOwnedProcessId(int processId)
     {
         if (processId == 0) return;
 
