@@ -457,6 +457,13 @@ public sealed class ProtectionGuardFirstTests
         // untouched; R7.5 owns the transfer failure policy.
         "src/GanttCreator.Office/IPowerPointPastePort.cs",
         "src/GanttCreator.Office/PowerPointPasteStage.cs",
+        // R7.4: the placement port is a declaration whose single write member names one shape
+        // by identity; the stage drives the port and verifies the read-back. Neither touches the
+        // workbook -- a placement mutates a PowerPoint slide, not the visible worksheet -- so a
+        // protection consultation here would be unreachable code. The refusal leaves the
+        // worksheet untouched; R7.5 owns the transfer failure policy.
+        "src/GanttCreator.Office/IPowerPointPlacementPort.cs",
+        "src/GanttCreator.Office/PowerPointPlacementStage.cs",
     ];
 
     /// <summary>

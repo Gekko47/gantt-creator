@@ -1,3 +1,6 @@
+using GanttCreator.Core;
+using GanttCreator.Core.Export;
+
 namespace GanttCreator.Office.ContractTests;
 
 /// <summary>
@@ -116,6 +119,69 @@ public sealed class PowerPointTransferAdapterTests
         _ = Assert.Throws<ObjectDisposedException>(() =>
         {
             _ = adapter.PasteSpecialShape();
+        });
+    }
+
+    [Fact]
+    public void Reading_the_slide_size_before_attach_reports_a_refused_fact_without_a_host()
+    {
+        using PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+
+        PowerPointSlideSizeFacts facts = adapter.ReadSlideSize();
+
+        Assert.False(facts.ReadSucceeded);
+        Assert.Null(facts.HResult);
+        Assert.Equal(0, facts.WidthPt);
+        Assert.Equal(0, facts.HeightPt);
+    }
+
+    [Fact]
+    public void Reading_the_slide_size_after_dispose_is_refused()
+    {
+        PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+        adapter.Dispose();
+
+        _ = Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = adapter.ReadSlideSize();
+        });
+    }
+
+    [Fact]
+    public void Applying_a_placement_before_attach_reports_NoSlide_without_a_host()
+    {
+        using PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+        SlidePlacement placement = Assert.IsType<SlidePlacement>(
+            SlideFit.Fit(new RectD(0, 0, 800, 200), 720, 540, 4).Placement);
+
+        PowerPointPlacementObservation observation = adapter.ApplyPlacement(42, placement);
+
+        Assert.Equal(PowerPointPlacementApplyOutcome.NoSlide, observation.Outcome);
+        Assert.Null(observation.HResult);
+    }
+
+    [Fact]
+    public void Applying_a_placement_after_dispose_is_refused()
+    {
+        PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+        adapter.Dispose();
+        SlidePlacement placement = Assert.IsType<SlidePlacement>(
+            SlideFit.Fit(new RectD(0, 0, 800, 200), 720, 540, 4).Placement);
+
+        _ = Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = adapter.ApplyPlacement(42, placement);
+        });
+    }
+
+    [Fact]
+    public void A_null_placement_is_refused_by_the_adapter()
+    {
+        using PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+
+        _ = Assert.Throws<ArgumentNullException>(() =>
+        {
+            _ = adapter.ApplyPlacement(42, null!);
         });
     }
 

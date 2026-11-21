@@ -39,6 +39,12 @@ public sealed class PowerPointAdapterHygieneTests
         // no-sleep path; the reflective port-surface scan above covers the new interface.
         "src/GanttCreator.Office/IPowerPointPastePort.cs",
         "src/GanttCreator.Office/PowerPointPasteStage.cs",
+        // R7.4: the placement port (a single-group write by identity, no range write) and its
+        // stage with the typed refusals. Both join the no-dynamic/no-Microsoft.CSharp/
+        // no-activate/no-sleep path; the reflective port-surface scan above covers the new
+        // interface automatically because it is an exported IPowerPoint* type.
+        "src/GanttCreator.Office/IPowerPointPlacementPort.cs",
+        "src/GanttCreator.Office/PowerPointPlacementStage.cs",
     ];
 
     /// <summary>Members the transfer surface must never expose (work item D5).</summary>

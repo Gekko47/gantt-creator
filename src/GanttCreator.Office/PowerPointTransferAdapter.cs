@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using GanttCreator.Core.Export;
 using OfficeCore = Microsoft.Office.Core;
 using PowerPoint = Microsoft.Office.Interop.PowerPoint;
 
@@ -7,9 +8,10 @@ namespace GanttCreator.Office;
 
 /// <summary>
 /// The statically typed PowerPoint implementation of <see cref="IPowerPointApplicationPort"/>
-/// (R7.1) and <see cref="IPowerPointPastePort"/> (R7.3): attach-or-start, active
-/// presentation/window/view/slide facts, the typed <c>ppPasteShape</c> paste read, and
-/// reverse-order release of every proxy it acquired.
+/// (R7.1), <see cref="IPowerPointPastePort"/> (R7.3) and <see cref="IPowerPointPlacementPort"/>
+/// (R7.4): attach-or-start, active presentation/window/view/slide facts, the typed
+/// <c>ppPasteShape</c> paste read, the slide-size fact read, the single-group placement
+/// application, and reverse-order release of every proxy it acquired.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -36,7 +38,7 @@ namespace GanttCreator.Office;
 /// </para>
 /// </remarks>
 public sealed class PowerPointTransferAdapter
-    : IPowerPointApplicationPort, IPowerPointPastePort, IDisposable
+    : IPowerPointApplicationPort, IPowerPointPastePort, IPowerPointPlacementPort, IDisposable
 {
     /// <summary>
     /// The PowerPoint <c>MsoShapeType.msoGroup</c> value (6), measured on the reference host.
@@ -540,6 +542,186 @@ public sealed class PowerPointTransferAdapter
             transient.ReleaseAll();
         }
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The active slide's size lives on its presentation's <c>PageSetup</c>
+    /// (<c>SlideWidth</c>/<c>SlideHeight</c>, both <c>Single</c> points). The presentation is
+    /// resolved through <c>Application.ActiveWindow.Presentation</c> when a document window
+    /// exists, falling back to <c>Presentations[1]</c> only to report a size the decision table
+    /// would refuse for lack of a window. Nothing is activated.
+    /// </remarks>
+    public PowerPointSlideSizeFacts ReadSlideSize()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        PowerPoint.Application? application = _application;
+        if (application is null)
+        {
+            return new PowerPointSlideSizeFacts(false, null, 0, 0);
+        }
+
+        PowerPointProxyOwnership transient = new(_technicalRecord);
+        try
+        {
+            PowerPoint.Presentations presentations = ReadStage(
+                "powerpoint slide size presentations",
+                () => transient.Acquire(application.Presentations));
+
+            // Measured 2026-11-21: the typed ActiveWindow getter raises 0x80048240 when the host
+            // has no document window; absence is a fallback fact, never a read refusal.
+            PowerPoint.DocumentWindow? window = ReadOptionalStage(
+                "powerpoint slide size active window",
+                () => application.ActiveWindow);
+            if (window is not null)
+            {
+                _ = transient.Acquire(window);
+            }
+
+            PowerPoint.Presentation presentation = ReadStage(
+                "powerpoint slide size presentation",
+                () => window is not null
+                    ? transient.Acquire(window.Presentation)
+                    : transient.Acquire(presentations[1]));
+
+            PowerPoint.PageSetup pageSetup = ReadStage(
+                "powerpoint slide size page setup",
+                () => transient.Acquire(presentation.PageSetup));
+            double widthPt = ReadStage(
+                "powerpoint slide size width",
+                () => (double)pageSetup.SlideWidth);
+            double heightPt = ReadStage(
+                "powerpoint slide size height",
+                () => (double)pageSetup.SlideHeight);
+
+            return new PowerPointSlideSizeFacts(true, null, widthPt, heightPt);
+        }
+        catch (COMException exception)
+        {
+            RecordFailure("powerpoint slide size refused", exception.HResult);
+            return new PowerPointSlideSizeFacts(false, exception.HResult, 0, 0);
+        }
+        finally
+        {
+            transient.ReleaseAll();
+        }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <b>The provisional absolute resize route (work item Step 0, route (a)).</b> The four box
+    /// members — <c>Left</c>, <c>Top</c>, <c>Width</c>, <c>Height</c> — are written from the
+    /// placement, so the applied size is the placement's size on both axes and the ratio cannot
+    /// drift. The Phase 0 probe confirms or corrects the route before the live gate; if it pins a
+    /// relative route instead, only this method changes — the port surface and the stage's refusal
+    /// contract are route-independent. Only the located <c>msoGroup</c> is written; the returned
+    /// range's flattened children are never touched (D4).
+    /// </remarks>
+    public PowerPointPlacementObservation ApplyPlacement(int groupId, SlidePlacement placement)
+    {
+        ArgumentNullException.ThrowIfNull(placement);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        PowerPoint.Application? application = _application;
+        if (application is null)
+        {
+            return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+        }
+
+        PowerPointProxyOwnership transient = new(_technicalRecord);
+        try
+        {
+            PowerPoint.DocumentWindow? window = ReadOptionalStage(
+                "powerpoint placement active window",
+                () => application.ActiveWindow);
+            if (window is null)
+            {
+                return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+            }
+
+            _ = transient.Acquire(window);
+
+            PowerPoint.View? view = ReadOptionalStage(
+                "powerpoint placement view",
+                () => window.View);
+            if (view is null)
+            {
+                return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+            }
+
+            _ = transient.Acquire(view);
+
+            PowerPoint.Slide? slide = ReadOptionalStage(
+                "powerpoint placement view slide",
+                () => view.Slide as PowerPoint.Slide);
+            if (slide is null)
+            {
+                return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+            }
+
+            _ = transient.Acquire(slide);
+
+            PowerPoint.Shapes shapes = ReadStage(
+                "powerpoint placement shapes",
+                () => transient.Acquire(slide.Shapes));
+            PowerPoint.Shape? group = FindGroupById(transient, shapes, groupId);
+            if (group is null)
+            {
+                return RefusedPlacement(PowerPointPlacementApplyOutcome.GroupMissing, null);
+            }
+
+            // Route (a): absolute box writes from the snapped placement. The values are already
+            // float-representable, so the Single-typed write is exact.
+            group.Left = (float)placement.Left;
+            group.Top = (float)placement.Top;
+            group.Width = (float)placement.Width;
+            group.Height = (float)placement.Height;
+
+            return new PowerPointPlacementObservation(
+                PowerPointPlacementApplyOutcome.Applied,
+                null,
+                group.Left,
+                group.Top,
+                group.Width,
+                group.Height);
+        }
+        catch (COMException exception)
+        {
+            RecordFailure("powerpoint placement refused", exception.HResult);
+            return RefusedPlacement(PowerPointPlacementApplyOutcome.HostRejected, exception.HResult);
+        }
+        finally
+        {
+            transient.ReleaseAll();
+        }
+    }
+
+    private PowerPoint.Shape? FindGroupById(
+        PowerPointProxyOwnership transient,
+        PowerPoint.Shapes shapes,
+        int groupId)
+    {
+        int count = ReadStage("powerpoint placement shape count", () => shapes.Count);
+        for (int index = 1; index <= count; index++)
+        {
+            PowerPoint.Shape shape = ReadStage(
+                "powerpoint placement shape",
+                () => transient.Acquire(shapes[index]));
+            int id = ReadStage("powerpoint placement shape id", () => shape.Id);
+            int shapeType = ReadStage("powerpoint placement shape type", () => (int)shape.Type);
+            if (id == groupId && shapeType == _groupShapeTypeIdentifier)
+            {
+                return shape;
+            }
+        }
+
+        return null;
+    }
+
+    private static PowerPointPlacementObservation RefusedPlacement(
+        PowerPointPlacementApplyOutcome outcome,
+        int? hresult) =>
+        new(outcome, hresult, 0, 0, 0, 0);
 
     private void RecordFailure(string stage, int hresult)
     {
