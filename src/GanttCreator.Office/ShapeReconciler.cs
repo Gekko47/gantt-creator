@@ -365,6 +365,41 @@ public static partial class ShapeReconciler
 
         long operationsStarted = Stopwatch.GetTimestamp();
 
+        // DELETES FIRST (owner ruling 2026-11-21). The grouped appearance pass below
+        // restyles every changed shape, and a pass that also removes a shape used to do all
+        // of that work with the doomed shape still on the sheet. The live title makes it
+        // visible: hiding every column leaves it sitting over the year band for the whole
+        // pass and it vanishes at the very end, so the chart appears to assemble itself
+        // around a stale shape. Removing before the restyle - and creating after it, below -
+        // makes a column toggle read as one deliberate redraw.
+        int completed = 0;
+        foreach (ShapeReconcileOperation operation in plan.Operations)
+        {
+            if (operation.Action != ShapeReconcileAction.Delete)
+            {
+                continue;
+            }
+
+            ShapeWriteOutcome deleted = writer.Delete(operation.PrimitiveId);
+            if (!deleted.Succeeded)
+            {
+                return new ShapeReconcileOutcome(
+                    ShapeReconcileRefusal.OperationRefused,
+                    plan,
+                    new ShapeReconcileFailure(operation.PrimitiveId, deleted.Refusal!.Value),
+                    completed
+                )
+                {
+                    OwnedCount = owned.Count,
+                    OwnedMilliseconds = ownedMilliseconds,
+                    VerifyMilliseconds = verifyMilliseconds,
+                    OperationMilliseconds = Stopwatch.GetElapsedTime(operationsStarted).TotalMilliseconds,
+                };
+            }
+
+            completed++;
+        }
+
         // The grouped appearance pass: every appearance-changing update is written once
         // per identical appearance and, where the port supports it, geometry and content
         // are verified in the same pass. The reconciler then runs the per-shape dispatch
@@ -400,8 +435,12 @@ public static partial class ShapeReconciler
             }
         }
 
-        int completed = 0;
-        foreach (ShapeReconcileOperation operation in plan.Operations)
+        // Updates before creates: a new shape is the last thing drawn, so nothing is ever
+        // placed under a shape that has not been restyled yet. OrderBy is stable, so within
+        // each group the plan's own order survives.
+        foreach (ShapeReconcileOperation operation in plan.Operations
+            .Where(operation => operation.Action != ShapeReconcileAction.Delete)
+            .OrderBy(operation => operation.Action == ShapeReconcileAction.Create ? 1 : 0))
         {
             ShapeWriteOutcome outcome = operation.Action switch
             {

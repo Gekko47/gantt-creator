@@ -336,7 +336,7 @@ public class ShapeReconcilerTests
     }
 
     [Fact]
-    public void Structural_delta_preserves_unchanged_shapes_and_creates_deletes_only_the_changed_ids()
+    public void Structural_delta_preserves_unchanged_shapes_and_deletes_then_creates_only_the_changed_ids()
     {
         OfficeShapeRequest[] previous = [Request("row-1:bar"), Request("row-2:bar", 40d)];
         OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-3:bar", 80d)];
@@ -349,7 +349,11 @@ public class ShapeReconcilerTests
             new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(["Create:row-3:bar", "Delete:row-2:bar"], port.ShapeCalls);
+
+        // Delete first, then create (owner ruling 2026-11-21, below). The pair is the whole
+        // point: the orphan is gone before the replacement exists, so no pass ever shows
+        // both - which is what a column toggle looked like when the order was the other way.
+        Assert.Equal(["Delete:row-2:bar", "Create:row-3:bar"], port.ShapeCalls);
         Assert.Single(port.ZOrderLists);
     }
 
@@ -479,7 +483,7 @@ public class ShapeReconcilerTests
     /// updated.
     /// </summary>
     [Fact]
-    public void A_changed_scene_creates_its_new_identifiers_deletes_its_orphans_and_updates_the_survivors()
+    public void A_changed_scene_deletes_its_orphans_updates_its_survivors_and_creates_its_new_identifiers()
     {
         OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-3:bar", 80d)];
         var port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
@@ -490,17 +494,32 @@ public class ShapeReconcilerTests
 
         // The set, not just the count: a planner that created the right number of
         // shapes for the wrong identifiers would pass a count assertion.
-        Assert.Equal(["Update:row-1:bar", "Create:row-3:bar", "Delete:row-2:bar"], port.ShapeCalls);
+        //
+        // Deletes run FIRST and creates LAST (owner ruling 2026-11-21): the live title was
+        // deleted at the end of the pass, so hiding every column left it sitting over the
+        // year band while the whole chart was rewritten underneath it. Removing before the
+        // restyle and creating after it makes the pass read as one deliberate redraw.
+        Assert.Equal(["Delete:row-2:bar", "Update:row-1:bar", "Create:row-3:bar"], port.ShapeCalls);
         Assert.Equal(["row-1:bar", "row-3:bar"], port.ListOwned());
     }
 
-    /// <summary>Updates run before creates, which run before deletes.</summary>
+    /// <summary>The plan still orders updates before creates before deletes.</summary>
     /// <remarks>
-    /// The order is not cosmetic: <see cref="IShapeWritePort.Create"/> refuses
-    /// <see cref="ShapeWriteRefusal.AlreadyExists"/>, so a delete that vacated a
-    /// name before a create needed it would be the only order that could support
-    /// a future delete-and-recreate. Pinning the order now means changing it
-    /// later is a deliberate act.
+    /// <para>
+    /// <b>Plan order and execution order are two different contracts.</b> The plan groups the
+    /// work update/create/delete, which keeps the planner readable and matches the order the
+    /// actions were introduced in. The reconciler EXECUTES it delete/update/create since the
+    /// owner's 2026-11-21 ruling, because a delete at the end of a pass is visible: the live
+    /// title stayed over the year band while everything else was rewritten. This fact pins the
+    /// plan; `A_changed_scene_deletes_its_orphans_updates_its_survivors_and_creates_its_new_identifiers`
+    /// pins the execution.
+    /// </para>
+    /// <para>
+    /// <see cref="IShapeWritePort.Create"/> refuses <see cref="ShapeWriteRefusal.AlreadyExists"/>,
+    /// which was the original reason to keep deletes last. Executing deletes first is strictly
+    /// more permissive: it is the only order in which a single pass can vacate a name and then
+    /// claim it again.
+    /// </para>
     /// </remarks>
     [Fact]
     public void Operations_are_ordered_updates_then_creates_then_deletes()
