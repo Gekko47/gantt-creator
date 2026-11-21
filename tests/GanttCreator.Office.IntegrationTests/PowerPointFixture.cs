@@ -64,6 +64,8 @@ internal sealed class PowerPointFixture : IAsyncDisposable
 
     private readonly List<int> _ownedProcessIds = [];
     private readonly Dictionary<int, long> _ownedProcessStartTicks = [];
+    private readonly List<PowerPoint.Presentation> _extraPresentations = [];
+    private readonly List<PowerPoint.ProtectedViewWindow> _protectedWindows = [];
     private readonly PowerPointProxyOwnership _ownership = new();
 
     private PowerPoint.Application? _application;
@@ -71,6 +73,7 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     private PowerPoint.Slide? _slide;
     private PowerPoint.ShapeRange? _lastPasteRange;
     private PowerPoint.Shape? _lastPastedGroup;
+    private PowerPoint.SlideShowWindow? _slideShowWindow;
     private bool _startedByUs;
     private bool _disposed;
 
@@ -81,11 +84,15 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     internal string BuildDescription { get; private set; } = "unknown";
 
     /// <summary>
-    /// Starts or attaches to desktop PowerPoint and creates the test-owned
-    /// presentation and blank slide the spike pastes into.
+    /// Starts or attaches to desktop PowerPoint and creates the test-owned presentation.
     /// </summary>
+    /// <param name="withWindow">
+    /// <see langword="true"/> for a deck with a document window (the active-slide and view
+    /// cases); <see langword="false"/> for a windowless deck (the no-window case).
+    /// </param>
+    /// <param name="slideCount">The number of blank slides to add; zero exercises the no-slide case.</param>
     /// <exception cref="InvalidOperationException">PowerPoint could not be created.</exception>
-    internal void Initialize()
+    internal void Initialize(bool withWindow = false, int slideCount = 1)
     {
         Dictionary<int, long> before = SnapshotPowerPointProcesses();
         _application = _ownership.Acquire(new PowerPoint.Application());
@@ -96,16 +103,203 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         // modal dialog that hangs the harness. The alert level is the documented member.
         _application.DisplayAlerts = PowerPoint.PpAlertLevel.ppAlertsNone;
 
-        // WithWindow = msoFalse: the test-owned presentation has no window, which is the
-        // documented way to keep the automation out of the user's view without relying on
-        // Application.Visible (PowerPoint does not honour an invisible application).
+        // WithWindow: a windowless deck is the documented no-window case; a windowed deck is
+        // what the active-slide, view and slide-show cases exercise.
         PowerPoint.Presentations presentations = _ownership.Acquire(_application.Presentations);
-        _presentation = _ownership.Acquire(presentations.Add(OfficeCore.MsoTriState.msoFalse));
+        _presentation = _ownership.Acquire(
+            presentations.Add(withWindow ? OfficeCore.MsoTriState.msoTrue : OfficeCore.MsoTriState.msoFalse));
 
         PowerPoint.Slides slides = _ownership.Acquire(_presentation.Slides);
-        _slide = _ownership.Acquire(slides.Add(1, PowerPoint.PpSlideLayout.ppLayoutBlank));
+        for (int index = 1; index <= slideCount; index++)
+        {
+            _slide = _ownership.Acquire(slides.Add(index, PowerPoint.PpSlideLayout.ppLayoutBlank));
+        }
+
         _lastPasteRange = null;
         _lastPastedGroup = null;
+    }
+
+    /// <summary>
+    /// Adds a second test-owned presentation, so a live body can prove the target read
+    /// resolves the active deck rather than <c>Presentations[1]</c>.
+    /// </summary>
+    /// <param name="withWindow">Whether the added deck has a document window.</param>
+    /// <param name="slideCount">The number of blank slides to add.</param>
+    internal void AddPresentation(bool withWindow, int slideCount)
+    {
+        if (_application is null)
+        {
+            throw new InvalidOperationException("Initialize must run before AddPresentation.");
+        }
+
+        PowerPoint.Presentations presentations = _ownership.Acquire(_application.Presentations);
+        PowerPoint.Presentation extra = _ownership.Acquire(
+            presentations.Add(withWindow ? OfficeCore.MsoTriState.msoTrue : OfficeCore.MsoTriState.msoFalse));
+        _extraPresentations.Add(extra);
+
+        PowerPoint.Slides slides = _ownership.Acquire(extra.Slides);
+        for (int index = 1; index <= slideCount; index++)
+        {
+            _ = _ownership.Acquire(slides.Add(index, PowerPoint.PpSlideLayout.ppLayoutBlank));
+        }
+    }
+
+    /// <summary>Reads the active window's current <c>PpViewType</c> value.</summary>
+    /// <returns>The integer <c>PpViewType</c> the host reports.</returns>
+    internal int ActiveViewType()
+    {
+        PowerPoint.DocumentWindow window = _ownership.Acquire(ActiveWindow());
+        PowerPoint.View view = _ownership.Acquire(window.View);
+        return (int)view.Type;
+    }
+
+    /// <summary>Sets the active window's view and returns what the host reports afterwards.</summary>
+    /// <param name="viewType">The <c>PpViewType</c> to request.</param>
+    /// <returns>The integer <c>PpViewType</c> the host reports after the request.</returns>
+    internal int SetActiveView(PowerPoint.PpViewType viewType)
+    {
+        PowerPoint.DocumentWindow window = _ownership.Acquire(ActiveWindow());
+        window.ViewType = viewType;
+        return ActiveViewType();
+    }
+
+    /// <summary>Starts a slide show on the test-owned deck.</summary>
+    internal void StartSlideShow()
+    {
+        if (_presentation is null)
+        {
+            throw new InvalidOperationException("Initialize must run before StartSlideShow.");
+        }
+
+        _slideShowWindow = _ownership.Acquire(_presentation.SlideShowSettings.Run());
+    }
+
+    /// <summary>Exits a slide show this fixture started, if one is running.</summary>
+    internal void ExitSlideShow()
+    {
+        if (_slideShowWindow is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _slideShowWindow.View.Exit();
+        }
+        catch (COMException)
+        {
+            // Best-effort: the owned process is quit and killed at teardown if the exit fails.
+        }
+        finally
+        {
+            _slideShowWindow = null;
+        }
+    }
+
+    /// <summary>Saves the test-owned primary deck to a temporary file and returns the path.</summary>
+    /// <returns>The temporary <c>.pptx</c> path.</returns>
+    internal string SavePrimaryPresentationToTemp()
+    {
+        if (_presentation is null)
+        {
+            throw new InvalidOperationException("Initialize must run before SavePrimaryPresentationToTemp.");
+        }
+
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            string.Create(CultureInfo.InvariantCulture, $"ganttcreator-r7-2-{Guid.NewGuid():N}.pptx"));
+        _presentation.SaveAs(path, PowerPoint.PpSaveAsFileType.ppSaveAsOpenXMLPresentation);
+        return path;
+    }
+
+    /// <summary>Closes the test-owned primary presentation without saving it.</summary>
+    internal void ClosePrimaryPresentation()
+    {
+        if (_presentation is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _presentation.Saved = OfficeCore.MsoTriState.msoTrue;
+            _presentation.Close();
+        }
+        catch (COMException)
+        {
+            // Best-effort: the owned process is quit and killed at teardown if the close fails.
+        }
+        finally
+        {
+            _presentation = null;
+            _slide = null;
+        }
+    }
+
+    /// <summary>Opens a saved deck read-only in a document window.</summary>
+    /// <param name="path">The deck to open.</param>
+    internal void OpenReadOnly(string path)
+    {
+        if (_application is null)
+        {
+            throw new InvalidOperationException("Initialize must run before OpenReadOnly.");
+        }
+
+        PowerPoint.Presentations presentations = _ownership.Acquire(_application.Presentations);
+        PowerPoint.Presentation presentation = _ownership.Acquire(
+            presentations.Open(
+                path,
+                ReadOnly: OfficeCore.MsoTriState.msoTrue,
+                Untitled: OfficeCore.MsoTriState.msoFalse,
+                WithWindow: OfficeCore.MsoTriState.msoTrue));
+        _extraPresentations.Add(presentation);
+    }
+
+    /// <summary>Opens a saved deck in a protected-view window the fixture owns.</summary>
+    /// <param name="path">The deck to open in protected view.</param>
+    /// <returns>
+    /// Whether the host opened a protected-view window, and the refusal's HResult when it did
+    /// not. The reference host refuses this automation route with <c>0x80004005</c> for a
+    /// local deck (measured 2026-11-21), so the refusal is a recorded outcome the live body
+    /// reports, not a fixture failure.
+    /// </returns>
+    internal (bool Opened, int? HResult) OpenProtectedView(string path)
+    {
+        if (_application is null)
+        {
+            throw new InvalidOperationException("Initialize must run before OpenProtectedView.");
+        }
+
+        PowerPoint.ProtectedViewWindows windows = _ownership.Acquire(_application.ProtectedViewWindows);
+        try
+        {
+            _protectedWindows.Add(_ownership.Acquire(windows.Open(path)));
+            return (true, null);
+        }
+        catch (COMException exception)
+        {
+            return (false, exception.HResult);
+        }
+    }
+
+    /// <summary>Adopts a host process the production adapter started, so teardown can quit it.</summary>
+    /// <param name="before">The <c>POWERPNT</c> snapshot taken before the adapter attached.</param>
+    internal void AdoptHostStartedSince(Dictionary<int, long> before)
+    {
+        _application = _ownership.Acquire(new PowerPoint.Application());
+        AdoptOwnedProcesses(before);
+        BuildDescription = DescribeOwnedBuild();
+        _application.DisplayAlerts = PowerPoint.PpAlertLevel.ppAlertsNone;
+    }
+
+    /// <summary>Snapshots the running <c>POWERPNT</c> processes by id and start time.</summary>
+    /// <returns>The snapshot keyed by process id.</returns>
+    internal static Dictionary<int, long> SnapshotProcesses() => SnapshotPowerPointProcesses();
+
+    private PowerPoint.DocumentWindow ActiveWindow()
+    {
+        PowerPoint.DocumentWindow? window = _application?.ActiveWindow;
+        return window ?? throw new InvalidOperationException("The fixture has no active document window.");
     }
 
     /// <summary>
@@ -286,6 +480,33 @@ internal sealed class PowerPointFixture : IAsyncDisposable
 
         _disposed = true;
 
+        ExitSlideShow();
+
+        foreach (PowerPoint.ProtectedViewWindow protectedWindow in _protectedWindows)
+        {
+            try
+            {
+                protectedWindow.Close();
+            }
+            catch (COMException)
+            {
+                // Best-effort: the owned process is quit and killed below if the close fails.
+            }
+        }
+
+        foreach (PowerPoint.Presentation extra in _extraPresentations)
+        {
+            try
+            {
+                extra.Saved = OfficeCore.MsoTriState.msoTrue;
+                extra.Close();
+            }
+            catch (COMException)
+            {
+                // Best-effort: the owned process is quit and killed below if the close fails.
+            }
+        }
+
         if (_presentation is not null)
         {
             try
@@ -408,6 +629,9 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         _slide = null;
         _lastPasteRange = null;
         _lastPastedGroup = null;
+        _slideShowWindow = null;
+        _extraPresentations.Clear();
+        _protectedWindows.Clear();
     }
 
     private async Task EnsureOwnedProcessesExitedAsync()
