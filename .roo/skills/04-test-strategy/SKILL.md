@@ -24,6 +24,9 @@ wins on any disagreement.
 - Office integration tests are tagged `OfficeIntegration`, serialize access, start from clean
   fixtures, and clean up in `finally`. They are excluded from `verify-quick.ps1` by policy
   (ADR-0001) and are run by `verify-office.ps1` on the live host.
+- PowerPoint transfer tests follow the same `OfficeIntegration` rule; the 25-transfer soak is
+  tagged `TransferSoak` only, runs through its own measured gate, and uses the shared
+  owned-PID manifest. A soak body that also carries `OfficeIntegration` is a defect.
 - Test observable behaviour, not private method implementation; Core and scene/layout tests
   must be deterministic and parallel-safe.
 - Every new `if (bad) { error }` validator ships a positive test in the same commit — a test

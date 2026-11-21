@@ -285,11 +285,20 @@ Required live tests:
 5. Save/reopen retains data/settings with one sheet.
 6. Editable composition copies; pasted result is a group with editable children.
 7. Temporary shapes are removed after success and injected failure.
-8. `PasteSpecial(ppPasteShape)` returns a non-empty `ShapeRange` on the active slide.
+8. `PasteSpecial(ppPasteShape)` returns the measured form — one `msoGroup` plus its flattened children — with a non-empty `ShapeRange` on the active slide.
 9. PowerPoint transfer does not save, close, or kill user-owned content/application.
 10. PNG export has exact size, aspect, crop, and density metadata.
 11. Protected sheet, missing PowerPoint, busy clipboard, and unwritable path fail safely.
 12. Twenty-five repeated refresh/copy/transfer cycles do not leave orphaned Office processes or steadily growing owned shapes.
+13. The 25-transfer soak is a separate `TransferSoak` category, runs under the same owned-PID manifest and watchdog, and records process, handle, working-set, shape and residue counters with a measured deadline.
+
+> **Phase-7 gate split (2026-11-21).** The routine `verify-office.ps1` selects
+> `Category=OfficeIntegration` and keeps its 780 s deadline. The 25-transfer soak is
+> tagged `TransferSoak` **only** and runs through the dedicated
+> `scripts/verify-transfer-soak.ps1` (created in R7.7) with its own measured deadline; a
+> soak body that also carries `OfficeIntegration` is a defect because it would enter the
+> routine gate. `PowerPointFixture` writes the same owned-PID manifest as `OfficeFixture`
+> and closes/quits only a host it started.
 
 ## Feature-to-test traceability
 

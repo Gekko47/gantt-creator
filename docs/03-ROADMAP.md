@@ -412,6 +412,26 @@ Goal: one click places an editable shape group on the intended slide without sav
 
 Exit demonstration: one click transfers an editable group to the active slide, verifies it, retains aspect ratio, and never saves, closes, or terminates user-owned PowerPoint.
 
+> **Phase 7 notes (21 November 2026 — plan revision, no row change).** The seven
+> Phase-7 work items were revised in place against the Phase-7 review in
+> [`plans/phase7-powerpoint-transfer-review.md`](../plans/phase7-powerpoint-transfer-review.md).
+> **No row is added, removed, renumbered or re-scoped**, and the phase dependency order is
+> unchanged. The decisions recorded are: (1) PowerPoint interop is **statically typed
+> against the PowerPoint PIA**, not late-bound `dynamic`; `dynamic` and
+> `Microsoft.CSharp` are removed from the production and test paths, with the package
+> check in R7.1 Step 0; (2) the host probe is folded into **R7.1 Step 0** as one evidence
+> commit, so no `R7.1a` row exists; (3) the transfer composes **`EditableExport`** and
+> never switches to `SceneCompositionProfile.PowerPoint` silently; (4) the pre-flight
+> refuses a resolved `ExportBounds.Bounds` that is not finite and strictly positive as
+> `InvalidBounds`, and the transfer consumes `Bounds` without re-applying
+> `PlacementDelta`; (5) `ExportGroup` is visible only in `Mode == Ready`, and Copy
+> Editable / Send to PowerPoint enable only on the Gantt sheet with a readable table
+> **and** a present configuration; (6) the 25-transfer soak is a `TransferSoak` category
+> with its own measured gate, excluded from the routine 780 s `OfficeIntegration` run;
+> (7) `PowerPointFixture` may only close/quit a PowerPoint it started and writes the
+> shared owned-PID manifest. The Phase 6/7 matrix subset and the Phase-8 Tier-A upgrade
+> remain Phase-7 exit obligations.
+
 ## Phase 8 — 300-DPI PNG export
 
 Goal: export an exact-size PNG from the scene without depending on the Excel clipboard.

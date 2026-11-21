@@ -206,24 +206,54 @@ Process:
 3. Group all temporary shapes and verify group bounds against the scene bounds.
 4. Copy the group with `ShapeRange.Copy`.
 5. For clipboard-only copy, verify an expected Office drawing clipboard format is present before reporting success.
-6. For PowerPoint, call `Shapes.PasteSpecial` with `ppPasteShape` and verify the returned `ShapeRange`, count, and non-zero bounds.
+6. For PowerPoint, call `Shapes.PasteSpecial` with `ppPasteShape` and verify the returned `ShapeRange` — one `msoGroup` plus its flattened children — its count, and non-zero bounds.
 7. Delete all temporary owned shapes in `finally` and restore selection/view state when possible.
 
 Phase 6 contains a compatibility spike (R6.7, which runs first in that phase). If deletion invalidates a delayed clipboard format on a supported Office build, the approved fallback is a short-lived staging workbook retained until the copy operation is materialised—not a permanent helper worksheet. This must be decided from measured evidence.
 
 ## PowerPoint automation
 
-Use a narrow `IPowerPointTransfer` port. The Office adapter:
+Use a narrow `IPowerPointTransfer` port. The port is primitive-typed — no interop type in
+a signature — and the Office adapter is **statically typed against the PowerPoint PIA**.
+Phase-7 code must not use `dynamic` or `Microsoft.CSharp`; the R6.7 test fixture is
+migrated to the same typed surface. The adapter:
 
-- attaches to or starts desktop PowerPoint according to a user-visible policy;
-- uses the active editable presentation/slide or creates a new presentation only when the button contract says so;
-- calls `PasteSpecial(ppPasteShape)`;
-- treats unsupported clipboard format, protected presentation, missing active slide, and COM busy/rejected-call errors as distinct failures;
-- positions/scales the pasted group once, preserving aspect ratio;
-- never saves, closes, or overwrites a user's presentation without a separate explicit command;
-- releases only COM proxies it owns and never terminates an existing PowerPoint instance.
+- attaches to or starts desktop PowerPoint according to a user-visible policy: a typed
+  `new Application()` starts PowerPoint if it is not running and returns the running
+  instance otherwise; a pre-call `POWERPNT` snapshot decides `StartedByUs`;
+- resolves the active **editable** presentation and slide by reading
+  `Application.ActiveWindow` / `View.Slide`; it never activates a slide, window or
+  presentation;
+- refuses a typed outcome when no presentation is open, the presentation is read-only or
+  in Protected View, there is no document window, there is no slide, the active view is
+  not slide, notes page or normal (for example slide sorter, outline, thumbnails or a
+  master), or a slide show window is active;
+- calls `PasteSpecial(ppPasteShape)` and validates the returned `ShapeRange`: exactly one
+  `msoGroup`, a count of `1 + staged child count`, finite positive bounds, and a bounds/
+  aspect match within `HostOwnedGeometry.GeometryMatchTolerancePt`. A non-throwing call
+  is never success. A missing clipboard payload or a partial document is a distinct
+  stage failure;
+- positions/scales the pasted **group** once from `ExportBounds.Bounds` (the zero-origin
+  rectangle), preserving aspect ratio. It never resizes the returned range (which also
+  lists the group's flattened children) and never re-applies `PlacementDelta`, which the
+  staging composition has already consumed. The export pre-flight refuses a resolved
+  `Bounds` that is not finite and strictly positive as `InvalidBounds` before any shape is
+  created;
+- treats unsupported clipboard format, protected presentation, missing active slide, no
+  window, no slide, unsupported view, active slide show, partial document and COM
+  busy/rejected-call errors as distinct failures;
+- never saves, closes, or overwrites a user's presentation without a separate explicit
+  command; never calls `Quit`, `Close` or `Save`; never terminates an existing PowerPoint
+  instance;
+- releases only COM proxies it owns, in reverse order, with `Marshal.ReleaseComObject` —
+  never `FinalReleaseComObject`, never a force release of a shared root. If it subscribes
+  to a PowerPoint event, it owns exactly one connection and detaches it exactly once.
 
-Retry only known transient COM rejection with a bounded message filter/deadline. Never use arbitrary sleeps.
+Retry only the measured transient COM rejections, with a bounded **attempt count** and a
+measured HRESULT filter; `Stopwatch` elapsed time is diagnostics, not a loop condition.
+Never use arbitrary sleeps, a spin loop or `Task.Run` around COM. The 25-transfer soak is
+tagged `TransferSoak` and runs through its own measured gate; the routine
+`OfficeIntegration` gate keeps its 780 s deadline.
 
 ## PNG renderer
 

@@ -28,6 +28,10 @@ any disagreement.
 - A work-item file must exist before implementation. If it does not, stop and ask.
 - Letter-suffixed rows (e.g. `R5.6a`–`R5.6e`) normalise to their numeric row for `check-status`,
   so a missing row will not be caught for you — verify the ID exists in the roadmap.
+- Phase 7 was revised 2026-11-21 without a row change: typed PowerPoint PIA (no `dynamic`),
+  the host probe folded into R7.1 Step 0, `ExportBounds.Bounds`/`PlacementDelta`/
+  `InvalidBounds` corrections, the `RibbonState` `Mode == Ready` gate, and the
+  `TransferSoak` gate split.
 
 ## Tools here
 

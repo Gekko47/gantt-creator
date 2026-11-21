@@ -275,17 +275,23 @@ not include R4.10 or its benchmark.
 | R6.6 | `R6.6-clipboard-copy.md` | Implemented 2026-11-18 |
 | R6.8 | `R6.8-copy-editable-command.md` | Implemented 2026-11-19; manual exit demonstration owed |
 
-### Phase 7 — direct PowerPoint transfer (Tier A; upgraded 2026-11-19 at the Phase-6 exit)
+### Phase 7 — direct PowerPoint transfer (Tier A; upgraded 2026-11-19; revised 2026-11-21)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R7.1 | `R7.1-powerpoint-adapters.md` | Authored (Tier A; upgraded 2026-11-19) |
-| R7.2 | `R7.2-attach-slide-cases.md` | Authored (Tier A; upgraded 2026-11-19) |
-| R7.3 | `R7.3-paste-special-verify.md` | Authored (Tier A; upgraded 2026-11-19) |
-| R7.4 | `R7.4-slide-fit-position.md` | Authored (Tier A; upgraded 2026-11-19) |
-| R7.5 | `R7.5-transfer-failures.md` | Authored (Tier A; upgraded 2026-11-19) |
-| R7.6 | `R7.6-send-to-powerpoint.md` | Authored (Tier A; upgraded 2026-11-19) |
-| R7.7 | `R7.7-transfer-soak.md` | Authored (Tier A; upgraded 2026-11-19) |
+| R7.1 | `R7.1-powerpoint-adapters.md` | Revised (Tier A; 2026-11-21; typed PIA, no `dynamic`) |
+| R7.2 | `R7.2-attach-slide-cases.md` | Revised (Tier A; 2026-11-21; complete matrix, typed attach/start) |
+| R7.3 | `R7.3-paste-special-verify.md` | Revised (Tier A; 2026-11-21; production-scale paste validation) |
+| R7.4 | `R7.4-slide-fit-position.md` | Revised (Tier A; 2026-11-21; `Bounds`/`PlacementDelta`/`InvalidBounds`, group-only resize) |
+| R7.5 | `R7.5-transfer-failures.md` | Revised (Tier A; 2026-11-21; bounded attempts, measured HRESULTs) |
+| R7.6 | `R7.6-send-to-powerpoint.md` | Revised (Tier A; 2026-11-21; shared pre-flight, transfer seam, `Mode == Ready` gate) |
+| R7.7 | `R7.7-transfer-soak.md` | Revised (Tier A; 2026-11-21; `TransferSoak` gate, fixture ownership, PID manifest) |
+
+> **Revised 21 November 2026.** R7.1–R7.7 were revised against the Phase-7 review:
+> statically typed PowerPoint PIA (no `dynamic`/`Microsoft.CSharp`), a folded host probe
+> in R7.1 Step 0, `ExportBounds.Bounds`/`PlacementDelta`/`InvalidBounds` corrections, the
+> `RibbonState` `Mode == Ready` gate, and the `TransferSoak` gate split. **No row is
+> added or renumbered.** D-G6 is resolved to the typed PIA with a Step-0 package check.
 
 ### Phase 8 — 300-DPI PNG export (Tier B; upgrade at Phase 7 exit; R8.2a precedes R8.3)
 
@@ -336,7 +342,7 @@ not include R4.10 or its benchmark.
 | D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | **Approved 2026-10-05** by the human's instruction to install and proceed — `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, gate wired into `ci.yml` (the `verify.ps1` step of the same name is a disabled stub pending the first full-Core baseline run). Pester guard in `scripts/mutation-gate.Tests.ps1` (26 tests, 12 positive); **a green mutation-gate run has not yet been observed** — the guard's first observed pass is recorded in `docs/STATUS.md` when it happens. No longer open. |
 | D-G4 | Pinned-font provisioning | R8.2a | R8.2a guide | Open — licence-sensitive; human choice required |
 | D-G5 | Code-signing certificate procurement | by Phase 8 | R10.3 guide | Open — external lead time; start no later than Phase 8 |
-| D-G6 | PowerPoint interop dependency (package + version pin) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` | Open — new production dependency; human approval required before first install |
+| D-G6 | PowerPoint interop dependency (typed PIA; package check) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` only if `ExcelDna.Interop` 16.0.0 does not expose the PIA | **Resolved 2026-11-21** — statically typed PIA; no `dynamic`/`Microsoft.CSharp`; Step 0 verifies the package |
 | D-G7 | Named-style label/colour capability schema | R2.7b | ADR-0009 | Accepted 2026-09-23 |
 | D-G8 | Defer R2.10 and R3.13 until after the R4.9 first-live slice | R2.9/R3.12 | ADR-0010 | Accepted 2026-09-23 |
 | D-G9 | Label `Auto` cascade order and the blocked-label widest-gap truncation fallback | R3.6 | ADR-0015 | Accepted 2026-09-26 |

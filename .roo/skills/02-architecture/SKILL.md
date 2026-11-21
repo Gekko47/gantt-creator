@@ -34,6 +34,11 @@ wins on any disagreement; this summary is not the contract.
   Excel state save/restore in `try/finally`.
 - COM: Excel/PowerPoint calls on the required STA/main thread; no `Task.Run` around COM; no
   chained proxy expressions; every proxy held locally and released by one ownership helper.
+- PowerPoint transfer (Phase 7): typed PIA, no `dynamic`; `new Application()` attaches/starts;
+  `PasteSpecial(ppPasteShape)` returns the group plus its flattened children; resize the
+  `msoGroup` only; the fit consumes `ExportBounds.Bounds` and never re-applies
+  `PlacementDelta`; release with `ReleaseComObject`, never `FinalReleaseComObject`; never
+  `Save`/`Close`/`Quit`; never activate a slide/window.
 
 ## Tools here
 
