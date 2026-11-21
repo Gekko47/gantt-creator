@@ -31,6 +31,31 @@ internal sealed record PowerPointPasteOutcome(
 /// <param name="WasGroup">Whether the pasted range was a single group that was ungrouped.</param>
 internal sealed record PowerPointUngroupOutcome(int ChildCount, bool WasGroup);
 
+/// <summary>What one measurement of the last pasted group reported (R7.4 Phase 0 probe).</summary>
+/// <param name="ChildCount">The group's <c>GroupItems.Count</c>.</param>
+/// <param name="LeftPt">The group's absolute left edge in points.</param>
+/// <param name="TopPt">The group's absolute top edge in points.</param>
+/// <param name="WidthPt">The group's width in points.</param>
+/// <param name="HeightPt">The group's height in points.</param>
+internal sealed record PowerPointGroupBox(int ChildCount, double LeftPt, double TopPt, double WidthPt, double HeightPt);
+
+/// <summary>
+/// One text-bearing child's measured box, for the R7.4 route probe's text-fidelity evidence.
+/// </summary>
+/// <param name="Name">The child shape's name.</param>
+/// <param name="ShapeWidthPt">The child shape's width in points.</param>
+/// <param name="ShapeHeightPt">The child shape's height in points.</param>
+/// <param name="HasText">Whether the child carries non-empty text.</param>
+/// <param name="TextWidthPt">The measured text bound width in points; zero when there is no text.</param>
+/// <param name="TextHeightPt">The measured text bound height in points; zero when there is no text.</param>
+internal sealed record PowerPointChildTextMetrics(
+    string Name,
+    double ShapeWidthPt,
+    double ShapeHeightPt,
+    bool HasText,
+    double TextWidthPt,
+    double TextHeightPt);
+
 /// <summary>
 /// Test-only PowerPoint host: the typed replacement for the late-bound R6.7 fixture.
 /// </summary>
@@ -443,6 +468,151 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         }
 
         return false;
+    }
+
+    /// <summary>Sets the test-owned presentation's slide size in points (R7.4 probe).</summary>
+    /// <param name="widthPt">The slide width in points.</param>
+    /// <param name="heightPt">The slide height in points.</param>
+    internal void SetSlideSize(double widthPt, double heightPt)
+    {
+        if (_presentation is null)
+        {
+            throw new InvalidOperationException("Initialize must run before SetSlideSize.");
+        }
+
+        PowerPoint.PageSetup pageSetup = _ownership.Acquire(_presentation.PageSetup);
+        pageSetup.SlideWidth = (float)widthPt;
+        pageSetup.SlideHeight = (float)heightPt;
+    }
+
+    /// <summary>Reads the test-owned presentation's slide size in points (R7.4 probe).</summary>
+    /// <returns>The measured slide width and height in points.</returns>
+    internal (double WidthPt, double HeightPt) ReadSlideSize()
+    {
+        if (_presentation is null)
+        {
+            throw new InvalidOperationException("Initialize must run before ReadSlideSize.");
+        }
+
+        PowerPoint.PageSetup pageSetup = _ownership.Acquire(_presentation.PageSetup);
+        return (pageSetup.SlideWidth, pageSetup.SlideHeight);
+    }
+
+    /// <summary>Measures the last group this fixture pasted (R7.4 probe).</summary>
+    /// <returns>The group's child count and absolute box.</returns>
+    internal PowerPointGroupBox LastPastedGroupBox()
+    {
+        PowerPoint.Shape group = _lastPastedGroup
+            ?? throw new InvalidOperationException("PasteSpecialShape must run before LastPastedGroupBox.");
+        PowerPoint.GroupShapes children = _ownership.Acquire(group.GroupItems);
+        return new PowerPointGroupBox(children.Count, group.Left, group.Top, group.Width, group.Height);
+    }
+
+    /// <summary>
+    /// Route (a) of the R7.4 Step 0 probe: writes the four absolute box members in one pass.
+    /// </summary>
+    /// <returns>The group box measured after the writes.</returns>
+    internal PowerPointGroupBox ApplyRouteAbsoluteBox(double leftPt, double topPt, double widthPt, double heightPt)
+    {
+        PowerPoint.Shape group = _lastPastedGroup
+            ?? throw new InvalidOperationException("PasteSpecialShape must run before ApplyRouteAbsoluteBox.");
+        group.Left = (float)leftPt;
+        group.Top = (float)topPt;
+        group.Width = (float)widthPt;
+        group.Height = (float)heightPt;
+        return LastPastedGroupBox();
+    }
+
+    /// <summary>
+    /// Route (b) of the R7.4 Step 0 probe: locks the aspect ratio and sets the width.
+    /// </summary>
+    /// <returns>The group box measured after the write.</returns>
+    internal PowerPointGroupBox ApplyRouteLockAspectWidth(double widthPt)
+    {
+        PowerPoint.Shape group = _lastPastedGroup
+            ?? throw new InvalidOperationException("PasteSpecialShape must run before ApplyRouteLockAspectWidth.");
+        group.LockAspectRatio = OfficeCore.MsoTriState.msoTrue;
+        group.Width = (float)widthPt;
+        return LastPastedGroupBox();
+    }
+
+    /// <summary>
+    /// Route (c) of the R7.4 Step 0 probe: scales width and height by the same factor.
+    /// </summary>
+    /// <returns>The group box measured after the scaling.</returns>
+    internal PowerPointGroupBox ApplyRouteUniformScale(float factor)
+    {
+        PowerPoint.Shape group = _lastPastedGroup
+            ?? throw new InvalidOperationException("PasteSpecialShape must run before ApplyRouteUniformScale.");
+        // Measured 2026-11-21: RelativeToOriginalSize = msoTrue is refused for an msoGroup
+        // ("The RelativeToOriginalSize argument applies only to a picture or an OLE object"),
+        // so a group scale must be relative to its current size (msoFalse).
+        group.ScaleWidth(factor, OfficeCore.MsoTriState.msoFalse, OfficeCore.MsoScaleFrom.msoScaleFromTopLeft);
+        group.ScaleHeight(factor, OfficeCore.MsoTriState.msoFalse, OfficeCore.MsoScaleFrom.msoScaleFromTopLeft);
+        return LastPastedGroupBox();
+    }
+
+    /// <summary>
+    /// Measures the text-bearing children of the last pasted group for the R7.4 probe's
+    /// label-fidelity evidence. Only the text <em>bound dimensions</em> are recorded; the
+    /// probe records them rather than asserting a containment rule whose member semantics
+    /// are unprobed.
+    /// </summary>
+    /// <returns>One metrics record per group child, in group order.</returns>
+    internal IReadOnlyList<PowerPointChildTextMetrics> MeasurePastedGroupText()
+    {
+        PowerPoint.Shape group = _lastPastedGroup
+            ?? throw new InvalidOperationException("PasteSpecialShape must run before MeasurePastedGroupText.");
+        PowerPoint.GroupShapes children = _ownership.Acquire(group.GroupItems);
+        List<PowerPointChildTextMetrics> metrics = [];
+        for (int index = 1; index <= children.Count; index++)
+        {
+            PowerPoint.Shape child = _ownership.Acquire(children[index]);
+            double shapeWidthPt = child.Width;
+            double shapeHeightPt = child.Height;
+
+            // A child with no text frame is the normal non-text case. The typed getter raises
+            // ArgumentException ("The specified value is out of range") for such a child on the
+            // reference host (measured 2026-11-21), so the frame is only read when the host says
+            // one exists, and the raising-miss encodings are contained besides.
+            if (child.HasTextFrame != OfficeCore.MsoTriState.msoTrue)
+            {
+                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+                continue;
+            }
+
+            try
+            {
+                PowerPoint.TextFrame2 frame = _ownership.Acquire(child.TextFrame2);
+                OfficeCore.TextRange2 range = _ownership.Acquire(frame.TextRange);
+                string text = range.Text;
+                bool hasText = !string.IsNullOrEmpty(text);
+                metrics.Add(new PowerPointChildTextMetrics(
+                    child.Name,
+                    shapeWidthPt,
+                    shapeHeightPt,
+                    hasText,
+                    hasText ? range.BoundWidth : 0,
+                    hasText ? range.BoundHeight : 0));
+            }
+            catch (COMException)
+            {
+                // A frame whose text range cannot be read is recorded as non-text.
+                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+            }
+            catch (ArgumentException)
+            {
+                // Measured raising-miss encoding for a text range that does not exist.
+                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+            }
+            catch (InvalidOperationException)
+            {
+                // The third encoding the interop boundary produces for an absent member.
+                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+            }
+        }
+
+        return metrics;
     }
 
     /// <summary>
