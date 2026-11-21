@@ -39,3 +39,24 @@ The owner's ruling (2026-10-10): the step must be **uniform** (no per-interval m
 ## Implementation status
 
 **Accepted; implemented on the R5.12 branch (2026-10-10).** `BandSequence.TryCreate` takes an optional `ITextWidthMeasurer periodMeasurer`; `CreatePeriods` resolves each label's required width via `RequiredPeriodWidth` (measured width, floor on failure/non-finite/negative) and passes it to `AddInterval`, whose `ShowLabel` is `intervalWidth >= requiredWidth`. Years unchanged. `FrameBandsBuilder.TryBuild` passes its `textMeasurer` into the sequence call. Core tests rewritten/added: `MM_is_shown_where_MMM_is_suppressed_on_the_same_plot`, `Narrow_periods_suppress_labels_and_warn` (now measurer-driven), `A_failed_measurement_falls_back_to_the_floor`, `Quarter_and_week_labels_are_also_fit_gated`. Guide §6 records the measured-fit rule (revision 12). Observed: Core 1480/1480, Architecture 117/117, Office contract 748/748, golden snapshot unchanged.
+
+## Amendment 2026-11-20 — D1: the period fit is judged against a reference plot width
+
+**Why.** D1 judges a period label against its interval's width, and that width is the plot divided by the visible period count. The plot's left edge is the data table's right edge, so the visible column set — which has nothing to do with the labels — decided whether every period label existed. The owner's 23:42 trace shows the whole set of nine month labels created on one automatic pass and deleted on the next, purely because a column toggle had changed the panel width; each toggle also paid ten creates and ten deletes of `chart:period:{yyyy-MM-dd}:label` and their reconciliation.
+
+**D1 (amended).** A period interval shows its label iff
+
+```
+(interval width) x (reference width / measured plot width) >= measured label width
+```
+
+where the reference width is the `PeriodLabelReferencePlotWidthPt` metric token (default 480 pt, range 120–1200). The band's own `Left`/`Right` stay measured: only the show/hide decision moves to the reference, so the label still renders inside its real band and the host clips it when the two disagree — the clipping D2 already accepted. Everything else in D1–D4 is unchanged: the year band keeps the `MinimumHeaderLabelWidthPt` floor, one measurer serves both, a failed measurement falls back to the floor, and the band stays uniform because the format is one scene-wide choice. `MM` still survives on narrower bands than `MMM`; it now does so at the reference width instead of at whatever width the current column set produced.
+
+A reference of `0` means "the measured plot width", which is exactly the pre-amendment behaviour, so the export compositions and the fixtures are unchanged by default — the golden scene is byte-identical.
+
+**Consequences.**
+
+- A column toggle no longer creates or deletes a period label. The decision is a function of the dates, the format and one token.
+- What the user sees changes: with columns hidden the plot is wider, but the labels do NOT appear, because they are sized for the reference. Conversely a narrow plot keeps its labels and clips them. That trade is the point — a stable label set instead of a flickering one — and the token is the control for how many labels the design wants.
+- **Schema 26 → 27**, because a metric token is a `tblGanttMetrics` row: a version-26 workbook's stored catalogue hash no longer matches. There is no migration (ADR-0029 D6). The remedy is **Repair**, not Initialise: the ribbon no longer carries an Initialise command, and `ExcelConfigRepairer` rewrites the catalogues from the code-owned definitions for a `SchemaVersionOlder` finding once the caller confirms, which is what materialises the new row. `Repair_rewrites_the_catalogues_for_an_older_schema_after_confirmation` pins both arms of that path.
+- Test: `The_period_label_gate_is_independent_of_the_measured_plot_width` — two different measured widths sharing a reference reach the same decision, with a third arm proving that without the reference the narrow plot really does suppress the labels.

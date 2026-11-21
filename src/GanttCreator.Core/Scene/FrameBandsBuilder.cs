@@ -131,7 +131,8 @@ public static class FrameBandsBuilder
             request.PeriodLabelFormat,
             request.PlotBounds,
             request.MinimumHeaderLabelWidthPt,
-            textMeasurer
+            textMeasurer,
+            request.PeriodLabelReferencePlotWidthPt
         );
         if (sequenceOutcome.Sequence is not { } sequence)
         {
@@ -776,6 +777,7 @@ public static class FrameBandsBuilder
         && IsFinitePositive(request.YearBandHeightPt)
         && IsFinitePositive(request.PeriodBandHeightPt)
         && IsFiniteNonNegative(request.MinimumHeaderLabelWidthPt)
+        && IsFiniteNonNegative(request.PeriodLabelReferencePlotWidthPt)
         && IsFiniteNonNegative(request.PlotBandHeaderOverlapPt)
         && IsFiniteNonNegative(request.ChartAnchorRowHeightPt)
         && IsFinitePositive(request.GridLinePt)

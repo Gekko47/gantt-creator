@@ -22,10 +22,21 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 17 for ADR-0043's live title as an owned
-    /// textbox shape.
+    /// monotonically, and is currently 27 for the period-label reference width.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 27 is the period-label reference width (ADR-0041 amendment).</b>
+    /// The metric catalogue gains <c>PeriodLabelReferencePlotWidthPt</c>, so a
+    /// version-26 workbook's <c>tblGanttMetrics</c> lacks a row the running add-in
+    /// reads and its stored catalogue hash no longer matches. There is no
+    /// migration (ADR-0029 D6): a version-26 workbook reports a mismatch and the
+    /// remedy is <b>Repair</b>, which rewrites the catalogues from the code-owned
+    /// definitions and stamps the new version and hash. Repair is the remedy
+    /// rather than Initialise because the ribbon no longer carries an Initialise
+    /// command, and a version bump that could only be cleared by a command the
+    /// user cannot reach would strand every existing workbook.
+    /// </para>
     /// <para>
     /// <b>Version 17 is ADR-0043.</b> The live chart title moves from a cell
     /// placeholder in the reserved row to an owned textbox shape created by
@@ -266,5 +277,5 @@ public static class GanttSchemaVersion
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 26;
+    public const int CurrentSchemaVersion = 27;
 }

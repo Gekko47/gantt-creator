@@ -90,8 +90,11 @@ public class GanttSchemaVersionTests
         // (R5.21, ADR-0064). It is visible and editable, is measured into the data
         // panel, and moves the plot anchor from column S to column T because the
         // anchor is the origin plus the column count. No migration (ADR-0029 D6);
-        // Initialise is the remedy.
-        Assert.Equal(26, GanttSchemaVersion.CurrentSchemaVersion);
+        // Repair is the remedy.
+        // 27 adds the PeriodLabelReferencePlotWidthPt metric token (ADR-0041's
+        // 2026-11-20 amendment). No migration (ADR-0029 D6); Repair is the remedy,
+        // because the ribbon no longer carries an Initialise command.
+        Assert.Equal(27, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

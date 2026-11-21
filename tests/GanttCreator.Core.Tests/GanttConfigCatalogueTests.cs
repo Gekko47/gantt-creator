@@ -42,7 +42,10 @@ public class GanttConfigCatalogueTests
         // the reserved anchor row below the body that the plot-spanning shapes paint
         // through so Excel's cell anchoring STRETCHES them on a bottom insert, where a
         // sub-row overlap into the header could not.
-        Assert.Equal(24, GanttCatalogues.Metrics.Count);
+        // ADR-0041's 2026-11-20 amendment added PeriodLabelReferencePlotWidthPt, taking
+        // 24 to 25. It is the plot width a period label's fit is judged against, so the
+        // visible column set stops deciding whether every period label exists.
+        Assert.Equal(25, GanttCatalogues.Metrics.Count);
 
     /// <summary>
     /// Every contract anchor must leave at least one blank row between the
@@ -989,7 +992,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "ddd3434dc1648cc96c9f81b303a8ddc01b3ce938c11405033d6c79b45ce57285";
+        "49f8668099af3add5a3fa872c7f50cf25d964908e78c247ac3659acc1488540f";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

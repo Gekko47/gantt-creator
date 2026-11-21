@@ -97,6 +97,20 @@ public sealed record FrameBandsTheme(
 /// legitimate there and this flag is off.
 /// </para>
 /// </param>
+/// <param name="PeriodLabelReferencePlotWidthPt">
+/// The plot width a PERIOD label's fit is evaluated against, from the
+/// <c>PeriodLabelReferencePlotWidthPt</c> metric token. Zero (the default) means
+/// the measured plot width, which is the pre-2026-11-20 behaviour.
+/// <para>
+/// <b>Why a reference instead of the measured width.</b> A period band is only as
+/// wide as the plot divided by the visible period count, and the plot's left edge
+/// is the data table's right edge. The visible column set therefore decided whether
+/// a month label existed: hiding any column widened the plot and created all nine
+/// labels, showing it again deleted all nine. Measured against a fixed reference,
+/// the same nine bands reach the same decision on every pass, so a resize moves the
+/// labels instead of replacing them.
+/// </para>
+/// </param>
 /// <param name="DataPanelBounds">
 /// The visible data table's rectangle, in worksheet points, when the chart's
 /// outer border must enclose it as well as the plot (ADR-0048).
@@ -137,7 +151,8 @@ public sealed record FrameBandsRequest(
     double ChartAnchorRowHeightPt,
     FrameBandsTheme Theme,
     bool SheetCoordinates = false,
-    RectD? DataPanelBounds = null
+    RectD? DataPanelBounds = null,
+    double PeriodLabelReferencePlotWidthPt = 0
 );
 
 /// <summary>The result of a successful frame/band build.</summary>

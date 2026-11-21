@@ -39,6 +39,11 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
     /// The width seam used to fit each period label to its interval, or
     /// <see langword="null"/> to fall back to the fixed floor for every period.
     /// </param>
+    /// <param name="referencePlotWidthPt">
+    /// The plot width the period fit is judged against, or zero to judge each band by
+    /// its own measured width. A non-zero reference makes the decision independent of
+    /// the visible column set, which is what a period label has nothing to do with.
+    /// </param>
     /// <returns>A typed sequence outcome.</returns>
     /// <remarks>
     /// <para>
@@ -68,20 +73,42 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
         GanttPeriodLabelFormat format,
         RectD plotBounds,
         double minimumLabelWidthPt,
-        ITextWidthMeasurer? periodMeasurer = null
+        ITextWidthMeasurer? periodMeasurer = null,
+        double referencePlotWidthPt = 0
     )
     {
+        double periodWidthScale = ReferenceScale(plotBounds, referencePlotWidthPt);
         return timeScale is not { } validScale ? Refused(BandSequenceRefusal.NullTimeScale)
             : !GanttChartSettings.IsCompatible(scale, format) ? Refused(BandSequenceRefusal.IncompatibleSettings)
             : !IsValidPlotBounds(plotBounds, minimumLabelWidthPt) ? Refused(BandSequenceRefusal.InvalidGeometry)
+            : !IsValidReference(referencePlotWidthPt) ? Refused(BandSequenceRefusal.InvalidGeometry)
             : new BandSequenceCreationOutcome(
                 new BandSequence(
                     CreateYears(validScale, minimumLabelWidthPt),
-                    CreatePeriods(validScale, scale, format, minimumLabelWidthPt, periodMeasurer)
+                    CreatePeriods(validScale, scale, format, minimumLabelWidthPt, periodMeasurer, periodWidthScale)
                 ),
                 null
             );
     }
+
+    /// <summary>
+    /// The factor a period band's width is multiplied by before its fit test.
+    /// </summary>
+    /// <param name="plotBounds">The measured plot bounds.</param>
+    /// <param name="referencePlotWidthPt">The reference width, or zero for the measured width.</param>
+    /// <returns>The scale factor, exactly one when no reference is supplied.</returns>
+    /// <remarks>
+    /// The test is "would this band hold its label at the reference width", so the band's
+    /// measured width is scaled up or down into the reference geometry instead of the
+    /// reference being scaled into every band. A zero reference returns one, which is the
+    /// pre-2026-11-20 behaviour for every caller that does not opt in (the export
+    /// compositions and the fixtures), so this changes no existing scene by default.
+    /// </remarks>
+    private static double ReferenceScale(RectD plotBounds, double referencePlotWidthPt) =>
+        referencePlotWidthPt > 0 && plotBounds.Width > 0 ? referencePlotWidthPt / plotBounds.Width : 1d;
+
+    private static bool IsValidReference(double referencePlotWidthPt) =>
+        double.IsFinite(referencePlotWidthPt) && referencePlotWidthPt >= 0;
 
     private static bool IsValidPlotBounds(RectD plotBounds, double minimumLabelWidthPt) =>
         plotBounds.Width > 0 && plotBounds.Height > 0 && double.IsFinite(minimumLabelWidthPt) && minimumLabelWidthPt >= 0;
@@ -112,7 +139,8 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
         GanttTimeScale periodScale,
         GanttPeriodLabelFormat format,
         double minimumWidth,
-        ITextWidthMeasurer? periodMeasurer
+        ITextWidthMeasurer? periodMeasurer,
+        double widthScale
     )
     {
         List<BandInterval> intervals = [];
@@ -135,7 +163,14 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
             };
             DateOnly periodFinish = next.AddDays(-1);
             string label = FormatPeriod(periodStart, format);
-            AddInterval(intervals, scale, periodStart, periodFinish, label, RequiredPeriodWidth(label, minimumWidth, periodMeasurer));
+            AddInterval(
+                intervals,
+                scale,
+                periodStart,
+                periodFinish,
+                label,
+                RequiredPeriodWidth(label, minimumWidth, periodMeasurer),
+                widthScale);
             periodStart = next;
         }
 
@@ -168,14 +203,21 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
         DateOnly periodStart,
         DateOnly periodFinish,
         string label,
-        double requiredWidth
+        double requiredWidth,
+        double widthScale = 1d
     )
     {
         DateOnly visibleStart = periodStart < scale.PlotStart ? scale.PlotStart : periodStart;
         DateOnly visibleFinish = periodFinish > scale.PlotFinish ? scale.PlotFinish : periodFinish;
         double left = visibleStart == scale.PlotStart ? scale.PlotLeftPt : scale.DateToX(visibleStart);
         double right = visibleFinish == scale.PlotFinish ? scale.PlotRightPt : scale.DateToX(periodFinish.AddDays(1));
-        intervals.Add(new BandInterval(visibleStart, visibleFinish, left, right, label, right - left >= requiredWidth));
+
+        // The width the FIT is judged on, which is the band's measured width scaled into
+        // the reference geometry. The band's own Left/Right stay measured: only the
+        // show/hide decision is reference-based, so the label still renders inside its
+        // real band and the host clips it if the two disagree.
+        double fitWidth = (right - left) * widthScale;
+        intervals.Add(new BandInterval(visibleStart, visibleFinish, left, right, label, fitWidth >= requiredWidth));
     }
 
     private static string FormatPeriod(DateOnly start, GanttPeriodLabelFormat format) =>

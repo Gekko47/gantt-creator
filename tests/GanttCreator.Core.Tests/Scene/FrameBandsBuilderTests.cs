@@ -986,6 +986,44 @@ public sealed class FrameBandsBuilderTests
                 && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal))
             .Select(line => line.From.X)];
 
+    /// <summary>
+    /// The period-label gate answers to the reference width, not to the measured plot.
+    /// </summary>
+    /// <remarks>
+    /// A period band is as wide as the plot divided by the visible period count, and the
+    /// plot's left edge is the data table's right edge, so the visible column set used to
+    /// decide whether every period label existed: the owner's 2026-11-20 trace shows all
+    /// nine created or all nine deleted on adjacent column toggles. Judged against a
+    /// reference width, two different plot widths reach the same decision, which is the
+    /// property that stops the churn. The third arm is the control: with no reference the
+    /// narrow plot really does suppress the labels, so the first assertion cannot pass on
+    /// a gate that ignores width altogether.
+    /// </remarks>
+    [Fact]
+    public void The_period_label_gate_is_independent_of_the_measured_plot_width()
+    {
+        static BandSequence Create(double plotWidthPt, double referenceWidthPt) =>
+            BandSequence.TryCreate(
+                TimeScale.TryCreate(
+                    new DateOnly(2024, 1, 1),
+                    new DateOnly(2024, 12, 31),
+                    0,
+                    plotWidthPt).Scale!,
+                GanttTimeScale.Month,
+                GanttPeriodLabelFormat.MMM,
+                new RectD(0, 0, plotWidthPt, 100),
+                18,
+                new FixedMeasurer(_ => 24),
+                referenceWidthPt).Sequence!;
+
+        static bool[] Shown(BandSequence sequence) => [.. sequence.Periods.Select(period => period.ShowLabel)];
+
+        Assert.Equal(Shown(Create(plotWidthPt: 480, referenceWidthPt: 480)), Shown(Create(plotWidthPt: 240, referenceWidthPt: 480)));
+        Assert.All(Shown(Create(plotWidthPt: 240, referenceWidthPt: 480)), Assert.True);
+
+        Assert.DoesNotContain(true, Shown(Create(plotWidthPt: 240, referenceWidthPt: 0)));
+    }
+
     [Fact]
     public void On_the_live_sheet_every_frame_stroke_is_drawn_inside_the_outline()
     {

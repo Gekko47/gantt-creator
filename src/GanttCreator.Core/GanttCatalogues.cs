@@ -208,6 +208,17 @@ public static class GanttCatalogues
         new("PeriodBandHeightPt", 16, 10, 48),
         new("MinimumHeaderLabelWidthPt", 18, 6, 72),
 
+        // The plot width a PERIOD label's fit is evaluated against, so that hiding a
+        // column cannot create or delete a label. A period band is only as wide as the
+        // plot divided by the visible period count, and the plot's left edge is the
+        // data table's right edge - so the visible column set, which has nothing to do
+        // with the labels, decided whether nine month labels existed: the owner's
+        // 2026-11-20 trace shows all nine created or all nine deleted on adjacent
+        // column toggles. Measured against a fixed reference width, the same nine bands
+        // always reach the same decision and a resize moves them instead of replacing
+        // them. Raise it to want fewer labels, lower it to want more.
+        new("PeriodLabelReferencePlotWidthPt", 480, 120, 1200),
+
         // ADR-0037: how far the plot-spanning shapes (plot background, alternate
         // period bands, vertical grid lines) extend UP into the header row.
         //

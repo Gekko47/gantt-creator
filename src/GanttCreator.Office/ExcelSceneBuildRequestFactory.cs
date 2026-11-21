@@ -182,6 +182,7 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     private const string _yearBandToken = "YearBandHeightPt";
     private const string _periodBandToken = "PeriodBandHeightPt";
     private const string _minHeaderLabelWidthToken = "MinimumHeaderLabelWidthPt";
+    private const string _periodLabelReferenceWidthToken = "PeriodLabelReferencePlotWidthPt";
     private const string _gridLineToken = "GridLinePt";
     private const string _majorBoundaryToken = "MajorBoundaryPt";
     private const string _delineatorLineToken = "DelineatorLinePt";
@@ -669,6 +670,13 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
 
             MinimumHeaderLabelWidthPt = themedMetrics.GetValueOrDefault(
                 _minHeaderLabelWidthToken, GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken)),
+
+            // The period labels are judged against a fixed reference plot width, not the
+            // measured one, so hiding a column cannot create or delete all nine of them
+            // (ADR-0041 amendment). The token is the user's density control: a wider
+            // reference means fewer, roomier labels.
+            PeriodLabelReferencePlotWidthPt = themedMetrics.GetValueOrDefault(
+                _periodLabelReferenceWidthToken, GanttCatalogues.MetricDefault(_periodLabelReferenceWidthToken)),
             GridLinePt = themedMetrics.GetValueOrDefault(
                 _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken)),
             MajorBoundaryPt = themedMetrics.GetValueOrDefault(

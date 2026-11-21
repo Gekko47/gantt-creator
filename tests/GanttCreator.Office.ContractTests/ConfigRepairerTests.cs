@@ -77,6 +77,45 @@ public sealed class ConfigRepairerTests
     }
 
     /// <summary>
+    /// A workbook whose stored schema is a version behind is repaired by rewriting the
+    /// catalogues, which is how a new metric token reaches an existing file.
+    /// </summary>
+    /// <remarks>
+    /// The ribbon no longer carries an Initialise command, so a schema bump cannot tell the
+    /// user to re-initialise: Repair is the only command they have. <c>SchemaVersionOlder</c>
+    /// is a confirmation-required finding, so the rewrite happens only when the caller
+    /// confirms - and that rewrite regenerates the catalogue rows from the code-owned
+    /// definitions, which is what materialises a token a version-26 workbook has never
+    /// seen. Both arms are asserted: skipping must not write, confirming must.
+    /// </remarks>
+    [Fact]
+    public void Repair_rewrites_the_catalogues_for_an_older_schema_after_confirmation()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        ConfigRepairOutcome skipped = new ExcelConfigRepairer(
+            null,
+            writer.Object,
+            null,
+            guard.Object).Repair(Plan(ConfigIntegrityFindingKind.SchemaVersionOlder), confirmRequiredChanges: false);
+        Assert.Null(skipped.Refusal);
+        Assert.Equal(1, skipped.ConfirmationSkippedCount);
+        writer.Verify(w => w.Write(), Times.Never);
+
+        ConfigRepairOutcome confirmed = new ExcelConfigRepairer(
+            null,
+            writer.Object,
+            null,
+            guard.Object).Repair(Plan(ConfigIntegrityFindingKind.SchemaVersionOlder), confirmRequiredChanges: true);
+        Assert.Null(confirmed.Refusal);
+        Assert.Equal(1, confirmed.RepairedCount);
+        writer.Verify(w => w.Write(), Times.Once);
+    }
+
+    /// <summary>
     /// The repair path is the one caller allowed to replace a stale TypeOptions
     /// name target, so it must go through the repair-specific entry point and
     /// never through ordinary materialisation.

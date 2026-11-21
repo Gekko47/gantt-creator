@@ -216,6 +216,18 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the minimum visible period-label width.</summary>
     public double MinimumHeaderLabelWidthPt { get; init; }
 
+    /// <summary>
+    /// Gets the plot width a period label's fit is judged against, or zero to judge it
+    /// by the measured plot width.
+    /// </summary>
+    /// <remarks>
+    /// From the <c>PeriodLabelReferencePlotWidthPt</c> metric token. Without it the
+    /// visible column set decides whether every period label exists, because the band
+    /// widths derive from the plot width and the plot's left edge is the table's right
+    /// edge (ADR-0041 amendment).
+    /// </remarks>
+    public double PeriodLabelReferencePlotWidthPt { get; init; }
+
     /// <summary>Gets the minor grid line width.</summary>
     public double GridLinePt { get; init; }
 
@@ -1045,7 +1057,8 @@ public static class SceneBuilder
                 request.ChartAnchorRowHeightPt,
                 frameTheme,
                 SheetCoordinates: request.Profile == SceneCompositionProfile.LiveExcel,
-                DataPanelBounds: dataPanelBounds),
+                DataPanelBounds: dataPanelBounds,
+                PeriodLabelReferencePlotWidthPt: request.PeriodLabelReferencePlotWidthPt),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
         {
