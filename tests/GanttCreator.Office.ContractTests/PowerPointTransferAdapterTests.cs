@@ -59,6 +59,38 @@ public sealed class PowerPointTransferAdapterTests
         Assert.Null(facts.HResult);
     }
 
+    [Fact]
+    public void Reading_the_target_observation_before_attach_reports_an_empty_typed_state()
+    {
+        using PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+
+        PowerPointTargetObservation observation = adapter.ReadTargetObservation();
+
+        Assert.True(observation.ReadSucceeded);
+        Assert.Null(observation.HResult);
+        Assert.Equal(0, observation.PresentationCount);
+        Assert.Equal(0, observation.ProtectedViewWindowCount);
+        Assert.False(observation.ActiveProtectedViewWindowPresent);
+        Assert.False(observation.ActivePresentationReadOnly);
+        Assert.False(observation.ActiveWindowPresent);
+        Assert.Null(observation.ActiveViewType);
+        Assert.False(observation.SlideShowActive);
+        Assert.Equal(0, observation.SlideCount);
+        Assert.Null(observation.ActiveSlideIndex);
+    }
+
+    [Fact]
+    public void Reading_the_target_observation_after_dispose_is_refused()
+    {
+        PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+        adapter.Dispose();
+
+        _ = Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = adapter.ReadTargetObservation();
+        });
+    }
+
     private sealed class RecordingOwnership : PowerPointProxyOwnership
     {
         internal List<object> Released { get; } = [];

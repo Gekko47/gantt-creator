@@ -176,6 +176,181 @@ public sealed class PowerPointTransferAdapter : IPowerPointApplicationPort, IDis
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The active presentation is resolved through <c>Application.ActiveWindow.Presentation</c>
+    /// when a document window exists, so a deck that is not <c>Presentations[1]</c> is not
+    /// mistaken for the paste target; a deck with no window falls back to the first
+    /// presentation only to report its facts, which the decision table refuses as
+    /// <c>NoWindow</c>. <c>ActiveProtectedViewWindow</c> is the on-top protected window, which
+    /// is distinct from the protected-window count. Nothing is activated.
+    /// </remarks>
+    public PowerPointTargetObservation ReadTargetObservation()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        PowerPoint.Application? application = _application;
+        if (application is null)
+        {
+            return new PowerPointTargetObservation(true, null, 0, 0, false, false, false, null, false, 0, null);
+        }
+
+        PowerPointProxyOwnership transient = new(_technicalRecord);
+        try
+        {
+            PowerPoint.Presentations presentations = ReadStage(
+                "powerpoint target presentations",
+                () => transient.Acquire(application.Presentations));
+            int presentationCount = ReadStage(
+                "powerpoint target presentation count",
+                () => presentations.Count);
+            int protectedViewWindowCount = ReadStage(
+                "powerpoint target protected view count",
+                () => transient.Acquire(application.ProtectedViewWindows).Count);
+
+            // Measured 2026-11-21 on the reference host: the typed PIA getter for
+            // ActiveProtectedViewWindow raises 0x80048240 ("Invalid request") when no
+            // protected-view window is open, although the late-bound path returns Nothing.
+            // With a zero count no protected window can be on top, so the getter is read only
+            // when one exists — which keeps the common state a readable fact rather than a
+            // refused observation.
+            bool activeProtectedWindowPresent = false;
+            if (protectedViewWindowCount > 0)
+            {
+                PowerPoint.ProtectedViewWindow? activeProtectedWindow = ReadStage(
+                    "powerpoint target active protected window",
+                    () => application.ActiveProtectedViewWindow);
+                activeProtectedWindowPresent = activeProtectedWindow is not null;
+                if (activeProtectedWindow is not null)
+                {
+                    _ = transient.Acquire(activeProtectedWindow);
+                }
+            }
+
+            bool slideShowActive = ReadStage(
+                "powerpoint target slide show count",
+                () => transient.Acquire(application.SlideShowWindows).Count > 0);
+
+            if (presentationCount == 0)
+            {
+                return new PowerPointTargetObservation(
+                    true,
+                    null,
+                    0,
+                    protectedViewWindowCount,
+                    activeProtectedWindowPresent,
+                    false,
+                    false,
+                    null,
+                    slideShowActive,
+                    0,
+                    null);
+            }
+
+            // Measured 2026-11-21 on the reference host: the typed ActiveWindow getter raises
+            // 0x80048240 ("Invalid request") when the host has no active document window (a
+            // windowless deck, or a running slide show), although the late-bound path returns
+            // Nothing. Absence is the fact the decision table classifies, never a read refusal.
+            PowerPoint.DocumentWindow? activeWindow = ReadOptionalStage(
+                "powerpoint target active window",
+                () => application.ActiveWindow);
+            if (activeWindow is not null)
+            {
+                _ = transient.Acquire(activeWindow);
+            }
+
+            PowerPoint.Presentation presentation = ReadStage(
+                "powerpoint target presentation",
+                () => activeWindow is not null
+                    ? transient.Acquire(activeWindow.Presentation)
+                    : transient.Acquire(presentations[1]));
+
+            bool readOnly = ReadStage(
+                "powerpoint target read only",
+                () => presentation.ReadOnly == OfficeCore.MsoTriState.msoTrue);
+            int windowCount = ReadStage(
+                "powerpoint target windows count",
+                () => transient.Acquire(presentation.Windows).Count);
+            int slideCount = ReadStage(
+                "powerpoint target slides count",
+                () => transient.Acquire(presentation.Slides).Count);
+            bool hasWindow = activeWindow is not null && windowCount > 0;
+
+            int? activeViewType = null;
+            int? activeSlideIndex = null;
+
+            if (activeWindow is not null && windowCount > 0)
+            {
+                PowerPoint.DocumentWindow window = activeWindow;
+                PowerPoint.View view = ReadStage(
+                    "powerpoint target view",
+                    () => transient.Acquire(window.View));
+                activeViewType = ReadStage("powerpoint target view type", () => (int)view.Type);
+
+                // The typed View.Slide getter raises the same 0x80048240 when the deck has no
+                // slide; absence is the fact the table classifies as NoSlide/NoActiveSlide.
+                PowerPoint.Slide? activeSlide = ReadOptionalStage(
+                    "powerpoint target view slide",
+                    () => view.Slide as PowerPoint.Slide);
+                if (activeSlide is not null)
+                {
+                    activeSlideIndex = ReadStage(
+                        "powerpoint target slide index",
+                        () => transient.Acquire(activeSlide).SlideIndex);
+                }
+            }
+
+            return new PowerPointTargetObservation(
+                true,
+                null,
+                presentationCount,
+                protectedViewWindowCount,
+                activeProtectedWindowPresent,
+                readOnly,
+                hasWindow,
+                activeViewType,
+                slideShowActive,
+                slideCount,
+                activeSlideIndex);
+        }
+        catch (COMException exception)
+        {
+            RecordFailure("powerpoint target read refused", exception.HResult);
+            return new PowerPointTargetObservation(false, exception.HResult, 0, 0, false, false, false, null, false, 0, null);
+        }
+        finally
+        {
+            transient.ReleaseAll();
+        }
+    }
+
+    private T ReadStage<T>(string stage, Func<T> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (COMException exception)
+        {
+            RecordFailure(stage, exception.HResult);
+            throw;
+        }
+    }
+
+    private T? ReadOptionalStage<T>(string stage, Func<T?> read)
+        where T : class
+    {
+        try
+        {
+            return read();
+        }
+        catch (COMException exception)
+        {
+            RecordFailure(stage, exception.HResult);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Releases the proxies this adapter owns, in reverse acquisition order, exactly once.
     /// </summary>

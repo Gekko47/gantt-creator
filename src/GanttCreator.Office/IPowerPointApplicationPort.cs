@@ -56,6 +56,46 @@ public sealed record PowerPointPresentationFacts(
     int? ActiveSlideIndex);
 
 /// <summary>
+/// What one read of the paste target reported (R7.2): the presentation and protected-view
+/// counts, and the resolved active presentation, window, view and slide facts. Every member is
+/// a fact; "proceed or refuse" is R7.2's Core decision table and is deliberately not expressed
+/// here.
+/// </summary>
+/// <param name="ReadSucceeded">
+/// Whether the host answered. A refused read is a typed fact so the decision table can
+/// distinguish it from a readable empty state.
+/// </param>
+/// <param name="HResult">The COM failure code when <paramref name="ReadSucceeded"/> is <see langword="false"/>.</param>
+/// <param name="PresentationCount">The number of open presentations at the read.</param>
+/// <param name="ProtectedViewWindowCount">The number of open protected-view windows.</param>
+/// <param name="ActiveProtectedViewWindowPresent">Whether a protected-view window is the on-top window.</param>
+/// <param name="ActivePresentationReadOnly">
+/// The resolved active presentation's <c>ReadOnly</c> state, read without changing it.
+/// </param>
+/// <param name="ActiveWindowPresent">Whether the resolved active presentation has a document window.</param>
+/// <param name="ActiveViewType">
+/// The active view's <c>PpViewType</c> value as an integer, or <see langword="null"/> when there
+/// is no document window. The interpretation is the decision table's.
+/// </param>
+/// <param name="SlideShowActive">Whether a slide-show window exists (a show is running).</param>
+/// <param name="SlideCount">The resolved active presentation's slide count.</param>
+/// <param name="ActiveSlideIndex">
+/// The active slide's one-based index, or <see langword="null"/> when the view exposes no slide.
+/// </param>
+public sealed record PowerPointTargetObservation(
+    bool ReadSucceeded,
+    int? HResult,
+    int PresentationCount,
+    int ProtectedViewWindowCount,
+    bool ActiveProtectedViewWindowPresent,
+    bool ActivePresentationReadOnly,
+    bool ActiveWindowPresent,
+    int? ActiveViewType,
+    bool SlideShowActive,
+    int SlideCount,
+    int? ActiveSlideIndex);
+
+/// <summary>
 /// The narrow PowerPoint application/presentation/slide fact port (R7.1).
 /// </summary>
 /// <remarks>
@@ -72,6 +112,14 @@ public sealed record PowerPointPresentationFacts(
 /// <b>Read, never activate.</b> The active presentation and slide are read through
 /// <c>Application.ActiveWindow</c> and <c>View.Slide</c>; nothing is activated
 /// (work item D4).
+/// </para>
+/// <para>
+/// <b>The target read resolves the active deck, not the first one.</b>
+/// <see cref="ReadTargetObservation"/> resolves the active presentation through
+/// <c>Application.ActiveWindow.Presentation</c> when a document window exists, so with two or
+/// more presentations open the facts describe the deck the user is working in. A windowless
+/// deck falls back to <c>Presentations[1]</c> only to report its own facts, which the decision
+/// table then refuses as <c>NoWindow</c>.
 /// </para>
 /// <para>
 /// <b>The port cannot save.</b> No <c>Save</c>, <c>SaveAs</c>, <c>Close</c>, <c>Quit</c> or
@@ -105,4 +153,12 @@ public interface IPowerPointApplicationPort
     /// </summary>
     /// <returns>The typed presentation facts; a refused read is reported, not thrown.</returns>
     PowerPointPresentationFacts ReadPresentationFacts();
+
+    /// <summary>
+    /// Reads the paste-target facts without activating anything: the presentation and
+    /// protected-view counts, and the active presentation resolved through the active window
+    /// (falling back to the first presentation only when the deck has no window).
+    /// </summary>
+    /// <returns>The typed target observation; a refused read is reported, not thrown.</returns>
+    PowerPointTargetObservation ReadTargetObservation();
 }

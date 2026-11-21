@@ -447,6 +447,9 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/PowerPointProcessSnapshot.cs",
         "src/GanttCreator.Office/PowerPointProxyOwnership.cs",
         "src/GanttCreator.Office/PowerPointTransferAdapter.cs",
+        // R7.2: the target fact gatherer drives the port and calls the Core table; it writes
+        // nothing, holds no proxy, and consults no guard.
+        "src/GanttCreator.Office/PowerPointTargetResolver.cs",
     ];
 
     /// <summary>
