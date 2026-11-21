@@ -30,6 +30,22 @@ Tests: `PowerPointProxyOwnershipTests`, `PowerPointProcessSnapshotTests` and
 `PowerPointFixture` is typed against the same PIA, quits only a host it started and records
 its owned PID in the shared manifest; `scripts/probe-powerpoint-host.ps1` is the Step 0 probe.
 
+**R7.2 entry points (2026-11-21).** `src/GanttCreator.Core/Export/` holds the pure target
+decision table: `PowerPointTargetFacts` (the primitive host facts),
+`PowerPointTargetDecision.Decide` (the closed precedence matrix over
+`PowerPointTargetAction`/`PowerPointTargetRefusal`), and the pasteable-view constant set
+`{1, 3, 9}`. `PowerPointTargetResolver` in `src/GanttCreator.Office/` is the fact gatherer:
+it drives `IPowerPointApplicationPort.AttachOrStart`/`ReadTargetObservation`, maps the two
+records to the Core facts (the observation's `PresentationCount` is authoritative over the
+attach-time count), and calls the table. The new port member resolves the active deck through
+`ActiveWindow.Presentation` with a `Presentations[1]` fallback and reads the protected-view
+count plus the on-top `ActiveProtectedViewWindow`. Tests: `PowerPointTargetDecisionTests` in
+`tests/GanttCreator.Core.Tests/Export/`, `PowerPointTargetResolverTests` and the adapter
+target-read facts in `tests/GanttCreator.Office.ContractTests`, and the live case gate
+`PowerPointTargetDecisionIntegrationTests` in `tests/GanttCreator.Office.IntegrationTests`
+(the `OfficeIntegration` trait). `scripts/probe-protected-view-open.ps1` is the Step-0 probe
+for the protected-view open route and outline-view settability.
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call
