@@ -28,6 +28,9 @@ public sealed class PowerPointAdapterHygieneTests
         "src/GanttCreator.Office/PowerPointProxyOwnership.cs",
         "src/GanttCreator.Office/PowerPointProcessSnapshot.cs",
         "src/GanttCreator.Office/PowerPointTransferAdapter.cs",
+        // R7.2: the target fact gatherer resolves the active deck through the port and calls
+        // the Core decision table; it joins the same no-dynamic/no-activate path.
+        "src/GanttCreator.Office/PowerPointTargetResolver.cs",
         // R7.1: the typed replacement for the R6.7 fixture is part of the Phase-7 path,
         // so the no-dynamic and no-sleep rules cover it too.
         "tests/GanttCreator.Office.IntegrationTests/PowerPointFixture.cs",
