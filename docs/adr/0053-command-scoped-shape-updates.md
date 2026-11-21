@@ -78,3 +78,14 @@ batching is not.
 - A future change that adds a host-visible member to `OfficeShapeRequest` must decide which
   part it belongs to; adding it to neither (like `ZLayer`, which orders the plan) means a
   change to it alone still produces a full update, which is safe.
+
+**Amendment 2026-11-21 — plan order and execution order are separate.** The plan still lists
+operations in scene order (back to front, then by action), because that is what the z-order pass
+consumes. Execution no longer follows it: `ShapeReconciler.Reconcile` applies every `Delete` first,
+in plan order, then the grouped appearance pass for `Update` and `Create`, with the `Create` calls
+last. The reason is what a partially applied pass looks like. When the Columns control hides all six
+columns, the title and the year band are redrawn in the same pass; a delete that waits behind forty
+style writes leaves the previous `ChartTitle` overlapping the year band for the whole pass, and a
+create issued before the updates appears in front of shapes that have not been restyled yet — both
+read as a bad draw rather than a redraw (owner report 2026-11-21). Nothing about *which* shapes
+change moved, only when each class is applied, and the grouped pass keeps its own batching.

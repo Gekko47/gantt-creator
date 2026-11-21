@@ -50,9 +50,39 @@ public sealed class WorksheetProtectionWindow(
     private bool _repairCellsOnClose = true;
 
     /// <summary>
+    /// Whether the outermost scope may release protection the add-in did not arm, and must therefore
+    /// put it back on the way out.
+    /// </summary>
+    /// <remarks>
+    /// Recorded at depth 0 for the same reason as <see cref="_repairCellsOnClose"/>. Only the explicit
+    /// Fix command asks for it (ADR-0011 amendment 2026-11-21): a workbook reopened from a previous
+    /// session comes up protected — <c>UserInterfaceOnly</c> is not persisted — so the one command that
+    /// exists to repair that workbook would otherwise demand a manual unprotect first.
+    /// </remarks>
+    private bool _releaseForeignProtection;
+
+    /// <summary>
+    /// Whether this window actually released protection it did not arm, so its close re-applies it.
+    /// </summary>
+    /// <remarks>
+    /// Set only from a release that succeeded. A refused release leaves the flag clear, so the close
+    /// does not protect a sheet it never opened — the caller sees the host refuse its write instead,
+    /// and the repairer turns that into its own typed refusal before writing anything.
+    /// </remarks>
+    private bool _releasedForeignProtection;
+
+    /// <summary>
     /// Opens the window: the inner scope runs with the sheet released, and the outermost scope
     /// re-applies protection when it disposes.
     /// </summary>
+    /// <param name="repairCells">
+    /// Whether the close unlocks the visible table's cells first, passed through to
+    /// <see cref="IWorksheetProtectionPort.Protect"/>.
+    /// </param>
+    /// <param name="releaseForeignProtection">
+    /// <see langword="true"/> to also release protection the add-in has not armed, and re-apply it on
+    /// close. Used only by the explicit Fix command (ADR-0011 amendment 2026-11-21).
+    /// </param>
     /// <returns>The scope that closes the window.</returns>
     /// <remarks>
     /// <para>
@@ -67,15 +97,26 @@ public sealed class WorksheetProtectionWindow(
     /// statement that started it finishes. A refused release is recorded and the write continues —
     /// the host then refuses the write and reports it, which is a truer signal than silence here.
     /// </para>
+    /// <para>
+    /// <b>Foreign protection.</b> Arming answers "is this protection ours"; the repair path cannot ask
+    /// that question, because the protection it must get past belongs to a previous session. It
+    /// therefore passes <paramref name="releaseForeignProtection"/> and the window releases whatever
+    /// protection the port reports — the add-in protects without a password, so a release it cannot
+    /// perform is a protection it must not silently write through.
+    /// </para>
     /// </remarks>
-    public IDisposable Open(bool repairCells = true)
+    public IDisposable Open(bool repairCells = true, bool releaseForeignProtection = false)
     {
         if (_depth == 0)
         {
             _repairCellsOnClose = repairCells;
+            _releaseForeignProtection = releaseForeignProtection;
+            _releasedForeignProtection = false;
         }
 
-        if (_depth == 0 && _state.IsArmed)
+        bool armed = _state.IsArmed;
+        bool foreign = _depth == 0 && _releaseForeignProtection && !armed && IsPortProtected();
+        if (_depth == 0 && (armed || foreign))
         {
             // The release is one host call and it is on the click-to-plot path, so its cost is
             // recorded rather than inferred: `command - total - post` attributed ~31-54 ms per
@@ -83,6 +124,7 @@ public sealed class WorksheetProtectionWindow(
             long started = Stopwatch.GetTimestamp();
             ProtectionWriteOutcome released = _port.Unprotect();
             Record(released, "window release");
+            _releasedForeignProtection = foreign && released.Succeeded;
             _trace?.Invoke(string.Create(
                 CultureInfo.InvariantCulture,
                 $"gantt.protection window open released={released.Succeeded} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
@@ -100,7 +142,7 @@ public sealed class WorksheetProtectionWindow(
         }
 
         _depth--;
-        if (_depth == 0 && _state.IsArmed)
+        if (_depth == 0 && (_state.IsArmed || _releasedForeignProtection))
         {
             long started = Stopwatch.GetTimestamp();
             ProtectionWriteOutcome protectedOutcome = _port.Protect(_repairCellsOnClose);
@@ -110,6 +152,15 @@ public sealed class WorksheetProtectionWindow(
                 $"gantt.protection window close protected={protectedOutcome.Succeeded} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
         }
     }
+
+    /// <summary>Whether the port reports a protected sheet, without changing it.</summary>
+    /// <returns><see langword="true"/> when either protection flag is set.</returns>
+    /// <remarks>
+    /// Read only when the caller asked for a foreign release: the arm path already knows the answer
+    /// (the add-in armed it), so it spends no host call on this.
+    /// </remarks>
+    private bool IsPortProtected() =>
+        _port.Read() is { } state && (state.ContentsProtected || state.ShapesProtected);
 
     /// <summary>Records a protection write that did not succeed, or nothing when it did.</summary>
     /// <param name="outcome">The typed result of the write.</param>

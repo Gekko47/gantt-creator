@@ -143,3 +143,25 @@ Office gate; it does not introduce a new selection rule.
   caller's hidden column as a real panel column and move the plot.
 - **Let export keep the schema panel.** Rejected by the owner: the export must reproduce what is
   visible, including the chart-only state.
+
+## Amendment 2026-11-21 — D4: the live title is decided by the Columns setting
+
+D4 keyed the live title on "no column is visible", which the refresh read as the *measured* grid
+having zero columns. The owner's 2026-11-21 logs show that reading flipping the title inside one
+toggle: `HiddenColumns` was empty (nothing hidden) while a partially applied toggle left the
+measurement momentarily empty, so the refresh deleted `ChartTitle` and re-created it in the same
+gesture — a flicker at the end of the pass.
+
+The decision is therefore keyed on the **Columns setting** whenever the configuration carries one:
+the title is disabled only when `HiddenColumns` names every toggleable column, and a zero-column
+measurement alone no longer disables it. With no `HiddenColumns` key — an older workbook, or a
+caller that never set it — the measured zero-column grid still decides, which is D4's original
+rule. The trace line `gantt.title live=… columns=… width=… reason=…` records which answer applied
+(`none`, `no-columns`, `blank`, `hidden`, `no-grid`), so the two cases can be told apart in a live
+log.
+
+Consequences: a toggle that transiently measures zero columns keeps its title, so the reconciler has
+nothing to delete and nothing to re-create; a workbook whose table really is fully hidden loses the
+title exactly as D4 says — on the setting rather than on a transient measurement. A workbook saved
+with an empty `HiddenColumns` whose columns are all hidden by hand still reports `live=yes`, and the
+explicit Refresh is what reconciles that disagreement.

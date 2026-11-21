@@ -19,7 +19,13 @@ internal static class RepairConfigCommand
         object application = ExcelDna.Integration.ExcelDnaUtil.Application;
         Run(
             new ExcelConfigIntegrityChecker(application),
-            new ExcelConfigRepairer(application),
+            // The port carries the live log sink, so a repair that had to release the sheet's
+            // protection leaves the same `gantt.protection window …` lines the refresh does.
+            new ExcelConfigRepairer(
+                application,
+                protectionPort: new ExcelWorksheetProtectionPort(
+                    application,
+                    CommandBoundary.Instance.WriteTechnicalRecord)),
             CommandErrorDialog.Confirm,
             CommandErrorDialog.Show,
             new ExcelWorkbookRecovery(
@@ -288,7 +294,7 @@ internal static class RepairConfigCommand
         {
             ConfigRepairRefusalReason.NoActiveWorkbook => "Gantt Creator needs an open workbook before it can repair configuration.",
             ConfigRepairRefusalReason.TargetProtected =>
-                "The workbook or target worksheet is protected, so no configuration was changed. Unprotect it and try again.",
+                "The worksheet is protected and Gantt Creator could not release that protection (it may carry a password), so no configuration was changed. Remove protection and run Fix again.",
             ConfigRepairRefusalReason.PlanRefused => "Configuration repair was refused because unsafe or unsupported damage was found.",
             ConfigRepairRefusalReason.CatalogueWriteRefused =>
                 "Gantt Creator could not safely write the configuration catalogues. No further changes were made.",

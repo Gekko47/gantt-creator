@@ -147,4 +147,71 @@ public class WorksheetProtectionWindowTests
         Assert.Equal(["Unprotect"], port.Calls);
         Assert.False(port.State!.ContentsProtected);
     }
+
+    /// <summary>
+    /// The repair path must get past protection left by a previous session, which the add-in never
+    /// armed in this one, and must leave the sheet exactly as protected as it found it
+    /// (ADR-0011 amendment 2026-11-21).
+    /// </summary>
+    [Fact]
+    public void A_window_asked_to_release_foreign_protection_restores_it_on_close()
+    {
+        FakeWorksheetProtectionPort port = new() { State = new WorksheetProtectionState(true, true) };
+        ProtectionArmingState state = new();
+        WorksheetProtectionWindow window = new(port, state);
+
+        using (window.Open(repairCells: true, releaseForeignProtection: true))
+        {
+            Assert.False(port.State.ContentsProtected);
+        }
+
+        Assert.Equal(["Read", "Unprotect", "Protect"], port.Calls);
+        Assert.True(port.State.ContentsProtected);
+        Assert.True(port.RepairCellsRequested);
+        Assert.False(state.IsArmed);
+    }
+
+    /// <summary>
+    /// A sheet that is already open is left alone: the foreign mode costs one read, not a
+    /// release-then-protect cycle that would apply protection the user did not have.
+    /// </summary>
+    [Fact]
+    public void A_window_asked_to_release_foreign_protection_leaves_an_open_sheet_alone()
+    {
+        FakeWorksheetProtectionPort port = new();
+        WorksheetProtectionWindow window = new(port, new ProtectionArmingState());
+
+        using (window.Open(repairCells: true, releaseForeignProtection: true))
+        {
+        }
+
+        Assert.Equal(["Read"], port.Calls);
+        Assert.False(port.State!.ContentsProtected);
+    }
+
+    /// <summary>
+    /// A protection the window cannot release (a password the add-in does not have) leaves the sheet
+    /// as it was, and the close must not claim to have restored anything.
+    /// </summary>
+    [Fact]
+    public void A_refused_foreign_release_does_not_protect_on_close()
+    {
+        FakeWorksheetProtectionPort port = new()
+        {
+            State = new WorksheetProtectionState(true, true),
+            UnprotectRefusal = ProtectionWriteRefusal.HostRejected,
+        };
+        List<string> traces = [];
+        WorksheetProtectionWindow window = new(port, new ProtectionArmingState(), traces.Add);
+
+        using (window.Open(repairCells: true, releaseForeignProtection: true))
+        {
+        }
+
+        Assert.Equal(["Read", "Unprotect"], port.Calls);
+        Assert.True(port.State.ContentsProtected);
+        Assert.Contains(
+            traces,
+            line => line.Contains("window release refused=HostRejected", StringComparison.Ordinal));
+    }
 }
