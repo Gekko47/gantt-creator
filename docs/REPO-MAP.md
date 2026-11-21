@@ -19,6 +19,17 @@ A second table records the project-to-project references (the dependency graph);
 | [Office](../src/GanttCreator.Office/) | Core |
 | [Raster](../src/GanttCreator.Raster/) | Core |
 
+**R7.1 entry points (2026-11-21).** `IPowerPointApplicationPort` is the primitive
+application/presentation/slide fact port; `PowerPointTransferAdapter` is the typed PowerPoint
+PIA implementation and `PowerPointProxyOwnership` the reverse-order, exactly-once release
+tracker, all in `src/GanttCreator.Office/`. `PowerPointProcessSnapshot` derives `StartedByUs`
+from the `POWERPNT` process set. The dependency is [ADR-0069](adr/0069-typed-powerpoint-pia-and-ownership.md).
+Tests: `PowerPointProxyOwnershipTests`, `PowerPointProcessSnapshotTests` and
+`PowerPointTransferAdapterTests` in `tests/GanttCreator.Office.ContractTests`, and
+`PowerPointAdapterHygieneTests` in `tests/GanttCreator.Architecture.Tests`. The R6.7
+`PowerPointFixture` is typed against the same PIA, quits only a host it started and records
+its owned PID in the shared manifest; `scripts/probe-powerpoint-host.ps1` is the Step 0 probe.
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call
