@@ -725,13 +725,24 @@ public sealed class GanttRefreshOrchestrator(
         // trace shows the owned ChartTitle created and deleted on adjacent column toggles,
         // and three omission paths produce that same shape - so the absence alone could
         // not say which one fired.
-        string titleOmission = (showTitle, IsBlank: string.IsNullOrWhiteSpace(chartTitle), HasGrid: titleGrid is not null, titleColumnCount) switch
+        // The zero-column state is decided by the Columns SETTING, never by the measured
+        // panel. The owner's 01:12 trace measures the panel at 0, 1, 4, 5 and 6 columns
+        // within one toggle, because the Columns control writes the hidden flags one column
+        // at a time; keying the title on the measurement therefore deleted and re-created the
+        // owned textbox on every pass, which reads as a flicker rather than a decision. The
+        // measurement is consulted only when the workbook carries no setting at all, because
+        // then nothing else is authoritative.
+        bool settingNamesHiddenColumns = config.Settings.ContainsKey(GanttColumnVisibility.SettingKey);
+        bool columnsGone = settingNamesHiddenColumns
+            ? SettingHidesEveryColumn(config.Settings)
+            : titleColumnCount == 0;
+
+        string titleOmission = (showTitle, IsBlank: string.IsNullOrWhiteSpace(chartTitle), HasGrid: titleGrid is not null) switch
         {
-            (false, _, _, _) => "hidden",
-            (_, true, _, _) => "blank",
-            (_, _, false, _) => "no-grid",
-            (_, _, true, 0) => "no-columns",
-            _ => "none",
+            (false, _, _) => "hidden",
+            (_, true, _) => "blank",
+            (_, _, false) => "no-grid",
+            _ => columnsGone ? "no-columns" : "none",
         };
 
         OfficeShapeRequest? titleRequest = null;
@@ -1199,6 +1210,39 @@ public sealed class GanttRefreshOrchestrator(
     /// <summary>Writes one trace line, or does nothing when no sink is wired.</summary>
     /// <param name="message">The line to write.</param>
     private void TraceRefresh(string message) => _trace?.Invoke(message);
+
+    /// <summary>
+    /// Whether the stored Columns setting hides every toggleable column, which is the only
+    /// thing that may disable the live title (ADR-0065 D4).
+    /// </summary>
+    /// <param name="settings">The workbook's settings map.</param>
+    /// <returns><see langword="true"/> when the setting hides every toggleable column.</returns>
+    /// <remarks>
+    /// A measurement cannot answer this. The Columns control writes the hidden flags one
+    /// column at a time, so a pass can measure zero visible columns on a sheet that is about
+    /// to show six; the setting is the user's intent and the measurement is a snapshot of an
+    /// unfinished write. The live title is the one thing whose whole existence hangs on this
+    /// question, so it reads the intent.
+    /// </remarks>
+    private static bool SettingHidesEveryColumn(IReadOnlyDictionary<string, string> settings)
+    {
+        if (!settings.TryGetValue(GanttColumnVisibility.SettingKey, out string? stored)
+            || string.IsNullOrWhiteSpace(stored))
+        {
+            return false;
+        }
+
+        int hidden = 0;
+        foreach (string name in stored.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (GanttColumnVisibility.IsToggleable(name))
+            {
+                hidden++;
+            }
+        }
+
+        return hidden >= GanttColumnVisibility.ToggleableColumnNames.Count;
+    }
 
     /// <summary>
     /// Mirrors the written <c>StyleKey</c> cells into the validated events so the

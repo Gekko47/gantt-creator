@@ -847,6 +847,46 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// A measurement reporting no visible columns does not disable the title while the
+    /// Columns setting still names visible ones.
+    /// </summary>
+    /// <remarks>
+    /// The Columns control writes the hidden flags one column at a time, so an automatic
+    /// pass can measure zero visible columns on a sheet that is about to show six. The
+    /// owner's 01:12 trace shows exactly that - `columns=0` on one pass and `columns=6` on
+    /// the next - and every such pass deleted and re-created the owned textbox, which reads
+    /// as a flicker. The setting is the user's intent; the measurement is an unfinished
+    /// write, so it may not decide this. The assertion that the trace still reports
+    /// `columns=0` is deliberate: the line records what was measured, and `reason=none` is
+    /// what the pass decided despite it.
+    /// </remarks>
+    [Fact]
+    public void A_zero_column_measurement_does_not_disable_the_title_while_the_setting_names_a_visible_column()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = ZeroColumnGridWithAReservedRow(),
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+                [GanttColumnVisibility.SettingKey] = "Type",
+            },
+        };
+        List<string> trace = [];
+
+        Assert.True(
+            fakes.BuildOrchestratorWithDeltaCache(new ShapeDeltaCache(), trace: trace.Add).Refresh().Succeeded);
+
+        string line = Assert.Single(
+            trace,
+            entry => entry.StartsWith("gantt.title ", StringComparison.Ordinal));
+        Assert.Contains("reason=none", line, StringComparison.Ordinal);
+        Assert.Contains("columns=0", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A zero-column grid that still carries the reserved row the live title occupies.
     /// </summary>
     private static PanelCellGrid ZeroColumnGridWithAReservedRow()
