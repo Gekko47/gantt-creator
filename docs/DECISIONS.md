@@ -66,6 +66,7 @@
 | ADR-0066 | Deleting staging shapes after `ShapeRange.Copy` preserves the Office drawing clipboard format | Accepted | 2026-11-18 | [`adr/0066-copy-after-delete-preserves-the-drawing-format.md`](adr/0066-copy-after-delete-preserves-the-drawing-format.md) |
 | ADR-0067 | A hidden worksheet row contributes no data-panel primitives, while its plot shapes stay | Accepted | 2026-11-19 | [`adr/0067-hidden-rows-contribute-no-panel-primitives.md`](adr/0067-hidden-rows-contribute-no-panel-primitives.md) |
 | ADR-0068 | The editable copy composes with the live chart's geometry rules | Accepted | 2026-11-19 | [`adr/0068-the-copy-composes-with-the-live-geometry-rules.md`](adr/0068-the-copy-composes-with-the-live-geometry-rules.md) |
+| ADR-0069 | Typed PowerPoint PIA (15.0.4420.1018, embedded interop types) and reverse-order proxy ownership | Accepted | 2026-11-21 | [`adr/0069-typed-powerpoint-pia-and-ownership.md`](adr/0069-typed-powerpoint-pia-and-ownership.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,

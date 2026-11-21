@@ -123,7 +123,8 @@
         "type": "Project",
         "dependencies": {
           "ExcelDna.Interop": "[16.0.0, )",
-          "GanttCreator.Core": "[0.0.0, )"
+          "GanttCreator.Core": "[0.0.0, )",
+          "Microsoft.Office.Interop.PowerPoint": "[15.0.4420.1018, )"
         }
       },
       "ExcelDna.AddIn": {
@@ -146,6 +147,12 @@
         "requested": "[16.0.0, )",
         "resolved": "16.0.0",
         "contentHash": "xJoz0zmnEfJd5hKkC0rzmtpQeyjC0mMEQQdpICrGnIB/zYN8e270S5yLxdtbPpTYeEGk7RUQNfjA4FjG9xlRNA=="
+      },
+      "Microsoft.Office.Interop.PowerPoint": {
+        "type": "CentralTransitive",
+        "requested": "[15.0.4420.1018, )",
+        "resolved": "15.0.4420.1018",
+        "contentHash": "3XkJAqbYq93MqqSOPusNE+6Tve5yBkbE92n9W8f+k8Z9AzXeoTMqMYqhZMrzVOp4saHhMMbOD78JkCjvk+qIzw=="
       }
     }
   }

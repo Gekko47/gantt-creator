@@ -1,0 +1,22 @@
+<Project>
+
+  <!--
+    R7.1 / ADR-0069. ExcelDna.Interop.targets marks Microsoft.Office.Interop.Excel,
+    Microsoft.Vbe.Interop and office with EmbedInteropTypes=true. The PowerPoint PIA
+    references office 15 indirectly; without an embedding policy of its own the compiler
+    creates a second, real office reference and fails with CS1762. The rule lives here
+    rather than in one project because the PIA reaches the AddIn and the integration tests
+    transitively, and each of those embeds office through the same Excel-DNA targets.
+    The condition matches only projects where the reference actually exists.
+  -->
+  <Target Name="EmbedPowerPointInteropAssembly"
+          AfterTargets="LinkExcelDnaInteropEmbeddableAssemblies"
+          BeforeTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePath Condition="'%(FileName)' == 'Microsoft.Office.Interop.PowerPoint'">
+        <EmbedInteropTypes>true</EmbedInteropTypes>
+      </ReferencePath>
+    </ItemGroup>
+  </Target>
+
+</Project>
