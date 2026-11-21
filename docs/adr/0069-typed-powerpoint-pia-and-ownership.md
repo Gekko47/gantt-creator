@@ -76,6 +76,22 @@ The active presentation, window, view and slide are read through `Application.Ac
 presentation. No `Save`, `SaveAs`, `Close`, `Quit` or `QuitAll` member exists on any
 `IPowerPoint*` interface, so R7.6's ownership proof is structural rather than a sequence hope.
 
+## Host probe (2026-11-21, build 16.0.20527.20196, x64)
+
+Measured by [`scripts/probe-powerpoint-host.ps1`](../../scripts/probe-powerpoint-host.ps1):
+
+- PowerPoint was not running; the typed `new Application()` started it, `StartedByUs` was
+  true, one `POWERPNT` process was created, and the probe left zero orphan processes.
+- `Application.Version` is `16.0`, so the Office 2013-era PIA automates the current host.
+- A windowless presentation has no `ActiveWindow`; its `Presentation.ReadOnly` is
+  `msoFalse`; `Slides.Add` takes the slide count 0 to 1.
+- `DisplayAlerts` reads 1 (`ppAlertsNone`) as this host's default.
+- A missing member returns `0x80020006` (`DISP_E_MEMBERNOTFOUND`), which is an
+  unsupported-build signal and never a transient retry.
+
+The production-scale paste range and the three group-resize routes need the staged Excel
+group, so they remain R7.3/R7.4 live-gate work.
+
 ## Consequences
 
 **Positive.** The adapter is compiler-checked against the typed object model; a renamed or

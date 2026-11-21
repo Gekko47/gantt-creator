@@ -157,9 +157,9 @@ finally {
                 }
 
                 # Only a process whose start time still matches the recorded one is ours.
-                if ($null -ne $after
-                    -and $after.ContainsKey($processId)
-                    -and $live.StartTime.ToUniversalTime().Ticks -eq $after[$processId]) {
+                if ($null -ne $after -and
+                    $after.ContainsKey($processId) -and
+                    $live.StartTime.ToUniversalTime().Ticks -eq $after[$processId]) {
                     Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
                 }
 
