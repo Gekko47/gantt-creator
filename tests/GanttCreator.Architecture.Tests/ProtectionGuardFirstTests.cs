@@ -450,6 +450,13 @@ public sealed class ProtectionGuardFirstTests
         // R7.2: the target fact gatherer drives the port and calls the Core table; it writes
         // nothing, holds no proxy, and consults no guard.
         "src/GanttCreator.Office/PowerPointTargetResolver.cs",
+        // R7.3: the paste port is a declaration whose observation names no interop type; the
+        // stage drives the port and calls the Core validator. Neither touches the workbook --
+        // a paste mutates a PowerPoint slide, not the visible worksheet -- so a protection
+        // consultation here would be unreachable code. The refusal leaves the worksheet
+        // untouched; R7.5 owns the transfer failure policy.
+        "src/GanttCreator.Office/IPowerPointPastePort.cs",
+        "src/GanttCreator.Office/PowerPointPasteStage.cs",
     ];
 
     /// <summary>

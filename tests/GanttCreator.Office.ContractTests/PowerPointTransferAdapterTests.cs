@@ -1,9 +1,9 @@
 namespace GanttCreator.Office.ContractTests;
 
 /// <summary>
-/// R7.1: the typed adapter's lifecycle is pinned without a host — construction, the
-/// unattached fact read, disposal and the disposed guards. The COM traversal itself is what
-/// the live gate exercises; it is deliberately not faked here.
+/// R7.1/R7.3: the typed adapter's lifecycle is pinned without a host — construction, the
+/// unattached fact and paste reads, disposal and the disposed guards. The COM traversal
+/// itself is what the live gate exercises; it is deliberately not faked here.
 /// </summary>
 public sealed class PowerPointTransferAdapterTests
 {
@@ -88,6 +88,34 @@ public sealed class PowerPointTransferAdapterTests
         _ = Assert.Throws<ObjectDisposedException>(() =>
         {
             _ = adapter.ReadTargetObservation();
+        });
+    }
+
+    [Fact]
+    public void Pasting_before_attach_reports_a_refused_observation_without_a_host()
+    {
+        using PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+
+        PowerPointPasteObservation observation = adapter.PasteSpecialShape();
+
+        Assert.False(observation.PasteSucceeded);
+        Assert.Null(observation.HResult);
+        Assert.Equal(0, observation.Count);
+        Assert.Equal(0, observation.GroupCount);
+        Assert.Null(observation.GroupShapeType);
+        Assert.Null(observation.GroupName);
+        Assert.Null(observation.GroupId);
+    }
+
+    [Fact]
+    public void Pasting_after_dispose_is_refused()
+    {
+        PowerPointTransferAdapter adapter = new(new PowerPointProxyOwnership());
+        adapter.Dispose();
+
+        _ = Assert.Throws<ObjectDisposedException>(() =>
+        {
+            _ = adapter.PasteSpecialShape();
         });
     }
 

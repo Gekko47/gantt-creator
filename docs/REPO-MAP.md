@@ -46,6 +46,21 @@ target-read facts in `tests/GanttCreator.Office.ContractTests`, and the live cas
 (the `OfficeIntegration` trait). `scripts/probe-protected-view-open.ps1` is the Step-0 probe
 for the protected-view open route and outline-view settability.
 
+**R7.3 entry points (2026-11-21).** `src/GanttCreator.Core/Export/` holds the pure paste
+validation: `PowerPointPasteExpectation` (staged child count N, staged group envelope, the
+repository tolerance), `PowerPointPasteFacts` (count, group count, group type, bounds) and
+`PowerPointPasteValidator` (the D1 precedence matrix over `PowerPointPasteRefusal`, with the
+documented `msoGroup` constant 6 and the measured bounds/aspect deltas on the result).
+`src/GanttCreator.Office/` holds the primitive-typed `IPowerPointPastePort` and its
+observation, `PowerPointPasteStage` (the D4 classification before validation plus the Core
+validator call, with its internal `PowerPointPasteFailureClassifier` seam), and
+`PowerPointTransferAdapter.PasteSpecialShape` (the typed `PasteSpecial(ppPasteShape)` call
+that walks the range to locate the group). Tests: `PowerPointPasteValidatorTests` in
+`tests/GanttCreator.Core.Tests/Export/`, `PowerPointPasteStageTests` and the adapter paste
+facts in `tests/GanttCreator.Office.ContractTests`, and the production-scale live gate
+`PowerPointPasteSpecialIntegrationTests` in `tests/GanttCreator.Office.IntegrationTests`
+(the `OfficeIntegration` trait; its empty-clipboard arm measures the D4 filter from evidence).
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call

@@ -201,6 +201,28 @@ internal partial class ClipboardFormatProbe
     }
 
     /// <summary>
+    /// Empties the clipboard so a paste can be driven against a known-empty payload (the
+    /// R7.3 D4 probe arm). Virtual so the failure path is testable without a real clipboard.
+    /// </summary>
+    /// <returns><see langword="true"/> when the clipboard was opened and emptied.</returns>
+    internal virtual bool TryEmpty()
+    {
+        if (!TryOpenClipboard())
+        {
+            return false;
+        }
+
+        try
+        {
+            return NativeMethods.EmptyClipboard();
+        }
+        finally
+        {
+            _ = CloseClipboardHandle();
+        }
+    }
+
+    /// <summary>
     /// Resolves a format identifier to a standard name, a candidate Office name, or
     /// a stable <c>format-0x…</c> fallback.
     /// </summary>
@@ -309,5 +331,10 @@ internal partial class ClipboardFormatProbe
             StringMarshalling = StringMarshalling.Utf16)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         internal static partial uint RegisterClipboardFormat(string format);
+
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static partial bool EmptyClipboard();
     }
 }

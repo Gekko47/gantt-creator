@@ -7,8 +7,9 @@ namespace GanttCreator.Office;
 
 /// <summary>
 /// The statically typed PowerPoint implementation of <see cref="IPowerPointApplicationPort"/>
-/// (R7.1): attach-or-start, active presentation/window/view/slide facts, and reverse-order
-/// release of every proxy it acquired.
+/// (R7.1) and <see cref="IPowerPointPastePort"/> (R7.3): attach-or-start, active
+/// presentation/window/view/slide facts, the typed <c>ppPasteShape</c> paste read, and
+/// reverse-order release of every proxy it acquired.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -34,8 +35,16 @@ namespace GanttCreator.Office;
 /// wrapper and no <c>Task.Run</c> around COM.
 /// </para>
 /// </remarks>
-public sealed class PowerPointTransferAdapter : IPowerPointApplicationPort, IDisposable
+public sealed class PowerPointTransferAdapter
+    : IPowerPointApplicationPort, IPowerPointPastePort, IDisposable
 {
+    /// <summary>
+    /// The PowerPoint <c>MsoShapeType.msoGroup</c> value (6), measured on the reference host.
+    /// The paste result is walked item by item so the group is located by this type, never
+    /// assumed to be index 1 (ADR-0066 D3).
+    /// </summary>
+    private const int _groupShapeTypeIdentifier = 6;
+
     private readonly PowerPointProxyOwnership _rootOwnership;
     private readonly Action<string>? _technicalRecord;
 
@@ -322,6 +331,135 @@ public sealed class PowerPointTransferAdapter : IPowerPointApplicationPort, IDis
         {
             transient.ReleaseAll();
         }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <b>The measured form is the group plus its flattened children (ADR-0066 D3).</b> The
+    /// returned range is walked item by item so the <c>msoGroup</c> is located by type, never
+    /// assumed to be the only item; the expected production form is <c>1 + N</c>. A host
+    /// refusal is reported as a refused observation with its HRESULT; an unavailable
+    /// application or active slide is reported as a refused observation with no HRESULT, so
+    /// the stage can distinguish a missing target from a COM failure (R7.3 D4).
+    /// </remarks>
+    public PowerPointPasteObservation PasteSpecialShape()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        PowerPoint.Application? application = _application;
+        if (application is null)
+        {
+            return PowerPointPasteFailureClassifier.RefusedObservation(null);
+        }
+
+        PowerPointProxyOwnership transient = new(_technicalRecord);
+        try
+        {
+            // Measured 2026-11-21: the typed ActiveWindow, View and View.Slide getters raise
+            // 0x80048240 ("Invalid request") when the surface is absent, although the
+            // late-bound path returns Nothing. Absence is the fact the stage classifies, never
+            // a read refusal, so the optional read reports a missing target.
+            PowerPoint.DocumentWindow? window = ReadOptionalStage(
+                "powerpoint paste active window",
+                () => application.ActiveWindow);
+            if (window is null)
+            {
+                return PowerPointPasteFailureClassifier.RefusedObservation(null);
+            }
+
+            _ = transient.Acquire(window);
+
+            PowerPoint.View? view = ReadOptionalStage(
+                "powerpoint paste view",
+                () => window.View);
+            if (view is null)
+            {
+                return PowerPointPasteFailureClassifier.RefusedObservation(null);
+            }
+
+            _ = transient.Acquire(view);
+
+            PowerPoint.Slide? slide = ReadOptionalStage(
+                "powerpoint paste view slide",
+                () => view.Slide as PowerPoint.Slide);
+            if (slide is null)
+            {
+                return PowerPointPasteFailureClassifier.RefusedObservation(null);
+            }
+
+            _ = transient.Acquire(slide);
+
+            PowerPoint.Shapes shapes = ReadStage(
+                "powerpoint paste shapes",
+                () => transient.Acquire(slide.Shapes));
+            PowerPoint.ShapeRange range = ReadStage(
+                "powerpoint paste special",
+                () => transient.Acquire(shapes.PasteSpecial(PowerPoint.PpPasteDataType.ppPasteShape)));
+
+            return ReadPastedRange(transient, range);
+        }
+        catch (COMException exception)
+        {
+            RecordFailure("powerpoint paste refused", exception.HResult);
+            return PowerPointPasteFailureClassifier.RefusedObservation(exception.HResult);
+        }
+        finally
+        {
+            transient.ReleaseAll();
+        }
+    }
+
+    private PowerPointPasteObservation ReadPastedRange(
+        PowerPointProxyOwnership transient,
+        PowerPoint.ShapeRange range)
+    {
+        int count = ReadStage("powerpoint paste range count", () => range.Count);
+        double widthPt = ReadStage("powerpoint paste range width", () => range.Width);
+        double heightPt = ReadStage("powerpoint paste range height", () => range.Height);
+
+        int groupCount = 0;
+        int? groupShapeType = null;
+        int groupChildCount = 0;
+        string? groupName = null;
+        int? groupId = null;
+
+        for (int index = 1; index <= count; index++)
+        {
+            PowerPoint.Shape item = ReadStage(
+                "powerpoint paste range item",
+                () => transient.Acquire(range[index]));
+            int shapeType = ReadStage(
+                "powerpoint paste range item type",
+                () => (int)item.Type);
+
+            groupCount += shapeType == _groupShapeTypeIdentifier ? 1 : 0;
+
+            // The first group found is the one whose identity and child count are reported;
+            // a second group still increments the count so the validator can refuse it.
+            if (groupCount != 1 || groupShapeType is not null)
+            {
+                continue;
+            }
+
+            groupShapeType = shapeType;
+            groupChildCount = ReadStage(
+                "powerpoint paste group child count",
+                () => transient.Acquire(item.GroupItems).Count);
+            groupName = ReadStage("powerpoint paste group name", () => item.Name);
+            groupId = ReadStage("powerpoint paste group id", () => item.Id);
+        }
+
+        return new PowerPointPasteObservation(
+            PasteSucceeded: true,
+            HResult: null,
+            Count: count,
+            GroupCount: groupCount,
+            GroupShapeType: groupShapeType,
+            GroupChildCount: groupChildCount,
+            GroupName: groupName,
+            GroupId: groupId,
+            WidthPt: widthPt,
+            HeightPt: heightPt);
     }
 
     private T ReadStage<T>(string stage, Func<T> read)

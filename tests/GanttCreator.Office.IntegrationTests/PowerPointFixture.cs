@@ -415,6 +415,37 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     }
 
     /// <summary>
+    /// Deletes the shape with the given identifier from the test-owned slide, if present.
+    /// This is the cleanup route for a group pasted by the PRODUCTION stage: the fixture's
+    /// own <see cref="DeletePastedShapes"/> tracks only the paste it performed itself.
+    /// </summary>
+    /// <param name="shapeId">The PowerPoint shape identifier.</param>
+    /// <returns><see langword="true"/> when a shape was deleted.</returns>
+    internal bool DeleteShapeById(int shapeId)
+    {
+        if (_slide is null)
+        {
+            return false;
+        }
+
+        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        for (int index = 1; index <= shapes.Count; index++)
+        {
+            PowerPoint.Shape shape = _ownership.Acquire(shapes[index]);
+            if (shape.Id != shapeId)
+            {
+                continue;
+            }
+
+            // Deleting the group removes its flattened children too (ADR-0066 D3).
+            shape.Delete();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Rejects a paste result that no consumer could use: zero shapes, or bounds that are
     /// not strictly positive. This is the validator the live body leans on so a
     /// non-throwing COM call is never reported as a successful materialisation.

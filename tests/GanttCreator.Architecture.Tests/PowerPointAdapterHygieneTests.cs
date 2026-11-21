@@ -34,6 +34,11 @@ public sealed class PowerPointAdapterHygieneTests
         // R7.1: the typed replacement for the R6.7 fixture is part of the Phase-7 path,
         // so the no-dynamic and no-sleep rules cover it too.
         "tests/GanttCreator.Office.IntegrationTests/PowerPointFixture.cs",
+        // R7.3: the paste port (a primitive-typed declaration) and its stage with the
+        // failure classifier. Both join the no-dynamic/no-Microsoft.CSharp/no-activate/
+        // no-sleep path; the reflective port-surface scan above covers the new interface.
+        "src/GanttCreator.Office/IPowerPointPastePort.cs",
+        "src/GanttCreator.Office/PowerPointPasteStage.cs",
     ];
 
     /// <summary>Members the transfer surface must never expose (work item D5).</summary>
