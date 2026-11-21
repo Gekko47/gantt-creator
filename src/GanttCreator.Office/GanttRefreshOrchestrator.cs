@@ -712,16 +712,32 @@ public sealed class GanttRefreshOrchestrator(
         // overlaps the chart. Omitting the request deletes an owned ChartTitle, and
         // the next refresh with any visible column re-creates it — the title returns
         // without a separate command.
-        OfficeShapeRequest? titleRequest = null;
         string? chartTitle = config.Settings.TryGetValue("ChartTitle", out string? title) ? title : null;
         bool showTitle = !config.Settings.TryGetValue("ShowTitle", out string? showText)
             || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
         PanelCellGrid? titleGrid = grid.Grid;
-        if (showTitle
-            && titleGrid is { Columns.Count: > 0 }
-            && !string.IsNullOrWhiteSpace(chartTitle))
+        int titleColumnCount = titleGrid?.Columns.Count ?? 0;
+        double titleWidthPt = titleGrid?.Columns.Sum(column => column.WidthPt) ?? 0d;
+
+        // ONE AUTHORITY for why the live title is absent: the trace below and the branch
+        // that builds the request both read this string, so a logged reason can never
+        // disagree with what the pass actually did. It exists because the owner's 23:42
+        // trace shows the owned ChartTitle created and deleted on adjacent column toggles,
+        // and three omission paths produce that same shape - so the absence alone could
+        // not say which one fired.
+        string titleOmission = (showTitle, IsBlank: string.IsNullOrWhiteSpace(chartTitle), HasGrid: titleGrid is not null, titleColumnCount) switch
         {
-            PanelCellGrid panelGrid = titleGrid;
+            (false, _, _, _) => "hidden",
+            (_, true, _, _) => "blank",
+            (_, _, false, _) => "no-grid",
+            (_, _, true, 0) => "no-columns",
+            _ => "none",
+        };
+
+        OfficeShapeRequest? titleRequest = null;
+        if (string.Equals(titleOmission, "none", StringComparison.Ordinal))
+        {
+            PanelCellGrid panelGrid = titleGrid!;
 
             // The title occupies the RESERVED ROW exactly: the heading space
             // ADR-0043 gave it, and the same row that carries the year band over
@@ -738,10 +754,8 @@ public sealed class GanttRefreshOrchestrator(
             double reservedRowHeightPt =
                 panelGrid.OriginTopPt - panelGrid.HeaderHeightPt - panelGrid.TopPaddingHeightPt;
 
-            // Every column here is visible (the zero-column state is disabled above), so
-            // the sum is the measured table width the title spans.
-            double titleWidthPt = panelGrid.Columns.Sum(column => column.WidthPt);
-
+            // Every column here is visible (the zero-column state is refused above), so
+            // the width computed from the grid IS the measured table width the title spans.
             RectD titleBounds = new(
                 panelGrid.OriginLeftPt,
                 panelGrid.TopPaddingHeightPt,
@@ -758,10 +772,19 @@ public sealed class GanttRefreshOrchestrator(
                 FontFamily: GanttCatalogues.LabelFontFamily,
                 FontSizePt: 12.0,
                 Bold: true,
-                Text: chartTitle.Trim(),
+                // The omission reason above already proved this non-blank; the flow
+                // analysis cannot see it through the string comparison.
+                Text: chartTitle!.Trim(),
                 Alignment: GanttTextAlignment.Centre,
                 TextColour: ColourHex.Parse("#404040"));
         }
+
+        // The reason AND the measurement it was sized from, because a title that vanishes
+        // on a column toggle is either a layout rule firing or a measurement that reported
+        // no columns - and those need different fixes. One line per pass, beside the
+        // phases line it belongs with.
+        TraceRefresh(FormattableString.Invariant(
+            $"gantt.title live={(titleRequest is null ? "no" : "yes")} columns={titleColumnCount} width={titleWidthPt:0.#} reason={titleOmission}"));
 
         // Build the complete desired list: scene primitives plus the optional
         // title shape. The reconciler compares Desired against Owned, so an

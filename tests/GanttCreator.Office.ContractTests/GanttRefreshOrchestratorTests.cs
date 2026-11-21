@@ -798,6 +798,55 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// The refresh names why the live title is absent, and the width it was sized from.
+    /// </summary>
+    /// <remarks>
+    /// The owner's 23:42 trace shows the owned <c>ChartTitle</c> created and deleted on
+    /// adjacent column toggles. Three omission paths produce that same shape - `ShowTitle`
+    /// false, a blank title, and the zero-column state of ADR-0065 D4 - and a missing shape
+    /// cannot say which one fired, so the cause could only be guessed. This fact pins the
+    /// line that removes the guess, and it is a two-armed fact on purpose: a trace that
+    /// always reported `no-columns` would satisfy the second arm alone, so the visible pass
+    /// asserting `reason=none` with the measured width is the positive control.
+    /// </remarks>
+    [Fact]
+    public void A_refresh_traces_why_the_live_title_is_absent()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = GridWithAReservedRow(),
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+        List<string> trace = [];
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestratorWithDeltaCache(
+            new ShapeDeltaCache(),
+            trace: trace.Add);
+
+        Assert.True(orchestrator.Refresh().Succeeded);
+        string shown = Assert.Single(
+            trace,
+            line => line.StartsWith("gantt.title ", StringComparison.Ordinal));
+        Assert.Contains("live=yes", shown, StringComparison.Ordinal);
+        Assert.Contains("reason=none", shown, StringComparison.Ordinal);
+        Assert.Contains("columns=1", shown, StringComparison.Ordinal);
+
+        fakes.MeasuredGrid = ZeroColumnGridWithAReservedRow();
+        trace.Clear();
+        Assert.True(orchestrator.Refresh().Succeeded);
+        string absent = Assert.Single(
+            trace,
+            line => line.StartsWith("gantt.title ", StringComparison.Ordinal));
+        Assert.Contains("live=no", absent, StringComparison.Ordinal);
+        Assert.Contains("reason=no-columns", absent, StringComparison.Ordinal);
+        Assert.Contains("columns=0", absent, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A zero-column grid that still carries the reserved row the live title occupies.
     /// </summary>
     private static PanelCellGrid ZeroColumnGridWithAReservedRow()
