@@ -1493,27 +1493,32 @@ public sealed class GanttRefreshOrchestrator(
     {
         ConfigReadRefusalReason.NoActiveWorkbook =>
             "There is no active workbook to refresh.",
+        // Every remedy below is Fix, because the ribbon carries no Initialise command: a
+        // message that names a command the user cannot reach is the same as no message.
+        // Fix rewrites the catalogue tables from the code-owned definitions and stamps the
+        // version and hash, which is exactly what an older workbook needs.
         ConfigReadRefusalReason.ConfigSheetMissing =>
-            "This workbook has no Gantt Creator configuration sheet. Run Initialize sheet first.",
+            "This workbook has no Gantt Creator configuration sheet. Run Fix to rebuild it, then refresh again.",
         ConfigReadRefusalReason.TableMissing =>
-            "The configuration sheet is missing a catalogue table. Run Initialize sheet to restore it.",
+            "The configuration sheet is missing a catalogue table. Run Fix to restore it, then refresh again.",
         ConfigReadRefusalReason.HeaderMismatch =>
             "The configuration sheet's tables have been edited. " +
-            "Run Initialize sheet to restore them, then refresh again.",
+            "Run Fix to restore them, then refresh again.",
         ConfigReadRefusalReason.RowCountMismatch =>
-            "This workbook's Gantt Creator configuration has the wrong number of catalogue rows. " +
-            "Run Initialize sheet to update it, then refresh again.",
+            "This workbook's Gantt Creator configuration has the wrong number of catalogue rows - " +
+            "usually because the workbook was saved by an earlier version. " +
+            "Run Fix to update it, then refresh again.",
         ConfigReadRefusalReason.CatalogueMismatch =>
             "This workbook's Gantt Creator configuration does not match this version. " +
-            "Run Initialize sheet to update it, then refresh again.",
+            "Run Fix to update it, then refresh again.",
         ConfigReadRefusalReason.CatalogueHashMismatch =>
             "This workbook's Gantt Creator configuration was written by an earlier version. " +
-            "Run Initialize sheet to update it, then refresh again.",
+            "Run Fix to update it, then refresh again.",
         ConfigReadRefusalReason.ValueOutOfRange =>
-            "A value in the configuration sheet is not valid. Run Initialize sheet to restore it.",
+            "A value in the configuration sheet is not valid. Run Fix to restore it, then refresh again.",
         ConfigReadRefusalReason.BadColourFormat =>
             "A colour in the configuration sheet is not in the required format. " +
-            "Run Initialize sheet to restore it.",
+            "Run Fix to restore it, then refresh again.",
         _ => "The Gantt Creator configuration could not be read from the hidden configuration sheet.",
     };
 

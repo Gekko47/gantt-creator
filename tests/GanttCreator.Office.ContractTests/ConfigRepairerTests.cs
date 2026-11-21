@@ -116,6 +116,36 @@ public sealed class ConfigRepairerTests
     }
 
     /// <summary>
+    /// An unattributed catalogue fault is repairable, because refusing it made Fix a no-op.
+    /// </summary>
+    /// <remarks>
+    /// The reader reports a table failure as a reason only ("RowCountMismatch"), and the
+    /// integrity checker converts that to a <c>CatalogueTableCorrupt</c> finding with no
+    /// table name. The plan classified every such finding as refused, so Repair returned a
+    /// refused plan without writing anything - the owner's 2026-11-21 log shows five
+    /// consecutive <c>config refused=RowCountMismatch</c> and a recreated sheet. This is that
+    /// exact finding, nameless, and it must reach the catalogue rewrite.
+    /// </remarks>
+    [Fact]
+    public void Repair_rewrites_the_catalogues_for_an_unattributed_catalogue_fault()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        ConfigRepairOutcome outcome = new ExcelConfigRepairer(
+            null,
+            writer.Object,
+            null,
+            guard.Object).Repair(Plan(ConfigIntegrityFindingKind.CatalogueTableCorrupt), confirmRequiredChanges: true);
+
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(1, outcome.RepairedCount);
+        writer.Verify(w => w.Write(), Times.Once);
+    }
+
+    /// <summary>
     /// The repair path is the one caller allowed to replace a stale TypeOptions
     /// name target, so it must go through the repair-specific entry point and
     /// never through ordinary materialisation.

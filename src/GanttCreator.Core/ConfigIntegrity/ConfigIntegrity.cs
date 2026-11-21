@@ -198,6 +198,18 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
                 ConfigRepairClassification.ConfirmRequired,
             ConfigIntegrityFindingKind.CatalogueTableCorrupt when finding.TableName == GanttCatalogues.StylesTableName =>
                 ConfigRepairClassification.ConfirmRequired,
+            // A catalogue-table fault the reader could not attribute to a table. The
+            // reader's outcome carries only the REASON - "RowCountMismatch" - so this arm
+            // cannot assume the fault is in one of the code-owned tables. Refusing
+            // outright was worse: Fix became a silent no-op, which stranded every
+            // workbook upgraded across a metric-token addition. The owner's 2026-11-21
+            // log shows five consecutive `config refused=RowCountMismatch` and a
+            // recreated sheet, because Repair never ran. Confirmation is the honest
+            // middle: the catalogue writer regenerates every table from the code-owned
+            // definitions and preserves user style rows by key, so the repair is safe,
+            // but the user is told it may touch their own styles.
+            ConfigIntegrityFindingKind.CatalogueTableCorrupt when finding.TableName is null =>
+                ConfigRepairClassification.ConfirmRequired,
             // IDE0072 requires every remaining enum member to be named here, so
             // this arm restates the default rather than being the only place the
             // rule is written. Mutation testing flags the alternatives that turn
