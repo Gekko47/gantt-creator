@@ -483,6 +483,59 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         return false;
     }
 
+    /// <summary>
+    /// Ungroups the group pasted by the PRODUCTION stage (R7.4 T-3.1 editability check) and
+    /// reports the editable child count. The loose shapes become the tracked last paste range,
+    /// so <see cref="DeletePastedShapes"/> removes them at the end of the cycle.
+    /// </summary>
+    /// <param name="shapeId">The PowerPoint shape identifier of the pasted group.</param>
+    /// <returns>The number of editable shapes the ungroup produced.</returns>
+    internal int UngroupShapeById(int shapeId)
+    {
+        PowerPoint.Shape group = FindShapeById(shapeId)
+            ?? throw new InvalidOperationException(
+                string.Create(CultureInfo.InvariantCulture, $"No shape with id {shapeId} on the test slide."));
+        PowerPoint.ShapeRange children = _ownership.Acquire(group.Ungroup());
+        _lastPasteRange = children;
+        _lastPastedGroup = null;
+        return children.Count;
+    }
+
+    /// <summary>
+    /// Measures the text-bearing children of the group pasted by the PRODUCTION stage (R7.4
+    /// T-3.1 label-fidelity check), which the fixture's own paste tracking cannot see.
+    /// </summary>
+    /// <param name="shapeId">The PowerPoint shape identifier of the pasted group.</param>
+    /// <returns>One metrics record per group child, in group order.</returns>
+    internal IReadOnlyList<PowerPointChildTextMetrics> MeasureGroupTextById(int shapeId)
+    {
+        PowerPoint.Shape group = FindShapeById(shapeId)
+            ?? throw new InvalidOperationException(
+                string.Create(CultureInfo.InvariantCulture, $"No shape with id {shapeId} on the test slide."));
+        return MeasureGroupText(group);
+    }
+
+    /// <summary>Finds the shape with the given identifier on the test-owned slide.</summary>
+    private PowerPoint.Shape? FindShapeById(int shapeId)
+    {
+        if (_slide is null)
+        {
+            return null;
+        }
+
+        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        for (int index = 1; index <= shapes.Count; index++)
+        {
+            PowerPoint.Shape shape = _ownership.Acquire(shapes[index]);
+            if (shape.Id == shapeId)
+            {
+                return shape;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Sets the test-owned presentation's slide size in points (R7.4 probe).</summary>
     /// <param name="widthPt">The slide width in points.</param>
     /// <param name="heightPt">The slide height in points.</param>
@@ -576,6 +629,11 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     {
         PowerPoint.Shape group = _lastPastedGroup
             ?? throw new InvalidOperationException("PasteSpecialShape must run before MeasurePastedGroupText.");
+        return MeasureGroupText(group);
+    }
+
+    private List<PowerPointChildTextMetrics> MeasureGroupText(PowerPoint.Shape group)
+    {
         PowerPoint.GroupShapes children = _ownership.Acquire(group.GroupItems);
         List<PowerPointChildTextMetrics> metrics = [];
         for (int index = 1; index <= children.Count; index++)
