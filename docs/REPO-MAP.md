@@ -61,6 +61,25 @@ facts in `tests/GanttCreator.Office.ContractTests`, and the production-scale liv
 `PowerPointPasteSpecialIntegrationTests` in `tests/GanttCreator.Office.IntegrationTests`
 (the `OfficeIntegration` trait; its empty-clipboard arm measures the D4 filter from evidence).
 
+**R7.4 entry points (2026-11-21).** `src/GanttCreator.Core/Export/` holds the pure fit:
+`SlideFit.Fit(groupBounds, slideWidthPt, slideHeightPt, insetPt)` (the D2 `min` scale with a
+total refusal precedence over `SlideFitRefusal`), `SlidePlacement` (validated immutable
+`Left`/`Top`/`Scale`/`Width`/`Height` plus the single-use `TryConsume` latch that makes the D1
+once-rule structural in Core) and `SlideFitOutcome`. `src/GanttCreator.Office/` holds
+`IPowerPointPlacementPort` (`ReadSlideSize`, `ApplyPlacement`), `PowerPointPlacementStage` (the
+fit call plus the typed `AlreadyApplied`/`GroupMissing`/`HostRejected`/`ReadBackMismatch`/
+`NoSlide`/`SlideSizeUnavailable` refusals, one technical record each, read-back compared
+against `HostOwnedGeometry.GeometryMatchTolerancePt`) and
+`PowerPointTransferAdapter.ReadSlideSize`/`ApplyPlacement`, which writes the fitted absolute
+box to the `msoGroup` found by `Id` — the Step-0 probe's route (a). Tests: `SlideFitTests` in
+`tests/GanttCreator.Core.Tests/Export/`, `PowerPointPlacementStageTests` and the adapter
+placement facts in `tests/GanttCreator.Office.ContractTests`, and the route probe
+`PowerPointSlideFitRouteProbeIntegrationTests` in `tests/GanttCreator.Office.IntegrationTests`
+(the `OfficeIntegration` trait; its recorded nine-cell table is the evidence for the route).
+**Not yet mapped because it does not exist yet:** the Phase-3 per-size live gate
+(`PowerPointSlideFitIntegrationTests`), which stays stopped until the D-R7.4 margin policy is
+recorded.
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call
