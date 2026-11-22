@@ -7,6 +7,10 @@
 Describe 'verify-transfer-soak.ps1' {
     BeforeAll {
         $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\verify-transfer-soak.ps1'
+        # Mirrors the gate's own prerequisite (verify-transfer-soak.ps1 exits 2 without this
+        # key). Hosted CI runners have no Microsoft 365, so the executable positive below
+        # cannot reach its fail-closed exit 5 there and is skipped rather than mis-reported.
+        $script:officePrerequisitePresent = $null -ne (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue)
     }
 
     It 'exists and is readable' {
@@ -124,6 +128,11 @@ Describe 'verify-transfer-soak.ps1' {
         # The executable positive for the fail-closed validator: a stub dotnet passes the
         # build and the test but writes neither a forced-kill record nor a manifest, so the
         # gate must exit 5 rather than report a clean soak it never measured.
+        if (-not $script:officePrerequisitePresent) {
+            Set-ItResult -Skipped -Because 'verify-transfer-soak.ps1 exits 2 without the Office ClickToRun registry key, so the fail-closed exit 5 path is unreachable on this host'
+            return
+        }
+
         $stubDir = Join-Path ([System.IO.Path]::GetTempPath()) ('soak-stub-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
         try {
