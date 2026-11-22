@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Office;
@@ -48,6 +49,13 @@ public enum StagingLifecycleRefusal
     /// reported as a success.
     /// </summary>
     CleanupResidue = 8,
+
+    /// <summary>
+    /// The optional R7.6 transfer seam reported a refusal. <see
+    /// cref="StagingLifecycleOutcome.Transfer"/> carries the typed failure; the
+    /// <c>finally</c> still cleans up the Excel staging and restores application state.
+    /// </summary>
+    TransferRefused = 9,
 }
 
 /// <summary>
@@ -86,6 +94,42 @@ public sealed record StagingCopyResult(
     public static StagingCopyResult Refused(string detail) => new(false, detail);
 }
 
+/// <summary>
+/// The result carrier the optional R7.6 transfer seam returns (D1): whether the staged group
+/// reached the PowerPoint slide, the validated child count and placed bounds, and R7.5's typed
+/// failure when it did not.
+/// </summary>
+/// <param name="Succeeded">Whether the paste was validated and the group placed once.</param>
+/// <param name="StagedShapeCount">
+/// The validated pasted child count — the shapes an ungroup yields — or zero on a refusal.
+/// Count-only: never schedule content.
+/// </param>
+/// <param name="PlacedBounds">The applied slide-space box, or <see langword="null"/> on a refusal.</param>
+/// <param name="Failure">The R7.5 typed failure carrying the one actionable message, or <see langword="null"/> on success.</param>
+public sealed record StagingTransferResult(
+    bool Succeeded,
+    int StagedShapeCount,
+    RectD? PlacedBounds,
+    PowerPointTransferFailure? Failure)
+{
+    /// <summary>Creates the success result.</summary>
+    /// <param name="stagedShapeCount">The validated pasted child count.</param>
+    /// <param name="placedBounds">The applied slide-space box.</param>
+    /// <returns>The success result.</returns>
+    public static StagingTransferResult Success(int stagedShapeCount, RectD placedBounds) =>
+        new(true, stagedShapeCount, placedBounds, null);
+
+    /// <summary>Creates a refused result.</summary>
+    /// <param name="failure">The R7.5 typed failure; required.</param>
+    /// <returns>The refused result.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="failure"/> is <see langword="null"/>.</exception>
+    public static StagingTransferResult Refused(PowerPointTransferFailure failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+        return new(false, 0, null, failure);
+    }
+}
+
 /// <summary>The typed result of one staging lifecycle run (R6.5).</summary>
 /// <param name="Composition">
 /// The composition stage's outcome, or <see langword="null"/> when the run refused
@@ -102,12 +146,18 @@ public sealed record StagingCopyResult(
 /// in the order the staging scan returned them. Always empty on a clean run; a non-empty
 /// list forces <see cref="StagingLifecycleRefusal.CleanupResidue"/>.
 /// </param>
+/// <param name="Transfer">
+/// The optional R7.6 transfer seam's result, or <see langword="null"/> when the caller ran
+/// no transfer (every R6 caller). Appended last so every existing positional construction
+/// stays source-compatible.
+/// </param>
 public sealed record StagingLifecycleOutcome(
     StagingCompositionOutcome? Composition,
     StagedGroupOutcome? Group,
     StagingCopyResult? Copy,
     StagingLifecycleRefusal? Refusal,
-    IReadOnlyList<string> Residue)
+    IReadOnlyList<string> Residue,
+    StagingTransferResult? Transfer = null)
 {
     /// <summary>Gets whether the run completed with every temporary shape removed.</summary>
     public bool Succeeded => Refusal is null;
@@ -139,13 +189,19 @@ public sealed record StagingLifecycleOutcome(
 /// residue remains), so checklist K's "one technical record" is satisfiable without a
 /// logging dependency in this class.
 /// </param>
+/// <param name="Transfer">
+/// The optional R7.6 transfer seam. Invoked only after the copy seam ran and succeeded,
+/// and before the <c>finally</c> cleanup, so the clipboard is live and the staged shapes
+/// still exist. Appended last so every existing R6 caller is source-compatible.
+/// </param>
 public sealed record StagingLifecycleRequest(
     IApplicationStateScope? StateScope,
     IShapeWritePort? StagingPort,
     IShapeGroupingPort? GroupingPort,
     ExportBoundsOutcome? Resolution,
     Func<StagedGroupOutcome, StagingCopyResult>? Copy = null,
-    Action<string>? TechnicalRecord = null);
+    Action<string>? TechnicalRecord = null,
+    Func<StagedGroupOutcome, StagingCopyResult, StagingTransferResult>? Transfer = null);
 
 /// <summary>
 /// R6.5: owns the editable-export staging operation from birth to removal — compose,
@@ -196,8 +252,12 @@ public sealed record StagingLifecycleRequest(
 /// selection restore by construction.
 /// </para>
 /// <para>
-/// <b>Nothing is exposed through a command yet.</b> R6.6 fills the copy seam and R6.8
-/// owns the click.
+/// <b>The optional transfer seam is R7.6's.</b> When the caller supplies
+/// <see cref="StagingLifecycleRequest.Transfer"/>, it runs exactly once after a successful
+/// verified copy and before the <c>finally</c>, so the clipboard is live while the staged
+/// shapes exist. It never deletes Excel staging and never restores state: the <c>finally</c>
+/// remains the one cleanup and restoration authority. A transfer refusal is
+/// <see cref="StagingLifecycleRefusal.TransferRefused"/> and still cleans up.
 /// </para>
 /// </remarks>
 public static class StagingLifecycle
@@ -249,11 +309,13 @@ public static class StagingLifecycle
         StagingCompositionOutcome? composition = null;
         StagedGroupOutcome? group = null;
         StagingCopyResult? copy = null;
+        StagingTransferResult? transfer = null;
         StagingLifecycleRefusal? refusal = null;
         long startedAt = Stopwatch.GetTimestamp();
         long composedAt = startedAt;
         long groupedAt = startedAt;
         long copiedAt = startedAt;
+        long transferredAt = startedAt;
 
         try
         {
@@ -292,6 +354,19 @@ public static class StagingLifecycle
                     {
                         refusal = StagingLifecycleRefusal.CopyRefused;
                     }
+                    else if (copy is not null && request.Transfer is { } transferSeam)
+                    {
+                        // R7.6 D1: the transfer runs inside the lifecycle, after the verified
+                        // copy and before the finally — the clipboard is live and the staged
+                        // shapes exist. A copy refusal never reaches here, and the seam never
+                        // owns Excel cleanup; the finally below remains its one authority.
+                        transfer = transferSeam(group, copy);
+                        transferredAt = Stopwatch.GetTimestamp();
+                        if (!transfer.Succeeded)
+                        {
+                            refusal = StagingLifecycleRefusal.TransferRefused;
+                        }
+                    }
                 }
             }
 
@@ -303,9 +378,18 @@ public static class StagingLifecycle
             // One record for the two stages that cost host time, emitted only when the run
             // refused there: a clean run stays record-free (D3) and a residue run already
             // owns its own single record.
-            if (refusal is StagingLifecycleRefusal.GroupingRefused or StagingLifecycleRefusal.CopyRefused)
+            if (refusal is StagingLifecycleRefusal.GroupingRefused
+                or StagingLifecycleRefusal.CopyRefused
+                or StagingLifecycleRefusal.TransferRefused)
             {
-                TraceStages(request.TechnicalRecord, startedAt, composedAt, groupedAt, copiedAt, registry.Count);
+                TraceStages(
+                    request.TechnicalRecord,
+                    startedAt,
+                    composedAt,
+                    groupedAt,
+                    copiedAt,
+                    transferredAt,
+                    registry.Count);
             }
 
             Cleanup(port, registry, groupPrimitiveId, residue, request.TechnicalRecord);
@@ -335,18 +419,20 @@ public static class StagingLifecycle
             refusal = StagingLifecycleRefusal.CleanupResidue;
         }
 
-        return new StagingLifecycleOutcome(composition, group, copy, refusal, residue);
+        return new StagingLifecycleOutcome(composition, group, copy, refusal, residue, transfer);
     }
 
     /// <summary>
-    /// Records the composition, grouping and copy durations of a run that refused at one of the
-    /// two expensive stages, so a slow or refused live copy is measurable from the log.
+    /// Records the composition, grouping, copy and transfer durations of a run that refused at
+    /// one of the expensive stages, so a slow or refused live operation is measurable from the
+    /// log.
     /// </summary>
     /// <param name="trace">The technical record sink, or <see langword="null"/>.</param>
     /// <param name="startedAt">The run's start timestamp.</param>
     /// <param name="composedAt">The timestamp the composition finished at.</param>
     /// <param name="groupedAt">The timestamp the grouping finished at.</param>
     /// <param name="copiedAt">The timestamp the copy seam returned at.</param>
+    /// <param name="transferredAt">The timestamp the transfer seam returned at, or the copy timestamp when none ran.</param>
     /// <param name="staged">The number of staged primitives.</param>
     /// <remarks>
     /// A stage that was never reached reports 0, never a negative span: the copy step of a run
@@ -358,6 +444,7 @@ public static class StagingLifecycle
         long composedAt,
         long groupedAt,
         long copiedAt,
+        long transferredAt,
         int staged)
     {
         if (trace is null)
@@ -374,7 +461,7 @@ public static class StagingLifecycle
 
         trace(string.Create(
             CultureInfo.InvariantCulture,
-            $"gantt.copy stages composition={Ms(startedAt, composedAt)} group={Ms(composedAt, groupedAt)} copy={Ms(groupedAt, copiedAt)} staged={staged}"));
+            $"gantt.copy stages composition={Ms(startedAt, composedAt)} group={Ms(composedAt, groupedAt)} copy={Ms(groupedAt, copiedAt)} transfer={Ms(copiedAt, transferredAt)} staged={staged}"));
     }
 
     /// <summary>
