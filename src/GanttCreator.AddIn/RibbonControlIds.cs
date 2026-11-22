@@ -360,6 +360,13 @@ internal static class RibbonControlIds
     /// </summary>
     internal const string CopyEditable = "btnCopyEditable";
 
+    /// <summary>
+    /// The Send to PowerPoint button (R7.6). It shares Copy Editable's corrected
+    /// <c>Mode == Ready</c> + active-Gantt-sheet gate (D6), so the Export group never offers a
+    /// command that would refuse at the configuration or table read.
+    /// </summary>
+    internal const string SendToPowerPoint = "btnSendToPowerPoint";
+
     /// <summary>The Diagnostics group, visible in every mode.</summary>
     internal const string DiagnosticsGroup = "grpDiagnostics";
 }

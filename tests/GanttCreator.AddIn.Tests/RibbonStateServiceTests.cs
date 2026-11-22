@@ -373,11 +373,12 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void Copy_editable_is_enabled_and_visible_on_an_initialised_gantt_sheet()
     {
-        // R6.8: the Export group joins the full surface, and its one member carries the
-        // same workbook + initialised + active-Gantt-sheet gate as every chart command.
+        // R7.6 D6: the Export commands are gated on the corrected Ready rule — a readable
+        // table AND a present configuration — plus the active-Gantt-sheet fact. The
+        // configuration is explicit here because Ready requires it (see the NeedsRepair pin).
         var service = ArmedWithTableRead(
             new FakeApplicationAdapter { WorkbookFact = true },
-            GanttTableReadOutcome.Ok([]));
+            GanttTableReadOutcome.Ok([], configurationPresent: true));
 
         Assert.True(service.GetEnabled(RibbonControlIds.CopyEditable));
         Assert.True(service.GetVisible(RibbonControlIds.ExportGroup));
@@ -392,6 +393,58 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.False(service.GetEnabled(RibbonControlIds.CopyEditable));
         Assert.False(service.GetVisible(RibbonControlIds.ExportGroup));
+    }
+
+    /// <summary>
+    /// R7.6 D6: both Export commands are enabled together on a Ready Gantt sheet, and the
+    /// group is visible.
+    /// </summary>
+    [Fact]
+    public void Send_to_powerpoint_is_enabled_on_a_ready_gantt_sheet()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], configurationPresent: true));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.CopyEditable));
+        Assert.True(service.GetEnabled(RibbonControlIds.SendToPowerPoint));
+        Assert.True(service.GetVisible(RibbonControlIds.ExportGroup));
+    }
+
+    /// <summary>
+    /// R7.6 D6: the defect the corrected gate removes. A readable table with a missing
+    /// configuration is NeedsRepair, where both export commands would refuse at the
+    /// configuration read, so the group is hidden and neither button is enabled.
+    /// </summary>
+    [Fact]
+    public void The_export_group_is_hidden_and_both_buttons_disabled_in_needs_repair()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], configurationPresent: false));
+
+        Assert.False(service.GetVisible(RibbonControlIds.ExportGroup));
+        Assert.False(service.GetEnabled(RibbonControlIds.CopyEditable));
+        Assert.False(service.GetEnabled(RibbonControlIds.SendToPowerPoint));
+    }
+
+    /// <summary>
+    /// R7.6 D6: a Ready workbook with another visible sheet active keeps the group visible
+    /// but disables both commands, which would paste a chart the user is not looking at.
+    /// </summary>
+    [Fact]
+    public void The_export_buttons_are_disabled_on_another_sheet()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+                [],
+                configurationPresent: true,
+                activeSheetIsGanttSheet: false));
+
+        Assert.True(service.GetVisible(RibbonControlIds.ExportGroup));
+        Assert.False(service.GetEnabled(RibbonControlIds.CopyEditable));
+        Assert.False(service.GetEnabled(RibbonControlIds.SendToPowerPoint));
     }
 
     [Fact]

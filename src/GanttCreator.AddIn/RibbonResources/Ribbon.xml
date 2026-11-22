@@ -237,13 +237,15 @@
             <toggleButton id="btnToggleChartLock" getLabel="GetToggleChartLockLabel" keytip="LK" screentip="Lock or unlock the chart elements" supertip="Pressed means the chart's shapes are locked and cannot be dragged. Unpressed means you can move them; the automatic refresh pauses until you lock the chart again or refresh." getImage="GetToggleChartLockImage" getEnabled="GetEnabled" getPressed="GetToggleChartLockPressed" onAction="OnToggleChartLockClick"/>
           </box>
         </group>
-        <!-- R6.8: the Export group. Copy Editable runs the whole editable-export
-             pipeline and reports success only after the clipboard formats are
-             verified. The three later members arrive with their own rows - Send
-             to PowerPoint (R7.6), PNG width/unit (R8.7) and Export PNG (R8.8) -
-             and the group deliberately leaves them unstubbed. -->
+        <!-- R6.8/R7.6: the Export group. Copy Editable runs the whole editable-export
+             pipeline and reports success only after the clipboard formats are verified;
+             Send to PowerPoint runs the same pipeline and transfers the verified group
+             to the user's active PowerPoint slide without ever saving or closing it.
+             The two later members arrive with their own rows - PNG width/unit (R8.7)
+             and Export PNG (R8.8) - and the group deliberately leaves them unstubbed. -->
         <group id="grpExport" label="Export" getVisible="GetVisible">
           <button id="btnCopyEditable" label="Copy editable" size="large" getImage="GetGlyph" keytip="CP" screentip="Copy the Gantt as editable shapes" supertip="Copies the chart and table as one editable group of shapes. Paste it into Excel or PowerPoint, then ungroup to edit the elements. A table with error rows copies the valid rows and says what was left out." getEnabled="GetEnabled" onAction="OnCopyEditableClick"/>
+          <button id="btnSendToPowerPoint" label="Send to PowerPoint" size="large" getImage="GetGlyph" keytip="SP" screentip="Send the Gantt to PowerPoint" supertip="Pastes the same editable chart and table as one group on the active PowerPoint slide, fitted to the slide. Your presentation is never saved, closed, or terminated." getEnabled="GetEnabled" onAction="OnSendToPowerPointClick"/>
         </group>
         <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">
           <button id="btnDiagnostics" label="Diagnostics" getImage="GetGlyph" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

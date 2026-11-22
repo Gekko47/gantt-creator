@@ -290,6 +290,35 @@ public static class PowerPointTransferFailureMapper
             MessageFor(PowerPointTransferFailureKind.OwnershipFailed),
             BuildRecord(PowerPointTransferFailureKind.OwnershipFailed, "ownership", hresult, null));
 
+    /// <summary>
+    /// Maps a refused paste-residue delete into the taxonomy (R7.6's truthful-message
+    /// enforcement): a failure whose remediation message claims the pasted shapes were removed
+    /// must not be presented when the delete was refused.
+    /// </summary>
+    /// <param name="result">The residue-delete result.</param>
+    /// <returns>
+    /// The host-failure to present instead of a removal claim, or <see langword="null"/> when
+    /// the group is gone (<see cref="PowerPointGroupDeleteOutcome.Deleted"/> or
+    /// <see cref="PowerPointGroupDeleteOutcome.GroupMissing"/>).
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="result"/> is <see langword="null"/>.</exception>
+    public static PowerPointTransferFailure? MapResidueCleanup(PowerPointGroupDeleteResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        if (result.Outcome != PowerPointGroupDeleteOutcome.HostRejected)
+        {
+            return null;
+        }
+
+        PowerPointTransferFailureKind kind = ClassifyHostFailure(result.HResult);
+        return new PowerPointTransferFailure(
+            kind,
+            result.HResult,
+            MessageFor(kind),
+            BuildRecord(kind, "residue-cleanup", result.HResult, result.Outcome.ToString()));
+    }
+
     private static PowerPointTransferFailure HostFailure(
         int? hresult,
         PowerPointTransientRetryPolicy? policy,
