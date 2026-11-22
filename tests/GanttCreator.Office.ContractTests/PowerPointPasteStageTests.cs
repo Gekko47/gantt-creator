@@ -175,5 +175,8 @@ public sealed class PowerPointPasteStageTests
         : IPowerPointPastePort
     {
         public PowerPointPasteObservation PasteSpecialShape() => observation;
+
+        public PowerPointGroupDeleteResult DeletePastedGroup(int groupId) =>
+            throw new InvalidOperationException("The paste stage never deletes residue.");
     }
 }

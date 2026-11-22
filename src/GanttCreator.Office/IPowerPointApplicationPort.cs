@@ -96,6 +96,16 @@ public sealed record PowerPointTargetObservation(
     int? ActiveSlideIndex);
 
 /// <summary>
+/// What one create-presentation call reported (R7.5 PD-2). The D-R7.2 button contract creates a
+/// presentation only when none is open, announced by the command; this observation reports
+/// whether that creation happened and carries the blank slide the paste will target.
+/// </summary>
+/// <param name="Created">Whether a presentation and its blank slide were created.</param>
+/// <param name="SlideIndex">The created blank slide's one-based index, or <see langword="null"/> on refusal.</param>
+/// <param name="HResult">The COM failure code when the creation was refused, or <see langword="null"/>.</param>
+public sealed record PowerPointPresentationCreation(bool Created, int? SlideIndex, int? HResult);
+
+/// <summary>
 /// The narrow PowerPoint application/presentation/slide fact port (R7.1).
 /// </summary>
 /// <remarks>
@@ -161,4 +171,15 @@ public interface IPowerPointApplicationPort
     /// </summary>
     /// <returns>The typed target observation; a refused read is reported, not thrown.</returns>
     PowerPointTargetObservation ReadTargetObservation();
+
+    /// <summary>
+    /// Creates a presentation with one blank slide — the D-R7.2 branch taken only when no
+    /// presentation is open. The caller announces the creation; the adapter reports whether it
+    /// happened and never opens, closes or activates anything else.
+    /// </summary>
+    /// <returns>
+    /// The typed creation facts; a refused creation is reported, not thrown, and the R7.5
+    /// mapper maps it to <see cref="PowerPointTransferFailureKind.NoPresentation"/>.
+    /// </returns>
+    PowerPointPresentationCreation CreatePresentationWithBlankSlide();
 }

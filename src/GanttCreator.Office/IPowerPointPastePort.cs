@@ -45,9 +45,28 @@ public sealed record PowerPointPasteObservation(
     double WidthPt,
     double HeightPt);
 
+/// <summary>The typed result of one paste-residue delete attempt (R7.5 PD-10).</summary>
+public enum PowerPointGroupDeleteOutcome
+{
+    /// <summary>The named group was found and deleted; its children went with it.</summary>
+    Deleted = 0,
+
+    /// <summary>No shape with the forwarded identifier exists on the active slide.</summary>
+    GroupMissing = 1,
+
+    /// <summary>The host refused the delete with a COM failure; the HRESULT is carried.</summary>
+    HostRejected = 2,
+}
+
+/// <summary>What one residue-delete attempt reported (R7.5 PD-10).</summary>
+/// <param name="Outcome">The typed delete outcome.</param>
+/// <param name="HResult">The COM failure code when <paramref name="Outcome"/> is <see cref="PowerPointGroupDeleteOutcome.HostRejected"/>.</param>
+public sealed record PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome Outcome, int? HResult);
+
 /// <summary>
 /// The narrow PowerPoint paste port (R7.3): one <c>PasteSpecial(ppPasteShape)</c> call whose
-/// result is read as primitive facts.
+/// result is read as primitive facts, plus the R7.5 residue delete for a paste that must be
+/// undone on a failure path.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -88,4 +107,17 @@ public interface IPowerPointPastePort
     /// its flattened children, not a single-item range (ADR-0066 D3).
     /// </returns>
     PowerPointPasteObservation PasteSpecialShape();
+
+    /// <summary>
+    /// Deletes the pasted group named by <paramref name="groupId"/> — the group-delete mechanic
+    /// (ADR-0066 D3): delete the group, never the returned range that also lists its flattened
+    /// children. This is the R7.5 paste-residue cleanup the R7.3 stage records for R7.5
+    /// (PD-10); it is called only on a failure path after a paste materialised.
+    /// </summary>
+    /// <param name="groupId">The pasted group's identifier carried by the paste result.</param>
+    /// <returns>
+    /// The typed delete result; a missing group or a refused delete is reported, never thrown.
+    /// A cleanup delete is attempted once and its refusal recorded — it is never retried.
+    /// </returns>
+    PowerPointGroupDeleteResult DeletePastedGroup(int groupId);
 }

@@ -116,10 +116,19 @@ public sealed class PowerPointPasteSpecialIntegrationTests(ITestOutputHelper out
                 Assert.Equal(1, facts.GroupCount);
                 Assert.Equal(PowerPointPasteValidator.MsoGroupShapeType, facts.GroupShapeType);
 
-                // Cleanup: delete the group the production stage pasted.
+                // Cleanup: delete the group the production stage pasted, through the R7.5
+                // residue-delete member (PD-10), and prove it removed the group.
                 if (result.GroupId is int groupId)
                 {
-                    _ = powerPointFixture.DeleteShapeById(groupId);
+                    PowerPointGroupDeleteResult deleted = adapter.DeletePastedGroup(groupId);
+                    _output.WriteLine(
+                        string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"residue delete outcome={deleted.Outcome} hresult=0x{deleted.HResult:X8}"));
+                    Assert.Equal(PowerPointGroupDeleteOutcome.Deleted, deleted.Outcome);
+                    Assert.False(
+                        powerPointFixture.DeleteShapeById(groupId),
+                        "The production residue delete should already have removed the group.");
                 }
             }
             finally

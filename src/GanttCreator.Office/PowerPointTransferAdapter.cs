@@ -49,6 +49,7 @@ public sealed class PowerPointTransferAdapter
 
     private readonly PowerPointProxyOwnership _rootOwnership;
     private readonly Action<string>? _technicalRecord;
+    private readonly PowerPointTransientRetryPolicy _retryPolicy;
 
     private PowerPoint.Application? _application;
     private bool _startedByUs;
@@ -61,14 +62,20 @@ public sealed class PowerPointTransferAdapter
     /// discipline is one tested type rather than a private detail of the adapter.
     /// </param>
     /// <param name="technicalRecord">Receives one technical record per refused COM call, or <see langword="null"/>.</param>
+    /// <param name="retryPolicy">
+    /// The transient filter and attempt cap, or <see langword="null"/> for the documented
+    /// candidates. The Step-0 probe supplies the measured set in production.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="ownership"/> is <see langword="null"/>.</exception>
     public PowerPointTransferAdapter(
         PowerPointProxyOwnership ownership,
-        Action<string>? technicalRecord = null)
+        Action<string>? technicalRecord = null,
+        PowerPointTransientRetryPolicy? retryPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(ownership);
         _rootOwnership = ownership;
         _technicalRecord = technicalRecord;
+        _retryPolicy = retryPolicy ?? PowerPointTransientRetryPolicy.DocumentedCandidates;
     }
 
     /// <inheritdoc/>
@@ -200,12 +207,18 @@ public sealed class PowerPointTransferAdapter
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        PowerPoint.Application? application = _application;
-        if (application is null)
-        {
-            return new PowerPointTargetObservation(true, null, 0, 0, false, false, false, null, false, 0, null);
-        }
+        return _application is not { } host
+            ? new PowerPointTargetObservation(true, null, 0, 0, false, false, false, null, false, 0, null)
+            : PowerPointRetryLoop.Execute(
+                _retryPolicy,
+                retryAfterMutation: true,
+                _ => ReadTargetAttempt(host),
+                _technicalRecord,
+                "powerpoint target");
+    }
 
+    private PowerPointRetryAttempt<PowerPointTargetObservation> ReadTargetAttempt(PowerPoint.Application application)
+    {
         PowerPointProxyOwnership transient = new(_technicalRecord);
         try
         {
@@ -244,18 +257,21 @@ public sealed class PowerPointTransferAdapter
 
             if (presentationCount == 0)
             {
-                return new PowerPointTargetObservation(
-                    true,
+                return new PowerPointRetryAttempt<PowerPointTargetObservation>(
+                    new PowerPointTargetObservation(
+                        true,
+                        null,
+                        0,
+                        protectedViewWindowCount,
+                        activeProtectedWindowPresent,
+                        false,
+                        false,
+                        null,
+                        slideShowActive,
+                        0,
+                        null),
                     null,
-                    0,
-                    protectedViewWindowCount,
-                    activeProtectedWindowPresent,
-                    false,
-                    false,
-                    null,
-                    slideShowActive,
-                    0,
-                    null);
+                    false);
             }
 
             // Measured 2026-11-21 on the reference host: the typed ActiveWindow getter raises
@@ -311,23 +327,29 @@ public sealed class PowerPointTransferAdapter
                 }
             }
 
-            return new PowerPointTargetObservation(
-                true,
+            return new PowerPointRetryAttempt<PowerPointTargetObservation>(
+                new PowerPointTargetObservation(
+                    true,
+                    null,
+                    presentationCount,
+                    protectedViewWindowCount,
+                    activeProtectedWindowPresent,
+                    readOnly,
+                    hasWindow,
+                    activeViewType,
+                    slideShowActive,
+                    slideCount,
+                    activeSlideIndex),
                 null,
-                presentationCount,
-                protectedViewWindowCount,
-                activeProtectedWindowPresent,
-                readOnly,
-                hasWindow,
-                activeViewType,
-                slideShowActive,
-                slideCount,
-                activeSlideIndex);
+                false);
         }
         catch (COMException exception)
         {
             RecordFailure("powerpoint target read refused", exception.HResult);
-            return new PowerPointTargetObservation(false, exception.HResult, 0, 0, false, false, false, null, false, 0, null);
+            return new PowerPointRetryAttempt<PowerPointTargetObservation>(
+                new PowerPointTargetObservation(false, exception.HResult, 0, 0, false, false, false, null, false, 0, null),
+                exception.HResult,
+                false);
         }
         finally
         {
@@ -348,13 +370,20 @@ public sealed class PowerPointTransferAdapter
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        PowerPoint.Application? application = _application;
-        if (application is null)
-        {
-            return PowerPointPasteFailureClassifier.RefusedObservation(null);
-        }
+        return _application is not { } host
+            ? PowerPointPasteFailureClassifier.RefusedObservation(null)
+            : PowerPointRetryLoop.Execute(
+                _retryPolicy,
+                retryAfterMutation: false,
+                _ => PasteAttempt(host),
+                _technicalRecord,
+                "powerpoint paste");
+    }
 
+    private PowerPointRetryAttempt<PowerPointPasteObservation> PasteAttempt(PowerPoint.Application application)
+    {
         PowerPointProxyOwnership transient = new(_technicalRecord);
+        bool pasteCommitted = false;
         try
         {
             // Measured 2026-11-21: the typed ActiveWindow, View and View.Slide getters raise
@@ -366,7 +395,8 @@ public sealed class PowerPointTransferAdapter
                 () => application.ActiveWindow);
             if (window is null)
             {
-                return PowerPointPasteFailureClassifier.RefusedObservation(null);
+                return new PowerPointRetryAttempt<PowerPointPasteObservation>(
+                    PowerPointPasteFailureClassifier.RefusedObservation(null), null, false);
             }
 
             _ = transient.Acquire(window);
@@ -376,7 +406,8 @@ public sealed class PowerPointTransferAdapter
                 () => window.View);
             if (view is null)
             {
-                return PowerPointPasteFailureClassifier.RefusedObservation(null);
+                return new PowerPointRetryAttempt<PowerPointPasteObservation>(
+                    PowerPointPasteFailureClassifier.RefusedObservation(null), null, false);
             }
 
             _ = transient.Acquire(view);
@@ -386,7 +417,8 @@ public sealed class PowerPointTransferAdapter
                 () => view.Slide as PowerPoint.Slide);
             if (slide is null)
             {
-                return PowerPointPasteFailureClassifier.RefusedObservation(null);
+                return new PowerPointRetryAttempt<PowerPointPasteObservation>(
+                    PowerPointPasteFailureClassifier.RefusedObservation(null), null, false);
             }
 
             _ = transient.Acquire(slide);
@@ -398,12 +430,20 @@ public sealed class PowerPointTransferAdapter
                 "powerpoint paste special",
                 () => transient.Acquire(shapes.PasteSpecial(PowerPoint.PpPasteDataType.ppPasteShape)));
 
-            return ReadPastedRange(transient, range);
+            // The paste has committed. A failure past this point must not re-invoke the paste —
+            // that would paste a second group and orphan the first — so the aspect is reported
+            // and the caller deletes the residue (PD-3/PD-10).
+            pasteCommitted = true;
+            return new PowerPointRetryAttempt<PowerPointPasteObservation>(
+                ReadPastedRange(transient, range), null, false);
         }
         catch (COMException exception)
         {
             RecordFailure("powerpoint paste refused", exception.HResult);
-            return PowerPointPasteFailureClassifier.RefusedObservation(exception.HResult);
+            return new PowerPointRetryAttempt<PowerPointPasteObservation>(
+                PowerPointPasteFailureClassifier.RefusedObservation(exception.HResult),
+                exception.HResult,
+                pasteCommitted);
         }
         finally
         {
@@ -486,6 +526,14 @@ public sealed class PowerPointTransferAdapter
         }
         catch (COMException exception)
         {
+            // The measured absence code (0x80048240) and every unrecognised code stay absence,
+            // as R7.2 established. A measured transient rejection escapes to the operation's
+            // retry loop instead, so a busy host is never mistaken for a missing surface (PD-8).
+            if (_retryPolicy.IsTransient(exception.HResult))
+            {
+                throw;
+            }
+
             RecordFailure(stage, exception.HResult);
             return null;
         }
@@ -555,12 +603,18 @@ public sealed class PowerPointTransferAdapter
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        PowerPoint.Application? application = _application;
-        if (application is null)
-        {
-            return new PowerPointSlideSizeFacts(false, null, 0, 0);
-        }
+        return _application is not { } host
+            ? new PowerPointSlideSizeFacts(false, null, 0, 0)
+            : PowerPointRetryLoop.Execute(
+                _retryPolicy,
+                retryAfterMutation: true,
+                _ => ReadSlideSizeAttempt(host),
+                _technicalRecord,
+                "powerpoint slide size");
+    }
 
+    private PowerPointRetryAttempt<PowerPointSlideSizeFacts> ReadSlideSizeAttempt(PowerPoint.Application application)
+    {
         PowerPointProxyOwnership transient = new(_technicalRecord);
         try
         {
@@ -594,12 +648,18 @@ public sealed class PowerPointTransferAdapter
                 "powerpoint slide size height",
                 () => (double)pageSetup.SlideHeight);
 
-            return new PowerPointSlideSizeFacts(true, null, widthPt, heightPt);
+            return new PowerPointRetryAttempt<PowerPointSlideSizeFacts>(
+                new PowerPointSlideSizeFacts(true, null, widthPt, heightPt),
+                null,
+                false);
         }
         catch (COMException exception)
         {
             RecordFailure("powerpoint slide size refused", exception.HResult);
-            return new PowerPointSlideSizeFacts(false, exception.HResult, 0, 0);
+            return new PowerPointRetryAttempt<PowerPointSlideSizeFacts>(
+                new PowerPointSlideSizeFacts(false, exception.HResult, 0, 0),
+                exception.HResult,
+                false);
         }
         finally
         {
@@ -628,7 +688,23 @@ public sealed class PowerPointTransferAdapter
             return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
         }
 
+        // Placement writes are idempotent (route (a): four absolute members), so a retry after
+        // the mutation re-applies the same box safely (PD-4).
+        return PowerPointRetryLoop.Execute(
+            _retryPolicy,
+            retryAfterMutation: true,
+            _ => ApplyPlacementAttempt(application, groupId, placement),
+            _technicalRecord,
+            "powerpoint placement");
+    }
+
+    private PowerPointRetryAttempt<PowerPointPlacementObservation> ApplyPlacementAttempt(
+        PowerPoint.Application application,
+        int groupId,
+        SlidePlacement placement)
+    {
         PowerPointProxyOwnership transient = new(_technicalRecord);
+        bool mutationCommitted = false;
         try
         {
             PowerPoint.DocumentWindow? window = ReadOptionalStage(
@@ -636,7 +712,8 @@ public sealed class PowerPointTransferAdapter
                 () => application.ActiveWindow);
             if (window is null)
             {
-                return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+                return new PowerPointRetryAttempt<PowerPointPlacementObservation>(
+                    RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null), null, false);
             }
 
             _ = transient.Acquire(window);
@@ -646,7 +723,8 @@ public sealed class PowerPointTransferAdapter
                 () => window.View);
             if (view is null)
             {
-                return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+                return new PowerPointRetryAttempt<PowerPointPlacementObservation>(
+                    RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null), null, false);
             }
 
             _ = transient.Acquire(view);
@@ -656,7 +734,8 @@ public sealed class PowerPointTransferAdapter
                 () => view.Slide as PowerPoint.Slide);
             if (slide is null)
             {
-                return RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null);
+                return new PowerPointRetryAttempt<PowerPointPlacementObservation>(
+                    RefusedPlacement(PowerPointPlacementApplyOutcome.NoSlide, null), null, false);
             }
 
             _ = transient.Acquire(slide);
@@ -667,28 +746,37 @@ public sealed class PowerPointTransferAdapter
             PowerPoint.Shape? group = FindGroupById(transient, shapes, groupId);
             if (group is null)
             {
-                return RefusedPlacement(PowerPointPlacementApplyOutcome.GroupMissing, null);
+                return new PowerPointRetryAttempt<PowerPointPlacementObservation>(
+                    RefusedPlacement(PowerPointPlacementApplyOutcome.GroupMissing, null), null, false);
             }
 
             // Route (a): absolute box writes from the snapped placement. The values are already
-            // float-representable, so the Single-typed write is exact.
+            // float-representable, so the Single-typed write is exact. The four writes are the
+            // mutation; a transient failure is retried idempotently (PD-4).
+            mutationCommitted = true;
             group.Left = (float)placement.Left;
             group.Top = (float)placement.Top;
             group.Width = (float)placement.Width;
             group.Height = (float)placement.Height;
 
-            return new PowerPointPlacementObservation(
-                PowerPointPlacementApplyOutcome.Applied,
+            return new PowerPointRetryAttempt<PowerPointPlacementObservation>(
+                new PowerPointPlacementObservation(
+                    PowerPointPlacementApplyOutcome.Applied,
+                    null,
+                    group.Left,
+                    group.Top,
+                    group.Width,
+                    group.Height),
                 null,
-                group.Left,
-                group.Top,
-                group.Width,
-                group.Height);
+                false);
         }
         catch (COMException exception)
         {
             RecordFailure("powerpoint placement refused", exception.HResult);
-            return RefusedPlacement(PowerPointPlacementApplyOutcome.HostRejected, exception.HResult);
+            return new PowerPointRetryAttempt<PowerPointPlacementObservation>(
+                RefusedPlacement(PowerPointPlacementApplyOutcome.HostRejected, exception.HResult),
+                exception.HResult,
+                mutationCommitted);
         }
         finally
         {
@@ -722,6 +810,140 @@ public sealed class PowerPointTransferAdapter
         PowerPointPlacementApplyOutcome outcome,
         int? hresult) =>
         new(outcome, hresult, 0, 0, 0, 0);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The D-R7.2 creation branch, reached only when no presentation is open and the caller
+    /// announces it. The creation is a mutation: a rejected <c>Presentations.Add</c> call never
+    /// executed and is retryable, but once the deck exists a post-creation failure is reported
+    /// without creating a second deck (the retry loop stops at the boundary).
+    /// </remarks>
+    public PowerPointPresentationCreation CreatePresentationWithBlankSlide()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        return _application is not { } host
+            ? new PowerPointPresentationCreation(false, null, null)
+            : PowerPointRetryLoop.Execute(
+                _retryPolicy,
+                retryAfterMutation: false,
+                _ => CreatePresentationAttempt(host),
+                _technicalRecord,
+                "powerpoint create");
+    }
+
+    private PowerPointRetryAttempt<PowerPointPresentationCreation> CreatePresentationAttempt(
+        PowerPoint.Application application)
+    {
+        PowerPointProxyOwnership transient = new(_technicalRecord);
+        bool creationCommitted = false;
+        try
+        {
+            PowerPoint.Presentations presentations = ReadStage(
+                "powerpoint create presentations",
+                () => transient.Acquire(application.Presentations));
+            PowerPoint.Presentation presentation = ReadStage(
+                "powerpoint create presentation",
+                () => transient.Acquire(presentations.Add(OfficeCore.MsoTriState.msoTrue)));
+            creationCommitted = true;
+            PowerPoint.Slides slides = ReadStage(
+                "powerpoint create slides",
+                () => transient.Acquire(presentation.Slides));
+            PowerPoint.Slide slide = ReadStage(
+                "powerpoint create slide",
+                () => transient.Acquire(slides.Add(1, PowerPoint.PpSlideLayout.ppLayoutBlank)));
+
+            return new PowerPointRetryAttempt<PowerPointPresentationCreation>(
+                new PowerPointPresentationCreation(true, slide.SlideIndex, null),
+                null,
+                false);
+        }
+        catch (COMException exception)
+        {
+            RecordFailure("powerpoint create refused", exception.HResult);
+            return new PowerPointRetryAttempt<PowerPointPresentationCreation>(
+                new PowerPointPresentationCreation(false, null, exception.HResult),
+                exception.HResult,
+                creationCommitted);
+        }
+        finally
+        {
+            transient.ReleaseAll();
+        }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The R7.5 paste-residue cleanup (PD-10): delete the located <c>msoGroup</c> by id, never
+    /// the returned range that also lists its flattened children (ADR-0066 D3). A cleanup delete
+    /// is attempted once and its refusal reported — it is never retried.
+    /// </remarks>
+    public PowerPointGroupDeleteResult DeletePastedGroup(int groupId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        PowerPoint.Application? application = _application;
+        if (application is null)
+        {
+            return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.GroupMissing, null);
+        }
+
+        PowerPointProxyOwnership transient = new(_technicalRecord);
+        try
+        {
+            PowerPoint.DocumentWindow? window = ReadOptionalStage(
+                "powerpoint residue delete active window",
+                () => application.ActiveWindow);
+            if (window is null)
+            {
+                return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.GroupMissing, null);
+            }
+
+            _ = transient.Acquire(window);
+
+            PowerPoint.View? view = ReadOptionalStage(
+                "powerpoint residue delete view",
+                () => window.View);
+            if (view is null)
+            {
+                return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.GroupMissing, null);
+            }
+
+            _ = transient.Acquire(view);
+
+            PowerPoint.Slide? slide = ReadOptionalStage(
+                "powerpoint residue delete view slide",
+                () => view.Slide as PowerPoint.Slide);
+            if (slide is null)
+            {
+                return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.GroupMissing, null);
+            }
+
+            _ = transient.Acquire(slide);
+
+            PowerPoint.Shapes shapes = ReadStage(
+                "powerpoint residue delete shapes",
+                () => transient.Acquire(slide.Shapes));
+            PowerPoint.Shape? group = FindGroupById(transient, shapes, groupId);
+            if (group is null)
+            {
+                return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.GroupMissing, null);
+            }
+
+            // Deleting the group removes its flattened children too (ADR-0066 D3).
+            group.Delete();
+            return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.Deleted, null);
+        }
+        catch (COMException exception)
+        {
+            RecordFailure("powerpoint residue delete refused", exception.HResult);
+            return new PowerPointGroupDeleteResult(PowerPointGroupDeleteOutcome.HostRejected, exception.HResult);
+        }
+        finally
+        {
+            transient.ReleaseAll();
+        }
+    }
 
     private void RecordFailure(string stage, int hresult)
     {

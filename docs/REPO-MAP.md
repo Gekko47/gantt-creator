@@ -81,6 +81,25 @@ the Phase-3 per-size gate `PowerPointSlideFitIntegrationTests` (placement, once-
 fidelity and editability on 4:3, 16:9 and 1200 × 400), both in
 `tests/GanttCreator.Office.IntegrationTests` with the `OfficeIntegration` trait.
 
+**R7.5 entry points (2026-11-22).** `src/GanttCreator.Office/` holds the closed transfer-failure
+taxonomy `PowerPointTransferFailureKind`/`PowerPointTransferFailure`, the single projection from
+every stage result to that taxonomy `PowerPointTransferFailureMapper` (the full Core
+`PowerPointTargetDecision` switch — nine refusal arms plus `CreatePresentation` and `Proceed` —
+the `StagedCopyRefusal.ClipboardUnavailable` copy arm, the paste-stage and placement refusals,
+and `DISP_E_MEMBERNOTFOUND` as `UnsupportedBuild`), the evidence-filtered bounded retry
+`PowerPointTransientRetryPolicy`/`PowerPointRetryLoop` (mutation boundary: pure reads and the
+idempotent placement retry, a paste retries only until `PasteSpecial` has been called), and the
+D3 residue cleanup `PowerPointPasteResidueCleanup`. The two additive port members are
+`IPowerPointApplicationPort.CreatePresentationWithBlankSlide()` (the `NoPresentation` arm's
+producer) and `IPowerPointPastePort.DeletePastedGroup(int)`; `PowerPointTransferAdapter` wires
+both plus the retry loop and keeps `PowerPointProxyOwnership`'s reverse-order exactly-once
+release intact. Tests: `PowerPointTransferFailureMapperTests`,
+`PowerPointTransientRetryPolicyTests`, `PowerPointRetryLoopTests` and
+`PowerPointPasteResidueCleanupTests` in `tests/GanttCreator.Office.ContractTests`, the
+`PowerPoint|ProtectionGuard` architecture scans in `tests/GanttCreator.Architecture.Tests`, and
+the live safe-failure gate `PowerPointTransferFailureIntegrationTests` in
+`tests/GanttCreator.Office.IntegrationTests` (the `OfficeIntegration` trait).
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call

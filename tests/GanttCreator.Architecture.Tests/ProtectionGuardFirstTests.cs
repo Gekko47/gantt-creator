@@ -464,6 +464,16 @@ public sealed class ProtectionGuardFirstTests
         // worksheet untouched; R7.5 owns the transfer failure policy.
         "src/GanttCreator.Office/IPowerPointPlacementPort.cs",
         "src/GanttCreator.Office/PowerPointPlacementStage.cs",
+        // R7.5: the transfer-failure taxonomy, the measured retry policy and its bounded loop,
+        // the mapper and the paste-residue cleanup. None touches the Excel worksheet -- the
+        // taxonomy and mapper are pure, the retry loop carries no host call, and the cleanup
+        // deletes a PowerPoint slide shape -- so a protection consultation here would be
+        // unreachable code, the same statement the R7.1-R7.4 entries make.
+        "src/GanttCreator.Office/PowerPointTransferFailure.cs",
+        "src/GanttCreator.Office/PowerPointTransientRetryPolicy.cs",
+        "src/GanttCreator.Office/PowerPointRetryLoop.cs",
+        "src/GanttCreator.Office/PowerPointTransferFailureMapper.cs",
+        "src/GanttCreator.Office/PowerPointPasteResidueCleanup.cs",
     ];
 
     /// <summary>

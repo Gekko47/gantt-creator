@@ -215,5 +215,8 @@ public sealed class PowerPointTargetResolverTests
             ObservationCalls++;
             return Observation;
         }
+
+        public PowerPointPresentationCreation CreatePresentationWithBlankSlide() =>
+            throw new InvalidOperationException("The resolver never creates a presentation.");
     }
 }

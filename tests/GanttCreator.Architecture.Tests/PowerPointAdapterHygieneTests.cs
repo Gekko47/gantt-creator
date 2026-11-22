@@ -45,6 +45,15 @@ public sealed class PowerPointAdapterHygieneTests
         // interface automatically because it is an exported IPowerPoint* type.
         "src/GanttCreator.Office/IPowerPointPlacementPort.cs",
         "src/GanttCreator.Office/PowerPointPlacementStage.cs",
+        // R7.5: the transfer-failure taxonomy, the measured retry policy, the bounded retry
+        // loop, the failure mapper and the paste-residue cleanup. All join the
+        // no-dynamic/no-Microsoft.CSharp/no-activate/no-sleep path; the retry loop carries no
+        // host call and the cleanup deletes only the add-in's own residue.
+        "src/GanttCreator.Office/PowerPointTransferFailure.cs",
+        "src/GanttCreator.Office/PowerPointTransientRetryPolicy.cs",
+        "src/GanttCreator.Office/PowerPointRetryLoop.cs",
+        "src/GanttCreator.Office/PowerPointTransferFailureMapper.cs",
+        "src/GanttCreator.Office/PowerPointPasteResidueCleanup.cs",
     ];
 
     /// <summary>Members the transfer surface must never expose (work item D5).</summary>
