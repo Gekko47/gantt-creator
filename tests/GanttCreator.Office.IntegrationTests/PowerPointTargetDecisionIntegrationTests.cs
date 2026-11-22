@@ -29,7 +29,11 @@ public sealed class PowerPointTargetDecisionIntegrationTests(ITestOutputHelper o
     [Fact]
     public async Task New_power_point_with_no_presentations_decides_CreatePresentation()
     {
-        Dictionary<int, long> before = PowerPointFixture.SnapshotProcesses();
+        // The suite runs several PowerPoint bodies in one process, and a prior fixture's
+        // Quit() completes asynchronously: the process can still appear in the snapshot for
+        // a short window. Poll the named observable condition with a deadline rather than
+        // asserting once, so suite composition cannot turn a clean teardown into a failure.
+        Dictionary<int, long> before = await WaitForNoPowerPointAsync().ConfigureAwait(true);
         Assert.True(
             before.Count == 0,
             "Close PowerPoint before running the R7.2 live gate: the new-PowerPoint case requires no running POWERPNT.");
@@ -382,6 +386,25 @@ public sealed class PowerPointTargetDecisionIntegrationTests(ITestOutputHelper o
         Assert.Equal(PowerPointTargetAction.Refuse, decision.Action);
         Assert.Equal(refusal, decision.Refusal);
         Assert.Null(decision.ActiveSlideIndex);
+    }
+
+    /// <summary>
+    /// Polls the named observable condition (no running <c>POWERPNT</c>) with a deadline, so a
+    /// PowerPoint instance that has been asked to quit but has not yet exited does not fail
+    /// the body. The deadline keeps the diagnostic honest when a host really is running.
+    /// </summary>
+    /// <returns>The empty snapshot, or the last non-empty one when the deadline expires.</returns>
+    private static async Task<Dictionary<int, long>> WaitForNoPowerPointAsync()
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        Dictionary<int, long> snapshot = PowerPointFixture.SnapshotProcesses();
+        while (snapshot.Count > 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100).ConfigureAwait(false);
+            snapshot = PowerPointFixture.SnapshotProcesses();
+        }
+
+        return snapshot;
     }
 
     private static void TryDelete(string path)

@@ -75,6 +75,7 @@ public sealed class SendToPowerPointIntegrationTests(ITestOutputHelper output)
         finally
         {
             await powerPointFixture.DisposeAsync().ConfigureAwait(true);
+            await excelFixture.DisposeAsync().ConfigureAwait(true);
             TryDelete(path);
         }
     }
@@ -119,6 +120,7 @@ public sealed class SendToPowerPointIntegrationTests(ITestOutputHelper output)
         finally
         {
             await powerPointFixture.DisposeAsync().ConfigureAwait(true);
+            await excelFixture.DisposeAsync().ConfigureAwait(true);
         }
     }
 
