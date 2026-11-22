@@ -158,6 +158,92 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     }
 
     /// <summary>
+    /// Starts or attaches to desktop PowerPoint WITHOUT creating a presentation, so a live
+    /// body can arrange the D-R7.2 zero-deck create arm. The launched process is adopted and
+    /// recorded in the shared owned-PID manifest exactly as <see cref="Initialize"/> does, so
+    /// the fixture remains the clean teardown owner.
+    /// </summary>
+    internal void InitializeWithoutPresentation()
+    {
+        Dictionary<int, long> before = SnapshotPowerPointProcesses();
+        _application = _ownership.Acquire(new PowerPoint.Application());
+        AdoptOwnedProcesses(before);
+        BuildDescription = DescribeOwnedBuild();
+
+        // ppAlertsNone: a quit with a fixture-created deck must not raise a modal prompt.
+        _application.DisplayAlerts = PowerPoint.PpAlertLevel.ppAlertsNone;
+
+        _presentation = null;
+        _slide = null;
+        _lastPasteRange = null;
+        _lastPastedGroup = null;
+    }
+
+    /// <summary>Adds an in-memory marker text box to the primary slide without saving.</summary>
+    /// <param name="text">The marker text.</param>
+    /// <exception cref="InvalidOperationException">No primary slide exists.</exception>
+    internal void AddUnsavedMarker(string text)
+    {
+        if (_slide is null)
+        {
+            throw new InvalidOperationException("Initialize must run before AddUnsavedMarker.");
+        }
+
+        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        PowerPoint.Shape marker = _ownership.Acquire(
+            shapes.AddTextbox(
+                OfficeCore.MsoTextOrientation.msoTextOrientationHorizontal,
+                12,
+                12,
+                220,
+                40));
+        PowerPoint.TextFrame frame = _ownership.Acquire(marker.TextFrame);
+        PowerPoint.TextRange range = _ownership.Acquire(frame.TextRange);
+        range.Text = text;
+    }
+
+    /// <summary>Whether the primary deck reports unsaved changes.</summary>
+    /// <returns><see langword="true"/> when the host reports the deck as dirty.</returns>
+    internal bool PrimaryPresentationHasUnsavedChanges() =>
+        _presentation is not null
+        && _presentation.Saved == OfficeCore.MsoTriState.msoFalse;
+
+    /// <summary>Whether the primary slide still carries the named text.</summary>
+    /// <param name="text">The marker text.</param>
+    /// <returns><see langword="true"/> when a shape on the primary slide contains it.</returns>
+    internal bool PrimarySlideHasText(string text)
+    {
+        if (_slide is null)
+        {
+            return false;
+        }
+
+        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        for (int index = 1; index <= shapes.Count; index++)
+        {
+            PowerPoint.Shape shape = _ownership.Acquire(shapes[index]);
+            if (shape.HasTextFrame != OfficeCore.MsoTriState.msoTrue)
+            {
+                continue;
+            }
+
+            PowerPoint.TextFrame frame = _ownership.Acquire(shape.TextFrame);
+            if (frame.HasText != OfficeCore.MsoTriState.msoTrue)
+            {
+                continue;
+            }
+
+            PowerPoint.TextRange range = _ownership.Acquire(frame.TextRange);
+            if (string.Equals(range.Text, text, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Adds a second test-owned presentation, so a live body can prove the target read
     /// resolves the active deck rather than <c>Presentations[1]</c>.
     /// </summary>
@@ -461,12 +547,16 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     /// <returns><see langword="true"/> when a shape was deleted.</returns>
     internal bool DeleteShapeById(int shapeId)
     {
-        if (_slide is null)
+        PowerPoint.Shapes shapes;
+        try
+        {
+            shapes = ResolveShapesForLookup();
+        }
+        catch (InvalidOperationException)
         {
             return false;
         }
 
-        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
         for (int index = 1; index <= shapes.Count; index++)
         {
             PowerPoint.Shape shape = _ownership.Acquire(shapes[index]);
@@ -515,15 +605,10 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         return MeasureGroupText(group);
     }
 
-    /// <summary>Finds the shape with the given identifier on the test-owned slide.</summary>
+    /// <summary>Finds the shape with the given identifier on the test-owned or active slide.</summary>
     private PowerPoint.Shape? FindShapeById(int shapeId)
     {
-        if (_slide is null)
-        {
-            return null;
-        }
-
-        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        PowerPoint.Shapes shapes = ResolveShapesForLookup();
         for (int index = 1; index <= shapes.Count; index++)
         {
             PowerPoint.Shape shape = _ownership.Acquire(shapes[index]);
@@ -534,6 +619,27 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the shape collection a production-pasted shape lives in: the fixture's
+    /// initial slide, or — in the zero-deck create arm where the transfer created the deck —
+    /// the ACTIVE slide the production paste targeted. The active window is read, never
+    /// activated.
+    /// </summary>
+    /// <returns>The resolved shape collection.</returns>
+    /// <exception cref="InvalidOperationException">No slide is resolvable.</exception>
+    private PowerPoint.Shapes ResolveShapesForLookup()
+    {
+        PowerPoint.Slide? slide = _slide;
+        if (slide is null)
+        {
+            PowerPoint.DocumentWindow window = _ownership.Acquire(ActiveWindow());
+            PowerPoint.View view = _ownership.Acquire(window.View);
+            slide = _ownership.Acquire(view.Slide);
+        }
+
+        return _ownership.Acquire(slide.Shapes);
     }
 
     /// <summary>Sets the test-owned presentation's slide size in points (R7.4 probe).</summary>
