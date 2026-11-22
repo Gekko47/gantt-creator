@@ -122,6 +122,14 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     internal string BuildDescription { get; private set; } = "unknown";
 
     /// <summary>
+    /// The process identifiers this fixture started and therefore owns, primary first.
+    /// Read by the R7.7 soak to sample per-process counters and to prove the shared
+    /// owned-PID manifest recorded each one. Empty when the fixture attached to a
+    /// pre-existing host instead of starting one.
+    /// </summary>
+    internal IReadOnlyList<int> OwnedProcessIds => _ownedProcessIds;
+
+    /// <summary>
     /// Starts or attaches to desktop PowerPoint and creates the test-owned presentation.
     /// </summary>
     /// <param name="withWindow">
@@ -241,6 +249,19 @@ internal sealed class PowerPointFixture : IAsyncDisposable
         }
 
         return false;
+    }
+
+    /// <summary>The primary slide's shape count; zero when the fixture owns no slide.</summary>
+    /// <returns>The live <c>Shapes.Count</c> for the primary slide.</returns>
+    internal int PrimarySlideShapeCount()
+    {
+        if (_slide is null)
+        {
+            return 0;
+        }
+
+        PowerPoint.Shapes shapes = _ownership.Acquire(_slide.Shapes);
+        return shapes.Count;
     }
 
     /// <summary>

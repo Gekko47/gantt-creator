@@ -11,6 +11,7 @@ You are adding or fixing an Office-integration test for **${input:ID:work item o
 
 - The test is tagged `[Trait("Category", "OfficeIntegration")]` and is excluded from `scripts/verify.ps1`.
 - The test is run by `scripts/verify-office.ps1` on a self-hosted Windows runner with a real licensed Microsoft 365 x64 install (per `docs/adr/0001-self-hosted-office-runner.md`).
+- **Exception - soak bodies (R7.7).** A transfer soak is tagged `[Trait("Category", "TransferSoak")]` ONLY, never `OfficeIntegration`: a double-tagged body would enter the 780 s routine gate (D4). Soaks run through `scripts/verify-transfer-soak.ps1` with its own measured deadline and are excluded from `scripts/verify.ps1`, `scripts/test-non-office.ps1` and CI by the extended negated filter.
 - Record the actual Office version, build, channel, locale, display scale, and test run ID in the test output.
 
 ## Structure

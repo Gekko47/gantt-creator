@@ -1011,6 +1011,21 @@ dotnet test $env:Solution
         $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'test-non-office.ps1') -Raw
         $text | Should -Match '\[string\]\$Solution\s*='
     }
+
+    It 'both routine non-office entry points also exclude TransferSoak (R7.7 D4)' {
+        # The routine filter is NEGATED, so a TransferSoak-only test matches
+        # Category!=OfficeIntegration. R7.7 D4 requires the 25-transfer soak to
+        # run only through scripts/verify-transfer-soak.ps1; without the second
+        # exclusion it would enter the every-commit gate, verify.ps1 and CI.
+        # Pin both entry points so a future edit cannot silently re-admit it.
+        foreach ($name in @('test-non-office.ps1', 'verify.ps1')) {
+            $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot $name) -Raw
+            $text | Should -Match 'Category!=OfficeIntegration&Category!=TransferSoak'
+        }
+        # And the branch-final gate must never select the soak positively.
+        $verifyText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'verify.ps1') -Raw
+        $verifyText | Should -Not -Match 'Category=TransferSoak'
+    }
 }
 
 Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)' {

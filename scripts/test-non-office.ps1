@@ -28,10 +28,16 @@ Set-Location $repoRoot
 # dotnet test accepts exactly ONE project or solution argument. Passing
 # multiple project paths is rejected by MSBuild (MSB1008: Only one project
 # can be specified) -- the b54ccbd regression. Test the whole solution and
-# exclude the Office-hosted suite by its xUnit Category trait; every test
-# in Office.IntegrationTests is tagged [Trait("Category","OfficeIntegration")]
-# (tests/Directory.Build.props). W14 tripwire (scripts/ci-parity.Tests.ps1)
-# asserts every scripts/*.ps1 dotnet test line passes exactly one target.
+# exclude the host-dependent suites by their xUnit Category traits. The
+# traits are per-test [Trait] attributes (the OfficeIntegration convention
+# is documented in tests/Directory.Build.props): OfficeIntegration bodies
+# need a live Office host, and TransferSoak bodies (R7.7) are the 25-transfer
+# soak that runs only through its own measured gate (D4, ADR-0001). The
+# filter is NEGATED, so the second exclusion is load-bearing: a
+# TransferSoak-only test matches Category!=OfficeIntegration and would
+# otherwise run on every commit, in verify.ps1 and in CI. W14 tripwire
+# (scripts/ci-parity.Tests.ps1) asserts every scripts/*.ps1 dotnet test line
+# passes exactly one target; the same file pins both exclusions.
 dotnet test $Solution -c $Configuration --no-build --no-restore `
-    --filter 'Category!=OfficeIntegration'
+    --filter 'Category!=OfficeIntegration&Category!=TransferSoak'
 exit $LASTEXITCODE
