@@ -78,11 +78,13 @@ public sealed class PowerPointSlideFitRouteProbeIntegrationTests(ITestOutputHelp
                 outcome.Copy.Succeeded,
                 $"Copy refused: {outcome.Copy.Refusal} {outcome.Copy.PortRefusal} {outcome.Copy.Detail}");
 
-            // 4:3, 16:9 and one custom wide size; the D-R7.4 inset is a placeholder here because
-            // the probe measures the routes, not the margin policy.
+            // 4:3, 16:9 and one custom wide size. The inset is the RECORDED D-R7.4 policy value
+            // (ChartPaddingPt.Uniform of the chart's outer padding, 4 pt at scene scale), so the
+            // measured target is the shipped placement and the routes stay like-for-like.
             (double WidthPt, double HeightPt)[] slideSizes = [(720, 540), (960, 540), (1200, 400)];
             string[] routes = ["a", "b", "c"];
-            double insetPt = 4;
+            double insetPt = ChartPaddingPt.Uniform(
+                GanttCatalogues.MetricDefault("ChartOuterPaddingPt")).MaxPt;
             bool sawTextChild = false;
 
             foreach ((double slideWidthPt, double slideHeightPt) in slideSizes)
@@ -105,6 +107,16 @@ public sealed class PowerPointSlideFitRouteProbeIntegrationTests(ITestOutputHelp
                         Assert.True(
                             groupBox.ChildCount > 0,
                             "The pasted group exposes no children, so no route can be measured.");
+
+                        // The NATURAL (unresized) label state is measured first. It separates a
+                        // label the composition already overflows from one the resize breaks —
+                        // the distinction work item D5's stop condition turns on.
+                        IReadOnlyList<PowerPointChildTextMetrics> naturalText =
+                            powerPointFixture.MeasurePastedGroupText();
+                        int naturalChildren = naturalText.Count(child => child.HasText);
+                        int naturalFits = naturalText.Count(child => !child.HasText || Fits(child));
+                        string naturalFonts = Fonts(naturalText);
+                        string[] naturalOverflow = DescribeOverflow(naturalText);
 
                         SlideFitOutcome fit = SlideFit.Fit(
                             new RectD(0, 0, groupBox.WidthPt, groupBox.HeightPt),
@@ -130,18 +142,9 @@ public sealed class PowerPointSlideFitRouteProbeIntegrationTests(ITestOutputHelp
                             powerPointFixture.MeasurePastedGroupText();
                         sawTextChild |= text.Any(child => child.HasText);
                         int textChildren = text.Count(child => child.HasText);
-                        int textFitsBox = text.Count(child =>
-                            !child.HasText
-                            || (child.TextWidthPt <= child.ShapeWidthPt + HostOwnedGeometry.GeometryMatchTolerancePt
-                                && child.TextHeightPt <= child.ShapeHeightPt + HostOwnedGeometry.GeometryMatchTolerancePt));
-
-                        string[] overflow = [.. text
-                            .Where(child => child.HasText
-                                && (child.TextWidthPt > child.ShapeWidthPt + HostOwnedGeometry.GeometryMatchTolerancePt
-                                    || child.TextHeightPt > child.ShapeHeightPt + HostOwnedGeometry.GeometryMatchTolerancePt))
-                            .Select(child => string.Create(
-                                CultureInfo.InvariantCulture,
-                                $"{child.Name}:shape={child.ShapeWidthPt:0.#}x{child.ShapeHeightPt:0.#},text={child.TextWidthPt:0.#}x{child.TextHeightPt:0.#}"))];
+                        int textFitsBox = text.Count(child => !child.HasText || Fits(child));
+                        string postFonts = Fonts(text);
+                        string[] overflow = DescribeOverflow(text);
 
                         double appliedAspect = applied.WidthPt / applied.HeightPt;
                         double targetAspect = placement.Width / placement.Height;
@@ -154,7 +157,9 @@ public sealed class PowerPointSlideFitRouteProbeIntegrationTests(ITestOutputHelp
                                 + $" scale={placement.Scale:0.#####}"
                                 + $" applied=({applied.LeftPt:0.##},{applied.TopPt:0.##},{applied.WidthPt:0.##},{applied.HeightPt:0.##})"
                                 + $" aspectDelta={Math.Abs(appliedAspect - targetAspect):0.#####}"
-                                + $" textChildren={textChildren} textFitsBox={textFitsBox}"
+                                + $" natural={naturalFits}/{naturalChildren} naturalFonts={naturalFonts}"
+                                + $" naturalOverflow=[{string.Join("; ", naturalOverflow)}]"
+                                + $" textChildren={textChildren} textFitsBox={textFitsBox} postFonts={postFonts}"
                                 + $" overflow=[{string.Join("; ", overflow)}]"));
                     }
                     finally
@@ -195,4 +200,18 @@ public sealed class PowerPointSlideFitRouteProbeIntegrationTests(ITestOutputHelp
             await excelFixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+
+    private static bool Fits(PowerPointChildTextMetrics child) =>
+        child.TextWidthPt <= child.ShapeWidthPt + HostOwnedGeometry.GeometryMatchTolerancePt
+        && child.TextHeightPt <= child.ShapeHeightPt + HostOwnedGeometry.GeometryMatchTolerancePt;
+
+    private static string Fonts(IReadOnlyList<PowerPointChildTextMetrics> text) =>
+        string.Join(",", text.Where(child => child.HasText).Select(child => child.FontSizePt).Distinct());
+
+    private static string[] DescribeOverflow(IReadOnlyList<PowerPointChildTextMetrics> text) =>
+        [.. text
+            .Where(child => child.HasText && !Fits(child))
+            .Select(child => string.Create(
+                CultureInfo.InvariantCulture,
+                $"{child.Name}:shape={child.ShapeWidthPt:0.#}x{child.ShapeHeightPt:0.#},text={child.TextWidthPt:0.#}x{child.TextHeightPt:0.#},wrap={child.WordWrapOn},autosize={child.AutoSize},font={child.FontSizePt:0.##}"))];
 }

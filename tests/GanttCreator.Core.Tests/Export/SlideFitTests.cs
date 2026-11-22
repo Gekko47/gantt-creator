@@ -32,7 +32,7 @@ public sealed class SlideFitTests
 
     [Theory]
     [MemberData(nameof(SlidesAndGroups))]
-    public void A_fit_is_within_the_margins_fills_one_axis_and_keeps_the_aspect(
+    public void A_fit_is_within_the_policy_margins_keeps_the_aspect_and_is_centred(
         double slideWidthPt,
         double slideHeightPt,
         double groupWidthPt,
@@ -48,20 +48,26 @@ public sealed class SlideFitTests
         Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
         SlidePlacement placement = Assert.IsType<SlidePlacement>(outcome.Placement);
 
-        double fitWidthPt = slideWidthPt - (2 * insetPt);
-        double fitHeightPt = slideHeightPt - (2 * insetPt);
+        // D-R7.4 (recorded 2026-11-22): the inset is scene-space, so the slide-space margin is
+        // the inset scaled with the group.
+        double marginPt = insetPt * placement.Scale;
 
-        // Inset containment: the whole placement is inside the policy margins.
-        Assert.True(placement.Left >= insetPt - _tolerancePt);
-        Assert.True(placement.Top >= insetPt - _tolerancePt);
-        Assert.True(placement.Left + placement.Width <= slideWidthPt - insetPt + _tolerancePt);
-        Assert.True(placement.Top + placement.Height <= slideHeightPt - insetPt + _tolerancePt);
+        // Containment: the whole placement is inside the slide.
+        Assert.True(placement.Left >= -_tolerancePt);
+        Assert.True(placement.Top >= -_tolerancePt);
+        Assert.True(placement.Left + placement.Width <= slideWidthPt + _tolerancePt);
+        Assert.True(placement.Top + placement.Height <= slideHeightPt + _tolerancePt);
 
-        // The limiting axis fills the frame, which is what "fit" means.
+        // The margins are symmetric, never smaller than the policy margin, and the binding axis
+        // carries exactly the policy margin — which is what "fit inside the margins" means.
+        double horizontalMarginPt = (slideWidthPt - placement.Width) / 2;
+        double verticalMarginPt = (slideHeightPt - placement.Height) / 2;
+        Assert.True(horizontalMarginPt >= marginPt - _tolerancePt);
+        Assert.True(verticalMarginPt >= marginPt - _tolerancePt);
         Assert.True(
-            Math.Abs(placement.Width - fitWidthPt) <= _tolerancePt
-                || Math.Abs(placement.Height - fitHeightPt) <= _tolerancePt,
-            "The fitted placement fills neither axis of the frame.");
+            Math.Abs(horizontalMarginPt - marginPt) <= _tolerancePt
+                || Math.Abs(verticalMarginPt - marginPt) <= _tolerancePt,
+            $"Neither axis carries the policy margin {marginPt}; horizontal {horizontalMarginPt}, vertical {verticalMarginPt}.");
 
         // Ratio preserved by construction (D2): one scale, both axes.
         double expectedAspect = groupWidthPt / groupHeightPt;
@@ -70,11 +76,53 @@ public sealed class SlideFitTests
             Math.Abs(appliedAspect - expectedAspect) <= _tolerancePt,
             $"Aspect drifted: expected {expectedAspect}, applied {appliedAspect}.");
 
-        // Centred within the frame on both axes.
-        double expectedLeftPt = insetPt + ((fitWidthPt - placement.Width) / 2);
-        double expectedTopPt = insetPt + ((fitHeightPt - placement.Height) / 2);
-        Assert.True(Math.Abs(placement.Left - expectedLeftPt) <= _tolerancePt);
-        Assert.True(Math.Abs(placement.Top - expectedTopPt) <= _tolerancePt);
+        // Centred on both axes.
+        Assert.True(Math.Abs(placement.Left - horizontalMarginPt) <= _tolerancePt);
+        Assert.True(Math.Abs(placement.Top - verticalMarginPt) <= _tolerancePt);
+    }
+
+    [Fact]
+    public void The_margin_is_the_scene_inset_scaled_with_the_group()
+    {
+        SlideFitOutcome outcome = SlideFit.Fit(new RectD(0, 0, 500, 100), 720, 540, 4);
+
+        SlidePlacement placement = Assert.IsType<SlidePlacement>(outcome.Placement);
+
+        // The binding axis (width) is at exactly 4 pt x the group scale.
+        Assert.True(Math.Abs(placement.Scale - (720d / 508d)) <= _tolerancePt);
+        Assert.True(Math.Abs(placement.Left - (4 * placement.Scale)) <= _tolerancePt);
+        Assert.True(placement.Top > placement.Left);
+    }
+
+    [Fact]
+    public void The_slide_margin_follows_the_group_scale_not_a_fixed_slide_inset()
+    {
+        // Both groups are width-bound on the same slide, so the larger one needs the smaller scale
+        // and therefore keeps the proportionally smaller margin. A fixed slide-space inset would
+        // report the same margin for both, which is exactly what the recorded policy rejects.
+        SlidePlacement smaller = Assert.IsType<SlidePlacement>(
+            SlideFit.Fit(new RectD(0, 0, 300, 60), 720, 540, 4).Placement);
+        SlidePlacement larger = Assert.IsType<SlidePlacement>(
+            SlideFit.Fit(new RectD(0, 0, 600, 120), 720, 540, 4).Placement);
+
+        Assert.True(larger.Scale < smaller.Scale);
+        Assert.True(larger.Left < smaller.Left);
+        Assert.True(Math.Abs(smaller.Left - (4 * smaller.Scale)) <= _tolerancePt);
+        Assert.True(Math.Abs(larger.Left - (4 * larger.Scale)) <= _tolerancePt);
+    }
+
+    [Fact]
+    public void A_downscaled_group_gets_a_slide_margin_smaller_than_the_scene_inset()
+    {
+        // The property that distinguishes the recorded policy from a fixed slide-space inset:
+        // shrinking the group shrinks the margin with it.
+        SlideFitOutcome outcome = SlideFit.Fit(new RectD(0, 0, 2000, 100), 720, 540, 4);
+
+        SlidePlacement placement = Assert.IsType<SlidePlacement>(outcome.Placement);
+
+        Assert.True(placement.Scale < 1);
+        Assert.True(placement.Left < 4);
+        Assert.True(Math.Abs(placement.Left - (4 * placement.Scale)) <= _tolerancePt);
     }
 
     [Fact]
@@ -84,8 +132,10 @@ public sealed class SlideFitTests
 
         SlidePlacement placement = Assert.IsType<SlidePlacement>(outcome.Placement);
         Assert.True(placement.Scale < 1);
-        Assert.True(placement.Width <= 720 - 8 + _tolerancePt);
-        Assert.True(placement.Height <= 540 - 8 + _tolerancePt);
+        Assert.True(placement.Width <= 720 + _tolerancePt);
+        Assert.True(placement.Height <= 540 + _tolerancePt);
+        Assert.True(placement.Left >= -_tolerancePt);
+        Assert.True(placement.Top >= -_tolerancePt);
     }
 
     [Fact]

@@ -89,9 +89,11 @@ public sealed record PowerPointPlacementResult(
 /// measured deltas on the result instead.
 /// </para>
 /// <para>
-/// <b>The inset is a caller input (PD-6).</b> The D-R7.4 margin policy is an owed product
-/// decision; this stage takes <c>insetPt</c> so the policy constant can land without changing
-/// this type.
+/// <b>The inset is a caller input, and it is scene-space (PD-6, D-R7.4 recorded 2026-11-22).</b>
+/// The caller supplies the chart's own outer padding (<see cref="ChartPaddingPt.Uniform"/>, 4 pt
+/// at scene scale); <see cref="SlideFit"/> scales it with the group, so the stage never invents a
+/// slide-space number. The value stays a parameter because the themed
+/// <c>ChartOuterPaddingPt</c> token is the production source.
 /// </para>
 /// </remarks>
 public sealed class PowerPointPlacementStage

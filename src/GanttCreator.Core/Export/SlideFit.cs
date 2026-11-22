@@ -58,9 +58,21 @@ public sealed record SlideFitOutcome(bool Succeeded, SlidePlacement? Placement, 
 /// not re-applied here or downstream.
 /// </para>
 /// <para>
-/// <b>Ratio preserved by construction.</b> One scale,
-/// <c>min(fitWidth / groupWidth, fitHeight / groupHeight)</c>, drives both axes, so width and
-/// height cannot be computed independently and the aspect cannot drift.
+/// <b>The margin is scene-space, so it scales with the group (D-R7.4, recorded 2026-11-22).</b>
+/// The inset is the chart's own outer padding
+/// (<see cref="ChartPaddingPt.Uniform"/>, 4 pt at scene scale), not a slide-space number: the
+/// chart keeps the margin it was composed with, and the slide-space margin is
+/// <c>inset × scale</c>. The closed form therefore puts the inset on the group's side of the
+/// ratio —
+/// <c>Scale = min(slideWidth / (groupWidth + 2·inset), slideHeight / (groupHeight + 2·inset))</c> —
+/// and the placement is centred:
+/// <c>Left = (slideWidth − groupWidth × Scale) / 2</c>, which equals <c>inset × Scale</c> on the
+/// binding axis. A slide-space inset would instead grow the margin's share as the chart shrinks,
+/// which is why it is not the recorded policy.
+/// </para>
+/// <para>
+/// <b>Ratio preserved by construction.</b> One scale drives both axes, so width and height
+/// cannot be computed independently and the aspect cannot drift.
 /// </para>
 /// <para>
 /// <b>One rounding policy.</b> The four values that reach PowerPoint are snapped through
@@ -85,7 +97,10 @@ public static class SlideFit
     /// </param>
     /// <param name="slideWidthPt">The active slide's width in points.</param>
     /// <param name="slideHeightPt">The active slide's height in points.</param>
-    /// <param name="insetPt">The policy margin in points, applied to every side.</param>
+    /// <param name="insetPt">
+    /// The policy margin in the group's own (scene) coordinate system, applied to every side and
+    /// scaled with the group — <see cref="ChartPaddingPt.Uniform"/> of the chart's outer padding.
+    /// </param>
     /// <returns>The single placement, or a typed refusal; no exception escapes for a bad input.</returns>
     public static SlideFitOutcome Fit(
         RectD groupBounds,
@@ -111,26 +126,32 @@ public static class SlideFit
             return Refuse(SlideFitRefusal.InvalidInset);
         }
 
-        double fitWidthPt = slideWidthPt - (2 * insetPt);
-        double fitHeightPt = slideHeightPt - (2 * insetPt);
-        if (!IsFiniteAndPositive(fitWidthPt) || !IsFiniteAndPositive(fitHeightPt))
+        // The inset is scene-space, so an inset at or beyond half a slide dimension leaves no
+        // room for the chart however small the group's share of it is. The frame subtraction is
+        // therefore a policy sanity guard, not the fit itself.
+        double frameWidthPt = slideWidthPt - (2 * insetPt);
+        double frameHeightPt = slideHeightPt - (2 * insetPt);
+        if (!IsFiniteAndPositive(frameWidthPt) || !IsFiniteAndPositive(frameHeightPt))
         {
             return Refuse(SlideFitRefusal.DegenerateFitFrame);
         }
 
+        // The inset is added on the BRACKET side so the emitted slide-space margin is
+        // inset × scale, which is the recorded D-R7.4 policy (see the type remarks).
         double scale = Math.Min(
-            fitWidthPt / groupBounds.Width,
-            fitHeightPt / groupBounds.Height);
+            slideWidthPt / (groupBounds.Width + (2 * insetPt)),
+            slideHeightPt / (groupBounds.Height + (2 * insetPt)));
         if (!IsFiniteAndPositive(scale))
         {
             return Refuse(SlideFitRefusal.InvalidScale);
         }
 
-        // Both applied axes derive from the one scale, so the ratio cannot drift (D2).
+        // Both applied axes derive from the one scale, so the ratio cannot drift (D2), and the
+        // group is centred, so the margin is symmetric and equals inset × scale on the binding axis.
         double rawWidthPt = groupBounds.Width * scale;
         double rawHeightPt = groupBounds.Height * scale;
-        double rawLeftPt = insetPt + ((fitWidthPt - rawWidthPt) / 2);
-        double rawTopPt = insetPt + ((fitHeightPt - rawHeightPt) / 2);
+        double rawLeftPt = (slideWidthPt - rawWidthPt) / 2;
+        double rawTopPt = (slideHeightPt - rawHeightPt) / 2;
 
         if (!IsRepresentableAtDisplayPrecision(rawLeftPt)
             || !IsRepresentableAtDisplayPrecision(rawTopPt)

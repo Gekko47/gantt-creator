@@ -40,7 +40,7 @@ internal sealed record PowerPointUngroupOutcome(int ChildCount, bool WasGroup);
 internal sealed record PowerPointGroupBox(int ChildCount, double LeftPt, double TopPt, double WidthPt, double HeightPt);
 
 /// <summary>
-/// One text-bearing child's measured box, for the R7.4 route probe's text-fidelity evidence.
+/// One text-bearing child's measured box, for the R7.4 text-fidelity evidence.
 /// </summary>
 /// <param name="Name">The child shape's name.</param>
 /// <param name="ShapeWidthPt">The child shape's width in points.</param>
@@ -48,13 +48,26 @@ internal sealed record PowerPointGroupBox(int ChildCount, double LeftPt, double 
 /// <param name="HasText">Whether the child carries non-empty text.</param>
 /// <param name="TextWidthPt">The measured text bound width in points; zero when there is no text.</param>
 /// <param name="TextHeightPt">The measured text bound height in points; zero when there is no text.</param>
+/// <param name="WordWrapOn">
+/// Whether the text frame wraps (<c>TextFrame2.WordWrap = msoTrue</c>). A wrapped range cannot
+/// spill horizontally, so it is the fact that decides whether a bound wider than the shape is a
+/// visible overflow or a measurement property (R7.4 audit M-6).
+/// </param>
+/// <param name="AutoSize">
+/// The text frame's <c>TextFrame2.AutoSize</c> value (the <c>MsoAutoSize</c> integer), so a
+/// frame that grows to fit its text is distinguishable from a fixed one.
+/// </param>
+/// <param name="FontSizePt">The range's font size in points; zero when it could not be read.</param>
 internal sealed record PowerPointChildTextMetrics(
     string Name,
     double ShapeWidthPt,
     double ShapeHeightPt,
     bool HasText,
     double TextWidthPt,
-    double TextHeightPt);
+    double TextHeightPt,
+    bool WordWrapOn,
+    int AutoSize,
+    double FontSizePt);
 
 /// <summary>
 /// Test-only PowerPoint host: the typed replacement for the late-bound R6.7 fixture.
@@ -577,7 +590,7 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             // one exists, and the raising-miss encodings are contained besides.
             if (child.HasTextFrame != OfficeCore.MsoTriState.msoTrue)
             {
-                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+                metrics.Add(NonText(child.Name, shapeWidthPt, shapeHeightPt));
                 continue;
             }
 
@@ -593,27 +606,33 @@ internal sealed class PowerPointFixture : IAsyncDisposable
                     shapeHeightPt,
                     hasText,
                     hasText ? range.BoundWidth : 0,
-                    hasText ? range.BoundHeight : 0));
+                    hasText ? range.BoundHeight : 0,
+                    frame.WordWrap == OfficeCore.MsoTriState.msoTrue,
+                    (int)frame.AutoSize,
+                    hasText ? range.Font.Size : 0));
             }
             catch (COMException)
             {
                 // A frame whose text range cannot be read is recorded as non-text.
-                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+                metrics.Add(NonText(child.Name, shapeWidthPt, shapeHeightPt));
             }
             catch (ArgumentException)
             {
                 // Measured raising-miss encoding for a text range that does not exist.
-                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+                metrics.Add(NonText(child.Name, shapeWidthPt, shapeHeightPt));
             }
             catch (InvalidOperationException)
             {
                 // The third encoding the interop boundary produces for an absent member.
-                metrics.Add(new PowerPointChildTextMetrics(child.Name, shapeWidthPt, shapeHeightPt, false, 0, 0));
+                metrics.Add(NonText(child.Name, shapeWidthPt, shapeHeightPt));
             }
         }
 
         return metrics;
     }
+
+    private static PowerPointChildTextMetrics NonText(string name, double shapeWidthPt, double shapeHeightPt) =>
+        new(name, shapeWidthPt, shapeHeightPt, false, 0, 0, WordWrapOn: false, AutoSize: 0, FontSizePt: 0);
 
     /// <summary>
     /// Rejects a paste result that no consumer could use: zero shapes, or bounds that are
