@@ -432,6 +432,25 @@ Exit demonstration: one click transfers an editable group to the active slide, v
 > shared owned-PID manifest. The Phase 6/7 matrix subset and the Phase-8 Tier-A upgrade
 > remain Phase-7 exit obligations.
 
+> **Phase 7 status (22 November 2026 — R7.4 complete).** R7.4 is closed: the pasted group is
+> fitted and positioned once, preserving the export aspect ratio, and both Step-0 decisions are
+> recorded. **D-R7.4 margin** — a uniform inset from the chart's own outer padding
+> (`ChartPaddingPt.Uniform` of `ChartOuterPaddingPt`, 4 pt at scene scale) that **scales with the
+> group**, so `SlideFit` computes
+> `Scale = min(slideWidth / (groupWidth + 2·inset), slideHeight / (groupHeight + 2·inset))` and
+> the slide margin is `inset × scale` on the binding axis. **Route** — (a), one absolute
+> `Left`/`Top`/`Width`/`Height` write of the single placement onto the `msoGroup`; routes (b) and
+> (c) preserve the aspect but do not position, and (c) needs `RelativeToOriginalSize = msoFalse`
+> on a group. Evidence: `SlideFitTests` for 4:3, 16:9 and two custom aspects with every refusal
+> positive; the nine-cell route probe; the Phase-3 `PowerPointSlideFitIntegrationTests` gate
+> (read-back deltas 0 on every member, margin exactly `inset × scale`, a second apply refused
+> `AlreadyApplied`, 81 editable shapes after ungroup, no added label overflow, zero residue);
+> `verify-office.ps1` 99/99 in 19 m 46 s. **Open and deliberately not worked around:** the staged
+> composition already overflows four of 81 text children (wrap off, no autosize, fixed font), and
+> two remain at 4:3 after placement, so D5's absolute rule needs an owner decision — fix the
+> header-label composition in a separate item or accept the residue. The gate asserts the
+> placement-side rule until that ruling is recorded.
+
 ## Phase 8 — 300-DPI PNG export
 
 Goal: export an exact-size PNG from the scene without depending on the Excel clipboard.
