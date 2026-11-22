@@ -66,7 +66,7 @@
 > kills against a ceiling of 26** (`KNOWN-LIMITATIONS.md` L19) — R4.8A's new
 > adapter surface is the first thing that could push it over.
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. **Revised 19 November 2026 at the Phase-6 exit:** R7.1–R7.7 were upgraded to Tier A against the landed R6 pipeline, so the index is now **50 Tier A and 55 Tier B** of the **105** roadmap-guide records (the previous 43/62 count was the 2026-10-31 snapshot). The earlier 94/41/53 count was a dated snapshot and omitted later roadmap additions. Historical recount notes below explain the earlier discrepancies; they do not describe the current index. [`../STATUS.md`](../STATUS.md) records implementation and acceptance state; `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. **Revised 19 November 2026 at the Phase-6 exit:** R7.1–R7.7 were upgraded to Tier A against the landed R6 pipeline. **Revised 22 November 2026 at the Phase-7 exit:** the nine Phase-8 guides (R8.1–R8.8 and R8.2a) were upgraded to Tier A against the landed Raster/`ExportSize` tree, so the index is now **59 Tier A and 46 Tier B** of the **105** roadmap-guide records (the previous 50/55 count was the 2026-11-19 snapshot). The earlier 94/41/53 count was a dated snapshot and omitted later roadmap additions. Historical recount notes below explain the earlier discrepancies; they do not describe the current index. [`../STATUS.md`](../STATUS.md) records implementation and acceptance state; `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
@@ -293,19 +293,19 @@ not include R4.10 or its benchmark.
 > `RibbonState` `Mode == Ready` gate, and the `TransferSoak` gate split. **No row is
 > added or renumbered.** D-G6 is resolved to the typed PIA with a Step-0 package check.
 
-### Phase 8 — 300-DPI PNG export (Tier B; upgrade at Phase 7 exit; R8.2a precedes R8.3)
+### Phase 8 — 300-DPI PNG export (Tier A; upgraded 2026-11-22 at the Phase-7 exit; R8.2a precedes R8.3)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R8.1 | `R8.1-width-parsing-residual.md` | Authored (Tier B) |
-| R8.2 | `R8.2-skia-primitive-renderer.md` | Authored (Tier B) |
-| R8.2a | `R8.2a-font-pinning-adr.md` | Authored (Tier B; ADR) |
-| R8.3 | `R8.3-text-hatch-rendering.md` | Authored (Tier B) |
-| R8.4 | `R8.4-representative-render.md` | Authored (Tier B) |
-| R8.5 | `R8.5-png-metadata.md` | Authored (Tier B) |
-| R8.6 | `R8.6-atomic-write-validator.md` | Authored (Tier B) |
-| R8.7 | `R8.7-width-controls-preview.md` | Authored (Tier B) |
-| R8.8 | `R8.8-export-png-command.md` | Authored (Tier B) |
+| R8.1 | `R8.1-width-parsing-residual.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.2 | `R8.2-skia-primitive-renderer.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.2a | `R8.2a-font-pinning-adr.md` | Revised (Tier A; 2026-11-22; ADR row) |
+| R8.3 | `R8.3-text-hatch-rendering.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.4 | `R8.4-representative-render.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.5 | `R8.5-png-metadata.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.6 | `R8.6-atomic-write-validator.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.7 | `R8.7-width-controls-preview.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.8 | `R8.8-export-png-command.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
 
 ### Phase 9 — recovery, resilience, and maintenance (Tier B; upgrade at Phase 8 exit)
 

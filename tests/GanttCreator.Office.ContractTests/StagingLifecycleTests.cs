@@ -93,6 +93,151 @@ public sealed class StagingLifecycleTests
         Assert.True(port.Survives("User note"));
     }
 
+    /// <summary>
+    /// R7.6 D1: the optional transfer seam runs exactly once after the verified copy and
+    /// before the finally cleanup — the staged shapes still exist at transfer time — and the
+    /// outcome carries its result.
+    /// </summary>
+    [Fact]
+    public void The_transfer_seam_runs_after_the_verified_copy_and_before_cleanup()
+    {
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        RecordingGroupingPort grouping = new(ExpectedGroupBounds(fixture.ChartBounds))
+        {
+            AfterGroup = () => _ = port.Owned(ShapeStagingTag.GroupPrimitiveId),
+        };
+        List<string> order = [];
+        int stagedAtTransfer = -1;
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            grouping,
+            fixture.Resolution,
+            Copy: _ =>
+            {
+                order.Add("copy");
+                return StagingCopyResult.Success;
+            },
+            Transfer: (group, _) =>
+            {
+                order.Add("transfer");
+                // The staged shapes must still exist: the finally cleanup has not run yet.
+                stagedAtTransfer = port.ListOwned().Count;
+                return StagingTransferResult.Success(
+                    group.ChildOrder.Count,
+                    new RectD(0, 0, 10, 10));
+            }));
+
+        Assert.True(outcome.Succeeded, "Lifecycle refused: " + outcome.Refusal);
+        Assert.Equal(["copy", "transfer"], order);
+        Assert.NotNull(outcome.Transfer);
+        Assert.True(outcome.Transfer!.Succeeded);
+        Assert.True(stagedAtTransfer > 0, "The staged shapes must exist while the transfer runs.");
+        Assert.Empty(port.ListOwned());
+        Assert.True(scope.Disposed);
+    }
+
+    /// <summary>
+    /// R7.6: a transfer refusal is <see cref="StagingLifecycleRefusal.TransferRefused"/> and
+    /// the finally still removes every temporary shape and restores state.
+    /// </summary>
+    [Fact]
+    public void A_transfer_refusal_still_cleans_up_and_names_transfer_refused()
+    {
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        RecordingGroupingPort grouping = new(ExpectedGroupBounds(fixture.ChartBounds))
+        {
+            AfterGroup = () => _ = port.Owned(ShapeStagingTag.GroupPrimitiveId),
+        };
+        PowerPointTransferFailure failure = new(
+            PowerPointTransferFailureKind.HostRejected,
+            null,
+            "PowerPoint refused the operation. Try again.",
+            "r7.5 transfer failure kind=HostRejected stage=paste");
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            grouping,
+            fixture.Resolution,
+            Copy: _ => StagingCopyResult.Success,
+            Transfer: (_, _) => StagingTransferResult.Refused(failure)));
+
+        Assert.Equal(StagingLifecycleRefusal.TransferRefused, outcome.Refusal);
+        Assert.False(outcome.Succeeded);
+        Assert.Same(failure, outcome.Transfer!.Failure);
+        Assert.Empty(outcome.Residue);
+        Assert.Empty(port.ListOwned());
+        Assert.True(scope.Disposed);
+    }
+
+    /// <summary>A copy refusal never reaches the transfer seam.</summary>
+    [Fact]
+    public void A_copy_refusal_never_invokes_the_transfer()
+    {
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        RecordingGroupingPort grouping = new(ExpectedGroupBounds(fixture.ChartBounds))
+        {
+            AfterGroup = () => _ = port.Owned(ShapeStagingTag.GroupPrimitiveId),
+        };
+        int transferCalls = 0;
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            grouping,
+            fixture.Resolution,
+            Copy: _ => StagingCopyResult.Refused("clipboard busy"),
+            Transfer: (_, _) =>
+            {
+                transferCalls++;
+                return StagingTransferResult.Success(0, new RectD(0, 0, 1, 1));
+            }));
+
+        Assert.Equal(StagingLifecycleRefusal.CopyRefused, outcome.Refusal);
+        Assert.Equal(0, transferCalls);
+        Assert.Null(outcome.Transfer);
+        Assert.Empty(port.ListOwned());
+    }
+
+    /// <summary>A transfer with no copy seam is never invoked: there is no verified payload.</summary>
+    [Fact]
+    public void A_transfer_without_a_copy_seam_is_never_invoked()
+    {
+        Fixture fixture = Build();
+        FakeShapeWritePort port = new();
+        using RecordingScope scope = new();
+        RecordingGroupingPort grouping = new(ExpectedGroupBounds(fixture.ChartBounds))
+        {
+            AfterGroup = () => _ = port.Owned(ShapeStagingTag.GroupPrimitiveId),
+        };
+        int transferCalls = 0;
+
+        StagingLifecycleOutcome outcome = StagingLifecycle.Run(new(
+            scope,
+            port,
+            grouping,
+            fixture.Resolution,
+            Transfer: (_, _) =>
+            {
+                transferCalls++;
+                return StagingTransferResult.Success(0, new RectD(0, 0, 1, 1));
+            }));
+
+        Assert.True(outcome.Succeeded, "Lifecycle refused: " + outcome.Refusal);
+        Assert.Equal(0, transferCalls);
+        Assert.Null(outcome.Copy);
+        Assert.Null(outcome.Transfer);
+        Assert.Empty(port.ListOwned());
+    }
+
     [Fact]
     public void A_group_delete_that_removes_the_children_skips_their_deletes()
     {

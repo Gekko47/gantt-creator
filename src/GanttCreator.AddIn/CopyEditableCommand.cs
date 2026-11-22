@@ -5,34 +5,6 @@ using GanttCreator.Office;
 
 namespace GanttCreator.AddIn;
 
-/// <summary>
-/// Builds the export scene request from the workbook's measured inputs (the R6.3
-/// <c>CreateExport</c> seam), as a delegate so the command test can pin the export variant
-/// without a host.
-/// </summary>
-/// <param name="events">The validated events to compose.</param>
-/// <param name="settings">The workbook's effective settings map.</param>
-/// <param name="registry">The workbook's style registry.</param>
-/// <param name="grid">The measured panel grid.</param>
-/// <param name="themedMetrics">The workbook's themed metric values.</param>
-/// <returns>The export request, or a typed refusal.</returns>
-internal delegate SceneBuildRequestOutcome ExportRequestBuild(
-    IReadOnlyList<GanttEvent> events,
-    IReadOnlyDictionary<string, string> settings,
-    GanttStyleRegistry registry,
-    PanelCellGrid grid,
-    IReadOnlyDictionary<string, double> themedMetrics);
-
-/// <summary>Resolves the export bounds and scene (the R6.1 <c>TryResolve</c> seam).</summary>
-/// <param name="request">The export request the scene is built from.</param>
-/// <param name="panelTheme">The resolved panel styles, or null for chart-only.</param>
-/// <param name="selection">The export selection the user's setting chose.</param>
-/// <returns>The bounds resolution carrying the scene, or a typed refusal.</returns>
-internal delegate ExportBoundsOutcome ExportBoundsResolve(
-    SceneBuildRequest? request,
-    PanelTheme? panelTheme,
-    ExportSelection selection);
-
 /// <summary>Runs the staging lifecycle (the R6.5 <c>Run</c> seam).</summary>
 /// <param name="request">The assembled lifecycle request.</param>
 /// <returns>The lifecycle outcome, with residue named whenever cleanup was incomplete.</returns>
@@ -242,7 +214,8 @@ internal static class CopyEditableCommand
     /// the one read, and an explicit case-insensitive <c>FALSE</c> is the only chart-only
     /// request.
     /// </summary>
-    internal const string ExportIncludeDataPanelSettingKey = "ExportIncludeDataPanel";
+    internal const string ExportIncludeDataPanelSettingKey =
+        EditableExportPreflight.ExportIncludeDataPanelSettingKey;
 
     /// <summary>The one actionable line used when a required dependency is absent.</summary>
     internal const string ConstructionMessage =
@@ -324,33 +297,10 @@ internal static class CopyEditableCommand
             return Refuse(CopyEditableRefusal.NullRequest, ConstructionMessage, 0, failurePresenter);
         }
 
-        // The dependency checks run in pipeline order, so the first missing member names the
-        // stage that would have failed. Every check is a positive-test target.
-        if (request.TableReader is not { } tableReader)
-        {
-            return Refuse(CopyEditableRefusal.MissingTableReader, ConstructionMessage, 0, failurePresenter);
-        }
-
-        if (request.ConfigReader is not { } configReader)
-        {
-            return Refuse(CopyEditableRefusal.MissingConfigReader, ConstructionMessage, 0, failurePresenter);
-        }
-
-        if (request.GridMeasurement is not { } gridMeasurement)
-        {
-            return Refuse(CopyEditableRefusal.MissingGridMeasurement, ConstructionMessage, 0, failurePresenter);
-        }
-
-        if (request.ExportRequestFactory is not { } exportRequestFactory)
-        {
-            return Refuse(CopyEditableRefusal.MissingExportRequestFactory, ConstructionMessage, 0, failurePresenter);
-        }
-
-        if (request.BoundsResolver is not { } boundsResolver)
-        {
-            return Refuse(CopyEditableRefusal.MissingBoundsResolver, ConstructionMessage, 0, failurePresenter);
-        }
-
+        // The command's own construction members (the lifecycle half) are checked before any
+        // host read, so a missing dependency is reported, never dereferenced. The read-path
+        // members are the shared pre-flight's checks (R7.6 D4), so both export commands share
+        // one authority and each maps its typed refusal to its own message.
         if (request.Lifecycle is not { } lifecycleRun)
         {
             return Refuse(CopyEditableRefusal.MissingLifecycle, ConstructionMessage, 0, failurePresenter);
@@ -381,92 +331,23 @@ internal static class CopyEditableCommand
             return Refuse(CopyEditableRefusal.MissingClipboardReader, ConstructionMessage, 0, failurePresenter);
         }
 
-        // Step 1 — read the full table. Read-only; nothing was mutated on a refusal.
-        GanttTableReadOutcome read = tableReader.Read();
-        if (!read.Succeeded)
+        // Steps 1-6 — the shared pre-flight owns read → configuration → validate → measure →
+        // export request → selection → bounds, plus the post-resolution guard (R7.6 D4). Its
+        // typed refusal is translated here, so every Copy Editable line stays byte-identical
+        // and never names another command (the R7.6 review's F1 finding).
+        EditableExportPreflightOutcome preflight = EditableExportPreflight.Run(new(
+            request.TableReader,
+            request.ConfigReader,
+            request.GridMeasurement,
+            request.ExportRequestFactory,
+            request.BoundsResolver,
+            request.TechnicalRecord));
+        if (!preflight.Succeeded)
         {
-            string message = read.Refusal is { } readRefusal
-                ? TranslateRead(readRefusal)
-                : ConstructionMessage;
-            return Refuse(CopyEditableRefusal.TableReadRefused, message, 0, failurePresenter);
+            return RefusePreflight(preflight, failurePresenter);
         }
 
-        // Step 2 — read the workbook configuration (settings, styles, metrics). It precedes
-        // validation because the validator must see the workbook's style registry: without it a
-        // style-key type (Custom Activity, Custom Milestone, Delineator) cannot resolve its
-        // capabilities, and the row's own LabelPosition and colour overrides are silently
-        // dropped. The live Refresh validates with config.Styles for exactly this reason; the
-        // copy now does the same (2026-11-19 label-parity fix).
-        ConfigReadOutcome config = configReader.Read();
-        if (!config.Succeeded)
-        {
-            string message = config.Refusal is { } configRefusal
-                ? TranslateConfig(configRefusal)
-                : ConstructionMessage;
-
-            // No validation has run yet, so no row has been dropped: zero, never inferred.
-            return Refuse(CopyEditableRefusal.ConfigReadRefused, message, 0, failurePresenter);
-        }
-
-        // Step 3 — validate with the workbook's registry. Rows with blocking errors are
-        // excluded from the export's event set by the validator's own contract; the count is
-        // surfaced, never silently dropped (owner ruling 2026-11-19). A marked or invalid count
-        // is never inferred from the rows.
-        GanttValidationOutcome validation = GanttRowValidator.Validate(read.Rows, config.Styles);
-        int droppedRows = validation.Issues
-            .Where(issue => issue.Severity == GanttValidationSeverity.Error)
-            .Select(issue => issue.RowNumber)
-            .Distinct()
-            .Count();
-        if (droppedRows > 0)
-        {
-            request.TechnicalRecord?.Invoke(string.Create(
-                CultureInfo.InvariantCulture,
-                $"gantt.copy rows-dropped={droppedRows}"));
-        }
-
-        // Step 4 — measure the live panel. The single-argument overload reads the host's
-        // current row heights, so the export path performs no normalisation writes.
-        PanelGridOutcome grid = gridMeasurement.Measure(
-            EditableExportRequest.MeasuredColumns(config.Settings));
-        if (!grid.Succeeded || grid.Grid is not { } measuredGrid)
-        {
-            string message = grid.Refusal is { } gridRefusal
-                ? TranslateMeasurement(gridRefusal)
-                : ConstructionMessage;
-            return Refuse(CopyEditableRefusal.MeasurementRefused, message, droppedRows, failurePresenter);
-        }
-
-        // Step 5 — build the EXPORT scene request (anchoring off, EditableExport profile,
-        // no empty-table fallback), never the live request.
-        SceneBuildRequestOutcome export = exportRequestFactory(
-            validation.Events,
-            config.Settings,
-            config.Styles,
-            measuredGrid,
-            config.Metrics);
-        if (!export.Succeeded || export.Request is not { } exportRequest)
-        {
-            return Refuse(
-                CopyEditableRefusal.ExportRequestRefused,
-                export.Message ?? ConstructionMessage,
-                droppedRows,
-                failurePresenter);
-        }
-
-        // Step 6 — the export selection rides the persisted inclusion setting; the panel
-        // theme is supplied only for table-plus-chart.
-        ExportSelection selection = SelectExportSelection(config.Settings);
-        ExportBoundsOutcome resolution = boundsResolver(
-            exportRequest,
-            selection == ExportSelection.TablePlusChart
-                ? ExportPanelTheme.Resolve(config.Metrics)
-                : null,
-            selection);
-        if (!resolution.Succeeded)
-        {
-            return Refuse(CopyEditableRefusal.BoundsRefused, TranslateBounds(resolution), droppedRows, failurePresenter);
-        }
+        EditableExportPreparation preparation = preflight.Preparation!;
 
         // Step 7 — the R6.5 lifecycle owns compose, group, copy, verified formats and cleanup.
         // The copy seam is the R6.6 verified stage, wired with the supplied ports and never
@@ -475,7 +356,7 @@ internal static class CopyEditableCommand
             stateScope,
             stagingWriter,
             groupingPort,
-            resolution,
+            preparation.Resolution,
             group => StagedShapeCopier.Copy(group, copyPort, clipboardReader),
             request.TechnicalRecord);
         StagingLifecycleOutcome lifecycle = lifecycleRun(lifecycleRequest);
@@ -493,7 +374,7 @@ internal static class CopyEditableCommand
             return Refuse(
                 MapLifecycleRefusal(lifecycle.Refusal),
                 refusalMessage,
-                droppedRows,
+                preflight.DroppedRowCount,
                 failurePresenter);
         }
 
@@ -504,14 +385,14 @@ internal static class CopyEditableCommand
             return Refuse(
                 CopyEditableRefusal.NothingCopied,
                 "Nothing could be composed for the copy. Run Refresh chart, then copy again.",
-                droppedRows,
+                preflight.DroppedRowCount,
                 failurePresenter);
         }
 
         int stagedCount = lifecycle.Composition?.StagedPrimitiveIds.Count ?? 0;
-        string successMessage = SuccessMessage(stagedCount, droppedRows);
+        string successMessage = SuccessMessage(stagedCount, preflight.DroppedRowCount);
         Present(successPresenter, successMessage);
-        return new CopyEditableOutcome(true, stagedCount, droppedRows, null, successMessage);
+        return new CopyEditableOutcome(true, stagedCount, preflight.DroppedRowCount, null, successMessage);
     }
 
     /// <summary>Chooses the success channel from the measured status-bar visibility (D9-5).</summary>
@@ -534,23 +415,6 @@ internal static class CopyEditableCommand
         ArgumentNullException.ThrowIfNull(statusBarWriter);
         ArgumentNullException.ThrowIfNull(dialogPresenter);
         return (statusBarVisible ?? true) ? statusBarWriter : dialogPresenter;
-    }
-
-    /// <summary>Maps the stored inclusion setting to the export selection.</summary>
-    /// <param name="settings">The workbook's effective settings map.</param>
-    /// <returns>Chart-only on an explicit case-insensitive <c>FALSE</c>; otherwise table-plus-chart.</returns>
-    /// <remarks>
-    /// Fail-open toward the catalogue default (<c>TRUE</c>), matching the automatic-refresh
-    /// parse precedent: a typo cannot silently change what a copy covers, and the catalogue
-    /// remains the key's authority.
-    /// </remarks>
-    internal static ExportSelection SelectExportSelection(IReadOnlyDictionary<string, string> settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        return settings.TryGetValue(ExportIncludeDataPanelSettingKey, out string? stored)
-            && string.Equals(stored?.Trim(), "FALSE", StringComparison.OrdinalIgnoreCase)
-                ? ExportSelection.ChartOnly
-                : ExportSelection.TablePlusChart;
     }
 
     /// <summary>Builds the D1 success sentence, including the dropped-row clause when needed.</summary>
@@ -704,6 +568,9 @@ internal static class CopyEditableCommand
             outcome.Copy?.Detail ?? "The staged copy could not be placed on the clipboard.",
         StagingLifecycleRefusal.CleanupResidue =>
             "The copy was made but temporary shapes could not be removed. Run Refresh chart to clean them up.",
+        // R7.6 adds the transfer seam; Copy Editable supplies no hook, so this arm is
+        // unreachable here. It is enumerated so a future refusal is a compile-time reminder.
+        StagingLifecycleRefusal.TransferRefused => ConstructionMessage,
         StagingLifecycleRefusal.NullRequest
             or StagingLifecycleRefusal.NullStateScope
             or StagingLifecycleRefusal.NullStagingPort
@@ -748,6 +615,17 @@ internal static class CopyEditableCommand
         _ => "Excel refused to create the copy.",
     };
 
+    /// <summary>Maps the stored inclusion setting to the export selection.</summary>
+    /// <param name="settings">The workbook's effective settings map.</param>
+    /// <returns>Chart-only on an explicit case-insensitive <c>FALSE</c>; otherwise table-plus-chart.</returns>
+    /// <remarks>
+    /// R7.6 moved the rule into the shared pre-flight so both export commands read one
+    /// authority; this forwarding member keeps the landed R6.8 reasoning and its integration
+    /// harness source-compatible without a second implementation.
+    /// </remarks>
+    internal static ExportSelection SelectExportSelection(IReadOnlyDictionary<string, string> settings) =>
+        EditableExportPreflight.SelectExportSelection(settings);
+
     /// <summary>Maps a lifecycle refusal to the command's typed refusal.</summary>
     /// <param name="refusal">The lifecycle's reason, or null when it succeeded.</param>
     /// <returns>The command-level refusal.</returns>
@@ -757,6 +635,8 @@ internal static class CopyEditableCommand
         StagingLifecycleRefusal.GroupingRefused => CopyEditableRefusal.GroupingRefused,
         StagingLifecycleRefusal.CopyRefused => CopyEditableRefusal.CopyRefused,
         StagingLifecycleRefusal.CleanupResidue => CopyEditableRefusal.CleanupResidue,
+        // R7.6: unreachable for Copy Editable (no transfer hook), mapped to the generic arm.
+        StagingLifecycleRefusal.TransferRefused => CopyEditableRefusal.LifecycleRefused,
         StagingLifecycleRefusal.NullRequest
             or StagingLifecycleRefusal.NullStateScope
             or StagingLifecycleRefusal.NullStagingPort
@@ -764,6 +644,57 @@ internal static class CopyEditableCommand
             or StagingLifecycleRefusal.NullResolution => CopyEditableRefusal.LifecycleRefused,
         _ => CopyEditableRefusal.LifecycleRefused,
     };
+
+    /// <summary>Maps the shared pre-flight's typed refusal to one Copy Editable line.</summary>
+    /// <param name="outcome">The pre-flight outcome carrying the underlying typed refusal.</param>
+    /// <param name="presenter">The failure presenter.</param>
+    /// <returns>The refused command outcome.</returns>
+    /// <remarks>
+    /// The pre-flight owns the chain, not the message: this translation is the command's own
+    /// authority, so Copy Editable's established strings (including the two that name the
+    /// command) are preserved exactly and can never be presented by another command.
+    /// </remarks>
+    private static CopyEditableOutcome RefusePreflight(
+        EditableExportPreflightOutcome outcome,
+        Action<string> presenter)
+    {
+        (CopyEditableRefusal refusal, string message) = outcome.Refusal switch
+        {
+            EditableExportPreflightRefusal.NullRequest =>
+                (CopyEditableRefusal.NullRequest, ConstructionMessage),
+            EditableExportPreflightRefusal.MissingTableReader =>
+                (CopyEditableRefusal.MissingTableReader, ConstructionMessage),
+            EditableExportPreflightRefusal.MissingConfigReader =>
+                (CopyEditableRefusal.MissingConfigReader, ConstructionMessage),
+            EditableExportPreflightRefusal.MissingGridMeasurement =>
+                (CopyEditableRefusal.MissingGridMeasurement, ConstructionMessage),
+            EditableExportPreflightRefusal.MissingExportRequestFactory =>
+                (CopyEditableRefusal.MissingExportRequestFactory, ConstructionMessage),
+            EditableExportPreflightRefusal.MissingBoundsResolver =>
+                (CopyEditableRefusal.MissingBoundsResolver, ConstructionMessage),
+            EditableExportPreflightRefusal.TableReadRefused =>
+                (CopyEditableRefusal.TableReadRefused, outcome.TableReadRefusal is { } readRefusal
+                    ? TranslateRead(readRefusal)
+                    : ConstructionMessage),
+            EditableExportPreflightRefusal.ConfigReadRefused =>
+                (CopyEditableRefusal.ConfigReadRefused, outcome.ConfigRefusal is { } configRefusal
+                    ? TranslateConfig(configRefusal)
+                    : ConstructionMessage),
+            EditableExportPreflightRefusal.MeasurementRefused =>
+                (CopyEditableRefusal.MeasurementRefused, outcome.MeasurementRefusal is { } gridRefusal
+                    ? TranslateMeasurement(gridRefusal)
+                    : ConstructionMessage),
+            EditableExportPreflightRefusal.ExportRequestRefused =>
+                (CopyEditableRefusal.ExportRequestRefused, outcome.ExportRequestMessage ?? ConstructionMessage),
+            EditableExportPreflightRefusal.BoundsRefused =>
+                (CopyEditableRefusal.BoundsRefused, outcome.BoundsOutcome is { } bounds
+                    ? TranslateBounds(bounds)
+                    : ConstructionMessage),
+            _ => (CopyEditableRefusal.LifecycleRefused, ConstructionMessage),
+        };
+
+        return Refuse(refusal, message, outcome.DroppedRowCount, presenter);
+    }
 
     /// <summary>Presents a refusal and returns its typed outcome.</summary>
     /// <param name="refusal">The command-level refusal.</param>

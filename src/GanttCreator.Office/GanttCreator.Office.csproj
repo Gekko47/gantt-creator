@@ -19,6 +19,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ExcelDna.Interop" />
+    <!-- R7.1 / ADR-0069: the typed PowerPoint PIA (see Directory.Packages.props). -->
+    <PackageReference Include="Microsoft.Office.Interop.PowerPoint" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />

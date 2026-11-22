@@ -279,6 +279,13 @@ $glyphs = [ordered]@{
         'rect:8,8,14,14,2'
         'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'
     )
+    # R7.6: Send to PowerPoint. Lucide `presentation` - a board on a stand, the surface
+    # the command fills with the verified editable chart group.
+    'send-to-powerpoint' = @(
+        'M2 3h20'
+        'M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3'
+        'm7 21 5-5 5 5'
+    )
 }
 
 # Control id -> glyph slug and pixel size. This is the single source for what the
@@ -319,6 +326,7 @@ $controlGlyphs = [ordered]@{
     btnPlotFinishCalendar   = @{ Glyph = 'calendar'; Size = 16 }
     btnRefreshSheet         = @{ Glyph = 'refresh-chart'; Size = 32 }
     btnCopyEditable         = @{ Glyph = 'copy-editable'; Size = 32 }
+    btnSendToPowerPoint     = @{ Glyph = 'send-to-powerpoint'; Size = 32 }
     btnWarnings             = @{ Glyph = 'warnings'; Size = 16 }
     btnDiagnostics          = @{ Glyph = 'diagnostics'; Size = 16 }
     btnOpenLog              = @{ Glyph = 'open-log'; Size = 16 }

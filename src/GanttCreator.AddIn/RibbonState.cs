@@ -252,10 +252,12 @@ internal sealed record RibbonState(
         RibbonControlIds.RepairConfig => HasActiveWorkbook,
         RibbonControlIds.RefreshSheet =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
-        // R6.8: Copy Editable is a chart command with the same R5.16b gate as Refresh,
-        // so it is never offered against a different visible sheet.
-        RibbonControlIds.CopyEditable =>
-            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        // R7.6 D6: the Export group's commands are chart commands gated on the corrected
+        // Ready rule — a readable table AND a present configuration — plus the Gantt sheet
+        // being active. SheetInitialised alone is true in a NeedsRepair workbook whose
+        // configuration is missing, where the command would refuse at the configuration read.
+        RibbonControlIds.CopyEditable or RibbonControlIds.SendToPowerPoint =>
+            Mode == RibbonMode.Ready && ActiveSheetIsGanttSheet,
         RibbonControlIds.Warnings =>
             HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         RibbonControlIds.AddActivity =>
@@ -379,6 +381,10 @@ internal sealed record RibbonState(
     {
         RibbonControlIds.DiagnosticsGroup => true,
         RibbonControlIds.GetStartedGroup => Mode == RibbonMode.FirstRun,
+        // R7.6 D6: the Export group is visible only on a fully ready workbook — a readable
+        // table AND a present configuration. It is deliberately hidden in FirstRun and
+        // NeedsRepair, where both of its commands would refuse.
+        RibbonControlIds.ExportGroup => Mode == RibbonMode.Ready,
         RibbonControlIds.DataGroup
             or RibbonControlIds.OutlineGroup
             or RibbonControlIds.LabelsGroup
@@ -386,8 +392,7 @@ internal sealed record RibbonState(
             or RibbonControlIds.StyleThemeGroup
             or RibbonControlIds.PlotAreaGroup
             or RibbonControlIds.PlotSizeGroup
-            or RibbonControlIds.SheetGroup
-            or RibbonControlIds.ExportGroup => Mode != RibbonMode.FirstRun,
+            or RibbonControlIds.SheetGroup => Mode != RibbonMode.FirstRun,
         _ => false,
     };
 }

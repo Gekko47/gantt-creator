@@ -19,6 +19,109 @@ A second table records the project-to-project references (the dependency graph);
 | [Office](../src/GanttCreator.Office/) | Core |
 | [Raster](../src/GanttCreator.Raster/) | Core |
 
+**R7.1 entry points (2026-11-21).** `IPowerPointApplicationPort` is the primitive
+application/presentation/slide fact port; `PowerPointTransferAdapter` is the typed PowerPoint
+PIA implementation and `PowerPointProxyOwnership` the reverse-order, exactly-once release
+tracker, all in `src/GanttCreator.Office/`. `PowerPointProcessSnapshot` derives `StartedByUs`
+from the `POWERPNT` process set. The dependency is [ADR-0069](adr/0069-typed-powerpoint-pia-and-ownership.md).
+Tests: `PowerPointProxyOwnershipTests`, `PowerPointProcessSnapshotTests` and
+`PowerPointTransferAdapterTests` in `tests/GanttCreator.Office.ContractTests`, and
+`PowerPointAdapterHygieneTests` in `tests/GanttCreator.Architecture.Tests`. The R6.7
+`PowerPointFixture` is typed against the same PIA, quits only a host it started and records
+its owned PID in the shared manifest; `scripts/probe-powerpoint-host.ps1` is the Step 0 probe.
+
+**R7.2 entry points (2026-11-21).** `src/GanttCreator.Core/Export/` holds the pure target
+decision table: `PowerPointTargetFacts` (the primitive host facts),
+`PowerPointTargetDecision.Decide` (the closed precedence matrix over
+`PowerPointTargetAction`/`PowerPointTargetRefusal`), and the pasteable-view constant set
+`{1, 3, 9}`. `PowerPointTargetResolver` in `src/GanttCreator.Office/` is the fact gatherer:
+it drives `IPowerPointApplicationPort.AttachOrStart`/`ReadTargetObservation`, maps the two
+records to the Core facts (the observation's `PresentationCount` is authoritative over the
+attach-time count), and calls the table. The new port member resolves the active deck through
+`ActiveWindow.Presentation` with a `Presentations[1]` fallback and reads the protected-view
+count plus the on-top `ActiveProtectedViewWindow`. Tests: `PowerPointTargetDecisionTests` in
+`tests/GanttCreator.Core.Tests/Export/`, `PowerPointTargetResolverTests` and the adapter
+target-read facts in `tests/GanttCreator.Office.ContractTests`, and the live case gate
+`PowerPointTargetDecisionIntegrationTests` in `tests/GanttCreator.Office.IntegrationTests`
+(the `OfficeIntegration` trait). `scripts/probe-protected-view-open.ps1` is the Step-0 probe
+for the protected-view open route and outline-view settability.
+
+**R7.3 entry points (2026-11-21).** `src/GanttCreator.Core/Export/` holds the pure paste
+validation: `PowerPointPasteExpectation` (staged child count N, staged group envelope, the
+repository tolerance), `PowerPointPasteFacts` (count, group count, group type, bounds) and
+`PowerPointPasteValidator` (the D1 precedence matrix over `PowerPointPasteRefusal`, with the
+documented `msoGroup` constant 6 and the measured bounds/aspect deltas on the result).
+`src/GanttCreator.Office/` holds the primitive-typed `IPowerPointPastePort` and its
+observation, `PowerPointPasteStage` (the D4 classification before validation plus the Core
+validator call, with its internal `PowerPointPasteFailureClassifier` seam), and
+`PowerPointTransferAdapter.PasteSpecialShape` (the typed `PasteSpecial(ppPasteShape)` call
+that walks the range to locate the group). Tests: `PowerPointPasteValidatorTests` in
+`tests/GanttCreator.Core.Tests/Export/`, `PowerPointPasteStageTests` and the adapter paste
+facts in `tests/GanttCreator.Office.ContractTests`, and the production-scale live gate
+`PowerPointPasteSpecialIntegrationTests` in `tests/GanttCreator.Office.IntegrationTests`
+(the `OfficeIntegration` trait; its empty-clipboard arm measures the D4 filter from evidence).
+
+**R7.4 entry points (2026-11-21, completed 2026-11-22).** `src/GanttCreator.Core/Export/` holds
+the pure fit: `SlideFit.Fit(groupBounds, slideWidthPt, slideHeightPt, insetPt)` (one scale,
+`min(slideWidth / (groupWidth + 2·inset), slideHeight / (groupHeight + 2·inset))`, because the
+D-R7.4 inset is scene-space and scales with the group; total refusal precedence over
+`SlideFitRefusal`), `SlidePlacement` (validated immutable `Left`/`Top`/`Scale`/`Width`/`Height`
+plus the single-use `TryConsume` latch that makes the D1 once-rule structural in Core) and
+`SlideFitOutcome`. `src/GanttCreator.Office/` holds `IPowerPointPlacementPort` (`ReadSlideSize`,
+`ApplyPlacement`), `PowerPointPlacementStage` (the fit call plus the typed
+`AlreadyApplied`/`GroupMissing`/`HostRejected`/`ReadBackMismatch`/`NoSlide`/
+`SlideSizeUnavailable` refusals, one technical record each, read-back compared against
+`HostOwnedGeometry.GeometryMatchTolerancePt`) and `PowerPointTransferAdapter.ReadSlideSize`/
+`ApplyPlacement`, which writes the fitted absolute box to the `msoGroup` found by `Id` — the
+recorded route (a). Tests: `SlideFitTests` in `tests/GanttCreator.Core.Tests/Export/`,
+`PowerPointPlacementStageTests` and the adapter placement facts in
+`tests/GanttCreator.Office.ContractTests`, the route probe
+`PowerPointSlideFitRouteProbeIntegrationTests` (its nine-cell table is the route evidence) and
+the Phase-3 per-size gate `PowerPointSlideFitIntegrationTests` (placement, once-rule, label
+fidelity and editability on 4:3, 16:9 and 1200 × 400), both in
+`tests/GanttCreator.Office.IntegrationTests` with the `OfficeIntegration` trait.
+
+**R7.5 entry points (2026-11-22).** `src/GanttCreator.Office/` holds the closed transfer-failure
+taxonomy `PowerPointTransferFailureKind`/`PowerPointTransferFailure`, the single projection from
+every stage result to that taxonomy `PowerPointTransferFailureMapper` (the full Core
+`PowerPointTargetDecision` switch — nine refusal arms plus `CreatePresentation` and `Proceed` —
+the `StagedCopyRefusal.ClipboardUnavailable` copy arm, the paste-stage and placement refusals,
+and `DISP_E_MEMBERNOTFOUND` as `UnsupportedBuild`), the evidence-filtered bounded retry
+`PowerPointTransientRetryPolicy`/`PowerPointRetryLoop` (mutation boundary: pure reads and the
+idempotent placement retry, a paste retries only until `PasteSpecial` has been called), and the
+D3 residue cleanup `PowerPointPasteResidueCleanup`. The two additive port members are
+`IPowerPointApplicationPort.CreatePresentationWithBlankSlide()` (the `NoPresentation` arm's
+producer) and `IPowerPointPastePort.DeletePastedGroup(int)`; `PowerPointTransferAdapter` wires
+both plus the retry loop and keeps `PowerPointProxyOwnership`'s reverse-order exactly-once
+release intact. Tests: `PowerPointTransferFailureMapperTests`,
+`PowerPointTransientRetryPolicyTests`, `PowerPointRetryLoopTests` and
+`PowerPointPasteResidueCleanupTests` in `tests/GanttCreator.Office.ContractTests`, the
+`PowerPoint|ProtectionGuard` architecture scans in `tests/GanttCreator.Architecture.Tests`, and
+the live safe-failure gate `PowerPointTransferFailureIntegrationTests` in
+`tests/GanttCreator.Office.IntegrationTests` (the `OfficeIntegration` trait).
+
+**R7.6 entry points (2026-11-22).** `src/GanttCreator.AddIn/EditableExportPreflight.cs` is the one
+read → configuration → validate → measure → export request → selection → bounds authority, with the
+post-resolution `InvalidBounds` guard (a zero extent is refused before any staging shape exists);
+both export commands consume it and each translates the typed refusal into its own message, so no
+Copy Editable string can be presented by another command. `SendToPowerPointCommand` runs the
+pre-flight plus the R6.5 lifecycle with the transfer hook: `PowerPointTargetResolver` → announced
+`CreatePresentationWithBlankSlide` → `PowerPointPasteStage` (the expectation assembled from
+`StagedGroupOutcome.ChildOrder`/`Bounds`) → `PowerPointPlacementStage` (`ExportBounds.Bounds` and the
+themed `ChartOuterPaddingPt` inset) → `PowerPointTransferFailureMapper`, with
+`PowerPointPasteResidueCleanup` on every post-paste failure and `MapResidueCleanup` substituting a
+truthful host failure when the delete is refused, so the "pasted shapes were removed" line is never
+presented unconfirmed. The live entry owns one `PowerPointTransferAdapter` over one
+`PowerPointProxyOwnership` and disposes it in a `using`. `RibbonState` gates `ExportGroup` on
+`Mode == RibbonMode.Ready` and both `CopyEditable`/`SendToPowerPoint` buttons on that plus
+`ActiveSheetIsGanttSheet` (D6); `RibbonControlIds.SendToPowerPoint` (`btnSendToPowerPoint`, glyph
+`send-to-powerpoint`) and `GanttRibbon.OnSendToPowerPointClick` are the surface. Tests:
+`EditableExportPreflightTests` and `SendToPowerPointCommandTests` in `tests/GanttCreator.AddIn.Tests`,
+the transfer-seam ordering/refusal facts in `StagingLifecycleTests`, and the live gate
+`SendToPowerPointIntegrationTests` (`OfficeIntegration`) whose Required arm proves a deck with
+unsaved changes survives intact and whose zero-deck arm uses the fixture's `InitializeWithoutPresentation`
+on a fixture-started host the fixture also tears down.
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call
@@ -90,7 +193,7 @@ R6.8 (19 November 2026) wires the command and the Export group: `src/GanttCreato
 Read the [implementation-guide manifest](work-items/IMPLEMENTATION-PLAN.md), the current [work item](work-items/), and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results. A symbol outline is only a locator, treat it as navigation aid, not as compiler or reference evidence — verify any finding against current source.
 From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
 After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`. `verify.ps1` runs the changed-code mutation gate as its step 14 via [`mutation-gate.ps1`](../scripts/mutation-gate.ps1); on a long-lived branch the gate halts when `--since origin/main` spans more than 30 Core files, and the sanctioned remedy is `pwsh ./scripts/verify.ps1 -MutationSince <nearer merge-base>` (recorded in R3.13), never a threshold change. The NuGet vulnerability scan is CI-only since W15 ([`scan-vulnerable-packages.ps1`](../scripts/scan-vulnerable-packages.ps1)); it needs network access, which the local gate must not require.
-Live Office checks are separate: `pwsh ./scripts/verify-office.ps1` when required; see [verification policy](05-GIT-QUALITY.md).
+Live Office checks are separate: `pwsh ./scripts/verify-office.ps1` when required, and the R7.7 transfer soak runs on the reference machine only via `pwsh ./scripts/verify-transfer-soak.ps1` (its own measured deadline; excluded from every routine gate); see [verification policy](05-GIT-QUALITY.md).
 
 R5.19 (16 November 2026) adds one commit gate and one generator inside `verify-quick.ps1`: [`check-ribbon-glyphs.ps1`](../scripts/check-ribbon-glyphs.ps1) verifies that every control declares `getImage`, that the ribbon and the generated [`RibbonGlyphCatalog.g.cs`](../src/GanttCreator.AddIn/RibbonGlyphCatalog.g.cs) agree, and that each glyph exists in both palettes at its declared size with an approved stroke colour; [`gen-ribbon-glyphs.ps1`](../scripts/gen-ribbon-glyphs.ps1) is the generator that must be rerun, not edited, when a glyph changes. `check-ribbon-icons.ps1` stays wired but now reports that no `imageMso` id remains on this tab.
 Update this map in the same change as mapped responsibilities, entry points, test locations or commands; inspect working-tree edits before relying on it.

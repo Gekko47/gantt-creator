@@ -658,6 +658,9 @@ public class GanttRibbonTests
                 // R6.8: Copy Editable sits in the new Export group, between the Sheet and
                 // Diagnostics groups in document order, and carries the same R5.16b gate.
                 RibbonControlIds.CopyEditable,
+                // R7.6: Send to PowerPoint follows Copy Editable in the Export group's
+                // document order and shares its corrected Mode == Ready gate.
+                RibbonControlIds.SendToPowerPoint,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 // Owner ruling 2026-11-09: the CHART and CELL lock toggles replace the shape pair.

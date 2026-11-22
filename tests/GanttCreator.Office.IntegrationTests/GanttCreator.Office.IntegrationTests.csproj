@@ -23,6 +23,8 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="ExcelDna.Interop" />
+    <!-- R7.1: the typed PowerPoint PIA replaces the late-bound R6.7 fixture. -->
+    <PackageReference Include="Microsoft.Office.Interop.PowerPoint" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />

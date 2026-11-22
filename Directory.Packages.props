@@ -30,6 +30,17 @@
     <PackageVersion Include="ExcelDna.Integration" Version="1.9.0" />
     <PackageVersion Include="ExcelDna.Interop"    Version="16.0.0" />
 
+    <!--
+      R7.1 / ADR-0069. The PowerPoint PIA is NOT supplied by ExcelDna.Interop
+      16.0.0 (its restored file list is the Excel PIA, Microsoft.Vbe.Interop
+      and office.dll only). Microsoft publishes no 16.x PowerPoint interop
+      package; 15.0.4420.1018 is the highest published version and is the
+      Microsoft-signed Office 2013 PIA repackaged for NuGet
+      (assembly version 15.0.0.0). It carries only
+      Microsoft.Office.Interop.PowerPoint.dll, so it adds no second office.dll.
+    -->
+    <PackageVersion Include="Microsoft.Office.Interop.PowerPoint" Version="15.0.4420.1018" />
+
     <!-- xUnit. The unit / contract / addin test projects use these. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk"           Version="18.12.0" />
     <PackageVersion Include="xunit"                            Version="2.9.3" />

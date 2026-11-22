@@ -436,6 +436,44 @@ public sealed class ProtectionGuardFirstTests
         // and no interop type - and it must stay that way: arming is a session fact, and
         // a host call here would be the per-refresh round trip the design forbids.
         "src/GanttCreator.Office/ProtectionArmingState.cs",
+        // R7.1: the PowerPoint fact port, its records and its two helpers. None of them
+        // touches the worksheet: the port is a declaration only, the snapshot reads
+        // process facts, the tracker releases proxies, and the adapter reads
+        // presentation/window/view/slide facts. A protection consultation here would be
+        // unreachable code -- the worksheet-protection question belongs to whoever writes
+        // to the workbook, and Phase 7 never writes to it. The adapter's one host call is
+        // a read; its ownership rule is pinned by PowerPointProxyOwnershipTests.
+        "src/GanttCreator.Office/IPowerPointApplicationPort.cs",
+        "src/GanttCreator.Office/PowerPointProcessSnapshot.cs",
+        "src/GanttCreator.Office/PowerPointProxyOwnership.cs",
+        "src/GanttCreator.Office/PowerPointTransferAdapter.cs",
+        // R7.2: the target fact gatherer drives the port and calls the Core table; it writes
+        // nothing, holds no proxy, and consults no guard.
+        "src/GanttCreator.Office/PowerPointTargetResolver.cs",
+        // R7.3: the paste port is a declaration whose observation names no interop type; the
+        // stage drives the port and calls the Core validator. Neither touches the workbook --
+        // a paste mutates a PowerPoint slide, not the visible worksheet -- so a protection
+        // consultation here would be unreachable code. The refusal leaves the worksheet
+        // untouched; R7.5 owns the transfer failure policy.
+        "src/GanttCreator.Office/IPowerPointPastePort.cs",
+        "src/GanttCreator.Office/PowerPointPasteStage.cs",
+        // R7.4: the placement port is a declaration whose single write member names one shape
+        // by identity; the stage drives the port and verifies the read-back. Neither touches the
+        // workbook -- a placement mutates a PowerPoint slide, not the visible worksheet -- so a
+        // protection consultation here would be unreachable code. The refusal leaves the
+        // worksheet untouched; R7.5 owns the transfer failure policy.
+        "src/GanttCreator.Office/IPowerPointPlacementPort.cs",
+        "src/GanttCreator.Office/PowerPointPlacementStage.cs",
+        // R7.5: the transfer-failure taxonomy, the measured retry policy and its bounded loop,
+        // the mapper and the paste-residue cleanup. None touches the Excel worksheet -- the
+        // taxonomy and mapper are pure, the retry loop carries no host call, and the cleanup
+        // deletes a PowerPoint slide shape -- so a protection consultation here would be
+        // unreachable code, the same statement the R7.1-R7.4 entries make.
+        "src/GanttCreator.Office/PowerPointTransferFailure.cs",
+        "src/GanttCreator.Office/PowerPointTransientRetryPolicy.cs",
+        "src/GanttCreator.Office/PowerPointRetryLoop.cs",
+        "src/GanttCreator.Office/PowerPointTransferFailureMapper.cs",
+        "src/GanttCreator.Office/PowerPointPasteResidueCleanup.cs",
     ];
 
     /// <summary>

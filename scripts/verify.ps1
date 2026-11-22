@@ -183,8 +183,12 @@ Invoke-Step 'test (OfficeIntegration excluded)' {
     if (Test-Path -LiteralPath $coverageRoot) {
         Remove-Item -LiteralPath $coverageRoot -Recurse -Force
     }
+    # The filter is NEGATED, so the TransferSoak exclusion (R7.7 D4) is
+    # load-bearing: the 25-transfer soak is tagged TransferSoak only and must
+    # run solely through scripts/verify-transfer-soak.ps1, never here. The
+    # soak adds no coverage of its own, so excluding it changes no threshold.
     dotnet test $Solution -c $Configuration --no-build --no-restore `
-        --filter 'Category!=OfficeIntegration' `
+        --filter 'Category!=OfficeIntegration&Category!=TransferSoak' `
         --collect:'XPlat Code Coverage' --results-directory $coverageRoot
 }
 
