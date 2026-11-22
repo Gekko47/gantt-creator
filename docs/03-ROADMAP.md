@@ -457,7 +457,7 @@ Goal: export an exact-size PNG from the scene without depending on the Excel cli
 
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
-| R8.1 | Add width/unit parsing, aspect calculation, rounding, and safety limits | Table-driven cm/in/px, ratio, rounding, and extreme-size tests | None |
+| R8.1 | Add width/unit parsing, aspect calculation, rounding, and safety limits | Table-driven cm/in/px, ratio, rounding, and extreme-size tests (landed early: `tests/GanttCreator.Raster.Tests/ExportSizeTests.cs`, 25 methods / 41 cases — see revision-4 note) | None |
 | R8.2 | Add SkiaSharp renderer for rectangles, lines, polygons, clipping, and z-order | Primitive pixel/golden tests and deterministic rerender comparison | None |
 | R8.2a | Decide pinned-font provisioning for raster text and golden images (ADR) | The ADR records installed-versus-bundled-versus-fallback with licence evidence; a font-presence probe reports the exact resolved font on the reference machine; the golden-image policy states what a missing pinned font does — a clear error or approved fallback, never a silent substitution | None |
 | R8.3 | Add deterministic text and hatch/pattern rendering | Pinned-font golden, clipping, and pattern tests | None |
