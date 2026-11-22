@@ -100,6 +100,28 @@ release intact. Tests: `PowerPointTransferFailureMapperTests`,
 the live safe-failure gate `PowerPointTransferFailureIntegrationTests` in
 `tests/GanttCreator.Office.IntegrationTests` (the `OfficeIntegration` trait).
 
+**R7.6 entry points (2026-11-22).** `src/GanttCreator.AddIn/EditableExportPreflight.cs` is the one
+read → configuration → validate → measure → export request → selection → bounds authority, with the
+post-resolution `InvalidBounds` guard (a zero extent is refused before any staging shape exists);
+both export commands consume it and each translates the typed refusal into its own message, so no
+Copy Editable string can be presented by another command. `SendToPowerPointCommand` runs the
+pre-flight plus the R6.5 lifecycle with the transfer hook: `PowerPointTargetResolver` → announced
+`CreatePresentationWithBlankSlide` → `PowerPointPasteStage` (the expectation assembled from
+`StagedGroupOutcome.ChildOrder`/`Bounds`) → `PowerPointPlacementStage` (`ExportBounds.Bounds` and the
+themed `ChartOuterPaddingPt` inset) → `PowerPointTransferFailureMapper`, with
+`PowerPointPasteResidueCleanup` on every post-paste failure and `MapResidueCleanup` substituting a
+truthful host failure when the delete is refused, so the "pasted shapes were removed" line is never
+presented unconfirmed. The live entry owns one `PowerPointTransferAdapter` over one
+`PowerPointProxyOwnership` and disposes it in a `using`. `RibbonState` gates `ExportGroup` on
+`Mode == RibbonMode.Ready` and both `CopyEditable`/`SendToPowerPoint` buttons on that plus
+`ActiveSheetIsGanttSheet` (D6); `RibbonControlIds.SendToPowerPoint` (`btnSendToPowerPoint`, glyph
+`send-to-powerpoint`) and `GanttRibbon.OnSendToPowerPointClick` are the surface. Tests:
+`EditableExportPreflightTests` and `SendToPowerPointCommandTests` in `tests/GanttCreator.AddIn.Tests`,
+the transfer-seam ordering/refusal facts in `StagingLifecycleTests`, and the live gate
+`SendToPowerPointIntegrationTests` (`OfficeIntegration`) whose Required arm proves a deck with
+unsaved changes survives intact and whose zero-deck arm uses the fixture's `InitializeWithoutPresentation`
+on a fixture-started host the fixture also tears down.
+
 R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetChanges`,
 `GanttRefreshScheduler`, `ExcelApplicationAdapter.SubscribeSheetChanged`, and
 `ExcelSheetChangeAnalyzer`; configuration/command commits call
