@@ -2614,12 +2614,26 @@ public sealed class SceneBuilderTests
     /// shuffled input order produces an identical scene.
     /// </param>
     /// <returns>The built scene.</returns>
-    internal static GanttScene BuildScene(IReadOnlyList<GanttRowDto>? rows = null)
+    internal static GanttScene BuildScene(IReadOnlyList<GanttRowDto>? rows = null) =>
+        Build(BuildRequest(rows));
+
+    /// <summary>
+    /// Builds the shared reference build request that the golden scene, the panel
+    /// scene, and the R8.4 profile-equivalence pin all consume.
+    /// </summary>
+    /// <param name="rows">The rows to build from, or <see langword="null"/> for the committed fixture.</param>
+    /// <param name="withPanel">Whether the request carries the §3 data panel theme.</param>
+    /// <returns>The reference request, profiled as <see cref="SceneCompositionProfile.Raster"/>.</returns>
+    /// <remarks>
+    /// The fixture's inputs exist once, so the profile-equivalence pin re-profiles this
+    /// exact request instead of restating its fifty members (R8.4 F3).
+    /// </remarks>
+    internal static SceneBuildRequest BuildRequest(IReadOnlyList<GanttRowDto>? rows = null, bool withPanel = false)
     {
         GanttValidationOutcome outcome = rows is null
             ? ReferenceSceneFixture.LoadValidated()
             : GanttRowValidator.Validate([.. rows]);
-        SceneBuildRequest request = new()
+        return new SceneBuildRequest
         {
             Events = outcome.Events.ToList(),
             Registry = ReferenceSceneBuilder.StyleRegistry,
@@ -2673,10 +2687,23 @@ public sealed class SceneBuilderTests
             LabelGapPt = 2,
             RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Panel = withPanel
+                ? new PanelTheme(
+                    new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),
+                    new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+                    new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
+                    new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
+                    new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5))
+                : null,
         };
+    }
 
+    private static GanttScene Build(SceneBuildRequest request, string refusalMessage = "Scene build refused: ")
+    {
         SceneBuildOutcome build = SceneBuilder.TryBuild(request);
-        Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
+        Assert.True(build.Succeeded, refusalMessage + build.Refusal);
         return build.Result!.Scene;
     }
 
@@ -2729,56 +2756,6 @@ public sealed class SceneBuilderTests
     /// one, so the committed golden stays free of them. This builds the same scene with
     /// the panel added, which is what lets the R3.16 data-panel row be exercised at all.
     /// </remarks>
-    internal static GanttScene BuildSceneWithPanel()
-    {
-        GanttValidationOutcome outcome = ReferenceSceneFixture.LoadValidated();
-        SceneBuildRequest request = new()
-        {
-            Events = outcome.Events.ToList(),
-            Registry = ReferenceSceneBuilder.StyleRegistry,
-            Grid = PanelCellGrid.TryCreate(
-                [
-                    new PanelColumn("Id", 80),
-                    new PanelColumn("Type", 120),
-                    new PanelColumn("Description", 180),
-                    new PanelColumn("Start", 70),
-                    new PanelColumn("Finish", 70),
-                ],
-                [.. Enumerable.Repeat(10.0, outcome.Events.Count)], 10,                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
-            PlotBounds = new RectD(520, 110, 600, 290),
-            Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
-            LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
-            FrameTheme = ReferenceSceneBuilder.FrameTheme,
-            PlotStart = ReferenceSceneFixture.PlotStart,
-            PlotFinish = ReferenceSceneFixture.PlotFinish,
-            Scale = GanttTimeScale.Month,
-            PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
-            DateFormat = GanttDateDisplayFormat.DdMMyyyy,
-            Title = ReferenceSceneFixture.Title,
-            GridLinePt = 0.5,
-            MajorBoundaryPt = 1,
-            MilestoneSizePt = 8,
-            TitleBandHeightPt = 14,
-            YearBandHeightPt = 16,
-            PeriodBandHeightPt = 20,
-            DelineatorLinePt = 1,
-            DelineatorStackGapPt = 10,
-            LabelGapPt = 2,
-            RowHeightPt = 8,
-            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
-            Panel = new PanelTheme(
-                new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),
-                new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
-                new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
-                new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
-                new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5)),
-            // A drawn panel belongs to a profile whose destination has no cells of
-            // its own; the live profile is refused one (R4.8A D4).
-            Profile = SceneCompositionProfile.Raster,
-        };
-
-        SceneBuildOutcome build = SceneBuilder.TryBuild(request);
-        Assert.True(build.Succeeded, "The panel-bearing scene build refused: " + build.Refusal);
-        return build.Result!.Scene;
-    }
+    internal static GanttScene BuildSceneWithPanel() =>
+        Build(BuildRequest(withPanel: true), "The panel-bearing scene build refused: ");
 }
