@@ -213,6 +213,12 @@ internal static class PngPreview
     internal static string PresetItemId(SizePreset preset) =>
         RibbonControlIds.PngSizeItemPrefix + preset.Key;
 
+    /// <summary>The preset dropdown label (D6): the display name and the width in centimetres.</summary>
+    /// <param name="preset">The size preset.</param>
+    /// <returns>For example <c>A4 (landscape) \u2014 29.7 cm</c>, derived from the preset contract.</returns>
+    internal static string PresetLabel(SizePreset preset) =>
+        string.Concat(preset.DisplayName, " \u2014 ", CmText(preset.WidthPt), " cm");
+
     /// <summary>Resolves a preset dropdown item id back to its size preset.</summary>
     /// <param name="itemId">The selected item id, or null when unprobeable.</param>
     /// <returns>The matching preset, or null when the id names none.</returns>

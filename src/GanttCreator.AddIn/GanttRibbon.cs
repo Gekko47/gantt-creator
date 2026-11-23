@@ -353,6 +353,260 @@ public class GanttRibbon : ExcelRibbon
     private static void RunSendToPowerPoint() => SendToPowerPointCommand.RunForExcel();
 
     /// <summary>
+    /// The stored PNG width text for the width box (R8.7), asked through <c>getText</c>.
+    /// The answer is the text the user last committed, not a rewritten value. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The stored width text.</returns>
+    public string GetPngWidth(IRibbonControl control) => GetPngWidth(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPngWidth(IRibbonControl)"/> against an injected state service.
+    /// Internal so contract tests can verify the routing without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service holding the session input.</param>
+    /// <returns>The stored width text, or an empty string when the getter fails.</returns>
+    internal static string GetPngWidth(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPngWidthText();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Commits the PNG width the user typed (R8.7). The setter is store-only: it keeps the
+    /// text verbatim so the preview can name an invalid value, and invalidates the ribbon.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="text">The committed text Excel passes.</param>
+    public void OnPngWidthChange(IRibbonControl control, string text) =>
+        OnPngWidthChange(control, text, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPngWidthChange(IRibbonControl, string)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="text">The committed text, or null when unprobeable.</param>
+    /// <param name="stateService">The state service receiving the value.</param>
+    internal static void OnPngWidthChange(
+        IRibbonControl? control,
+        string? text,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPngWidth(text);
+    }
+
+    /// <summary>
+    /// The PNG unit dropdown's selected index (R8.7). Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>0 for centimetres, 1 for inches, 2 for pixels.</returns>
+    public int GetPngUnit(IRibbonControl control) => GetPngUnit(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPngUnit(IRibbonControl)"/> against an injected state service.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service holding the session input.</param>
+    /// <returns>The selected index, or 0 when the getter fails.</returns>
+    internal static int GetPngUnit(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPngUnitIndex();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Commits the PNG unit the user chose (R8.7 D3). The number is never converted:
+    /// it means that many of the selected unit, and the preview recomputes.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="itemId">The selected unit item id.</param>
+    /// <param name="selectedIndex">The selected index; unused because the id is the key.</param>
+    public void OnPngUnitChange(IRibbonControl control, string itemId, int selectedIndex) =>
+        OnPngUnitChange(control, itemId, selectedIndex, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPngUnitChange(IRibbonControl, string, int)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="itemId">The selected unit item id, or null when unprobeable.</param>
+    /// <param name="selectedIndex">The selected index; unused because the id is the key.</param>
+    /// <param name="stateService">The state service receiving the value.</param>
+    internal static void OnPngUnitChange(
+        IRibbonControl? control,
+        string? itemId,
+        int selectedIndex,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        _ = selectedIndex;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPngUnit(itemId);
+    }
+
+    /// <summary>
+    /// Returns how many rows the PNG preset dropdown offers (R8.7 D6): one per
+    /// <see cref="SizePresets.All"/> entry, so a new preset appears without a second list.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The catalogue count.</returns>
+    public int GetPngSizeItemCount(IRibbonControl control)
+    {
+        _ = control;
+        return SizePresets.All.Count;
+    }
+
+    /// <summary>
+    /// Returns the item id at the given index for the PNG preset dropdown. Excel's
+    /// dynamic dropDown contract asks for this through <c>getItemID</c>.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The item id, or an empty string when the index is out of range.</returns>
+    public string GetPngSizeItemID(IRibbonControl control, int index)
+    {
+        _ = control;
+        return index >= 0 && index < SizePresets.All.Count
+            ? PngPreview.PresetItemId(SizePresets.All[index])
+            : string.Empty;
+    }
+
+    /// <summary>
+    /// Returns the label at the given index for the PNG preset dropdown: the preset's
+    /// display name and its width in centimetres.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The label, or an empty string when the index is out of range.</returns>
+    public string GetPngSizeItemLabel(IRibbonControl control, int index)
+    {
+        _ = control;
+        return index >= 0 && index < SizePresets.All.Count
+            ? PngPreview.PresetLabel(SizePresets.All[index])
+            : string.Empty;
+    }
+
+    /// <summary>
+    /// The PNG preset dropdown's selected index (R8.7 D6). Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The matching preset index, or -1 for a custom width.</returns>
+    public int GetPngSizeSelectedIndex(IRibbonControl control) =>
+        GetPngSizeSelectedIndex(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPngSizeSelectedIndex(IRibbonControl)"/> against an injected
+    /// state service.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service holding the session input.</param>
+    /// <returns>The selected preset index, or -1 when none matches.</returns>
+    internal static int GetPngSizeSelectedIndex(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPngPresetIndex();
+        }
+        catch
+        {
+            return -1;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Commits the PNG width preset the user chose (R8.7 D6): writes the preset's width in
+    /// centimetres and selects the centimetre unit atomically.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="itemId">The selected preset item id.</param>
+    /// <param name="selectedIndex">The selected index; unused because the id is the key.</param>
+    public void OnPngSizeChange(IRibbonControl control, string itemId, int selectedIndex) =>
+        OnPngSizeChange(control, itemId, selectedIndex, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPngSizeChange(IRibbonControl, string, int)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="itemId">The selected preset item id, or null when unprobeable.</param>
+    /// <param name="selectedIndex">The selected index; unused because the id is the key.</param>
+    /// <param name="stateService">The state service receiving the value.</param>
+    internal static void OnPngSizeChange(
+        IRibbonControl? control,
+        string? itemId,
+        int selectedIndex,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        _ = selectedIndex;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPngPreset(itemId);
+    }
+
+    /// <summary>
+    /// The PNG size preview text (R8.7 D1/D5), asked through <c>getLabel</c>: the calculated
+    /// height and pixel dimensions for the recorded aspect, the actionable validation
+    /// message, or the not-available state. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The preview text.</returns>
+    public string GetPngPreview(IRibbonControl control) =>
+        GetPngPreview(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPngPreview(IRibbonControl)"/> against an injected state service.
+    /// Internal so contract tests can verify the routing without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service holding the session input.</param>
+    /// <returns>The preview text, or an empty string when the getter fails.</returns>
+    internal static string GetPngPreview(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPngPreviewText();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): presses to flip whether the chart's elements
     /// can be dragged. One control replaces the old Unlock shape / Lock shapes pair, and its pressed
     /// state is the lock state, so it can always be found and always shows what is true.

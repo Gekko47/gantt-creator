@@ -2403,10 +2403,21 @@ internal class RibbonStateService
     /// describing the last completed render.
     /// </summary>
     /// <param name="aspect">The recorded aspect, or null for the not-available state.</param>
-    internal void UpdateExportAspect(ExportAspectPt? aspect)
+    /// <returns>
+    /// Whether the cached value changed. The explicit pass wants a full re-query; the
+    /// automatic pass invalidates only the preview label and the export action, because
+    /// it re-runs on every debounced edit and a full re-query per pass is the cost
+    /// <c>RunSilentForExcel</c> deliberately avoids.
+    /// </returns>
+    internal bool UpdateExportAspect(ExportAspectPt? aspect)
     {
+        if (_exportAspect == aspect)
+        {
+            return false;
+        }
+
         _exportAspect = aspect;
-        Invalidate();
+        return true;
     }
 
     /// <summary>

@@ -1958,6 +1958,22 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     /// <summary>
+    /// R8.7 D4: the setter reports whether the value moved, so the automatic path can
+    /// invalidate only the two controls that read it instead of the whole ribbon on
+    /// every debounced pass.
+    /// </summary>
+    [Fact]
+    public void UpdateExportAspect_reports_a_change_only_when_the_value_differs()
+    {
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true });
+
+        Assert.True(service.UpdateExportAspect(new ExportAspectPt(800, 400)));
+        Assert.False(service.UpdateExportAspect(new ExportAspectPt(800, 400)));
+        Assert.True(service.UpdateExportAspect(null));
+        Assert.False(service.UpdateExportAspect(null));
+    }
+
+    /// <summary>
     /// R8.7 D5: the cached aspect belongs to the workbook it was recorded from, so a
     /// switch clears it. Otherwise the first workbook's aspect would size exports for
     /// a workbook whose chart may have a different shape.

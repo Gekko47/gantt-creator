@@ -241,11 +241,32 @@
              pipeline and reports success only after the clipboard formats are verified;
              Send to PowerPoint runs the same pipeline and transfers the verified group
              to the user's active PowerPoint slide without ever saving or closing it.
-             The two later members arrive with their own rows - PNG width/unit (R8.7)
-             and Export PNG (R8.8) - and the group deliberately leaves them unstubbed. -->
+             R8.7 adds the PNG width controls: the box takes the number, the dropdown
+             names the unit (the number is never converted, D3), the preset dropdown
+             writes a catalogue width, and the label states ExportSize's calculated
+             height and pixel size for the aspect the last completed refresh recorded.
+             Export PNG itself lands with R8.8 and is deliberately not stubbed here. -->
         <group id="grpExport" label="Export" getVisible="GetVisible">
           <button id="btnCopyEditable" label="Copy editable" size="large" getImage="GetGlyph" keytip="CP" screentip="Copy the Gantt as editable shapes" supertip="Copies the chart and table as one editable group of shapes. Paste it into Excel or PowerPoint, then ungroup to edit the elements. A table with error rows copies the valid rows and says what was left out." getEnabled="GetEnabled" onAction="OnCopyEditableClick"/>
           <button id="btnSendToPowerPoint" label="Send to PowerPoint" size="large" getImage="GetGlyph" keytip="SP" screentip="Send the Gantt to PowerPoint" supertip="Pastes the same editable chart and table as one group on the active PowerPoint slide, fitted to the slide. Your presentation is never saved, closed, or terminated." getEnabled="GetEnabled" onAction="OnSendToPowerPointClick"/>
+          <box id="boxPngWidth" boxStyle="horizontal">
+            <labelControl id="lblPngWidth" label="PNG width"/>
+            <editBox id="ebxPngWidth" keytip="PW" screentip="PNG width" supertip="The width of the exported PNG in the selected unit. The height follows the chart's aspect ratio, so it is calculated rather than entered." getText="GetPngWidth" getEnabled="GetEnabled" onChange="OnPngWidthChange" sizeString="0000000000"/>
+            <!-- R5.9: the label is the dropdown's visible, accessible name. -->
+            <labelControl id="lblPngUnit" label="Unit"/>
+            <dropDown id="ddnPngUnit" keytip="PU" screentip="Width unit" supertip="Chooses centimetres, inches, or pixels. The width number is not converted; it means that many of the selected unit." getSelectedItemIndex="GetPngUnit" getEnabled="GetEnabled" onAction="OnPngUnitChange">
+              <item id="pngUnitCm" label="cm"/>
+              <item id="pngUnitIn" label="in"/>
+              <item id="pngUnitPx" label="px"/>
+            </dropDown>
+          </box>
+          <box id="boxPngSize" boxStyle="horizontal">
+            <labelControl id="lblPngSize" label="Preset"/>
+            <dropDown id="ddnPngSize" keytip="PP" screentip="PNG width preset" supertip="Fills the width from a page or slide size preset. Free-form widths remain available in the box above." getItemCount="GetPngSizeItemCount" getItemID="GetPngSizeItemID" getItemLabel="GetPngSizeItemLabel" getSelectedItemIndex="GetPngSizeSelectedIndex" getEnabled="GetEnabled" onAction="OnPngSizeChange"/>
+          </box>
+          <box id="boxPngPreview" boxStyle="horizontal">
+            <labelControl id="lblPngPreview" getLabel="GetPngPreview"/>
+          </box>
         </group>
         <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">
           <button id="btnDiagnostics" label="Diagnostics" getImage="GetGlyph" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

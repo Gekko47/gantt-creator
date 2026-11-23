@@ -250,6 +250,22 @@ public sealed class PngPreviewTests
     }
 
     /// <summary>
+    /// The preset label names the preset and its width in centimetres, so the
+    /// dropdown reads as catalogue data rather than a bare key.
+    /// </summary>
+    [Fact]
+    public void The_preset_label_names_the_preset_and_its_width_in_centimetres()
+    {
+        foreach (SizePreset preset in SizePresets.All)
+        {
+            string label = PngPreview.PresetLabel(preset);
+
+            Assert.StartsWith(preset.DisplayName, label, StringComparison.Ordinal);
+            Assert.Contains(PngPreview.CmText(preset.WidthPt) + " cm", label, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// The preset dropdown selects only the exact text a selection wrote: a custom
     /// width or a non-centimetre unit reads as no selection rather than a phantom row.
     /// </summary>

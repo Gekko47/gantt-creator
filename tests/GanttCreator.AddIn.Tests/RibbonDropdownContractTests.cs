@@ -1,5 +1,6 @@
 using System.Xml.Linq;
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 
 namespace GanttCreator.AddIn.Tests;
 
@@ -100,6 +101,55 @@ public class RibbonDropdownContractTests
     }
 
     /// <summary>
+    /// R8.7 D3: every unit row the dropdown offers selects that unit, and the
+    /// selected index reads back as the row Excel showed. The ids are pinned
+    /// against the constants, so a renamed row fails here rather than silently
+    /// selecting nothing.
+    /// </summary>
+    [Fact]
+    public void Every_png_unit_item_id_lands_on_its_own_index()
+    {
+        List<string> ids = ItemIds(RibbonControlIds.PngUnit);
+        Assert.Equal(
+            [
+                RibbonControlIds.PngUnitCm,
+                RibbonControlIds.PngUnitIn,
+                RibbonControlIds.PngUnitPx,
+            ],
+            ids);
+        var service = ArmedService();
+
+        foreach ((string id, int expectedIndex) in ids.Select((id, index) => (id, index)))
+        {
+            GanttRibbon.OnPngUnitChange(null, id, expectedIndex, service);
+
+            Assert.Equal(expectedIndex, GanttRibbon.GetPngUnit(null, service));
+        }
+    }
+
+    /// <summary>
+    /// R8.7 D6: the preset dropdown is projected from <see cref="SizePresets.All"/>,
+    /// so a new preset appears without a second list and a dropped one fails here.
+    /// </summary>
+    [Fact]
+    public void The_png_preset_dropdown_offers_every_size_preset()
+    {
+        GanttRibbon ribbon = new();
+        int count = ribbon.GetPngSizeItemCount(null!);
+        Assert.Equal(SizePresets.All.Count, count);
+
+        List<string> ids = [.. Enumerable.Range(0, count).Select(index => ribbon.GetPngSizeItemID(null!, index))];
+        Assert.Equal(SizePresets.All.Select(PngPreview.PresetItemId), ids);
+
+        // The default width is the A4-landscape preset, so the dropdown shows that row
+        // rather than a phantom selection or none.
+        int landscapeIndex = SizePresets.All
+            .ToList()
+            .FindIndex(preset => ReferenceEquals(preset, SizePresets.A4Landscape));
+        Assert.Equal(landscapeIndex, GanttRibbon.GetPngSizeSelectedIndex(null, ArmedService()));
+    }
+
+    /// <summary>
     /// The dynamic lists must be coherent before any workbook, table or
     /// selection exists: a non-negative count, a selected index that lies inside
     /// that count, and a non-empty unique id for every index the count promises.
@@ -131,6 +181,16 @@ public class RibbonDropdownContractTests
             index => GanttRibbon.GetCustomStyleItemID(null, index, service),
             index => GanttRibbon.GetCustomStyleItemLabel(null, index, service),
             () => GanttRibbon.GetCustomStyleSelectedIndex(null, service));
+
+        // R8.7 D6: the preset list is static, so its coherence cannot depend on a
+        // workbook at all; the selected index must still name a real row.
+        GanttRibbon ribbon = new();
+        AssertListIsCoherent(
+            "png size",
+            () => ribbon.GetPngSizeItemCount(null!),
+            index => ribbon.GetPngSizeItemID(null!, index),
+            index => ribbon.GetPngSizeItemLabel(null!, index),
+            () => GanttRibbon.GetPngSizeSelectedIndex(null, service));
     }
 
     private static void AssertListIsCoherent(

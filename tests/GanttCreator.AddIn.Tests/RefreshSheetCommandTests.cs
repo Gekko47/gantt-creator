@@ -205,6 +205,68 @@ public class RefreshSheetCommandTests
             source.IndexOf(repair, repairAt + repair.Length, StringComparison.Ordinal));
     }
 
+    // ---------------------------------------------------------------------
+    // R8.7 D4/D5 — the export aspect published by a completed refresh.
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// A completed pass hands its recorded aspect to the ribbon state, so the PNG
+    /// preview converts against the chart the user is looking at — not against a
+    /// second composition built for the preview.
+    /// </summary>
+    [Fact]
+    public void PublishExportAspect_records_the_aspect_from_a_completed_pass()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        GanttRefreshOutcome outcome = GanttRefreshOutcome.Ok(
+            [],
+            shapesWritten: 0,
+            durationCellsWritten: 0,
+            styleKeyCellsWritten: 0,
+            exportAspect: new ExportAspectPt(800, 400));
+
+        RefreshSheetCommand.PublishExportAspect(outcome, service, fullInvalidation: false);
+
+        string preview = service.GetPngPreviewText();
+        Assert.NotEqual(PngPreview.NotAvailableText, preview);
+        Assert.Contains("px", preview, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A refused pass records nothing, so the preview keeps describing the last
+    /// completed render rather than a chart that was never written (D5).
+    /// </summary>
+    [Fact]
+    public void PublishExportAspect_ignores_a_refused_pass()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        GanttRefreshOutcome outcome = Refused(GanttRefreshRefusal.PartialReconciliation)
+            with { ExportAspect = new ExportAspectPt(800, 400) };
+
+        RefreshSheetCommand.PublishExportAspect(outcome, service, fullInvalidation: true);
+
+        Assert.Equal(PngPreview.NotAvailableText, service.GetPngPreviewText());
+    }
+
+    /// <summary>
+    /// A completed pass that resolves no aspect clears the previous one: an aspect
+    /// recorded for an earlier composition is stale, and D5 forbids showing it
+    /// against a changed table.
+    /// </summary>
+    [Fact]
+    public void PublishExportAspect_clears_a_stale_aspect_when_a_completed_pass_has_none()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        Assert.True(service.UpdateExportAspect(new ExportAspectPt(800, 400)));
+
+        RefreshSheetCommand.PublishExportAspect(Success(), service, fullInvalidation: true);
+
+        Assert.Equal(PngPreview.NotAvailableText, service.GetPngPreviewText());
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
