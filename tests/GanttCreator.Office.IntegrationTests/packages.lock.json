@@ -65,6 +65,11 @@
           "Microsoft.TestPlatform.ObjectModel": "18.12.0"
         }
       },
+      "SkiaSharp.NativeAssets.macOS": {
+        "type": "Transitive",
+        "resolved": "4.157.0",
+        "contentHash": "s44YB0BMAEudDf/AdcJLCcN6AXxhpKto0ZnJjats1TwNC+SD4mI2FhotDft58M593Ocea1ra6ad5slfJBhxfvg=="
+      },
       "xunit.abstractions": {
         "type": "Transitive",
         "resolved": "2.0.3",
@@ -111,7 +116,8 @@
           "ExcelDna.AddIn": "[1.9.0, )",
           "ExcelDna.Interop": "[16.0.0, )",
           "GanttCreator.Core": "[0.0.0, )",
-          "GanttCreator.Office": "[0.0.0, )"
+          "GanttCreator.Office": "[0.0.0, )",
+          "GanttCreator.Raster": "[0.0.0, )"
         }
       },
       "ganttcreator.core": {
@@ -123,6 +129,14 @@
           "ExcelDna.Interop": "[16.0.0, )",
           "GanttCreator.Core": "[0.0.0, )",
           "Microsoft.Office.Interop.PowerPoint": "[15.0.4420.1018, )"
+        }
+      },
+      "ganttcreator.raster": {
+        "type": "Project",
+        "dependencies": {
+          "GanttCreator.Core": "[0.0.0, )",
+          "SkiaSharp": "[4.157.0, )",
+          "SkiaSharp.NativeAssets.Win32": "[4.157.0, )"
         }
       },
       "ExcelDna.AddIn": {
@@ -139,6 +153,22 @@
         "requested": "[1.9.0, )",
         "resolved": "1.9.0",
         "contentHash": "A1nbeRWa+rg3RoO9NV9iqNwQxWb9eVNG+Ki3uCfo8D3U8CT11/fzTIvVT3y2LoCTzqRIPwTysqp9sj42MKYw5Q=="
+      },
+      "SkiaSharp": {
+        "type": "CentralTransitive",
+        "requested": "[4.157.0, )",
+        "resolved": "4.157.0",
+        "contentHash": "C0PYSs8z0OGihExuIPaCEJnoEmDwiVRTFmDI2TZ44rWr2u7UiQX4rZyEwfVSHEiV5Zn/FYh1WbcO9uMPRxAsbw==",
+        "dependencies": {
+          "SkiaSharp.NativeAssets.Win32": "4.157.0",
+          "SkiaSharp.NativeAssets.macOS": "4.157.0"
+        }
+      },
+      "SkiaSharp.NativeAssets.Win32": {
+        "type": "CentralTransitive",
+        "requested": "[4.157.0, )",
+        "resolved": "4.157.0",
+        "contentHash": "tP54cTnPqGrzf2pBcyupMZWdIUjV34ELdKuh3/c329kRQF4UCVLZvilQZrDMqPJ9P/+AUJC8kDRMBgT/jBvYug=="
       }
     }
   }

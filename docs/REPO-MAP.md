@@ -14,7 +14,7 @@ A second table records the project-to-project references (the dependency graph);
 
 | Project | References |
 | --- | --- |
-| [AddIn](../src/GanttCreator.AddIn/) | Core, Office |
+| [AddIn](../src/GanttCreator.AddIn/) | Core, Raster (R8.7: the PNG preview's `ExportSize` math), Office |
 | [Core](../src/GanttCreator.Core/) | (none) |
 | [Office](../src/GanttCreator.Office/) | Core |
 | [Raster](../src/GanttCreator.Raster/) | Core |

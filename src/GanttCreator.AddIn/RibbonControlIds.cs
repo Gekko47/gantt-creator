@@ -367,6 +367,40 @@ internal static class RibbonControlIds
     /// </summary>
     internal const string SendToPowerPoint = "btnSendToPowerPoint";
 
+    /// <summary>
+    /// The PNG width box (R8.7): free-form entry in the selected unit. The number
+    /// means "value in the selected unit", never silently converted (D3).
+    /// </summary>
+    internal const string PngWidth = "ebxPngWidth";
+
+    /// <summary>The PNG unit dropdown (R8.7): centimetres, inches, or pixels.</summary>
+    internal const string PngUnit = "ddnPngUnit";
+
+    /// <summary>
+    /// The PNG preset dropdown (R8.7 D6): the R4.7H size presets offered as width
+    /// shortcuts; selecting one writes its width in centimetres and keeps the
+    /// free-form entry available.
+    /// </summary>
+    internal const string PngSize = "ddnPngSize";
+
+    /// <summary>The calculated-height and pixel-dimension preview label (R8.7).</summary>
+    internal const string PngPreviewLabel = "lblPngPreview";
+
+    /// <summary>The Export PNG button (R8.8): gated on valid input plus a recorded aspect.</summary>
+    internal const string ExportPng = "btnExportPng";
+
+    /// <summary>The unit dropdown's centimetre row (R8.7).</summary>
+    internal const string PngUnitCm = "pngUnitCm";
+
+    /// <summary>The unit dropdown's inch row (R8.7).</summary>
+    internal const string PngUnitIn = "pngUnitIn";
+
+    /// <summary>The unit dropdown's pixel row (R8.7).</summary>
+    internal const string PngUnitPx = "pngUnitPx";
+
+    /// <summary>The preset dropdown's item-id prefix; the preset's durable key follows.</summary>
+    internal const string PngSizeItemPrefix = "pngSize";
+
     /// <summary>The Diagnostics group, visible in every mode.</summary>
     internal const string DiagnosticsGroup = "grpDiagnostics";
 }

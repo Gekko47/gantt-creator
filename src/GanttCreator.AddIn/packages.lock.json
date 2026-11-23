@@ -17,6 +17,11 @@
         "resolved": "16.0.0",
         "contentHash": "xJoz0zmnEfJd5hKkC0rzmtpQeyjC0mMEQQdpICrGnIB/zYN8e270S5yLxdtbPpTYeEGk7RUQNfjA4FjG9xlRNA=="
       },
+      "SkiaSharp.NativeAssets.macOS": {
+        "type": "Transitive",
+        "resolved": "4.157.0",
+        "contentHash": "s44YB0BMAEudDf/AdcJLCcN6AXxhpKto0ZnJjats1TwNC+SD4mI2FhotDft58M593Ocea1ra6ad5slfJBhxfvg=="
+      },
       "ganttcreator.core": {
         "type": "Project"
       },
@@ -26,6 +31,14 @@
           "ExcelDna.Interop": "[16.0.0, )",
           "GanttCreator.Core": "[0.0.0, )",
           "Microsoft.Office.Interop.PowerPoint": "[15.0.4420.1018, )"
+        }
+      },
+      "ganttcreator.raster": {
+        "type": "Project",
+        "dependencies": {
+          "GanttCreator.Core": "[0.0.0, )",
+          "SkiaSharp": "[4.157.0, )",
+          "SkiaSharp.NativeAssets.Win32": "[4.157.0, )"
         }
       },
       "ExcelDna.Integration": {
@@ -39,6 +52,22 @@
         "requested": "[15.0.4420.1018, )",
         "resolved": "15.0.4420.1018",
         "contentHash": "3XkJAqbYq93MqqSOPusNE+6Tve5yBkbE92n9W8f+k8Z9AzXeoTMqMYqhZMrzVOp4saHhMMbOD78JkCjvk+qIzw=="
+      },
+      "SkiaSharp": {
+        "type": "CentralTransitive",
+        "requested": "[4.157.0, )",
+        "resolved": "4.157.0",
+        "contentHash": "C0PYSs8z0OGihExuIPaCEJnoEmDwiVRTFmDI2TZ44rWr2u7UiQX4rZyEwfVSHEiV5Zn/FYh1WbcO9uMPRxAsbw==",
+        "dependencies": {
+          "SkiaSharp.NativeAssets.Win32": "4.157.0",
+          "SkiaSharp.NativeAssets.macOS": "4.157.0"
+        }
+      },
+      "SkiaSharp.NativeAssets.Win32": {
+        "type": "CentralTransitive",
+        "requested": "[4.157.0, )",
+        "resolved": "4.157.0",
+        "contentHash": "tP54cTnPqGrzf2pBcyupMZWdIUjV34ELdKuh3/c329kRQF4UCVLZvilQZrDMqPJ9P/+AUJC8kDRMBgT/jBvYug=="
       }
     }
   }

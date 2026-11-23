@@ -2,6 +2,7 @@ using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
+using GanttCreator.Raster;
 using Moq;
 using System.Windows.Forms;
 
@@ -1763,6 +1764,238 @@ public sealed class RibbonStateServiceTests : IDisposable
         var service = new RibbonStateService();
 
         Assert.False(service.ShowThemeSettingsDialog());
+    }
+
+    // ---------------------------------------------------------------------
+    // R8.7 — PNG width inputs and the delegated-math preview.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void SetPngWidth_stores_the_trimmed_text_and_invalidates_each_commit()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        var invalidationsBefore = CountInvalidations(ribbon);
+
+        service.SetPngWidth("  15  ");
+        Assert.Equal("15", service.GetPngWidthText());
+
+        // A null commit stores empty rather than keeping the previous text, so the
+        // box and the preview always describe the same state.
+        service.SetPngWidth(null);
+
+        // Stored verbatim (trimmed) so the preview can name an invalid value
+        // instead of silently rewriting it (D2).
+        Assert.Equal(string.Empty, service.GetPngWidthText());
+        Assert.Equal(invalidationsBefore + 2, CountInvalidations(ribbon));
+    }
+
+    /// <summary>
+    /// R8.7 D3: the unit is a label on the number, not a conversion. Switching
+    /// cm to in must keep "10" as "10", and the preview re-reads it as inches.
+    /// </summary>
+    [Fact]
+    public void SetPngUnit_keeps_the_number_and_invalidates_once()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        service.SetPngWidth("10");
+        var invalidationsBefore = CountInvalidations(ribbon);
+
+        service.SetPngUnit(RibbonControlIds.PngUnitIn);
+
+        Assert.Equal("10", service.GetPngWidthText());
+        Assert.Equal(PngPreview.UnitIndex(ExportUnit.Inches), service.GetPngUnitIndex());
+        Assert.Equal(invalidationsBefore + 1, CountInvalidations(ribbon));
+    }
+
+    [Fact]
+    public void SetPngUnit_ignores_an_unknown_id_and_a_repeated_selection()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        var invalidationsBefore = CountInvalidations(ribbon);
+
+        service.SetPngUnit("not-a-unit");
+        service.SetPngUnit(null);
+        service.SetPngUnit(PngPreview.UnitItemId(PngPreview.DefaultUnit));
+
+        // Nothing changed, so nothing is invalidated: a spurious Invalidate on
+        // every dropdown callback is how the R5.18h defect class starts.
+        Assert.Equal(PngPreview.UnitIndex(PngPreview.DefaultUnit), service.GetPngUnitIndex());
+        Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
+    }
+
+    [Fact]
+    public void SetPngPreset_writes_the_preset_width_in_centimetres()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        service.SetPngUnit(RibbonControlIds.PngUnitPx);
+        service.SetPngWidth("800");
+        SizePreset preset = SizePresets.A4Portrait;
+
+        service.SetPngPreset(PngPreview.PresetItemId(preset));
+
+        Assert.Equal(PngPreview.CmText(preset.WidthPt), service.GetPngWidthText());
+        Assert.Equal(PngPreview.UnitIndex(ExportUnit.Centimetres), service.GetPngUnitIndex());
+        Assert.Equal(
+            SizePresets.All.ToList().FindIndex(candidate => string.Equals(candidate.Key, preset.Key, StringComparison.Ordinal)),
+            service.GetPngPresetIndex());
+    }
+
+    [Fact]
+    public void SetPngPreset_ignores_an_unknown_id()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        service.SetPngWidth("12");
+        var invalidationsBefore = CountInvalidations(ribbon);
+
+        service.SetPngPreset("pngSizeDoesNotExist");
+        service.SetPngPreset(null);
+
+        Assert.Equal("12", service.GetPngWidthText());
+        Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
+    }
+
+    [Fact]
+    public void The_default_width_projects_the_A4_landscape_preset()
+    {
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true });
+
+        Assert.Equal(PngPreview.DefaultWidthText, service.GetPngWidthText());
+        Assert.Equal(PngPreview.UnitIndex(ExportUnit.Centimetres), service.GetPngUnitIndex());
+        Assert.Equal(
+            SizePresets.All.ToList().FindIndex(
+                preset => string.Equals(preset.Key, SizePresets.A4Landscape.Key, StringComparison.Ordinal)),
+            service.GetPngPresetIndex());
+    }
+
+    [Fact]
+    public void The_preview_reports_not_available_before_a_completed_render()
+    {
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true });
+
+        Assert.Equal(PngPreview.NotAvailableText, service.GetPngPreviewText());
+
+        // The input half is already true (the default width parses), so the
+        // disabled export action here proves the aspect half of the gate.
+        Assert.True(service.PngInputValid);
+        Assert.False(service.PngExportReady);
+        Assert.False(service.GetEnabled(RibbonControlIds.ExportPng));
+    }
+
+    [Fact]
+    public void The_preview_equals_the_parser_for_the_recorded_aspect()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], configurationPresent: true));
+        var aspect = new ExportAspectPt(800, 400);
+        service.UpdateExportAspect(aspect);
+        service.SetPngWidth("10");
+
+        WidthRequest request = ExportSize.ParseWidth("10cm");
+        PixelDimensions dimensions = ExportSize.ToPixels(request, aspect.WidthPt, aspect.HeightPt);
+
+        Assert.Equal(PngPreview.FormatPreview(request, dimensions), service.GetPngPreviewText());
+        Assert.True(service.GetEnabled(RibbonControlIds.ExportPng));
+    }
+
+    [Fact]
+    public void An_invalid_width_disables_the_export_action_and_shows_the_message()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], configurationPresent: true));
+        service.UpdateExportAspect(new ExportAspectPt(800, 400));
+
+        service.SetPngWidth("0");
+
+        Assert.False(service.PngInputValid);
+        Assert.False(service.GetEnabled(RibbonControlIds.ExportPng));
+        Assert.NotEqual(PngPreview.NotAvailableText, service.GetPngPreviewText());
+        Assert.Contains("greater than zero", service.GetPngPreviewText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(false, true)]   // NeedsRepair: the export group is hidden
+    [InlineData(true, false)]   // another visible sheet is active
+    public void The_export_action_stays_disabled_without_the_ready_state(
+        bool configurationPresent,
+        bool activeSheetIsGanttSheet)
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+                [],
+                configurationPresent: configurationPresent,
+                activeSheetIsGanttSheet: activeSheetIsGanttSheet));
+        service.UpdateExportAspect(new ExportAspectPt(800, 400));
+
+        Assert.True(service.PngInputValid);
+        Assert.False(service.PngExportReady);
+        Assert.False(service.GetEnabled(RibbonControlIds.ExportPng));
+        Assert.False(service.GetEnabled(RibbonControlIds.PngWidth));
+    }
+
+    [Fact]
+    public void The_width_inputs_are_enabled_on_a_ready_gantt_sheet()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], configurationPresent: true));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.PngWidth));
+        Assert.True(service.GetEnabled(RibbonControlIds.PngUnit));
+        Assert.True(service.GetEnabled(RibbonControlIds.PngSize));
+    }
+
+    /// <summary>
+    /// R8.7 D5: the cached aspect belongs to the workbook it was recorded from, so a
+    /// switch clears it. Otherwise the first workbook's aspect would size exports for
+    /// a workbook whose chart may have a different shape.
+    /// </summary>
+    [Fact]
+    public void A_workbook_switch_clears_the_recorded_aspect()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var service = Arm(adapter);
+        service.UpdateExportAspect(new ExportAspectPt(800, 400));
+        Assert.NotEqual(PngPreview.NotAvailableText, service.GetPngPreviewText());
+
+        adapter.RaiseWorkbookStateChanged();
+
+        Assert.Equal(PngPreview.NotAvailableText, service.GetPngPreviewText());
+        Assert.False(service.PngExportReady);
+    }
+
+    [Fact]
+    public void Repeated_preview_getters_are_side_effect_free()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        service.UpdateExportAspect(new ExportAspectPt(800, 400));
+        var capturesBefore = adapter.CaptureCount;
+        var invalidationsBefore = CountInvalidations(ribbon);
+
+        string first = service.GetPngPreviewText();
+        string second = service.GetPngPreviewText();
+        _ = service.PngExportReady;
+        _ = service.PngInputValid;
+        _ = service.GetPngPresetIndex();
+        _ = service.GetEnabled(RibbonControlIds.ExportPng);
+
+        Assert.Equal(first, second);
+        Assert.Equal(capturesBefore, adapter.CaptureCount);
+        Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }
 
     /// <summary>
