@@ -41,6 +41,20 @@
     -->
     <PackageVersion Include="Microsoft.Office.Interop.PowerPoint" Version="15.0.4420.1018" />
 
+    <!--
+      R8.2 / ADR-0071. SkiaSharp is the raster renderer's drawing library
+      (docs/02-ARCHITECTURE.md "PNG renderer"). Version 4.157.0 was probed
+      against nuget.org on 2026-11-23: both packages are MIT, the managed
+      package carries a lib/net10.0 asset, and the native package carries
+      libSkiaSharp.dll under runtimes/win-{x64,x86,arm64}/native.
+      SkiaSharp's default loader does not resolve the packed native resource,
+      so the add-in ships libSkiaSharp.dll BESIDE the XLL (R8.2 D5: R10.2
+      copies it, R10.7 records the MIT notice). SKPath.MoveTo/LineTo/Close
+      are obsolete in this version; SKPathBuilder is the probed replacement.
+    -->
+    <PackageVersion Include="SkiaSharp" Version="4.157.0" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Win32" Version="4.157.0" />
+
     <!-- xUnit. The unit / contract / addin test projects use these. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk"           Version="18.12.0" />
     <PackageVersion Include="xunit"                            Version="2.9.3" />

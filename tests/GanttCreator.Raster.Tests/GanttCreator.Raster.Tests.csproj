@@ -20,4 +20,16 @@
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
     <ProjectReference Include="..\..\src\GanttCreator.Raster\GanttCreator.Raster.csproj" />
   </ItemGroup>
+
+  <!--
+    R8.2: the category-1 raster golden baseline (the fixture scene JSON, the
+    exact BGRA pixel baseline, and the human-review PNG) is committed under
+    tests/golden/raster/ and copied to the test output, so the comparison
+    reads the committed file rather than a source-relative path (checklist G).
+  -->
+  <ItemGroup>
+    <None Include="..\golden\raster\**\*" Link="golden\raster\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

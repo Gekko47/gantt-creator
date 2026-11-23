@@ -18,4 +18,14 @@
     -->
     <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      R8.2 / ADR-0071: the Skia primitive renderer. SkiaSharp is a package
+      reference, not a project reference, so Raster's Core-only project graph
+      is unchanged and the architecture suite's dependency-direction facts
+      keep passing. The native binary ships beside the packed XLL (D5).
+    -->
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
+  </ItemGroup>
 </Project>
