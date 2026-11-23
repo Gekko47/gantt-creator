@@ -390,6 +390,37 @@ internal sealed class RefreshFakes
             Highlighter,
             null);
 
+    /// <summary>Builds the orchestrator with an injected export-aspect resolver (R8.7 D4).</summary>
+    /// <param name="resolver">The aspect resolver seam a completed pass calls.</param>
+    /// <param name="trace">The diagnostic sink, or null for no trace.</param>
+    /// <returns>The composed orchestrator.</returns>
+    /// <remarks>
+    /// The seam exists so a contract test can drive the aspect path deterministically.
+    /// Production passes no resolver, so <see cref="ExportComposition.TryResolveAspect"/>
+    /// runs; there is no production mode that skips the record.
+    /// </remarks>
+    public GanttRefreshOrchestrator BuildOrchestratorWithAspectResolver(
+        ExportAspectResolve resolver,
+        Action<string>? trace = null) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            null,
+            trace: trace,
+            exportAspectResolver: resolver);
+
     /// <summary>Builds the orchestrator with the ADR-0055 arming step wired.</summary>
     /// <param name="trace">The diagnostic sink, or null for no trace.</param>
     /// <returns>The composed orchestrator.</returns>

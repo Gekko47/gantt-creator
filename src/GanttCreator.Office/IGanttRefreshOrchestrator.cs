@@ -153,6 +153,25 @@ public sealed record GanttRefreshOutcome(
     /// <summary>The inclusive plot finish the successful pass rendered, or null when unknown.</summary>
     public DateOnly? PlotFinish { get; init; }
 
+    /// <summary>
+    /// The export composition's aspect recorded by this completed pass, or
+    /// <see langword="null"/> when the pass refused or no aspect resolved (R8.7 D4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A completed render records the aspect so the Ribbon preview can calculate
+    /// pixel dimensions without a host call. A refused pass records nothing, so the
+    /// Ribbon keeps describing the last completed render — the same authority the
+    /// chart on screen has.
+    /// </para>
+    /// <para>
+    /// Additive and <see langword="null"/> by default, so every existing caller reads
+    /// the outcome exactly as before. The export command never trusts this value for
+    /// its own pipeline; it resolves its own bounds from a fresh pre-flight.
+    /// </para>
+    /// </remarks>
+    public ExportAspectPt? ExportAspect { get; init; }
+
     /// <summary>Gets whether the refresh completed.</summary>
     public bool Succeeded => Refusal is null;
 
@@ -186,6 +205,7 @@ public sealed record GanttRefreshOutcome(
     /// <param name="warnings">The scene warnings from the successfully built scene, if any.</param>
     /// <param name="plotStart">The inclusive plot start the scene used, when known.</param>
     /// <param name="plotFinish">The inclusive plot finish the scene used, when known.</param>
+    /// <param name="exportAspect">The export aspect this completed pass recorded, when one resolved.</param>
     /// <returns>The successful outcome.</returns>
     public static GanttRefreshOutcome Ok(
         IReadOnlyList<GanttValidationIssue> issues,
@@ -194,12 +214,14 @@ public sealed record GanttRefreshOutcome(
         int styleKeyCellsWritten,
         IReadOnlyList<SceneWarning>? warnings = null,
         DateOnly? plotStart = null,
-        DateOnly? plotFinish = null) =>
+        DateOnly? plotFinish = null,
+        ExportAspectPt? exportAspect = null) =>
         new GanttRefreshOutcome(null, null, issues, shapesWritten, durationCellsWritten, styleKeyCellsWritten)
         {
             Warnings = warnings ?? [],
             PlotStart = plotStart,
             PlotFinish = plotFinish,
+            ExportAspect = exportAspect,
         };
 
     /// <summary>Creates a refusal.</summary>

@@ -65,7 +65,8 @@ public sealed class GanttRefreshOrchestrator(
     Action<string>? trace = null,
     ProtectionOwnershipSource? protectionOwnership = null,
     WorksheetProtectionArming? protectionArming = null,
-    bool repairColumnClassification = true)
+    bool repairColumnClassification = true,
+    ExportAspectResolve? exportAspectResolver = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -144,6 +145,19 @@ public sealed class GanttRefreshOrchestrator(
     /// automatic pass exists to keep the chart right rather than to police presentation.
     /// </remarks>
     private readonly bool _repairColumnClassification = repairColumnClassification;
+
+    /// <summary>
+    /// Resolves the export composition's aspect after a completed render, or defaults
+    /// to the production host-free helper (R8.7 D4).
+    /// </summary>
+    /// <remarks>
+    /// The default is <see cref="ExportComposition.TryResolveAspect"/>, so the feature
+    /// is on for every production pass. The seam exists only so a contract test can
+    /// drive the aspect path deterministically without a host; there is no production
+    /// mode that skips the record.
+    /// </remarks>
+    private readonly ExportAspectResolve _exportAspectResolver =
+        exportAspectResolver ?? ExportComposition.TryResolveAspect;
 
     /// <summary>
     /// Optional diagnostic sink for one refresh's delta and geometry decisions, or
@@ -849,6 +863,16 @@ public sealed class GanttRefreshOrchestrator(
 
         long written = Stopwatch.GetTimestamp();
 
+        // R8.7 D4: a completed render records the export composition's aspect so the
+        // Ribbon preview can calculate pixel dimensions host-free. A refused pass
+        // records nothing, so the preview keeps describing the last completed render -
+        // the same authority the chart on screen has.
+        long aspectStarted = Stopwatch.GetTimestamp();
+        ExportAspectPt? exportAspect = reconcile.Succeeded
+            ? _exportAspectResolver(events, config.Settings, config.Styles, grid.Grid!, config.Metrics)
+            : null;
+        long aspectCompleted = Stopwatch.GetTimestamp();
+
         TraceReconcileResult(
             reconcile,
             desired.Count,
@@ -887,7 +911,8 @@ public sealed class GanttRefreshOrchestrator(
                 requestCompleted,
                 buildCompleted,
                 reconcileStarted,
-                written));
+                written),
+            ElapsedMs(aspectStarted, aspectCompleted));
 
         if (reconcile.Succeeded)
         {
@@ -906,7 +931,8 @@ public sealed class GanttRefreshOrchestrator(
                 styleCellsWritten,
                 scene.Result!.Scene.Warnings,
                 built.PlotStart,
-                built.PlotFinish);
+                built.PlotFinish,
+                exportAspect);
         }
 
 
@@ -1110,6 +1136,9 @@ public sealed class GanttRefreshOrchestrator(
     /// <param name="reconcile">The reconciliation result, carrying its own read/write split.</param>
     /// <param name="settings">The workbook's effective settings, read once at step 2.</param>
     /// <param name="timings">The sub-phase boundaries of this pass.</param>
+    /// <param name="aspectMilliseconds">
+    /// The export-aspect resolution cost, measured before the line is written (R8.7 D4).
+    /// </param>
     /// <remarks>
     /// <para>
     /// The existing <c>gantt.refresh timings</c> line answers "which coarse phase is
@@ -1127,7 +1156,8 @@ public sealed class GanttRefreshOrchestrator(
     private void TraceRefreshPhases(
         ShapeReconcileOutcome reconcile,
         IReadOnlyDictionary<string, string> settings,
-        PhaseTimings timings)
+        PhaseTimings timings,
+        double aspectMilliseconds)
     {
         if (_trace is null)
         {
@@ -1140,7 +1170,7 @@ public sealed class GanttRefreshOrchestrator(
         ShapeReconcilePlan plan = reconcile.Plan;
         TraceRefresh(string.Create(
             CultureInfo.InvariantCulture,
-            $"gantt.refresh phases ms table={ElapsedMs(timings.Started, timings.TableRead):0.#} config={ElapsedMs(timings.TableRead, timings.ConfigRead):0.#} guard={ElapsedMs(timings.ConfigRead, timings.Guard):0.#} columns={ElapsedMs(timings.Guard, timings.Columns):0.#} identity={ElapsedMs(timings.Columns, timings.Identity):0.#} types={ElapsedMs(timings.Identity, timings.Types):0.#} validate={ElapsedMs(timings.Types, timings.Validated):0.#} report={ElapsedMs(timings.Validated, timings.Report):0.#} outline={ElapsedMs(timings.Report, timings.Outline):0.#} duration={ElapsedMs(timings.Outline, timings.Duration):0.#} stylekey={ElapsedMs(timings.Duration, timings.StyleKey):0.#} heights={ElapsedMs(timings.StyleKey, timings.Heights):0.#} grid={ElapsedMs(timings.Heights, timings.Grid):0.#} request={ElapsedMs(timings.Grid, timings.Request):0.#} prewrite={ElapsedMs(timings.Built, timings.ReconcileStarted):0.#} ownedms={reconcile.OwnedMilliseconds:0.#} verify={reconcile.VerifyMilliseconds:0.#} ops={reconcile.OperationMilliseconds:0.#} hiddenColumns=\"{hiddenColumns}\" owned={reconcile.OwnedCount} createdIds={IdSample(plan.Of(ShapeReconcileAction.Create))} deletedIds={IdSample(plan.Of(ShapeReconcileAction.Delete))}"));
+            $"gantt.refresh phases ms table={ElapsedMs(timings.Started, timings.TableRead):0.#} config={ElapsedMs(timings.TableRead, timings.ConfigRead):0.#} guard={ElapsedMs(timings.ConfigRead, timings.Guard):0.#} columns={ElapsedMs(timings.Guard, timings.Columns):0.#} identity={ElapsedMs(timings.Columns, timings.Identity):0.#} types={ElapsedMs(timings.Identity, timings.Types):0.#} validate={ElapsedMs(timings.Types, timings.Validated):0.#} report={ElapsedMs(timings.Validated, timings.Report):0.#} outline={ElapsedMs(timings.Report, timings.Outline):0.#} duration={ElapsedMs(timings.Outline, timings.Duration):0.#} stylekey={ElapsedMs(timings.Duration, timings.StyleKey):0.#} heights={ElapsedMs(timings.StyleKey, timings.Heights):0.#} grid={ElapsedMs(timings.Heights, timings.Grid):0.#} request={ElapsedMs(timings.Grid, timings.Request):0.#} prewrite={ElapsedMs(timings.Built, timings.ReconcileStarted):0.#} aspect={aspectMilliseconds:0.#} ownedms={reconcile.OwnedMilliseconds:0.#} verify={reconcile.VerifyMilliseconds:0.#} ops={reconcile.OperationMilliseconds:0.#} hiddenColumns=\"{hiddenColumns}\" owned={reconcile.OwnedCount} createdIds={IdSample(plan.Of(ShapeReconcileAction.Create))} deletedIds={IdSample(plan.Of(ShapeReconcileAction.Delete))}"));
     }
 
     /// <summary>
