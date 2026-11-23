@@ -33,11 +33,13 @@ namespace GanttCreator.Raster;
 /// geometry and is skipped.
 /// </para>
 /// <para>
-/// Hatch patterns and stroke dashes are R8.3's remaining mapping obligations;
-/// this renderer maps fill colour, stroke colour, stroke width, typography,
-/// and text so far. A stroked primitive whose scene resolved no width draws at
-/// the one-pixel raster hairline, the minimum visible stroke; a resolved width
-/// is never replaced.
+/// Hatch and stroke dash are R8.3's mapping obligations and are drawn here:
+/// <see cref="HatchPatternPainter"/> clips the catalogue's diagonal families to
+/// the shape at the <c>HatchPitchPt</c>/<c>HatchLinePt</c> tokens, and
+/// <see cref="StrokeDashMap"/> supplies the closed dash table every stroke path
+/// wears. A stroked primitive whose scene resolved no width draws at the
+/// one-pixel raster hairline, the minimum visible stroke; a resolved width is
+/// never replaced.
 /// </para>
 /// </remarks>
 public static class SceneRasterRenderer

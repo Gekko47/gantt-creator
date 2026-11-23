@@ -300,7 +300,7 @@ not include R4.10 or its benchmark.
 | R8.1 | `R8.1-width-parsing-residual.md` | Landed 2026-11-22 (`7451c0ae`; residual verified, no parser gap; preview-feed contract documented; acceptance linked to `ExportSizeTests` 25/41; no duplicate parser) |
 | R8.2 | `R8.2-skia-primitive-renderer.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit); Step 0 probed 2026-11-23 (SkiaSharp 4.157.0; beside-the-XLL native route) |
 | R8.2a | `R8.2a-font-pinning-adr.md` | Revised (Tier A; 2026-11-22; ADR row) |
-| R8.3 | `R8.3-text-hatch-rendering.md` | In progress — Step 0 probed; the font pin/resolver + probe refactor, the renderer's text branch, and hatch/dash drawing landed 2026-11-23 (Raster 131/131 host-free); the category-2/3 goldens are the open slice, awaiting human approval |
+| R8.3 | `R8.3-text-hatch-rendering.md` | Landed 2026-11-23 — Step 0 probed; the font pin/resolver + probe refactor, the renderer's text branch, hatch/dash drawing, and the category-1/2/3 golden baselines (Raster 135/135 on the reference machine; 115/115 under the routine gate's `FontProbe` exclusion) |
 | R8.4 | `R8.4-representative-render.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
 | R8.5 | `R8.5-png-metadata.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
 | R8.6 | `R8.6-atomic-write-validator.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
