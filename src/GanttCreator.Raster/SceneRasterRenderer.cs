@@ -110,18 +110,24 @@ public static class SceneRasterRenderer
                 // stated once here rather than per primitive (D3).
                 canvas.ClipRect(new SKRect(0, 0, dimensions.PixelWidth, dimensions.PixelHeight));
 
+                // The hatch pitch and stroke width are chart metrics, not
+                // per-entity scene values (ADR-0007 D7), so they are read from
+                // the code-owned catalogue once per render.
+                double hatchPitchPt = GanttCatalogues.MetricDefault("HatchPitchPt");
+                double hatchLinePt = GanttCatalogues.MetricDefault("HatchLinePt");
+
                 foreach (ScenePrimitive primitive in scene.Primitives)
                 {
                     switch (primitive)
                     {
                         case SceneRect rect:
-                            DrawRect(canvas, transform, rect);
+                            DrawRect(canvas, transform, rect, hatchPitchPt, hatchLinePt);
                             break;
                         case SceneLine line:
                             DrawLine(canvas, transform, line);
                             break;
                         case ScenePolygon polygon:
-                            DrawPolygon(canvas, transform, polygon);
+                            DrawPolygon(canvas, transform, polygon, hatchPitchPt, hatchLinePt);
                             break;
                         case SceneText text:
                             DrawText(canvas, transform, text, fonts);
@@ -212,7 +218,12 @@ public static class SceneRasterRenderer
         return builder.Length > 0 ? builder.ToString() : "none";
     }
 
-    private static void DrawRect(SKCanvas canvas, RasterTransform transform, SceneRect rect)
+    private static void DrawRect(
+        SKCanvas canvas,
+        RasterTransform transform,
+        SceneRect rect,
+        double hatchPitchPt,
+        double hatchLinePt)
     {
         SKRect bounds = ToSkRect(transform, rect.Bounds);
         if (rect.Style.FillColour is { } fill)
@@ -221,9 +232,24 @@ public static class SceneRasterRenderer
             canvas.DrawRect(bounds, paint);
         }
 
+        if (rect.Style.HatchPattern != GanttHatchPattern.None && rect.Style.StrokeColour is { } hatchColour)
+        {
+            HatchPatternPainter.Paint(
+                canvas,
+                bounds,
+                null,
+                rect.Style.HatchPattern,
+                ToSkColor(hatchColour),
+                hatchPitchPt,
+                hatchLinePt,
+                transform);
+        }
+
         if (rect.Style.StrokeColour is { } stroke)
         {
-            using SKPaint paint = CreateStrokePaint(stroke, rect.Style.OutlineWidthPt, transform);
+            float widthPx = ResolveStrokeWidth(rect.Style.OutlineWidthPt, transform);
+            using SKPathEffect? dash = StrokeDashMap.Create(rect.Style.StrokeDash, widthPx);
+            using SKPaint paint = CreateStrokePaint(stroke, widthPx, dash, rect.Style.StrokeDash);
             canvas.DrawRect(bounds, paint);
         }
     }
@@ -235,7 +261,9 @@ public static class SceneRasterRenderer
             return;
         }
 
-        using SKPaint paint = CreateStrokePaint(stroke, line.Style.OutlineWidthPt, transform);
+        float widthPx = ResolveStrokeWidth(line.Style.OutlineWidthPt, transform);
+        using SKPathEffect? dash = StrokeDashMap.Create(line.Style.StrokeDash, widthPx);
+        using SKPaint paint = CreateStrokePaint(stroke, widthPx, dash, line.Style.StrokeDash);
         canvas.DrawLine(
             transform.X(line.From.X),
             transform.Y(line.From.Y),
@@ -244,7 +272,12 @@ public static class SceneRasterRenderer
             paint);
     }
 
-    private static void DrawPolygon(SKCanvas canvas, RasterTransform transform, ScenePolygon polygon)
+    private static void DrawPolygon(
+        SKCanvas canvas,
+        RasterTransform transform,
+        ScenePolygon polygon,
+        double hatchPitchPt,
+        double hatchLinePt)
     {
         bool hasFill = polygon.Style.FillColour is not null;
         bool hasStroke = polygon.Style.StrokeColour is not null;
@@ -271,9 +304,24 @@ public static class SceneRasterRenderer
             canvas.DrawPath(path, paint);
         }
 
+        if (polygon.Style.HatchPattern != GanttHatchPattern.None && polygon.Style.StrokeColour is { } hatchColour)
+        {
+            HatchPatternPainter.Paint(
+                canvas,
+                path.Bounds,
+                path,
+                polygon.Style.HatchPattern,
+                ToSkColor(hatchColour),
+                hatchPitchPt,
+                hatchLinePt,
+                transform);
+        }
+
         if (polygon.Style.StrokeColour is { } stroke)
         {
-            using SKPaint paint = CreateStrokePaint(stroke, polygon.Style.OutlineWidthPt, transform);
+            float widthPx = ResolveStrokeWidth(polygon.Style.OutlineWidthPt, transform);
+            using SKPathEffect? dash = StrokeDashMap.Create(polygon.Style.StrokeDash, widthPx);
+            using SKPaint paint = CreateStrokePaint(stroke, widthPx, dash, polygon.Style.StrokeDash);
             canvas.DrawPath(path, paint);
         }
     }
@@ -349,15 +397,23 @@ public static class SceneRasterRenderer
         Color = ToSkColor(fill),
     };
 
-    private static SKPaint CreateStrokePaint(ColourHex stroke, double? widthPt, RasterTransform transform) => new()
-    {
-        Style = SKPaintStyle.Stroke,
-        IsAntialias = true,
-        Color = ToSkColor(stroke),
-        StrokeWidth = widthPt is { } width && width > 0 ? transform.Length(width) : 1f,
-        StrokeCap = SKStrokeCap.Butt,
-        StrokeJoin = SKStrokeJoin.Miter,
-    };
+    private static SKPaint CreateStrokePaint(
+        ColourHex stroke,
+        float widthPx,
+        SKPathEffect? dashEffect,
+        GanttStrokeDash dash) => new()
+        {
+            Style = SKPaintStyle.Stroke,
+            IsAntialias = true,
+            Color = ToSkColor(stroke),
+            StrokeWidth = widthPx,
+            StrokeCap = StrokeDashMap.CapFor(dash),
+            StrokeJoin = SKStrokeJoin.Miter,
+            PathEffect = dashEffect,
+        };
+
+    private static float ResolveStrokeWidth(double? widthPt, RasterTransform transform) =>
+        widthPt is { } width && width > 0 ? transform.Length(width) : 1f;
 
     private static SKColor ToSkColor(ColourHex colour) => new(
         (byte)(colour.ARGB >> 16),
