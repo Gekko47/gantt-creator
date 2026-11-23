@@ -302,8 +302,8 @@ not include R4.10 or its benchmark.
 | R8.2a | `R8.2a-font-pinning-adr.md` | Revised (Tier A; 2026-11-22; ADR row) |
 | R8.3 | `R8.3-text-hatch-rendering.md` | Landed 2026-11-23 — Step 0 probed; the font pin/resolver + probe refactor, the renderer's text branch, hatch/dash drawing, and the category-1/2/3 golden baselines (Raster 135/135 on the reference machine; 115/115 under the routine gate's `FontProbe` exclusion) |
 | R8.4 | `R8.4-representative-render.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
-| R8.5 | `R8.5-png-metadata.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
-| R8.6 | `R8.6-atomic-write-validator.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.5 | `R8.5-png-metadata.md` | Landed 2026-11-23 — Step 0 probed (SkiaSharp writes no `pHYs`; layout `IHDR → sBIT → IDAT → IEND`); `PngExportEncoder` density patch + `PngCrc32`/`PngChunkReader`/`PngExportBytes`; `PngMetadataTests` byte-level pins with the wrong-density/unit positives and the replace-in-place arm (Raster 179/179) |
+| R8.6 | `R8.6-atomic-write-validator.md` | Landed 2026-11-23 — Step 0 probed (`Replace`/`Move`/lock/read-only semantics; sharing violation 0x80070020); `PngFileValidator` + `AtomicPngFileWriter` + typed refusal taxonomy + `PngWriteSeam`; host-free failure matrix green; the live unwritable-path case owed to R8.8 |
 | R8.7 | `R8.7-width-controls-preview.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
 | R8.8 | `R8.8-export-png-command.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
 

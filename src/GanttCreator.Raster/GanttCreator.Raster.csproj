@@ -28,4 +28,16 @@
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      R8.5/R8.6: the Raster test project exercises the internal PNG chunk walk
+      and the density patch (the replace-in-place arm), matching the Office
+      adapter's InternalsVisibleTo precedent. The public export surface stays
+      small; only the byte-level plumbing is shared with the tests, and their
+      assertions still run through an independent parser.
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GanttCreator.Raster.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>
