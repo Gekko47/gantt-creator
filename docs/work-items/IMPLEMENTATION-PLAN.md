@@ -298,7 +298,7 @@ not include R4.10 or its benchmark.
 | ID | Guide | Status |
 | --- | --- | --- |
 | R8.1 | `R8.1-width-parsing-residual.md` | Landed 2026-11-22 (`7451c0ae`; residual verified, no parser gap; preview-feed contract documented; acceptance linked to `ExportSizeTests` 25/41; no duplicate parser) |
-| R8.2 | `R8.2-skia-primitive-renderer.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
+| R8.2 | `R8.2-skia-primitive-renderer.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit); Step 0 probed 2026-11-23 (SkiaSharp 4.157.0; beside-the-XLL native route) |
 | R8.2a | `R8.2a-font-pinning-adr.md` | Revised (Tier A; 2026-11-22; ADR row) |
 | R8.3 | `R8.3-text-hatch-rendering.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
 | R8.4 | `R8.4-representative-render.md` | Revised (Tier A; 2026-11-22; upgraded at the Phase-7 exit) |
