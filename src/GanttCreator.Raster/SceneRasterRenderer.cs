@@ -84,9 +84,8 @@ public static class SceneRasterRenderer
                             // R8.3 draws text; a group carries no geometry.
                             break;
                         default:
-                            // The scene's primitive set is closed today; an
-                            // unknown kind paints nothing rather than being
-                            // guessed at.
+                            // The scene's primitive set is closed; an unknown
+                            // kind paints nothing rather than being guessed at.
                             break;
                     }
                 }

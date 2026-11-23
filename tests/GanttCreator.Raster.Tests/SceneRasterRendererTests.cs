@@ -368,6 +368,75 @@ public class SceneRasterRendererTests
             () => SceneRasterRenderer.Render(scene, new PixelDimensions(0, 100), RasterBackground.Transparent));
     }
 
+    [Fact]
+    public void A_polygon_with_neither_fill_nor_stroke_paints_nothing()
+    {
+        GanttScene scene = CreateScene(
+            new RectD(0, 0, 100, 100),
+            new ScenePolygon(
+                "empty-polygon",
+                SceneOwnerId.Chart,
+                ZLayer.Milestone,
+                [new PointD(10, 10), new PointD(50, 10), new PointD(30, 40)],
+                new SceneStyle("Fixture")));
+
+        using RasterRenderResult result = Render(scene);
+
+        AssertPixel(result, 30, 15, Transparent);
+    }
+
+    [Fact]
+    public void A_line_with_no_stroke_colour_paints_nothing()
+    {
+        GanttScene scene = CreateScene(
+            new RectD(0, 0, 100, 100),
+            new SceneLine(
+                "fill-only-line",
+                SceneOwnerId.Chart,
+                ZLayer.Grid,
+                new PointD(10, 50),
+                new PointD(90, 50),
+                new SceneStyle("Fixture", fillColour: _blue)));
+
+        using RasterRenderResult result = Render(scene);
+
+        AssertPixel(result, 50, 50, Transparent);
+    }
+
+    [Fact]
+    public void Background_from_a_null_colour_is_rejected() =>
+        _ = Assert.Throws<ArgumentNullException>(() => RasterBackground.FromColour(null!));
+
+    [Fact]
+    public void Background_values_compare_by_value()
+    {
+        Assert.True(RasterBackground.Transparent == RasterBackground.Transparent);
+        Assert.True(RasterBackground.Transparent != RasterBackground.FromColour(_white));
+        Assert.Equal(RasterBackground.Transparent, RasterBackground.Transparent);
+        Assert.NotEqual(RasterBackground.Transparent, RasterBackground.FromColour(_white));
+        Assert.Equal(
+            RasterBackground.FromColour(_white).GetHashCode(),
+            RasterBackground.FromColour(_white).GetHashCode());
+    }
+
+    [Fact]
+    public void Determinism_descriptors_compare_by_value()
+    {
+        Assert.True(RasterDeterminism.Pinned == RasterDeterminism.Pinned);
+        Assert.Equal(RasterDeterminism.Pinned, RasterDeterminism.Pinned);
+        Assert.Equal(RasterDeterminism.Pinned.GetHashCode(), RasterDeterminism.Pinned.GetHashCode());
+    }
+
+    [Fact]
+    public void Dispose_is_idempotent()
+    {
+        GanttScene scene = CreateScene(new RectD(0, 0, 100, 100));
+        RasterRenderResult result = Render(scene);
+
+        result.Dispose();
+        result.Dispose();
+    }
+
     private static ColourHex Transparent { get; } = ColourHex.Parse("#00000000");
 
     private static GanttScene CreateScene(RectD bounds, params ScenePrimitive[] primitives)

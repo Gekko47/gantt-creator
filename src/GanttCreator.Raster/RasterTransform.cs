@@ -48,13 +48,14 @@ internal sealed class RasterTransform
     /// </exception>
     public static RasterTransform Create(RectD sceneBounds, PixelDimensions dimensions)
     {
-        if (!double.IsFinite(sceneBounds.Width) || sceneBounds.Width <= 0 ||
-            !double.IsFinite(sceneBounds.Height) || sceneBounds.Height <= 0)
+        // RectD's constructor already guarantees finite coordinates and extents,
+        // so only a non-positive extent is reachable here.
+        if (sceneBounds.Width <= 0 || sceneBounds.Height <= 0)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(sceneBounds),
                 sceneBounds,
-                "Scene bounds must have a finite positive width and height.");
+                "Scene bounds must have a positive width and height.");
         }
 
         ArgumentOutOfRangeException.ThrowIfLessThan(dimensions.PixelWidth, 1, nameof(dimensions));
