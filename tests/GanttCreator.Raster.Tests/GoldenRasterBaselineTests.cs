@@ -18,9 +18,11 @@ namespace GanttCreator.Raster.Tests;
 /// pixel buffer; the PNG is the human-review artefact only.
 /// </para>
 /// <para>
-/// The golden metadata's font fields are not applicable: the category-1 scene
-/// carries one text primitive only to prove the R8.2 text skip, and no text is
-/// drawn. Full font pinning arrives with R8.2a/R8.3.
+/// R8.3 removed the category-1 scene's single text primitive: it existed only
+/// to prove the R8.2 text skip, and that purpose is superseded by
+/// <see cref="SceneRasterTextTests"/>. The rendered pixels are unchanged (the
+/// text never drew), so the committed BGRA baseline stays byte-identical and
+/// this baseline remains host-free — no pinned font is needed to compare it.
 /// </para>
 /// </remarks>
 public class GoldenRasterBaselineTests
@@ -144,14 +146,6 @@ public class GoldenRasterBaselineTests
                 ZLayer.Label,
                 new RectD(30, 47, 30, 10),
                 new SceneStyle("Fixture", fillColour: yellow)),
-            new SceneText(
-                "chart:title:text",
-                SceneOwnerId.Chart,
-                ZLayer.Title,
-                "Primitives",
-                new RectD(5, 2, 90, 8),
-                new SceneStyle("FixtureText", fontFamily: "Aptos", fontSizePt: 10),
-                GanttTextAlignment.Left),
         ];
 
         SceneCreationOutcome outcome = GanttScene.TryCreate(

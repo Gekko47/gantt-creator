@@ -188,19 +188,14 @@ public class SceneRasterRendererTests
     }
 
     [Fact]
-    public void A_scene_with_text_and_groups_renders_only_the_non_text_primitives()
+    public void A_scene_with_groups_renders_only_the_geometric_primitives()
     {
+        // R8.3 supersedes this test's original text-skip half: text now draws
+        // (SceneRasterTextTests), so the text primitive is gone and the group
+        // pin stays. A text-free scene keeps this test host-free.
         SceneRect body = FillRect("body", 50, 50, 10, 10, ZLayer.ActivityBody, _blue);
         GanttScene scene = CreateScene(
             new RectD(0, 0, 100, 100),
-            new SceneText(
-                "label",
-                SceneOwnerId.Chart,
-                ZLayer.Label,
-                "Hello",
-                new RectD(10, 10, 30, 10),
-                new SceneStyle("FixtureText", fontFamily: "Aptos", fontSizePt: 10),
-                GanttTextAlignment.Left),
             new SceneGroup("group", SceneOwnerId.Chart, ZLayer.Label, ["body"]),
             body);
 
