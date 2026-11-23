@@ -347,6 +347,13 @@ internal static class ExportPngCommand
             return ExportPngOutcome.CancelledOutcome(preflight.DroppedRowCount);
         }
 
+        // Diagnosis hook (live defect 2026-11-23): the raster renderer refuses a text
+        // primitive whose style names no font family, and the scene builders historically
+        // left FontFamily null because only the raster path reads it. The trace names the
+        // style keys and families BEFORE the refusal, so a live export says which family
+        // the scene is missing instead of only that one is missing.
+        TraceTextFamilies(scene, request.TechnicalRecord);
+
         // Stage 4 + 5 — render, then encode. The render owns the surface; the bytes outlive it.
         PngExportBytes png;
         try
@@ -415,6 +422,35 @@ internal static class ExportPngCommand
 
         return RasterBackground.FromColour(
             ColourHex.Parse(GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background)));
+    }
+
+    /// <summary>
+    /// Records the distinct style/family pairs among the scene's text primitives, so a
+    /// font-refusal is diagnosable from the log. Counts and style keys only; a family-less
+    /// style is named <c>&lt;none&gt;</c>, which is exactly the state the raster
+    /// renderer refuses.
+    /// </summary>
+    /// <param name="scene">The export scene about to be rendered.</param>
+    /// <param name="trace">The technical-record sink, or null to discard the line.</param>
+    private static void TraceTextFamilies(GanttScene scene, Action<string>? trace)
+    {
+        if (trace is null)
+        {
+            return;
+        }
+
+        SortedDictionary<string, int> groups = new(StringComparer.Ordinal);
+        foreach (SceneText text in scene.Primitives.OfType<SceneText>())
+        {
+            string family = string.IsNullOrWhiteSpace(text.Style.FontFamily)
+                ? "<none>"
+                : text.Style.FontFamily;
+            string key = text.Style.StyleKey + "=" + family;
+            groups[key] = groups.TryGetValue(key, out int count) ? count + 1 : 1;
+        }
+
+        trace("gantt.export text-families "
+            + string.Join(";", groups.Select(pair => $"{pair.Key}x{pair.Value}")));
     }
 
     /// <summary>Maps a pre-flight refusal to this command's typed refusal.</summary>

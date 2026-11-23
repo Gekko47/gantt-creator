@@ -34,15 +34,30 @@ public sealed class ExportPngCommandTests
 
     /// <summary>Builds a pre-flight request whose every stage succeeds host-free.</summary>
     private static EditableExportPreflightRequest Preflight(
-        IReadOnlyDictionary<string, string>? settings = null)
+        IReadOnlyDictionary<string, string>? settings = null,
+        GanttScene? scene = null)
     {
-        GanttScene scene = EmptyScene();
+        GanttScene built = scene ?? EmptyScene();
         return new EditableExportPreflightRequest(
             new StubTableReader(),
             new StubConfigReader(settings ?? new Dictionary<string, string>()),
             new StubMeasurement(),
             (_, _, _, _, _) => SceneBuildRequestOutcome.Ok(new SceneBuildRequest()),
-            (_, _, _) => new ExportBoundsOutcome(new ExportBounds(Bounds), null, null, scene));
+            (_, _, _) => new ExportBoundsOutcome(new ExportBounds(Bounds), null, null, built));
+    }
+
+    /// <summary>A scene carrying one text primitive with the supplied (or missing) family.</summary>
+    private static GanttScene SceneWithText(string? family)
+    {
+        SceneText text = new(
+            "chart:title-text",
+            SceneOwnerId.Chart,
+            ZLayer.Title,
+            "T",
+            new RectD(10, 10, 50, 10),
+            new SceneStyle("TitleStyle", fontFamily: family, fontSizePt: 9, bold: false),
+            GanttTextAlignment.Centre);
+        return GanttScene.TryCreate(Bounds, Bounds, [text], []).Scene!;
     }
 
     private static ExportPngRequest Request(
@@ -52,7 +67,8 @@ public sealed class ExportPngCommandTests
         ISaveFileDialogPort? dialog = null,
         PngWrite? write = null,
         EditableExportPreflightRequest? preflight = null,
-        Action<RasterBackground>? onBackground = null) =>
+        Action<RasterBackground>? onBackground = null,
+        Action<string>? technicalRecord = null) =>
         new(
             preflight ?? Preflight(),
             widthText,
@@ -66,7 +82,7 @@ public sealed class ExportPngCommandTests
             },
             PngExportEncoder.Encode,
             write ?? ((png, path) => new PngWriteOutcome(true, null, "written", "record")),
-            null);
+            technicalRecord);
 
     [Fact]
     public void Run_writes_and_reports_the_path_and_the_exact_dimensions()
@@ -272,6 +288,36 @@ public sealed class ExportPngCommandTests
             RasterBackground.FromColour(
                 ColourHex.Parse(GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background))),
             background);
+    }
+
+    /// <summary>
+    /// The live defect of 2026-11-23, now a regression pin. A text primitive declared with
+    /// no font family used to make the raster renderer refuse the whole export
+    /// (<c>FamilyMismatch</c> with an empty family). The scene names the label family at
+    /// the primitive, so the export now renders, and the trace states the family the
+    /// renderer will resolve — the two facts that together prove the fix and keep the
+    /// diagnosis available if another family-less style ever appears.
+    /// </summary>
+    [Fact]
+    public void A_text_primitive_declared_without_a_family_renders_with_the_label_family()
+    {
+        var records = new List<string>();
+        var failures = new List<string>();
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                preflight: Preflight(scene: SceneWithText(family: null)),
+                technicalRecord: records.Add),
+            _ => { },
+            failures.Add);
+
+        Assert.True(outcome.Succeeded, failures.Count > 0 ? failures[0] : null);
+        Assert.Contains(
+            records,
+            record => record.StartsWith("gantt.export text-families", StringComparison.Ordinal)
+                && record.Contains(
+                    "TitleStyle=" + GanttCatalogues.LabelFontFamily,
+                    StringComparison.Ordinal));
     }
 
     private static string GanttChromeKey() =>

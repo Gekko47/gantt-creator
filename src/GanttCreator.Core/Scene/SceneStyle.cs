@@ -102,6 +102,43 @@ public sealed record SceneStyle
     /// </summary>
     public GanttStrokeDash StrokeDash { get; }
 
+    /// <summary>
+    /// Returns this style with the label font family named when it has none.
+    /// </summary>
+    /// <returns>
+    /// This style when it already names a family; otherwise a copy naming
+    /// <see cref="GanttCatalogues.LabelFontFamily"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// The live defect of 2026-11-23: the raster renderer refuses a text primitive whose
+    /// style names no font family, and the scene builders left <see cref="FontFamily"/>
+    /// <see langword="null"/> because only the raster path reads it — the sheet draws shape
+    /// text from the measured metrics. The scene, never the renderer, must name the font,
+    /// so <see cref="SceneText"/> applies this to every text primitive it carries.
+    /// </para>
+    /// <para>
+    /// The value is <see cref="GanttCatalogues.LabelFontFamily"/>, the same token the text
+    /// metrics measure, so the named family can never disagree with the size and the
+    /// measured bounds the layout assumed.
+    /// </para>
+    /// </remarks>
+    public SceneStyle WithLabelFontFamilyIfMissing() =>
+        string.IsNullOrWhiteSpace(FontFamily)
+            ? new SceneStyle(
+                StyleKey,
+                FillColour,
+                StrokeColour,
+                OutlineWidthPt,
+                HatchPattern,
+                GanttCatalogues.LabelFontFamily,
+                FontSizePt,
+                Bold,
+                Alignment,
+                TextColour,
+                StrokeDash)
+            : this;
+
     /// <summary>Returns this style with the supplied label text colour.</summary>
     /// <param name="textColour">The text colour the copy should carry.</param>
     /// <returns>A copy carrying <paramref name="textColour"/>.</returns>

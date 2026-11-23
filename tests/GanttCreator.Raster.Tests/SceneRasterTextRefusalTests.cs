@@ -42,8 +42,16 @@ public class SceneRasterTextRefusalTests
         Assert.Equal("Segoe UI", exception.FontFamily);
     }
 
+    /// <summary>
+    /// R8.8 font contract (the live 2026-11-23 defect): a text primitive declared with no
+    /// family is stored naming the label family, so the renderer resolves Aptos instead
+    /// of refusing an empty family. Against a source with no cloud-font cache that is the
+    /// same fail-closed <c>FontFileMissing</c> refusal the explicitly named case has — which
+    /// is what this pin now guards, because the empty-family arm is unreachable through
+    /// <see cref="SceneText"/> by construction.
+    /// </summary>
     [Fact]
-    public void Render_refuses_a_text_primitive_with_no_font_family()
+    public void Render_resolves_the_label_family_for_a_text_primitive_declared_without_one()
     {
         GanttScene scene = TextScene(Text("label", "Hello", family: null, sizePt: 10));
         using PinnedFontSource source = new(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
@@ -51,8 +59,8 @@ public class SceneRasterTextRefusalTests
         PinnedFontException exception = Assert.Throws<PinnedFontException>(
             () => SceneRasterRenderer.Render(scene, _square, RasterBackground.Transparent, source));
 
-        Assert.Equal(PinnedFontRefusal.FamilyMismatch, exception.Refusal);
-        Assert.Equal(string.Empty, exception.FontFamily);
+        Assert.Equal(PinnedFontRefusal.FontFileMissing, exception.Refusal);
+        Assert.Equal(GanttCatalogues.LabelFontFamily, exception.FontFamily);
     }
 
     [Fact]
