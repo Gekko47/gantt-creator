@@ -26,9 +26,15 @@
     exact BGRA pixel baseline, and the human-review PNG) is committed under
     tests/golden/raster/ and copied to the test output, so the comparison
     reads the committed file rather than a source-relative path (checklist G).
+    R8.4 adds the shared reference scene: the representative suite loads the
+    committed golden scene through SceneSnapshot.Deserialize rather than a
+    second fixture copy.
   -->
   <ItemGroup>
     <None Include="..\golden\raster\**\*" Link="golden\raster\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\golden\scene\reference-scene.json" Link="golden\scene\reference-scene.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

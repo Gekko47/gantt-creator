@@ -204,7 +204,7 @@ fonts and that `SKTypeface.FromFile` resolves the four pinned Aptos faces;
 `AptosTextMetrics`, `FontAdvanceTable` and `gen-font-advances.py` are unchanged
 and remain the measurement authority.
 
-**R8.3 entry points (2026-11-23, in progress).** `src/GanttCreator.Raster/PinnedFontSet.cs`
+**R8.3 entry points (2026-11-23, landed).** `src/GanttCreator.Raster/PinnedFontSet.cs`
 holds the four-face pin (the ADR-0070 D2 identities) and `PinnedFontSource.cs`
 the single resolver: the explicit `SKTypeface.FromFile` route, the fail-closed
 identity check with the typed `PinnedFontRefusal` set, and a process-wide
@@ -239,6 +239,32 @@ is the explicit `GANTTCREATOR_RASTER_GOLDEN_OUT` route the R8.2 class documents;
 re-running it left the category-1 baseline byte-identical
 (`1947966d…22c321` before and after), so the writer itself is pinned by that
 fact.
+
+**R8.4 entry points (2026-11-23).** `tests/GanttCreator.Raster.Tests/GoldenRasterRepresentativeTests.cs`
+holds the five owner-ratified representative baselines: the committed
+`tests/golden/scene/reference-scene.json` loaded through public
+`SceneSnapshot.Deserialize` and rendered at 29.7 cm / 45.16 cm / 36.12 cm
+(preset arms derived from `SizePresets.WidthPt` at full precision) and
+800 px / 2400 px (the ratified pixel arms). Each arm compares against its
+`tests/golden/raster/representative-<key>.meta` sidecar: exact pixels from
+`ExportSize.ToPixels` (3508×1906, 5333×2898, 4267×2318, 800×435, 2400×1304),
+the SHA-256 digest of the exact BGRA buffer (the owner's 2026-11-23 storage
+ruling; the human-review `representative-<key>.png` is the only committed
+image), DPI 300, `cpu-raster`, antialias, SkiaSharp 4.157.0.0, the four-face
+`FontIdentity`, OS, culture, and `mode=exact`. Scene-derived exact-byte
+presence probes cover an alternate band, an activity bar and a milestone
+marker, and tamper/no-write facts prove a corrupted digest or metadata field
+is reported by name while the comparison never regenerates. The suite carries
+`Category=FontProbe` (the scene carries text) and writes only through the
+explicit `GANTTCREATOR_RASTER_GOLDEN_OUT` route; the Raster test project copies
+the shared scene beside `golden/raster/`. The reference request's `LabelStyle`
+and `ReferenceSceneBuilder.FrameTheme` now carry the catalogue typography and a
+text colour (the 2026-11-23 fixture-typography ruling — the scene must name its
+own fonts — with the golden scene regenerated style-only). Core prerequisite
+facts: `GoldenSceneSnapshotTests.The_committed_scene_deserializes_to_the_fixture_built_scene`
+(the F2 structural arm; the byte round trip has existed since R3.12) and
+`SceneProfileEquivalenceTests` (the F3 Raster≡EditableExport pin with a
+`LiveExcel` sensitivity control). KNOWN-LIMITATIONS **L4 closed**.
 
 Read the [implementation-guide manifest](work-items/IMPLEMENTATION-PLAN.md), the current [work item](work-items/), and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results. A symbol outline is only a locator, treat it as navigation aid, not as compiler or reference evidence — verify any finding against current source.
 From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.

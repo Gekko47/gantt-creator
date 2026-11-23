@@ -1,0 +1,11 @@
+width=800px
+pixels=800x435
+dpi=300
+surface=cpu-raster
+antialias=True
+skiasharp=4.157.0.0
+font-identity=Aptos Version 2.01;O365 upem=2048; Aptos-Bold Version 2.00;O365 upem=2048
+os=Microsoft Windows NT 10.0.26200.0
+culture=en-GB
+mode=exact
+digest=sha256:E0315BA2A8D9DC594CDE76AEED791F8B1EC3B731801D58F7F708BF5112BFF476
