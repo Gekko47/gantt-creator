@@ -267,6 +267,10 @@
           <box id="boxPngPreview" boxStyle="horizontal">
             <labelControl id="lblPngPreview" getLabel="GetPngPreview"/>
           </box>
+          <!-- R8.8: the command is enabled only when the width is valid AND a completed
+               render has recorded the aspect, so a click can never open a save dialog it
+               cannot satisfy. -->
+          <button id="btnExportPng" label="Export PNG..." size="large" getImage="GetGlyph" keytip="PE" screentip="Export the Gantt as a PNG image" supertip="Writes the chart and table as one PNG at the width above, with the height following the chart's aspect ratio. You choose where the file goes; it is checked after it is written." getEnabled="GetEnabled" onAction="OnExportPngClick"/>
         </group>
         <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">
           <button id="btnDiagnostics" label="Diagnostics" getImage="GetGlyph" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

@@ -661,6 +661,9 @@ public class GanttRibbonTests
                 // R7.6: Send to PowerPoint follows Copy Editable in the Export group's
                 // document order and shares its corrected Mode == Ready gate.
                 RibbonControlIds.SendToPowerPoint,
+                // R8.8: Export PNG is the Export group's last control, gated on the R8.7
+                // readiness fact (a valid width AND a recorded aspect) on top of Ready.
+                RibbonControlIds.ExportPng,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 // Owner ruling 2026-11-09: the CHART and CELL lock toggles replace the shape pair.
@@ -2584,6 +2587,12 @@ public class GanttRibbonTests
         XElement preview = group.Descendants(ns + "labelControl")
             .Single(element => (string?)element.Attribute("id") == RibbonControlIds.PngPreviewLabel);
         Assert.Equal("GetPngPreview", (string?)preview.Attribute("getLabel"));
+
+        // R8.8: the command's button is in the same group and carries the readiness gate.
+        XElement export = group.Descendants(ns + "button")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPng);
+        Assert.Equal("OnExportPngClick", (string?)export.Attribute("onAction"));
+        Assert.Equal("GetEnabled", (string?)export.Attribute("getEnabled"));
     }
 
     /// <summary>

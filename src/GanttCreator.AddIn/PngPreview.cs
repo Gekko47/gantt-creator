@@ -130,7 +130,7 @@ internal static class PngPreview
     /// <param name="widthText">The number the user entered.</param>
     /// <param name="unit">The unit selected in the dropdown.</param>
     /// <returns>The grammar input <see cref="ExportSize.ParseWidth"/> consumes.</returns>
-    private static string ComposeInput(string widthText, ExportUnit unit) =>
+    internal static string ComposeInput(string widthText, ExportUnit unit) =>
         string.Concat(widthText, " ", UnitLabel(unit));
 
     /// <summary>Formats the preview text for a valid evaluation.</summary>

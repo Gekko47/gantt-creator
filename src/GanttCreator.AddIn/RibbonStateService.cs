@@ -2300,6 +2300,10 @@ internal class RibbonStateService
     /// <returns>The stored width text. A pure read: no Excel probe, no ribbon call.</returns>
     internal string GetPngWidthText() => _pngWidthText;
 
+    /// <summary>Gets the stored PNG unit (R8.7).</summary>
+    /// <returns>The unit the width number is expressed in; the dropdown index is derived from it.</returns>
+    internal ExportUnit GetPngUnit() => _pngUnit;
+
     /// <summary>Gets the PNG unit dropdown's selected index (R8.7).</summary>
     /// <returns>0 for centimetres, 1 for inches, 2 for pixels.</returns>
     internal int GetPngUnitIndex() => PngPreview.UnitIndex(_pngUnit);

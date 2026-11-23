@@ -98,11 +98,17 @@ internal enum EditableExportPreflightRefusal
 /// <see cref="ChartPaddingPt.Uniform(double)"/> (D-R7.4). Scene-space, so the fit scales it
 /// with the group.
 /// </param>
+/// <param name="Settings">
+/// The workbook's effective settings map, carried so the PNG export's canvas background is
+/// read from the same configuration the scene was built from instead of a second read
+/// (R8.8 D1).
+/// </param>
 internal sealed record EditableExportPreparation(
     IReadOnlyList<GanttEvent> Events,
     PanelCellGrid Grid,
     ExportBoundsOutcome Resolution,
-    double InsetPt);
+    double InsetPt,
+    IReadOnlyDictionary<string, string> Settings);
 
 /// <summary>The typed result of one shared editable-export pre-flight run (R7.6 D4).</summary>
 /// <param name="Preparation">The resolved preparation, or <see langword="null"/> on a refusal.</param>
@@ -365,7 +371,8 @@ internal static class EditableExportPreflight
                     validation.Events,
                     measuredGrid,
                     resolution,
-                    ResolveInsetPt(config.Metrics)),
+                    ResolveInsetPt(config.Metrics),
+                    config.Settings),
                 droppedRows);
     }
 

@@ -353,6 +353,46 @@ public class GanttRibbon : ExcelRibbon
     private static void RunSendToPowerPoint() => SendToPowerPointCommand.RunForExcel();
 
     /// <summary>
+    /// Called when the user clicks Export PNG (R8.8). The callback is a thin error boundary
+    /// exactly like Copy Editable: the command runs across the project-wide
+    /// <see cref="CommandBoundary"/> and the ribbon state is refreshed afterwards.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnExportPngClick(IRibbonControl control)
+        => OnExportPngClick(
+            control,
+            CommandBoundary.Instance,
+            RunExportPng,
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Export PNG command across an injected boundary. Internal so contract tests can
+    /// verify the routing with a deterministic boundary and a stub command instead of the
+    /// singleton and a live save dialog.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The export command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    internal static void OnExportPngClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(
+            () => ResolveCommandName(control, nameof(OnExportPngClick)),
+            command,
+            nameof(OnExportPngClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>Runs the PNG export in the current Excel session (R8.8).</summary>
+    private static void RunExportPng() => ExportPngCommand.RunForExcel();
+
+    /// <summary>
     /// The stored PNG width text for the width box (R8.7), asked through <c>getText</c>.
     /// The answer is the text the user last committed, not a rewritten value. Never throws.
     /// </summary>
