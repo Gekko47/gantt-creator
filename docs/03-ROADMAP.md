@@ -457,15 +457,34 @@ Goal: export an exact-size PNG from the scene without depending on the Excel cli
 
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
-| R8.1 | Add width/unit parsing, aspect calculation, rounding, and safety limits | Table-driven cm/in/px, ratio, rounding, and extreme-size tests (landed early: `tests/GanttCreator.Raster.Tests/ExportSizeTests.cs`, 25 methods / 41 cases — see revision-4 note) | None |
+| R8.1 | Add width/unit parsing, aspect calculation, rounding, and safety limits — **re-scoped by revision 13** to the chart-size points conversion | Table-driven rounding, aspect, and extreme-size tests at the chart's own size (`tests/GanttCreator.Raster.Tests/ExportSizeTests.cs`; the cm/in/px grammar is withdrawn — see revision-13 note) | None |
 | R8.2 | Add SkiaSharp renderer for rectangles, lines, polygons, clipping, and z-order | Primitive pixel/golden tests and deterministic rerender comparison | None |
 | R8.2a | Decide pinned-font provisioning for raster text and golden images (ADR) | The ADR records installed-versus-bundled-versus-fallback with licence evidence; a font-presence probe reports the exact resolved font on the reference machine; the golden-image policy states what a missing pinned font does — a clear error or approved fallback, never a silent substitution | None |
 | R8.3 | Add deterministic text and hatch/pattern rendering | Pinned-font golden, clipping, and pattern tests | None |
 | R8.4 | Render the complete representative Gantt at several widths | Exact dimensions and visual-diff tests at approved widths | None |
 | R8.5 | Add PNG `pHYs` 300-DPI metadata writer | Chunk order, CRC, unit, and 11811-pixels-per-metre tests | None |
 | R8.6 | Add atomic file writer and post-write validator | Corrupt, locked, invalid, and partial-file failure tests | None |
-| R8.7 | Add width/unit Ribbon controls and calculated-height preview | Parser, Ribbon-state, validation, and preview-value tests | Required: enter cm/in/px widths and confirm displayed height/pixel preview |
-| R8.8 | Wire Export PNG and ensure exact scene crop | Command plus independent dimensions, density, crop, and aspect tests | Required: export from Excel and inspect user flow, selected path, and resulting image |
+| R8.7 | Add width/unit Ribbon controls and calculated-height preview — **withdrawn by revision 13**; the PNG uses the chart's own size | The controls, session state, preview, and their tests are removed in the revision; the Export group keeps only the export action with its target toggle | None (the cm/in/px exercise is superseded by R8.8's revised exit demonstration) |
+| R8.8 | Wire Export PNG at the chart's own size with clipboard-first delivery and exact scene crop | Command plus independent dimensions, density, crop, and aspect tests; clipboard-format and folder-memory tests; the three font-fallback arms | Required: from a freshly opened workbook, export to clipboard and to file with no manual refresh, then inspect the image, the target flow, and the remembered folder |
+
+> **Phase 8 notes (revision 13) — owner ruling 2026-11-23.** The PNG export is
+> revised to the chart's own contract: the image uses the chart's pre-existing
+> fonts and its own page size/width (the export composition's bounds at 300 DPI),
+> so the separate width box, unit dropdown, preset dropdown, and calculated-height
+> preview (R8.7) are withdrawn and removed with their session state, width grammar,
+> and the per-refresh aspect machinery. The image is copied to the clipboard by
+> default; the Export PNG split button's menu toggles the main action to a verified
+> file write whose dialog defaults to the workbook's folder and remembers the user's
+> folder choice (settings keys `PngExportTarget`/`LastPngExportFolder`, schema 28,
+> ADR-0007 D3 amendment). The command identifies font compatibility through the
+> pinned resolver and falls back to the pinned-font raster render with a reported
+> substitution (ADR-0070 D3 amendment) — never a silent swap and never a
+> whole-export refusal. The button is no longer gated on a prior refresh; the command
+> runs the explicit-refresh pipeline itself only when the workbook has not rendered
+> since it was opened. R8.1's cm/in/px grammar is withdrawn with the width input;
+> `ExportSize` is re-scoped to the points-to-pixels conversion at 300 DPI, keeping its
+> rounding and safety limits, so the R8.4 goldens reproduce their recorded pixel
+> dimensions without regeneration.
 
 > **Phase 8 notes (revision 12):** a named style now carries an **outline dash
 > pattern** (ADR-0044), so the raster renderer must honour it: the PNG is
@@ -485,7 +504,7 @@ Goal: export an exact-size PNG from the scene without depending on the Excel cli
 > - **R8.2a** precedes R8.3 because deterministic text rendering and every later golden image depend on the font decision.
 > - Phase 8 consumes only the Phase 3 scene and the Raster project; it is independent of Phases 6 and 7. Executing it directly after Phase 4 requires one ADR recording the order change under the scope-change protocol — an order change, not a design change.
 
-Exit demonstration: enter a width in each supported unit, export, and independently verify the exact pixel dimensions, aspect ratio, 300-DPI metadata, and absence of surrounding whitespace.
+Exit demonstration: from a freshly opened workbook with no manual refresh, export the chart at its own size to the clipboard and then to a file, and independently verify the exact pixel dimensions, aspect ratio, 300-DPI metadata, and absence of surrounding whitespace; confirm the split-button target toggle, the remembered export folder, and the reported font-fallback substitution.
 
 ## Phase 9 — resilience, accessibility, and migration support
 
