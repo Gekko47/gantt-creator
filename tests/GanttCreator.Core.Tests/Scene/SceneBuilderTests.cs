@@ -2686,7 +2686,16 @@ public sealed class SceneBuilderTests
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
             RowHeightPt = 8,
-            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+            // R8.4: the label style carries typography so the reference scene is
+            // renderable by the pinned-font raster renderer - a blank family fails
+            // closed and a null text colour paints nothing (ADR-0070). Values come
+            // from the code-owned catalogue; the measured label boxes are unchanged
+            // because the metrics seam measures them.
+            LabelStyle = new SceneStyle(
+                "DefaultText",
+                fillColour: ColourHex.Parse("#000000"),
+                fontFamily: GanttCatalogues.LabelFontFamily,
+                fontSizePt: GanttCatalogues.LabelBodyFontSizePt),
             // A drawn panel belongs to a profile whose destination has no cells of
             // its own; the live profile is refused one (R4.8A D4).
             Panel = withPanel
