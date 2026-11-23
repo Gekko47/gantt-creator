@@ -1012,19 +1012,23 @@ dotnet test $env:Solution
         $text | Should -Match '\[string\]\$Solution\s*='
     }
 
-    It 'both routine non-office entry points also exclude TransferSoak (R7.7 D4)' {
-        # The routine filter is NEGATED, so a TransferSoak-only test matches
-        # Category!=OfficeIntegration. R7.7 D4 requires the 25-transfer soak to
-        # run only through scripts/verify-transfer-soak.ps1; without the second
-        # exclusion it would enter the every-commit gate, verify.ps1 and CI.
-        # Pin both entry points so a future edit cannot silently re-admit it.
+    It 'both routine non-office entry points exclude TransferSoak and FontProbe (R7.7 D4, R8.2a)' {
+        # The routine filter is NEGATED, so a TransferSoak-only or FontProbe-only
+        # test matches Category!=OfficeIntegration. R7.7 D4 requires the
+        # 25-transfer soak to run only through scripts/verify-transfer-soak.ps1;
+        # R8.2a requires the font probe to run only through the reference-machine
+        # evidence command, because a GitHub-hosted runner has no Office cloud
+        # fonts. Without the exclusions each would enter the every-commit gate,
+        # verify.ps1 and CI. Pin both entry points so a future edit cannot
+        # silently re-admit either.
         foreach ($name in @('test-non-office.ps1', 'verify.ps1')) {
             $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot $name) -Raw
-            $text | Should -Match 'Category!=OfficeIntegration&Category!=TransferSoak'
+            $text | Should -Match 'Category!=OfficeIntegration&Category!=TransferSoak&Category!=FontProbe'
         }
-        # And the branch-final gate must never select the soak positively.
+        # And the branch-final gate must never select either positively.
         $verifyText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'verify.ps1') -Raw
         $verifyText | Should -Not -Match 'Category=TransferSoak'
+        $verifyText | Should -Not -Match 'Category=FontProbe'
     }
 }
 

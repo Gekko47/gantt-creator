@@ -340,7 +340,7 @@ not include R4.10 or its benchmark.
 | D-G1 | Configuration-sheet table set, settings storage, and storage format | R2.7 | ADR-0007 | Accepted and landed |
 | D-G2 | Destructive-command undo semantics | R2.7a | ADR-0008 | Accepted and landed |
 | D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | **Approved 2026-10-05** by the human's instruction to install and proceed — `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, gate wired into `ci.yml` (the `verify.ps1` step of the same name is a disabled stub pending the first full-Core baseline run). Pester guard in `scripts/mutation-gate.Tests.ps1` (26 tests, 12 positive); **a green mutation-gate run has not yet been observed** — the guard's first observed pass is recorded in `docs/STATUS.md` when it happens. No longer open. |
-| D-G4 | Pinned-font provisioning | R8.2a | R8.2a guide | Open — licence-sensitive; human choice required |
+| D-G4 | Pinned-font provisioning | R8.2a | ADR-0070; R8.2a guide | **Resolved 2026-11-23** — Option B: use the Office-installed Aptos faces in place through the explicit SkiaSharp typeface loader with a fail-closed per-face identity check; no bundling (no redistribution right established); [ADR-0070](../adr/0070-font-pinning.md) |
 | D-G5 | Code-signing certificate procurement | by Phase 8 | R10.3 guide | Open — external lead time; start no later than Phase 8 |
 | D-G6 | PowerPoint interop dependency (typed PIA; package check) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` only if `ExcelDna.Interop` 16.0.0 does not expose the PIA | **Resolved 2026-11-21** — statically typed PIA; no `dynamic`/`Microsoft.CSharp`; Step 0 verifies the package |
 | D-G7 | Named-style label/colour capability schema | R2.7b | ADR-0009 | Accepted 2026-09-23 |

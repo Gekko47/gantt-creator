@@ -31,13 +31,16 @@ Set-Location $repoRoot
 # exclude the host-dependent suites by their xUnit Category traits. The
 # traits are per-test [Trait] attributes (the OfficeIntegration convention
 # is documented in tests/Directory.Build.props): OfficeIntegration bodies
-# need a live Office host, and TransferSoak bodies (R7.7) are the 25-transfer
-# soak that runs only through its own measured gate (D4, ADR-0001). The
-# filter is NEGATED, so the second exclusion is load-bearing: a
-# TransferSoak-only test matches Category!=OfficeIntegration and would
-# otherwise run on every commit, in verify.ps1 and in CI. W14 tripwire
-# (scripts/ci-parity.Tests.ps1) asserts every scripts/*.ps1 dotnet test line
-# passes exactly one target; the same file pins both exclusions.
+# need a live Office host, TransferSoak bodies (R7.7) are the 25-transfer
+# soak that runs only through its own measured gate (D4, ADR-0001), and
+# FontProbe bodies (R8.2a) need the Office-delivered Aptos cloud fonts that a
+# GitHub-hosted runner does not have, so they run only through the
+# reference-machine evidence command in ADR-0070. The filter is NEGATED, so
+# every exclusion is load-bearing: a TransferSoak-only or FontProbe-only test
+# matches Category!=OfficeIntegration and would otherwise run on every commit,
+# in verify.ps1 and in CI. W14 tripwire (scripts/ci-parity.Tests.ps1) asserts
+# every scripts/*.ps1 dotnet test line passes exactly one target; the same
+# file pins all three exclusions.
 dotnet test $Solution -c $Configuration --no-build --no-restore `
-    --filter 'Category!=OfficeIntegration&Category!=TransferSoak'
+    --filter 'Category!=OfficeIntegration&Category!=TransferSoak&Category!=FontProbe'
 exit $LASTEXITCODE

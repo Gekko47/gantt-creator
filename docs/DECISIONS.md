@@ -67,6 +67,7 @@
 | ADR-0067 | A hidden worksheet row contributes no data-panel primitives, while its plot shapes stay | Accepted | 2026-11-19 | [`adr/0067-hidden-rows-contribute-no-panel-primitives.md`](adr/0067-hidden-rows-contribute-no-panel-primitives.md) |
 | ADR-0068 | The editable copy composes with the live chart's geometry rules | Accepted | 2026-11-19 | [`adr/0068-the-copy-composes-with-the-live-geometry-rules.md`](adr/0068-the-copy-composes-with-the-live-geometry-rules.md) |
 | ADR-0069 | Typed PowerPoint PIA (15.0.4420.1018, embedded interop types) and reverse-order proxy ownership | Accepted | 2026-11-21 | [`adr/0069-typed-powerpoint-pia-and-ownership.md`](adr/0069-typed-powerpoint-pia-and-ownership.md) |
+| ADR-0070 | Pinned-font provisioning: use the Office-installed Aptos faces in place through the explicit SkiaSharp typeface loader with a fail-closed per-face identity check; no bundling | Accepted | 2026-11-23 | [`adr/0070-font-pinning.md`](adr/0070-font-pinning.md) |
 | ADR-0071 | SkiaSharp 4.157.0 as the raster renderer's drawing dependency: CPU surface with pinned antialiasing, native binary beside the XLL | Accepted | 2026-11-23 | [`adr/0071-skia-raster-renderer-dependency.md`](adr/0071-skia-raster-renderer-dependency.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented

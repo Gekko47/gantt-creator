@@ -190,6 +190,20 @@ R6.6 (18 November 2026) adds the verified clipboard copy to Office, ahead of the
 
 R6.8 (19 November 2026) wires the command and the Export group: `src/GanttCreator.AddIn/CopyEditableCommand.cs` owns the editable-export pipeline order — read, validate, configuration, measurement, export request, the `ExportIncludeDataPanel` selection, bounds, then `StagingLifecycle.Run` — through delegate seams (`ExportRequestBuild`/`ExportBoundsResolve`/`StagingLifecycleRun`), maps every typed refusal to one actionable line, and presents the D1 count sentence (plus the owner's 2026-11-19 dropped-row clause) on the status bar, or the dialog when `IExcelApplicationAdapter.IsStatusBarVisible` reports the status bar hidden. `EditableExportRequest` (beside `ExcelSceneBuildRequestFactory`) is the named export-assembly doorway this command and R7.6 call. `Ribbon.xml` gains `grpExport` with `btnCopyEditable` (`RibbonControlIds.CopyEditable`/`ExportGroup`), gated in `RibbonState.IsEnabled` and visible through `RibbonState.IsVisible`; the glyph is `copy-editable` in `gen-ribbon-glyphs.ps1`. Tests: `tests/GanttCreator.AddIn.Tests/CopyEditableCommandTests.cs` (33 facts), the gate/visibility facts in `RibbonStateServiceTests`, the updated gated-controls pin in `GanttRibbonTests`, and the live `tests/GanttCreator.Office.IntegrationTests/CopyEditableIntegrationTests.cs` (one-click, busy-clipboard, and wiring-spike facts; Excel 16.0 build 20527: 80 staged, paste 1 group of 80, residue 0). The integration test project now references the add-in assembly (test-only, via internals visibility) — the only project-graph change.
 
+**R8.2a entry points (2026-11-23).** The pinned-font decision is
+[ADR-0070](adr/0070-font-pinning.md). The probe is
+[`tests/GanttCreator.Raster.Tests/FontProbeTests.cs`](../tests/GanttCreator.Raster.Tests/FontProbeTests.cs),
+carrying `[Trait("Category", "FontProbe")]`; the routine entry points
+[`scripts/test-non-office.ps1`](../scripts/test-non-office.ps1) and
+[`scripts/verify.ps1`](../scripts/verify.ps1) exclude that category, pinned by
+[`scripts/ci-parity.Tests.ps1`](../scripts/ci-parity.Tests.ps1), because a
+GitHub-hosted runner has no Office cloud fonts. The reference-machine evidence
+command is `dotnet test tests/GanttCreator.Raster.Tests/GanttCreator.Raster.Tests.csproj -c Release --filter "Category=FontProbe"`.
+The probe proved that SkiaSharp's system font manager cannot see Office cloud
+fonts and that `SKTypeface.FromFile` resolves the four pinned Aptos faces;
+`AptosTextMetrics`, `FontAdvanceTable` and `gen-font-advances.py` are unchanged
+and remain the measurement authority.
+
 Read the [implementation-guide manifest](work-items/IMPLEMENTATION-PLAN.md), the current [work item](work-items/), and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results. A symbol outline is only a locator, treat it as navigation aid, not as compiler or reference evidence — verify any finding against current source.
 From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
 After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`. `verify.ps1` runs the changed-code mutation gate as its step 14 via [`mutation-gate.ps1`](../scripts/mutation-gate.ps1); on a long-lived branch the gate halts when `--since origin/main` spans more than 30 Core files, and the sanctioned remedy is `pwsh ./scripts/verify.ps1 -MutationSince <nearer merge-base>` (recorded in R3.13), never a threshold change. The NuGet vulnerability scan is CI-only since W15 ([`scan-vulnerable-packages.ps1`](../scripts/scan-vulnerable-packages.ps1)); it needs network access, which the local gate must not require.

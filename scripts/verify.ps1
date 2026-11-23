@@ -183,12 +183,14 @@ Invoke-Step 'test (OfficeIntegration excluded)' {
     if (Test-Path -LiteralPath $coverageRoot) {
         Remove-Item -LiteralPath $coverageRoot -Recurse -Force
     }
-    # The filter is NEGATED, so the TransferSoak exclusion (R7.7 D4) is
-    # load-bearing: the 25-transfer soak is tagged TransferSoak only and must
-    # run solely through scripts/verify-transfer-soak.ps1, never here. The
-    # soak adds no coverage of its own, so excluding it changes no threshold.
+    # The filter is NEGATED, so each exclusion is load-bearing: the 25-transfer
+    # soak (R7.7 D4) is tagged TransferSoak only and must run solely through
+    # scripts/verify-transfer-soak.ps1; the R8.2a font probe is tagged
+    # FontProbe only and must run solely through the reference-machine evidence
+    # command (a hosted runner has no Office cloud fonts). Neither adds coverage
+    # of its own, so excluding them changes no threshold.
     dotnet test $Solution -c $Configuration --no-build --no-restore `
-        --filter 'Category!=OfficeIntegration&Category!=TransferSoak' `
+        --filter 'Category!=OfficeIntegration&Category!=TransferSoak&Category!=FontProbe' `
         --collect:'XPlat Code Coverage' --results-directory $coverageRoot
 }
 
