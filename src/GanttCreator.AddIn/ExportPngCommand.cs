@@ -176,6 +176,10 @@ internal sealed record ExportPngOutcome(
 /// <param name="Encode">The encode entry. Required.</param>
 /// <param name="Write">The atomic write-and-validate entry. Required.</param>
 /// <param name="TechnicalRecord">Receives the export records, or null to discard them.</param>
+/// <param name="FontResolver">
+/// The pinned-font resolver the compatibility gate consumes (R8.8 D10), or null for the
+/// production pinned source. Injectable so a test drives every font arm host-free.
+/// </param>
 internal sealed record ExportPngRequest(
     EditableExportPreflightRequest? Preflight,
     PngExportTarget Target,
@@ -188,7 +192,8 @@ internal sealed record ExportPngRequest(
     PngRender? Render,
     PngEncode? Encode,
     PngWrite? Write,
-    Action<string>? TechnicalRecord = null);
+    Action<string>? TechnicalRecord = null,
+    PngFontGate.FamilyResolver? FontResolver = null);
 
 /// <summary>
 /// R8.8: the Export PNG click. Ensures chart freshness when required, runs the shared
@@ -379,6 +384,26 @@ internal static class ExportPngCommand
         // missing instead of only that one is missing.
         TraceTextFamilies(scene, request.TechnicalRecord);
 
+        // Stage 3 — font compatibility, identified before any target action (D10). A family
+        // the engine cannot resolve is substituted with the pinned label family and the
+        // substitution is reported; a missing pinned set leaves the scene untouched and the
+        // renderer's typed refusal stands.
+        PngFontGate.FamilyResolver fontResolver = request.FontResolver
+            ?? (static (family, bold) => PinnedFontSource.Default.Resolve(family, bold));
+        PngFontGateResult gate = PngFontGate.Apply(scene, fontResolver, GanttCatalogues.LabelFontFamily);
+        scene = gate.Scene;
+        string substitutionNote = gate.Substituted
+            ? string.Create(
+                CultureInfo.InvariantCulture,
+                $" The chart font could not be rendered, so it was drawn with {GanttCatalogues.LabelFontFamily}.")
+            : string.Empty;
+        if (gate.Substituted)
+        {
+            request.TechnicalRecord?.Invoke(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.export font-fallback families={string.Join(",", gate.SubstitutedFamilies)} substituted={GanttCatalogues.LabelFontFamily}"));
+        }
+
         // The render and encode are shared by both targets; only the delivery differs.
         PngExportBytes RenderPng()
         {
@@ -434,7 +459,8 @@ internal static class ExportPngCommand
 
             string fileMessage = string.Create(
                 CultureInfo.InvariantCulture,
-                $"Exported {dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px to {path}.");
+                $"Exported {dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px to {path}.")
+                + substitutionNote;
             successPresenter(fileMessage);
 
             request.TechnicalRecord?.Invoke(string.Create(
@@ -471,7 +497,8 @@ internal static class ExportPngCommand
 
         string clipboardMessage = string.Create(
             CultureInfo.InvariantCulture,
-            $"PNG copied to the clipboard ({dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px).");
+            $"PNG copied to the clipboard ({dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px).")
+            + substitutionNote;
         successPresenter(clipboardMessage);
 
         request.TechnicalRecord?.Invoke(string.Create(

@@ -72,7 +72,8 @@ public sealed class ExportPngCommandTests
         bool chartRenderCurrent = true,
         Action? ensureCurrent = null,
         string? initialDirectory = null,
-        Action<string?>? persistFolder = null) =>
+        Action<string?>? persistFolder = null,
+        PngFontGate.FamilyResolver? fontResolver = null) =>
         new(
             preflight ?? Preflight(),
             target,
@@ -90,7 +91,17 @@ public sealed class ExportPngCommandTests
             },
             PngExportEncoder.Encode,
             write ?? ((png, path) => new PngWriteOutcome(true, null, "written", "record")),
-            technicalRecord);
+            technicalRecord,
+            fontResolver ?? Resolves);
+
+    /// <summary>
+    /// A resolver that reports every family and weight as renderable, so a test that does not
+    /// exercise the font gate never touches the pinned faces on disk (host-free default).
+    /// </summary>
+    private static PinnedFontResolution Resolves(string fontFamily, bool _) =>
+        PinnedFontResolution.Resolved(
+            null!,
+            new PinnedFontObservation(fontFamily, fontFamily, string.Empty, double.NaN, 1000, null, string.Empty));
 
     [Fact]
     public void Run_writes_and_reports_the_path_and_the_exact_dimensions()
@@ -314,6 +325,94 @@ public sealed class ExportPngCommandTests
                 && record.Contains(
                     "TitleStyle=" + GanttCatalogues.LabelFontFamily,
                     StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A family the engine resolves adds no caveat and no font record: the success line is the
+    /// plain one (the positive counterpart of the substitution arm).
+    /// </summary>
+    [Fact]
+    public void Run_adds_no_font_caveat_when_every_family_resolves()
+    {
+        var successes = new List<string>();
+        var records = new List<string>();
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                preflight: Preflight(scene: SceneWithText(family: GanttCatalogues.LabelFontFamily)),
+                technicalRecord: records.Add),
+            successes.Add,
+            _ => { });
+
+        Assert.True(outcome.Succeeded);
+        Assert.DoesNotContain("drawn with", successes[0], StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            records,
+            record => record.StartsWith("gantt.export font-fallback", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A family the engine cannot resolve renders with the pinned label family, and the status
+    /// line and the technical record both name the substitution (D10). The render receives the
+    /// substituted scene, so the production renderer never sees the unresolvable family.
+    /// </summary>
+    [Fact]
+    public void Run_reports_a_font_substitution_in_the_success_line_and_record()
+    {
+        var successes = new List<string>();
+        var records = new List<string>();
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                preflight: Preflight(scene: SceneWithText(family: "Comic Sans MS")),
+                technicalRecord: records.Add,
+                fontResolver: (family, _) => string.Equals(
+                    family, GanttCatalogues.LabelFontFamily, StringComparison.Ordinal)
+                        ? Resolves(family, false)
+                        : PinnedFontResolution.Refused(PinnedFontRefusal.FontFileMissing, null)),
+            successes.Add,
+            _ => { });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Contains(
+            "drawn with " + GanttCatalogues.LabelFontFamily,
+            successes[0],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            records,
+            record => record.StartsWith("gantt.export font-fallback", StringComparison.Ordinal)
+                && record.Contains("families=Comic Sans MS", StringComparison.Ordinal)
+                && record.Contains(
+                    "substituted=" + GanttCatalogues.LabelFontFamily,
+                    StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// When the pinned faces themselves cannot load there is nothing to substitute with, so the
+    /// renderer's typed refusal stands and the run reports it as a render refusal (never a
+    /// silent swap and never a whole-export refusal).
+    /// </summary>
+    [Fact]
+    public void Run_refuses_the_render_when_the_pinned_faces_are_missing()
+    {
+        var successes = new List<string>();
+        var failures = new List<string>();
+        ExportPngRequest request = Request(
+            preflight: Preflight(scene: SceneWithText(family: "Comic Sans MS")),
+            fontResolver: (_, _) => PinnedFontResolution.Refused(PinnedFontRefusal.FontFileMissing, null)) with
+        {
+            Render = (_, _, _) => throw new PinnedFontException(
+                PinnedFontRefusal.FontFileMissing,
+                GanttCatalogues.LabelFontFamily,
+                null),
+        };
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(request, successes.Add, failures.Add);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ExportPngRefusal.RenderRefused, outcome.Refusal);
+        Assert.Empty(successes);
+        Assert.Single(failures);
     }
 
     private static string GanttChromeKey() =>
