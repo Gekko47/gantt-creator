@@ -479,6 +479,11 @@ public static class SceneBuilder
         // corner the user chose. Delineators are plot-global, so their position travels in its
         // own map rather than through ResolvedEventStyle, which only lane rows build.
         Dictionary<GanttRowId, GanttLabelPosition> delineatorLabelPositions = [];
+
+        // One lookup for the whole pass: the fallback style and its default label
+        // position are the same preset, so resolving the key twice per row was two
+        // answers to one question. The key is a code-owned constant, never input.
+        GanttStylePreset defaultDelineator = GanttCatalogues.GetPreset("DefaultDelineator");
         foreach (GanttEvent @event in plotGlobalEntities)
         {
             // §24 draws the line from the resolved line style, but a Delineator has
@@ -490,10 +495,10 @@ public static class SceneBuilder
                 TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null;
             delineatorStyles[@event.Id] = delineatorResolved
                 ? resolved!.Style
-                : CataloguePresetStyle("DefaultDelineator");
+                : CataloguePresetStyle(defaultDelineator);
             delineatorLabelPositions[@event.Id] = @event.LabelPosition
                 ?? resolved?.LabelPosition
-                ?? GanttCatalogues.GetPreset("DefaultDelineator").DefaultLabelPosition;
+                ?? defaultDelineator.DefaultLabelPosition;
         }
 
         foreach (GanttEvent @event in laneParticipants)
@@ -1750,15 +1755,15 @@ public static class SceneBuilder
     /// the scene. Reading the preset keeps the token table authoritative and is what
     /// makes a registry that supplies its own style and this fallback agree.
     /// </remarks>
-    private static SceneStyle CataloguePresetStyle(string styleKey)
-    {
-        GanttStylePreset preset = GanttCatalogues.GetPreset(styleKey);
-        return new SceneStyle(
+    private static SceneStyle CataloguePresetStyle(string styleKey) =>
+        CataloguePresetStyle(GanttCatalogues.GetPreset(styleKey));
+
+    private static SceneStyle CataloguePresetStyle(GanttStylePreset preset) =>
+        new(
             preset.StyleKey,
             string.IsNullOrEmpty(preset.FillColour) ? null : ColourHex.Parse(preset.FillColour),
             string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour),
             textColour: string.IsNullOrEmpty(preset.TextColour) ? null : ColourHex.Parse(preset.TextColour));
-    }
 
     /// <summary>
     /// Builds the §10 splitter band, borders, and labels for every splitter lane.
