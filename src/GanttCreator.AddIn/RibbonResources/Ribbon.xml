@@ -247,9 +247,17 @@
         <group id="grpExport" label="Export" getVisible="GetVisible">
           <button id="btnCopyEditable" label="Copy editable" size="large" getImage="GetGlyph" keytip="CP" screentip="Copy the Gantt as editable shapes" supertip="Copies the chart and table as one editable group of shapes. Paste it into Excel or PowerPoint, then ungroup to edit the elements. A table with error rows copies the valid rows and says what was left out." getEnabled="GetEnabled" onAction="OnCopyEditableClick"/>
           <button id="btnSendToPowerPoint" label="Send to PowerPoint" size="large" getImage="GetGlyph" keytip="SP" screentip="Send the Gantt to PowerPoint" supertip="Pastes the same editable chart and table as one group on the active PowerPoint slide, fitted to the slide. Your presentation is never saved, closed, or terminated." getEnabled="GetEnabled" onAction="OnSendToPowerPointClick"/>
-          <!-- R8.8: the command renders the chart at its own size; it shares Copy Editable's
-               Ready + active-Gantt-sheet gate and ensures chart freshness itself. -->
-          <button id="btnExportPng" label="Export PNG" size="large" getImage="GetGlyph" keytip="PE" screentip="Export the Gantt as a PNG image" supertip="Renders the chart and table as one PNG at the chart's own size and copies it to the clipboard. The file action and its remembered folder live on this button's menu." getEnabled="GetEnabled" onAction="OnExportPngClick"/>
+          <!-- R8.8 (owner ruling 2026-11-23): the export action is a split button. The main
+               action delivers to the selected target (clipboard by default); the menu's two
+               toggles choose it radio-style, and the choice is saved in the workbook. `size`
+               belongs on the splitButton, never on its child button. -->
+          <splitButton id="spbExportPng" size="large" getEnabled="GetEnabled">
+            <button id="btnExportPng" getLabel="GetExportPngLabel" getImage="GetGlyph" keytip="PE" screentip="Export the Gantt as a PNG image" supertip="Renders the chart and table as one PNG at the chart's own size and delivers it to the target chosen in this button's menu: the clipboard by default, or a verified file whose folder is remembered." getEnabled="GetEnabled" onAction="OnExportPngClick"/>
+            <menu id="mnuExportPng">
+              <toggleButton id="btnExportPngTargetClipboard" label="Copy to clipboard" keytip="PC" screentip="Copy the PNG to the clipboard" supertip="Pressed means the main button copies the image to the clipboard. The choice is saved in this workbook." getEnabled="GetEnabled" getPressed="GetExportPngClipboardPressed" onAction="OnExportPngTargetClick"/>
+              <toggleButton id="btnExportPngTargetFile" label="Save to file" keytip="PF" screentip="Save the PNG to a file" supertip="Pressed means the main button writes a verified file, starting in the folder of the last export or the workbook's folder. The choice is saved in this workbook." getEnabled="GetEnabled" getPressed="GetExportPngFilePressed" onAction="OnExportPngTargetClick"/>
+            </menu>
+          </splitButton>
         </group>
         <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">
           <button id="btnDiagnostics" label="Diagnostics" getImage="GetGlyph" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

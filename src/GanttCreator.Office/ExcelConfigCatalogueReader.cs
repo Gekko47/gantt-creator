@@ -710,6 +710,15 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
+            // R8.8: the PNG-export target is a closed two-value set. A bad value is refused,
+            // never defaulted behind the user's back, so the export never silently changes
+            // where the image goes.
+            if (expected.Key == GanttPngExport.TargetSettingKey
+                && !GanttPngExport.TryParse(value, out _))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
             map[expected.Key] = value;
         }
 

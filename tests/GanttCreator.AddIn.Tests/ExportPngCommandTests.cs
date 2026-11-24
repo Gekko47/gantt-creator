@@ -61,15 +61,27 @@ public sealed class ExportPngCommandTests
     }
 
     private static ExportPngRequest Request(
+        PngExportTarget target = PngExportTarget.File,
         Action? onRender = null,
         ISaveFileDialogPort? dialog = null,
+        PngClipboardPlace? clipboard = null,
         PngWrite? write = null,
         EditableExportPreflightRequest? preflight = null,
         Action<RasterBackground>? onBackground = null,
-        Action<string>? technicalRecord = null) =>
+        Action<string>? technicalRecord = null,
+        bool chartRenderCurrent = true,
+        Action? ensureCurrent = null,
+        string? initialDirectory = null,
+        Action<string?>? persistFolder = null) =>
         new(
             preflight ?? Preflight(),
+            target,
+            chartRenderCurrent,
+            ensureCurrent,
             dialog ?? new StubDialog("out.png"),
+            clipboard ?? (_ => PngClipboardOutcome.Ok()),
+            initialDirectory,
+            persistFolder,
             (scene, dimensions, background) =>
             {
                 onBackground?.Invoke(background);
@@ -307,13 +319,143 @@ public sealed class ExportPngCommandTests
     private static string GanttChromeKey() =>
         GanttChartChrome.SettingKeyFor(GanttChartChromeRole.Background);
 
+    /// <summary>
+    /// A clipboard-target run copies the rendered PNG, presents the clipboard success line,
+    /// reports the delivery, and never opens the dialog (R8.8 D8).
+    /// </summary>
+    [Fact]
+    public void Run_copies_to_the_clipboard_by_default_and_reports_it()
+    {
+        var successes = new List<string>();
+        var failures = new List<string>();
+        int placements = 0;
+        PixelDimensions placed = default;
+        var dialog = new StubDialog("unused.png");
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                target: PngExportTarget.Clipboard,
+                dialog: dialog,
+                clipboard: png =>
+                {
+                    placements++;
+                    placed = png.Dimensions;
+                    return PngClipboardOutcome.Ok();
+                }),
+            successes.Add,
+            failures.Add);
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.DeliveredToClipboard);
+        Assert.Null(outcome.WrittenPath);
+        Assert.Equal(1, placements);
+        Assert.Equal(outcome.Dimensions, placed);
+        Assert.Equal(0, dialog.Calls);
+        Assert.Single(successes);
+        Assert.Contains("clipboard", successes[0], StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(failures);
+    }
+
+    /// <summary>A refused clipboard placement is the typed refusal and never a success (D8).</summary>
+    [Fact]
+    public void Run_reports_a_clipboard_refusal_with_the_ports_message()
+    {
+        var successes = new List<string>();
+        var failures = new List<string>();
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                target: PngExportTarget.Clipboard,
+                clipboard: _ => PngClipboardOutcome.Fail("The clipboard is busy, so the PNG was not copied.")),
+            successes.Add,
+            failures.Add);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ExportPngRefusal.ClipboardRefused, outcome.Refusal);
+        Assert.Empty(successes);
+        Assert.Single(failures);
+        Assert.Contains("clipboard is busy", failures[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A clipboard target without a clipboard port is a construction refusal (D8).</summary>
+    [Fact]
+    public void Run_refuses_a_clipboard_target_without_a_clipboard_port()
+    {
+        var failures = new List<string>();
+        ExportPngRequest request = Request(target: PngExportTarget.Clipboard) with { Clipboard = null };
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(request, _ => { }, failures.Add);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ExportPngRefusal.MissingClipboard, outcome.Refusal);
+        Assert.Single(failures);
+    }
+
+    /// <summary>
+    /// A successful file export remembers the chosen folder (D9), so the next dialog opens
+    /// there; the initial directory the command resolved is passed to the dialog.
+    /// </summary>
+    [Fact]
+    public void Run_persists_the_chosen_folder_and_passes_the_initial_directory()
+    {
+        var dialog = new StubDialog("out.png");
+        var persisted = new List<string?>();
+        const string initial = @"C:\remembered";
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(dialog: dialog, initialDirectory: initial, persistFolder: persisted.Add),
+            _ => { },
+            _ => { });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(initial, dialog.LastInitialDirectory);
+        string? recorded = Assert.Single(persisted);
+        Assert.Equal(Path.GetDirectoryName("out.png"), recorded);
+    }
+
+    /// <summary>
+    /// A stale chart runs the freshness step before the read (D10); a current chart does not.
+    /// </summary>
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 0)]
+    public void Run_ensures_freshness_only_when_the_chart_is_stale(bool chartRenderCurrent, int expectedCalls)
+    {
+        var order = new List<string>();
+        EditableExportPreflightRequest preflight = Preflight() with
+        {
+            TableReader = new StubTableReader(order: order),
+        };
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                preflight: preflight,
+                chartRenderCurrent: chartRenderCurrent,
+                ensureCurrent: () => order.Add("ensure")),
+            _ => { },
+            _ => { });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(
+            expectedCalls,
+            order.Count(entry => string.Equals(entry, "ensure", StringComparison.Ordinal)));
+        if (expectedCalls == 1)
+        {
+            Assert.Equal(["ensure", "read"], order);
+        }
+    }
+
     private sealed class StubDialog(string? path, Action? onPick = null) : ISaveFileDialogPort
     {
         internal int Calls { get; private set; }
 
-        public string? PickPath(string suggestedFileName)
+        /// <summary>The initial directory the command supplied, for the folder-default pin.</summary>
+        internal string? LastInitialDirectory { get; private set; }
+
+        public string? PickPath(string suggestedFileName, string? initialDirectory)
         {
             Calls++;
+            LastInitialDirectory = initialDirectory;
             onPick?.Invoke();
             return path;
         }

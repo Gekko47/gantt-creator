@@ -28,7 +28,7 @@ internal delegate PngExportBytes PngEncode(RasterRenderResult result);
 /// <returns>The write outcome; success only after the writer re-read and validated the file.</returns>
 internal delegate PngWriteOutcome PngWrite(PngExportBytes png, string targetPath);
 
-/// <summary>Why the PNG export produced no file (R8.8).</summary>
+/// <summary>Why the PNG export produced no image (R8.8).</summary>
 /// <remarks>
 /// Every member is a typed, expected outcome rather than an exception; the construction
 /// members exist so a dependency the command cannot run without is reported, never
@@ -43,47 +43,54 @@ internal enum ExportPngRefusal
     /// <summary>No shared pre-flight request was supplied.</summary>
     MissingPreflight = 1,
 
-    /// <summary>No save-file dialog port was supplied.</summary>
-    MissingDialog = 2,
+    /// <summary>No clipboard port was supplied for a clipboard export.</summary>
+    MissingClipboard = 2,
+
+    /// <summary>No save-file dialog port was supplied for a file export.</summary>
+    MissingDialog = 3,
 
     /// <summary>No render seam was supplied.</summary>
-    MissingRender = 3,
+    MissingRender = 4,
 
     /// <summary>No encode seam was supplied.</summary>
-    MissingEncode = 4,
+    MissingEncode = 5,
 
     /// <summary>No write seam was supplied.</summary>
-    MissingWrite = 5,
+    MissingWrite = 6,
 
-    /// <summary>The table could not be read, so no file was written.</summary>
-    TableReadRefused = 6,
+    /// <summary>The table could not be read, so no image was produced.</summary>
+    TableReadRefused = 7,
 
-    /// <summary>The workbook configuration could not be read, so no file was written.</summary>
-    ConfigReadRefused = 7,
+    /// <summary>The workbook configuration could not be read, so no image was produced.</summary>
+    ConfigReadRefused = 8,
 
-    /// <summary>The live panel grid could not be measured, so no file was written.</summary>
-    MeasurementRefused = 8,
+    /// <summary>The live panel grid could not be measured, so no image was produced.</summary>
+    MeasurementRefused = 9,
 
-    /// <summary>The export scene request was refused, so no file was written.</summary>
-    ExportRequestRefused = 9,
+    /// <summary>The export scene request was refused, so no image was produced.</summary>
+    ExportRequestRefused = 10,
 
-    /// <summary>The export bounds or scene were refused, so no file was written.</summary>
-    BoundsRefused = 10,
+    /// <summary>The export bounds or scene were refused, so no image was produced.</summary>
+    BoundsRefused = 11,
 
     /// <summary>The composition's bounds convert to pixels beyond the safety limits.</summary>
-    DimensionsRefused = 11,
+    DimensionsRefused = 12,
 
     /// <summary>The render refused (a pinned font could not be loaded).</summary>
-    RenderRefused = 12,
+    RenderRefused = 13,
 
     /// <summary>The atomic write or its post-write validation refused.</summary>
-    WriteRefused = 13,
+    WriteRefused = 14,
+
+    /// <summary>The clipboard placement or its format verification refused.</summary>
+    ClipboardRefused = 15,
 }
 
 /// <summary>The typed result of one PNG export run (R8.8).</summary>
-/// <param name="Succeeded">Whether the file was written and independently validated.</param>
+/// <param name="Succeeded">Whether the image was delivered and verified.</param>
 /// <param name="Cancelled">Whether the user cancelled the save dialog; nothing was written.</param>
-/// <param name="WrittenPath">The written path on success, or null.</param>
+/// <param name="DeliveredToClipboard">Whether the delivered image went to the clipboard.</param>
+/// <param name="WrittenPath">The written path on a file success, or null.</param>
 /// <param name="Dimensions">The exported pixel dimensions on success, or the default.</param>
 /// <param name="DroppedRowCount">
 /// How many body rows carried a blocking validation error and were left out of the export,
@@ -94,30 +101,42 @@ internal enum ExportPngRefusal
 internal sealed record ExportPngOutcome(
     bool Succeeded,
     bool Cancelled,
+    bool DeliveredToClipboard,
     string? WrittenPath,
     PixelDimensions Dimensions,
     int DroppedRowCount,
     ExportPngRefusal? Refusal,
     string Message)
 {
-    /// <summary>Creates the success outcome.</summary>
+    /// <summary>Creates the clipboard success outcome.</summary>
+    /// <param name="dimensions">The exported pixel dimensions.</param>
+    /// <param name="droppedRows">The blocking-error row count left out of the export.</param>
+    /// <param name="message">The success sentence.</param>
+    /// <returns>The success outcome.</returns>
+    internal static ExportPngOutcome OkClipboard(
+        PixelDimensions dimensions,
+        int droppedRows,
+        string message) =>
+        new(true, false, true, null, dimensions, droppedRows, null, message);
+
+    /// <summary>Creates the file success outcome.</summary>
     /// <param name="writtenPath">The path the validated file was written to.</param>
     /// <param name="dimensions">The exported pixel dimensions.</param>
     /// <param name="droppedRows">The blocking-error row count left out of the export.</param>
     /// <param name="message">The success sentence.</param>
     /// <returns>The success outcome.</returns>
-    internal static ExportPngOutcome Ok(
+    internal static ExportPngOutcome OkFile(
         string writtenPath,
         PixelDimensions dimensions,
         int droppedRows,
         string message) =>
-        new(true, false, writtenPath, dimensions, droppedRows, null, message);
+        new(true, false, false, writtenPath, dimensions, droppedRows, null, message);
 
     /// <summary>Creates the silent cancellation outcome: nothing was written, nothing is presented.</summary>
     /// <param name="droppedRows">The blocking-error row count the pre-flight had already counted.</param>
     /// <returns>The cancellation outcome.</returns>
     internal static ExportPngOutcome CancelledOutcome(int droppedRows) =>
-        new(false, true, null, default, droppedRows, null, string.Empty);
+        new(false, true, false, null, default, droppedRows, null, string.Empty);
 
     /// <summary>Creates a refusal outcome.</summary>
     /// <param name="refusal">The typed refusal.</param>
@@ -128,7 +147,7 @@ internal sealed record ExportPngOutcome(
         ExportPngRefusal refusal,
         string message,
         int droppedRows = 0) =>
-        new(false, false, null, default, droppedRows, refusal, message);
+        new(false, false, false, null, default, droppedRows, refusal, message);
 }
 
 /// <summary>The inputs one PNG export run consumes (R8.8).</summary>
@@ -136,40 +155,64 @@ internal sealed record ExportPngOutcome(
 /// The shared pre-flight request (table reader, configuration reader, grid measurement,
 /// export request factory, bounds resolver). Required.
 /// </param>
-/// <param name="Dialog">The save-file dialog port. Required.</param>
+/// <param name="Target">Where the image is delivered. Defaults to the clipboard (D8).</param>
+/// <param name="ChartRenderCurrent">
+/// Whether the workbook has rendered since it was opened (D10). When false the command runs
+/// <paramref name="EnsureCurrent"/> before the pre-flight.
+/// </param>
+/// <param name="EnsureCurrent">
+/// The freshness step: the existing silent refresh entry, or null when the caller has already
+/// guaranteed freshness (tests). Never a second refresh implementation.
+/// </param>
+/// <param name="Dialog">The save-file dialog port. Required for the file target.</param>
+/// <param name="Clipboard">The clipboard placement port. Required for the clipboard target.</param>
+/// <param name="InitialDirectory">
+/// The save dialog's initial folder (D9): the remembered folder, else the workbook's, else null.
+/// </param>
+/// <param name="PersistFolder">
+/// Receives the chosen folder after a successful file write, or null to persist nothing.
+/// </param>
 /// <param name="Render">The render entry. Required.</param>
 /// <param name="Encode">The encode entry. Required.</param>
 /// <param name="Write">The atomic write-and-validate entry. Required.</param>
 /// <param name="TechnicalRecord">Receives the export records, or null to discard them.</param>
 internal sealed record ExportPngRequest(
     EditableExportPreflightRequest? Preflight,
+    PngExportTarget Target,
+    bool ChartRenderCurrent,
+    Action? EnsureCurrent,
     ISaveFileDialogPort? Dialog,
+    PngClipboardPlace? Clipboard,
+    string? InitialDirectory,
+    Action<string?>? PersistFolder,
     PngRender? Render,
     PngEncode? Encode,
     PngWrite? Write,
     Action<string>? TechnicalRecord = null);
 
 /// <summary>
-/// R8.8 D1/D7: the Export PNG click. Runs the shared pre-flight, sizes the image from the
-/// fresh composition bounds at 300 DPI, shows the save dialog, renders, encodes, and writes
-/// atomically with post-write validation — reporting success only after the file was validated.
+/// R8.8: the Export PNG click. Ensures chart freshness when required, runs the shared
+/// pre-flight, sizes the image from the fresh composition bounds at 300 DPI, then delivers to
+/// the selected target — the clipboard by default, or a verified file whose folder is
+/// remembered — reporting success only after the delivery was verified.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The order is the contract.</b> Every input-dependent refusal (pre-flight, dimension
-/// budget) precedes the dialog, so a refused export never makes the user pick a path first;
-/// the render precedes the write, and the write's own validator precedes success.
+/// <b>The order is the contract.</b> The freshness step precedes the pre-flight; every
+/// input-dependent refusal (pre-flight, dimension budget) precedes the dialog; the render
+/// precedes the write or the clipboard placement, and each delivery verifies its own result.
 /// </para>
 /// <para>
 /// <b>The image is the chart's own size (owner ruling 2026-11-23).</b> The pixel dimensions
 /// derive from the pre-flight's freshly resolved export-composition bounds in points, so the
-/// PNG is what the user sees and a table changed since the last render can never size the
-/// file for a chart that no longer exists. There is no width input.
+/// PNG is what the user sees. There is no width input.
 /// </para>
 /// <para>
-/// <b>The render is synchronous on Excel's command thread</b> (D6). The
-/// <see cref="ExportSize.MaxTotalPixels"/> budget bounds the legal worst case; cancellation
-/// for long non-COM rendering is R9.1's row.
+/// <b>Freshness is ensured, never demanded (D10).</b> A first export after opening runs the
+/// existing silent refresh entry rather than asking the user to press Refresh. The entry is
+/// the scheduled pass, which rebuilds the complete scene; its declined repairs are
+/// presentation matters the explicit Refresh still owns, and the export's own stages stay
+/// read-only.
 /// </para>
 /// <para>
 /// <b>A scene-contract fault is not caught here.</b> <see cref="SceneRasterRenderer.Render"/>
@@ -189,15 +232,9 @@ internal static class ExportPngCommand
     internal const string SuggestedFileName = "gantt.png";
 
     /// <summary>
-    /// Runs the live PNG export in the current Excel session: wires the production seams,
-    /// runs once, and restores the add-in tab.
+    /// Runs the live PNG export in the current Excel session: wires the production seams for
+    /// the persisted target, runs once, and restores the add-in tab.
     /// </summary>
-    /// <remarks>
-    /// <b>No protection window and no application-state scope.</b> The pre-flight reads and
-    /// measures, the renderer writes pixels in memory and the writer writes a file; no shape
-    /// and no cell is touched, so ADR-0055's release-and-restore window and ADR-0020's
-    /// screen-updating scope would only add COM traffic.
-    /// </remarks>
     internal static void RunForExcel()
     {
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
@@ -219,7 +256,13 @@ internal static class ExportPngCommand
 
         ExportPngRequest request = new(
             preflight,
+            PngExportPreferences.Shared.Target,
+            RibbonStateService.Instance.ChartRenderCurrent,
+            EnsureChartCurrent,
             new WindowsSaveFileDialogPort(),
+            new WindowsPngClipboardPort().Place,
+            RibbonStateService.Instance.ResolvePngExportInitialFolder(),
+            RibbonStateService.Instance.PersistPngExportFolder,
             RenderLive,
             EncodeLive,
             WriteLive,
@@ -229,6 +272,9 @@ internal static class ExportPngCommand
 
         RibbonStateService.Instance.ActivateGanttTab();
     }
+
+    /// <summary>Runs the freshness step: the existing silent refresh entry (D10).</summary>
+    private static void EnsureChartCurrent() => RefreshSheetCommand.RunSilentForExcel();
 
     /// <summary>Runs one PNG export pipeline and presents its one-line result.</summary>
     /// <param name="request">The run's inputs; see <see cref="ExportPngRequest"/>.</param>
@@ -254,11 +300,6 @@ internal static class ExportPngCommand
             return Refuse(ExportPngRefusal.MissingPreflight, ConstructionMessage, failurePresenter);
         }
 
-        if (request.Dialog is not { } dialog)
-        {
-            return Refuse(ExportPngRefusal.MissingDialog, ConstructionMessage, failurePresenter);
-        }
-
         if (request.Render is not { } render)
         {
             return Refuse(ExportPngRefusal.MissingRender, ConstructionMessage, failurePresenter);
@@ -274,7 +315,25 @@ internal static class ExportPngCommand
             return Refuse(ExportPngRefusal.MissingWrite, ConstructionMessage, failurePresenter);
         }
 
+        ISaveFileDialogPort? fileDialog = request.Dialog;
+        if (request.Target == PngExportTarget.File && fileDialog is null)
+        {
+            return Refuse(ExportPngRefusal.MissingDialog, ConstructionMessage, failurePresenter);
+        }
+
+        PngClipboardPlace? clipboard = request.Clipboard;
+        if (request.Target == PngExportTarget.Clipboard && clipboard is null)
+        {
+            return Refuse(ExportPngRefusal.MissingClipboard, ConstructionMessage, failurePresenter);
+        }
+
         long started = Stopwatch.GetTimestamp();
+
+        // Stage 0 — freshness (D10): only when the workbook has not rendered since it opened.
+        if (!request.ChartRenderCurrent)
+        {
+            request.EnsureCurrent?.Invoke();
+        }
 
         // Stage 1 — the shared pre-flight, unchanged (D5).
         EditableExportPreflightOutcome preflight = EditableExportPreflight.Run(preflightRequest);
@@ -294,7 +353,7 @@ internal static class ExportPngCommand
             // it is still named rather than dereferenced.
             return Refuse(
                 ExportPngRefusal.BoundsRefused,
-                "The chart could not be measured for export, so no PNG was written.",
+                "The chart could not be measured for export, so no PNG was produced.",
                 failurePresenter,
                 preflight.DroppedRowCount);
         }
@@ -314,26 +373,82 @@ internal static class ExportPngCommand
                 preflight.DroppedRowCount);
         }
 
-        // Stage 3 — the dialog is the last gate before the expensive render, and a cancel is
-        // silent: nothing is written and nothing is presented.
-        string? path = dialog.PickPath(SuggestedFileName);
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return ExportPngOutcome.CancelledOutcome(preflight.DroppedRowCount);
-        }
-
         // Diagnosis hook (live defect 2026-11-23): the raster renderer refuses a text
         // primitive whose style names no font family. The trace names the style keys and
         // families BEFORE the refusal, so a live export says which family the scene is
         // missing instead of only that one is missing.
         TraceTextFamilies(scene, request.TechnicalRecord);
 
-        // Stage 4 + 5 — render, then encode. The render owns the surface; the bytes outlive it.
-        PngExportBytes png;
+        // The render and encode are shared by both targets; only the delivery differs.
+        PngExportBytes RenderPng()
+        {
+            using RasterRenderResult rendered = render(
+                scene,
+                dimensions,
+                ChartBackground(preparation.Settings));
+            return encode(rendered);
+        }
+
+        if (request.Target == PngExportTarget.File)
+        {
+            // Stage 3 — the dialog is the last gate before the expensive render, and a cancel
+            // is silent: nothing is written and nothing is presented.
+            string? path = fileDialog!.PickPath(SuggestedFileName, request.InitialDirectory);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return ExportPngOutcome.CancelledOutcome(preflight.DroppedRowCount);
+            }
+
+            PngExportBytes png;
+            try
+            {
+                png = RenderPng();
+            }
+            catch (PinnedFontException ex)
+            {
+                return Refuse(
+                    ExportPngRefusal.RenderRefused,
+                    ex.Message,
+                    failurePresenter,
+                    preflight.DroppedRowCount);
+            }
+
+            // Stage 4 — write, and validate from disk before success (R8.6 D2).
+            PngWriteOutcome written = write(png, path);
+            if (!string.IsNullOrWhiteSpace(written.TechnicalRecord))
+            {
+                request.TechnicalRecord?.Invoke(written.TechnicalRecord);
+            }
+
+            if (!written.Succeeded)
+            {
+                return Refuse(
+                    ExportPngRefusal.WriteRefused,
+                    written.ActionableMessage,
+                    failurePresenter,
+                    preflight.DroppedRowCount);
+            }
+
+            // D9: remember the folder only after a successful, validated write.
+            request.PersistFolder?.Invoke(Path.GetDirectoryName(path));
+
+            string fileMessage = string.Create(
+                CultureInfo.InvariantCulture,
+                $"Exported {dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px to {path}.");
+            successPresenter(fileMessage);
+
+            request.TechnicalRecord?.Invoke(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.export png target=file path={path} width={dimensions.PixelWidth} height={dimensions.PixelHeight} rows-dropped={preflight.DroppedRowCount} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
+
+            return ExportPngOutcome.OkFile(path, dimensions, preflight.DroppedRowCount, fileMessage);
+        }
+
+        // Clipboard target (D8): render, place, and verify the formats read back.
+        PngExportBytes clipboardPng;
         try
         {
-            using RasterRenderResult rendered = render(scene, dimensions, ChartBackground(preparation.Settings));
-            png = encode(rendered);
+            clipboardPng = RenderPng();
         }
         catch (PinnedFontException ex)
         {
@@ -344,33 +459,26 @@ internal static class ExportPngCommand
                 preflight.DroppedRowCount);
         }
 
-        // Stage 6 — write, and validate from disk before success (R8.6 D2).
-        PngWriteOutcome written = write(png, path);
-        if (!string.IsNullOrWhiteSpace(written.TechnicalRecord))
-        {
-            request.TechnicalRecord?.Invoke(written.TechnicalRecord);
-        }
-
-        if (!written.Succeeded)
+        PngClipboardOutcome placed = clipboard!(clipboardPng);
+        if (!placed.Succeeded)
         {
             return Refuse(
-                ExportPngRefusal.WriteRefused,
-                written.ActionableMessage,
+                ExportPngRefusal.ClipboardRefused,
+                placed.Failure ?? "The PNG could not be copied to the clipboard.",
                 failurePresenter,
                 preflight.DroppedRowCount);
         }
 
-        // Stage 7 — report. Counts and sizes only; never schedule content.
-        string message = string.Create(
+        string clipboardMessage = string.Create(
             CultureInfo.InvariantCulture,
-            $"Exported {dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px to {path}.");
-        successPresenter(message);
+            $"PNG copied to the clipboard ({dimensions.PixelWidth} \u00d7 {dimensions.PixelHeight} px).");
+        successPresenter(clipboardMessage);
 
         request.TechnicalRecord?.Invoke(string.Create(
             CultureInfo.InvariantCulture,
-            $"gantt.export png path={path} width={dimensions.PixelWidth} height={dimensions.PixelHeight} rows-dropped={preflight.DroppedRowCount} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
+            $"gantt.export png target=clipboard width={dimensions.PixelWidth} height={dimensions.PixelHeight} rows-dropped={preflight.DroppedRowCount} ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.#}"));
 
-        return ExportPngOutcome.Ok(path, dimensions, preflight.DroppedRowCount, message);
+        return ExportPngOutcome.OkClipboard(dimensions, preflight.DroppedRowCount, clipboardMessage);
     }
 
     /// <summary>The canvas background: the workbook's chart background, token fallback (R8.8 D1).</summary>
@@ -454,16 +562,16 @@ internal static class ExportPngCommand
         preflight.Refusal switch
         {
             EditableExportPreflightRefusal.TableReadRefused =>
-                "The table could not be read, so no PNG was written.",
+                "The table could not be read, so no PNG was produced.",
             EditableExportPreflightRefusal.ConfigReadRefused =>
-                "The workbook configuration could not be read, so no PNG was written.",
+                "The workbook configuration could not be read, so no PNG was produced.",
             EditableExportPreflightRefusal.MeasurementRefused =>
-                "The table could not be measured, so no PNG was written.",
+                "The table could not be measured, so no PNG was produced.",
             EditableExportPreflightRefusal.ExportRequestRefused =>
                 preflight.ExportRequestMessage
-                ?? "The chart could not be prepared for export, so no PNG was written.",
+                ?? "The chart could not be prepared for export, so no PNG was produced.",
             EditableExportPreflightRefusal.BoundsRefused =>
-                "The chart could not be measured for export, so no PNG was written.",
+                "The chart could not be measured for export, so no PNG was produced.",
             EditableExportPreflightRefusal.NullRequest => ConstructionMessage,
             EditableExportPreflightRefusal.MissingTableReader => ConstructionMessage,
             EditableExportPreflightRefusal.MissingConfigReader => ConstructionMessage,

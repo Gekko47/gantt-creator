@@ -79,6 +79,37 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
     }
 
     /// <inheritdoc />
+    public string? ActiveWorkbookFolder()
+    {
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return null;
+        }
+
+        // CA1031: this read runs on a click path and inside Excel event handlers, where a
+        // propagating COM failure surfaces as a host error. A failed probe reports "not
+        // determinable" so the dialog opens at its own default.
+#pragma warning disable CA1031
+        try
+        {
+            Excel.Workbook? workbook = application.ActiveWorkbook;
+            if (workbook is null)
+            {
+                return null;
+            }
+
+            string path = workbook.Path;
+            return string.IsNullOrWhiteSpace(path) ? null : path;
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <inheritdoc />
     public void ShowStatusBar(string message)
     {
         ArgumentNullException.ThrowIfNull(message);

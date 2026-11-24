@@ -15,6 +15,10 @@ internal interface ISaveFileDialogPort
 {
     /// <summary>Shows the save dialog and returns the chosen path.</summary>
     /// <param name="suggestedFileName">The file name the dialog is pre-filled with.</param>
+    /// <param name="initialDirectory">
+    /// The folder the dialog opens at — the remembered export folder, else the workbook's own
+    /// folder (R8.8 D9) — or null/blank to let the host choose.
+    /// </param>
     /// <returns>The chosen path, or <see langword="null"/> when the user cancelled.</returns>
-    string? PickPath(string suggestedFileName);
+    string? PickPath(string suggestedFileName, string? initialDirectory);
 }

@@ -94,7 +94,11 @@ public class GanttSchemaVersionTests
         // 27 adds the PeriodLabelReferencePlotWidthPt metric token (ADR-0041's
         // 2026-11-20 amendment). No migration (ADR-0029 D6); Repair is the remedy,
         // because the ribbon no longer carries an Initialise command.
-        Assert.Equal(27, GanttSchemaVersion.CurrentSchemaVersion);
+        // 28 adds `PngExportTarget` and `LastPngExportFolder` to tblGanttSettings
+        // (R8.8), so the PNG export target and the remembered folder survive
+        // reopening the workbook. The config anchor moves from A100 to A102 to keep
+        // the blank row. No migration (ADR-0029 D6); Repair is the remedy.
+        Assert.Equal(28, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

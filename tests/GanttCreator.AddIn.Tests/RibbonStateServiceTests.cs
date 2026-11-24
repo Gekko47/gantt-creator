@@ -1808,6 +1808,108 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     /// <summary>
+    /// Selecting the file target from the menu toggle persists the workbook row and flips the
+    /// pressed state and the main button's label (R8.8 D8).
+    /// </summary>
+    [Fact]
+    public void SetPngExportTarget_persists_the_choice_and_re_queries_the_surface()
+    {
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Returns(ConfigWriteOutcome.Ok());
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(writer.Object);
+        PngExportPreferences.Shared.Target = PngExportTarget.Clipboard;
+
+        service.SetPngExportTarget(RibbonControlIds.ExportPngTargetFile);
+
+        Assert.Equal(PngExportTarget.File, PngExportPreferences.Shared.Target);
+        Assert.True(RibbonStateService.GetExportPngFilePressed(null));
+        Assert.False(RibbonStateService.GetExportPngClipboardPressed(null));
+        Assert.Equal("Export PNG to file", RibbonStateService.GetExportPngLabel(null));
+        writer.Verify(
+            w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings => settings[GanttPngExport.TargetSettingKey] == GanttPngExport.FileValue)),
+            Times.Once);
+
+        // Restore the shared default so a later test starts from the clipboard.
+        PngExportPreferences.Shared.Target = PngExportTarget.Clipboard;
+    }
+
+    /// <summary>
+    /// A toggled-off press still selects its own target, so the pair behaves as radio buttons
+    /// and clicking the active row can never leave both rows unpressed (R8.8).
+    /// </summary>
+    [Fact]
+    public void A_toggled_off_target_still_selects_that_target()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        PngExportPreferences.Shared.Target = PngExportTarget.Clipboard;
+
+        service.SetPngExportTarget(RibbonControlIds.ExportPngTargetFile);
+        service.SetPngExportTarget(RibbonControlIds.ExportPngTargetFile);
+
+        Assert.Equal(PngExportTarget.File, PngExportPreferences.Shared.Target);
+        PngExportPreferences.Shared.Target = PngExportTarget.Clipboard;
+    }
+
+    /// <summary>The activation read seeds the session target and folder from the workbook (R8.8).</summary>
+    [Fact]
+    public void Seeding_adopts_the_stored_target_and_folder()
+    {
+        RibbonStateService.SeedPersistedSwitches(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [GanttPngExport.TargetSettingKey] = GanttPngExport.FileValue,
+            [GanttPngExport.FolderSettingKey] = @"C:\out",
+        });
+
+        Assert.Equal(PngExportTarget.File, PngExportPreferences.Shared.Target);
+        Assert.Equal(@"C:\out", PngExportPreferences.Shared.Folder);
+
+        PngExportPreferences.Shared.Target = PngExportTarget.Clipboard;
+        PngExportPreferences.Shared.Folder = string.Empty;
+    }
+
+    /// <summary>A successful file export records its folder in the session and the workbook (D9).</summary>
+    [Fact]
+    public void PersistPngExportFolder_records_the_folder_and_the_workbook_row()
+    {
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Returns(ConfigWriteOutcome.Ok());
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(writer.Object);
+
+        service.PersistPngExportFolder(@"C:\exports");
+
+        Assert.Equal(@"C:\exports", PngExportPreferences.Shared.Folder);
+        writer.Verify(
+            w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings => settings[GanttPngExport.FolderSettingKey] == @"C:\exports")),
+            Times.Once);
+        PngExportPreferences.Shared.Folder = string.Empty;
+    }
+
+    /// <summary>
+    /// The dialog's initial folder is the remembered folder when it still exists; with none,
+    /// and no adapter to read the workbook's folder, it is null for the host default (D9).
+    /// </summary>
+    [Fact]
+    public void The_initial_folder_prefers_the_remembered_folder()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        PngExportPreferences.Shared.Folder = string.Empty;
+        Assert.Null(service.ResolvePngExportInitialFolder());
+
+        string temp = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar);
+        PngExportPreferences.Shared.Folder = temp;
+        Assert.Equal(temp, service.ResolvePngExportInitialFolder());
+        PngExportPreferences.Shared.Folder = string.Empty;
+    }
+
+    /// <summary>
     /// Test double that supplies a fixed host application object instead of
     /// querying <c>ExcelDnaUtil.Application</c>. The production probe resolves
     /// whichever Excel instance is running, so a test that used it would pass or

@@ -22,9 +22,17 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 27 for the period-label reference width.
+    /// monotonically, and is currently 28 for the PNG-export settings.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 28 is R8.8's PNG-export settings.</b> <c>tblGanttSettings</c> gains
+    /// <c>PngExportTarget</c> and <c>LastPngExportFolder</c>, so a version-27 workbook's
+    /// settings table lacks two rows the running add-in reads and its stored catalogue hash
+    /// no longer matches. There is no migration (ADR-0029 D6): a version-27 workbook reports
+    /// a mismatch and the remedy is Repair, which rewrites the catalogues from the code-owned
+    /// definitions and stamps the new version and hash.
+    /// </para>
     /// <para>
     /// <b>Version 27 is the period-label reference width (ADR-0041 amendment).</b>
     /// The metric catalogue gains <c>PeriodLabelReferencePlotWidthPt</c>, so a
@@ -277,5 +285,5 @@ public static class GanttSchemaVersion
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 27;
+    public const int CurrentSchemaVersion = 28;
 }

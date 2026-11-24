@@ -115,7 +115,13 @@ public sealed class ExportPngWrittenFileTests
                 new StubMeasurement(),
                 (_, _, _, _, _) => SceneBuildRequestOutcome.Ok(new SceneBuildRequest()),
                 (_, _, _) => new ExportBoundsOutcome(new ExportBounds(Bounds), null, null, scene)),
+            PngExportTarget.File,
+            ChartRenderCurrent: true,
+            EnsureCurrent: null,
             new FixedDialog(path),
+            Clipboard: null,
+            InitialDirectory: null,
+            PersistFolder: null,
             (s, dimensions, background) => SceneRasterRenderer.Render(s, dimensions, background),
             PngExportEncoder.Encode,
             (png, targetPath) => AtomicPngFileWriter.Write(png, targetPath),
@@ -124,7 +130,7 @@ public sealed class ExportPngWrittenFileTests
 
     private sealed class FixedDialog(string path) : ISaveFileDialogPort
     {
-        public string? PickPath(string suggestedFileName) => path;
+        public string? PickPath(string suggestedFileName, string? initialDirectory) => path;
     }
 
     private sealed class StubTableReader : IGanttTableReader

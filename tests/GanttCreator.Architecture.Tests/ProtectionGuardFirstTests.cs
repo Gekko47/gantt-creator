@@ -247,6 +247,9 @@ public sealed class ProtectionGuardFirstTests
         // performs no workbook write itself: persisting the row is delegated to the registered
         // IConfigCatalogueWriter, which consults the guard, so there is nothing here to guard.
         "src/GanttCreator.Office/AutoRefreshPreferences.cs",
+        // R8.8: the PNG-export preference cache is a session snapshot of two settings rows;
+        // the writes go through IConfigCatalogueWriter, which consults the guard.
+        "src/GanttCreator.Office/PngExportPreferences.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",

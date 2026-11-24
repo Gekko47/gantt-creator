@@ -70,10 +70,12 @@ public static class GanttCatalogues
     /// 95, so the anchor moved to A98; R5.18h's <c>HiddenColumns</c> key took
     /// it to 27 keys reaching row 97, so it moved once more to A99; R5.20's
     /// <c>AutoRefreshEnabled</c> key took it to 28 keys reaching row 98, so it
-    /// moved again to A100. The blank-row invariant test ties every anchor to
-    /// the catalogue sizes, so future growth fails there first.
+    /// moved again to A100. R8.8's two PNG-export settings took it to 30 keys
+    /// reaching row 100, so it moved once more to A102. The blank-row invariant
+    /// test ties every anchor to the catalogue sizes, so future growth fails
+    /// there first.
     /// </summary>
-    public const string ConfigAnchor = "A100";
+    public const string ConfigAnchor = "A102";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";
@@ -429,6 +431,17 @@ public static class GanttCatalogues
         // full validation and repair pass, and an enabled automatic pass still reads and
         // validates the complete table before mutating a shape (ADR-0050 D6).
         new(GanttAutoRefresh.SettingKey, GanttAutoRefresh.EnabledValue),
+
+        // Schema version 28 (R8.8). The PNG export remembers two user choices: the split
+        // button's main-action target and the folder the last successful file write went to.
+        // Both are persisted with the workbook for the same reason the automatic-refresh
+        // switch is - the choice survives opening the file in another instance.
+        // `PngExportTarget` is validated against its closed two-value set by the reader; a
+        // bad value is refused, never defaulted behind the user's back. `LastPngExportFolder`
+        // accepts any text and the export falls back to the workbook's folder when it names
+        // no existing directory.
+        new(GanttPngExport.TargetSettingKey, GanttPngExport.ClipboardValue),
+        new(GanttPngExport.FolderSettingKey, string.Empty),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

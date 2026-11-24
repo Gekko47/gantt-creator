@@ -25,7 +25,7 @@ internal sealed class WindowsSaveFileDialogPort : ISaveFileDialogPort
         "Microsoft.Globalization",
         "CA1303:Do not pass literals as localized parameters",
         Justification = "Dialog UI strings are not localized in this release.")]
-    public string? PickPath(string suggestedFileName)
+    public string? PickPath(string suggestedFileName, string? initialDirectory)
     {
         using SaveFileDialog dialog = new()
         {
@@ -36,6 +36,13 @@ internal sealed class WindowsSaveFileDialogPort : ISaveFileDialogPort
             OverwritePrompt = true,
             FileName = suggestedFileName,
         };
+
+        // The remembered or workbook folder. A remembered path the user has since deleted is
+        // ignored rather than shown as an error: the dialog then opens at the host default.
+        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
+        {
+            dialog.InitialDirectory = initialDirectory;
+        }
 
         return dialog.ShowDialog() == DialogResult.OK ? dialog.FileName : null;
     }

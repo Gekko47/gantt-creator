@@ -661,8 +661,9 @@ public class GanttRibbonTests
                 // R7.6: Send to PowerPoint follows Copy Editable in the Export group's
                 // document order and shares its corrected Mode == Ready gate.
                 RibbonControlIds.SendToPowerPoint,
-                // R8.8: Export PNG is the Export group's last control, gated on the R8.7
-                // readiness fact (a valid width AND a recorded aspect) on top of Ready.
+                // R8.8: Export PNG is the Export group's split button's main action, gated on
+                // the same Ready + active-Gantt-sheet fact as Copy Editable; the command
+                // ensures chart freshness itself.
                 RibbonControlIds.ExportPng,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
@@ -679,6 +680,11 @@ public class GanttRibbonTests
                 RibbonControlIds.ToggleAutoRefresh,
                 RibbonControlIds.ToggleCellLock,
                 RibbonControlIds.ToggleChartLock,
+                // R8.8: the two PNG-export target toggles live in the Export PNG split
+                // button's menu, after the Sheet group in document order. They are gated on
+                // the same facts so the target can always be switched.
+                RibbonControlIds.ExportPngTargetClipboard,
+                RibbonControlIds.ExportPngTargetFile,
                 // R5.5: the description-label dropdown is the first
                 // selection-gated control — it shares the workbook+initialised
                 // part of the truth table and adds the single-row condition
@@ -2563,6 +2569,35 @@ public class GanttRibbonTests
             .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPng);
         Assert.Equal("OnExportPngClick", (string?)export.Attribute("onAction"));
         Assert.Equal("GetEnabled", (string?)export.Attribute("getEnabled"));
+    }
+
+    /// <summary>
+    /// R8.8: the Export PNG action is a split button whose menu carries the two radio-style
+    /// target toggles, each wired to its pressed getter and the shared onAction, and whose
+    /// main button's label states the current target.
+    /// </summary>
+    [Fact]
+    public void The_export_png_action_is_a_split_button_with_a_target_menu()
+    {
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = NamespaceCustomUI2010;
+        XElement split = doc.Descendants(ns + "splitButton")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPngSplit);
+
+        XElement primary = split.Descendants(ns + "button")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPng);
+        Assert.Equal("GetExportPngLabel", (string?)primary.Attribute("getLabel"));
+        Assert.Equal("OnExportPngClick", (string?)primary.Attribute("onAction"));
+
+        XElement clipboard = split.Descendants(ns + "toggleButton")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPngTargetClipboard);
+        Assert.Equal("GetExportPngClipboardPressed", (string?)clipboard.Attribute("getPressed"));
+        Assert.Equal("OnExportPngTargetClick", (string?)clipboard.Attribute("onAction"));
+
+        XElement file = split.Descendants(ns + "toggleButton")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPngTargetFile);
+        Assert.Equal("GetExportPngFilePressed", (string?)file.Attribute("getPressed"));
+        Assert.Equal("OnExportPngTargetClick", (string?)file.Attribute("onAction"));
     }
 
     /// <summary>

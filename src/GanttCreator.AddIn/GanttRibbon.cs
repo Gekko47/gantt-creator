@@ -393,6 +393,43 @@ public class GanttRibbon : ExcelRibbon
     private static void RunExportPng() => ExportPngCommand.RunForExcel();
 
     /// <summary>
+    /// Called when either PNG-export target toggle is pressed (R8.8). The pressed state is
+    /// advisory: the control's id names the target and the state service keeps the pair
+    /// radio-style, so clicking the active row can never leave both rows unpressed.
+    /// </summary>
+    /// <param name="control">The menu toggle that raised the event.</param>
+    /// <param name="pressed">
+    /// Whether the toggle is now pressed. Unused, because the id is the key; declared because a
+    /// <c>toggleButton</c> handler must match Excel's callback signature.
+    /// </param>
+    public void OnExportPngTargetClick(IRibbonControl control, bool pressed)
+    {
+        _ = pressed;
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnExportPngTargetClick)),
+            () => RibbonStateService.Instance.SetPngExportTarget(control?.Id),
+            nameof(OnExportPngTargetClick));
+    }
+
+    /// <summary>Gets whether the clipboard target toggle is pressed (R8.8). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> when the clipboard is the main action's target.</returns>
+    public bool GetExportPngClipboardPressed(IRibbonControl control) =>
+        RibbonStateService.GetExportPngClipboardPressed(control);
+
+    /// <summary>Gets whether the file target toggle is pressed (R8.8). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> when the verified file write is the main action's target.</returns>
+    public bool GetExportPngFilePressed(IRibbonControl control) =>
+        RibbonStateService.GetExportPngFilePressed(control);
+
+    /// <summary>Gets the Export PNG main button's target-specific label (R8.8). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label naming the main action's current target.</returns>
+    public string GetExportPngLabel(IRibbonControl control) =>
+        RibbonStateService.GetExportPngLabel(control);
+
+    /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): presses to flip whether the chart's elements
     /// can be dragged. One control replaces the old Unlock shape / Lock shapes pair, and its pressed
     /// state is the lock state, so it can always be found and always shows what is true.
