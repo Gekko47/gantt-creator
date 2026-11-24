@@ -161,6 +161,16 @@ public class StyleRenderIntegrationTests(ITestOutputHelper output)
             Assert.Equal(MsoFillType.msoFillPatterned, fill.Type);
             Assert.Equal(expectedPattern, fill.Pattern);
         }
+
+        if (styleCase.ExpectedFillTransparency is { } expectedFillTransparency)
+        {
+            AssertTransparency($"{styleCase.Id} fill transparency", expectedFillTransparency, fill.Transparency);
+        }
+
+        if (styleCase.ExpectedLineTransparency is { } expectedLineTransparency)
+        {
+            AssertTransparency($"{styleCase.Id} line transparency", expectedLineTransparency, line.Transparency);
+        }
     }
 
     private static string Describe(int rgb) =>
@@ -180,7 +190,9 @@ public class StyleRenderIntegrationTests(ITestOutputHelper output)
         double? ExpectedWidthPt,
         MsoPatternType? ExpectedPattern,
         bool IsDiamond = false,
-        bool IsLine = false);
+        bool IsLine = false,
+        double? ExpectedFillTransparency = null,
+        double? ExpectedLineTransparency = null);
 
     private static IReadOnlyList<StyleCase> Cases =>
     [
@@ -275,6 +287,22 @@ public class StyleRenderIntegrationTests(ITestOutputHelper output)
             0.75,
             null,
             IsLine: true),
+
+        // R11.1 owner ruling (2026-11-24): a per-row colour override may carry
+        // alpha, exactly as the style and theme paths do. The host has no ARGB
+        // setter, so the alpha must arrive as FillFormat/LineFormat.Transparency;
+        // #FF000080 is half transparent, 1 - 128/255. The RGB halves are checked
+        // too, so a host that ignored the alpha would be caught by the RGB or by
+        // the transparency assertion rather than passing silently.
+        new(
+            "row-1:alpha",
+            new SceneStyle("AlphaFill", ColourHex.Parse("#FF000080"), ColourHex.Parse("#00FF0080"), 0.75),
+            0x0000FF,
+            0x00FF00,
+            0.75,
+            null,
+            ExpectedFillTransparency: 1d - (128d / 255d),
+            ExpectedLineTransparency: 1d - (128d / 255d)),
     ];
 
     private static GanttScene BuildScene(StyleCase styleCase)
@@ -313,6 +341,18 @@ public class StyleRenderIntegrationTests(ITestOutputHelper output)
                 [primitive],
                 [])
             .Scene ?? throw new InvalidOperationException($"The {styleCase.Id} scene failed to validate.");
+    }
+
+    private static void AssertTransparency(string what, double expected, float actual)
+    {
+        // The host reports Single. 128/255 does not land exactly on a Single, so
+        // compare with the same 0.001 tolerance ExcelShapeWriter's own read-back
+        // comparison uses.
+        Assert.True(
+            Math.Abs(expected - actual) <= 0.001d,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"{what}: expected {expected:R} but the live host reported {actual:R}."));
     }
 
     private static void AssertPoint(string what, double expected, double actual)
