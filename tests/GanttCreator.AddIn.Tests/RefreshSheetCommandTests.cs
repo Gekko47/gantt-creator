@@ -14,6 +14,10 @@ namespace GanttCreator.AddIn.Tests;
 /// observable consequences: exactly one invocation, no retry, and no presentation on
 /// success.
 /// </remarks>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public class RefreshSheetCommandTests
 {
     private static GanttRefreshOutcome Success() =>

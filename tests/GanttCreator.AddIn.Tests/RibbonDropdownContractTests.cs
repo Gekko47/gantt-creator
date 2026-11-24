@@ -21,6 +21,10 @@ namespace GanttCreator.AddIn.Tests;
 /// non-empty, unique item.
 /// </para>
 /// </remarks>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public class RibbonDropdownContractTests
 {
     private static readonly XNamespace _ns =

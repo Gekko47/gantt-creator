@@ -9,6 +9,10 @@ namespace GanttCreator.AddIn.Tests;
 /// R5.4 ribbon contracts for the collapse-all and expand-all buttons: the
 /// Ribbon surface over the native Excel outline.
 /// </summary>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public class CollapseGroupsRibbonTests
 {
     private const string WorkbookRibbonId = "Microsoft.Excel.Workbook";
