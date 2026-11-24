@@ -22,8 +22,13 @@ internal static class RepairConfigCommand
             new ExcelConfigIntegrityChecker(application),
             // The port carries the live log sink, so a repair that had to release the sheet's
             // protection leaves the same `gantt.protection window …` lines the refresh does.
+            // The host's catalogue writer is reused because it carries the rolling log: the
+            // adapter's default writer has no sink, so a host-rejected write discarded its
+            // exception, HRESULT and table progress with the typed refusal (live 2026-11-24,
+            // where Fix failed with no record at all).
             new ExcelConfigRepairer(
                 application,
+                catalogueWriter: RibbonStateService.Instance.GetCatalogueWriter(),
                 protectionPort: new ExcelWorksheetProtectionPort(
                     application,
                     CommandBoundary.Instance.WriteTechnicalRecord)),

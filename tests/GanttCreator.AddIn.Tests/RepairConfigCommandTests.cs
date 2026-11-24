@@ -190,6 +190,24 @@ public sealed class RepairConfigCommandTests
         repairer.Verify(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), It.IsAny<bool>()), Times.Never);
     }
 
+    /// <summary>
+    /// The repairer must reuse the host's catalogue writer, because that instance carries the
+    /// rolling log. The adapter's default writer has no sink, so a host-rejected write discards
+    /// its exception, HRESULT and table progress with the typed refusal (live 2026-11-24, where
+    /// the first Fix failed with no record at all).
+    /// </summary>
+    [Fact]
+    public void RunForExcel_reuses_the_logged_host_catalogue_writer()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "GanttCreator.AddIn", "RepairConfigCommand.cs"));
+
+        Assert.Contains(
+            "catalogueWriter: RibbonStateService.Instance.GetCatalogueWriter()",
+            source,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Run_traces_the_repair_outcome()
     {
@@ -239,6 +257,23 @@ public sealed class RepairConfigCommandTests
             records,
             record => string.Equals(record, "gantt.repair refused=CatalogueWriteRefused", StringComparison.Ordinal));
         Assert.Contains("safely write", Assert.Single(messages), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "src"))
+                && File.Exists(Path.Combine(directory.FullName, "GanttCreator.slnx")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the repository root.");
     }
 
     [Fact]
