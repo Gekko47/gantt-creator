@@ -12,7 +12,7 @@ namespace GanttCreator.Office;
 /// </summary>
 public class ExcelStyleKeyWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IStyleKeyWritePort
+    IWorksheetProtectionGuard? protectionGuard = null) : ExcelTableAdapterBase, IStyleKeyWritePort
 {
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
@@ -188,33 +188,8 @@ public class ExcelStyleKeyWriter(
     internal virtual bool TryFindTable(
         Sheets sheets,
         out Worksheet? worksheet,
-        out ListObject? table)
-    {
-        worksheet = null;
-        table = null;
-        foreach (object? entry in sheets)
-        {
-            if (entry is not Worksheet candidate)
-            {
-                // A chart sheet or any other non-worksheet entry: it cannot carry the
-                // Gantt table, so it is skipped rather than cast.
-                continue;
-            }
-
-            ListObjects listObjects = candidate.ListObjects;
-            foreach (ListObject candidateTable in listObjects)
-            {
-                if (GanttChartContract.IsDataTableName(candidateTable.Name))
-                {
-                    worksheet = candidate;
-                    table = candidateTable;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+        out ListObject? table) =>
+        TryLocateTable(sheets, out worksheet, out table);
 
     /// <summary>Returns the list column at the one-based index. Test seam.</summary>
     /// <param name="columns">The table's list columns.</param>
