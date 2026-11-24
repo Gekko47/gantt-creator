@@ -170,55 +170,32 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
         out int[]? columnMap)
     {
         columnMap = null;
-        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        int[] map = new int[schema.Count];
-
-        Dictionary<string, int>? byName = TryReadHeaderNamesInOneCall(table);
-        if (byName is null)
+        string[]? headerNames = TryReadHeaderNamesInOneCall(table);
+        if (headerNames is null)
         {
             // A header the bulk payload cannot express as text (a numeric or blank header
             // cell, where the table's own column name and the cell value can differ) falls
             // back to the column names -- exactly the map this built before.
-            byName = new Dictionary<string, int>(StringComparer.Ordinal);
             ListColumns columns = table.ListColumns;
             int columnCount = columns.Count;
+            headerNames = new string[columnCount];
             for (int index = 1; index <= columnCount; index++)
             {
-                ListColumn column = columns[index];
-                byName[column.Name] = index;
+                headerNames[index - 1] = columns[index].Name;
             }
         }
 
-        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
-        {
-            GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out int tableIndex))
-            {
-                if (expected.IsRequired)
-                {
-                    return false;
-                }
-
-                map[schemaIndex] = -1;
-            }
-            else
-            {
-                map[schemaIndex] = tableIndex;
-            }
-        }
-
-        columnMap = map;
-        return true;
+        return GanttTableSchema.TryBuildColumnMap(headerNames, out columnMap);
     }
 
     /// <summary>
-    /// Reads the table's header row in ONE bulk <c>Value2</c> call and maps each header
-    /// text to its one-based table-column index.
+    /// Reads the table's header row in ONE bulk <c>Value2</c> call and returns the header
+    /// texts in table order.
     /// </summary>
     /// <param name="table">The Gantt data table.</param>
     /// <returns>
-    /// The map, or <see langword="null"/> when the header cannot be read this way and the
-    /// caller must read the table's column names individually.
+    /// The header names, or <see langword="null"/> when the header cannot be read this way
+    /// and the caller must read the table's column names individually.
     /// </returns>
     /// <remarks>
     /// <para>
@@ -235,7 +212,7 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
     /// by the old path instead of being guessed at.
     /// </para>
     /// </remarks>
-    private static Dictionary<string, int>? TryReadHeaderNamesInOneCall(ListObject table)
+    private static string[]? TryReadHeaderNamesInOneCall(ListObject table)
     {
         ArgumentNullException.ThrowIfNull(table);
 
@@ -254,18 +231,18 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
                 return null;
             }
 
-            Dictionary<string, int> byName = new(StringComparer.Ordinal);
-            for (int index = 0; index < rows[0].Length; index++)
+            string[] names = new string[rows[0].Length];
+            for (int index = 0; index < names.Length; index++)
             {
                 if (rows[0][index] is not string name || name.Length == 0)
                 {
                     return null;
                 }
 
-                byName[name] = index + 1;
+                names[index] = name;
             }
 
-            return byName;
+            return names;
         }
 #pragma warning disable CA1031
         catch
