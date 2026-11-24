@@ -34,7 +34,7 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelDateLabelPositionMutator(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IDateLabelPositionMutator
+    IWorksheetProtectionGuard? protectionGuard = null) : ExcelTableAdapterBase, IDateLabelPositionMutator
 {
     // object? rather than the interop Application so the AddIn can pass
     // ExcelDnaUtil.Application without naming the interop type (the CS0433
@@ -118,7 +118,7 @@ public class ExcelDateLabelPositionMutator(
         }
 
         Sheets sheets = workbook.Sheets;
-        if (!TryFindTable(sheets, out Worksheet? worksheet, out ListObject? foundTable) || worksheet is null || foundTable is null)
+        if (!TryLocateTable(sheets, out Worksheet? worksheet, out ListObject? foundTable) || worksheet is null || foundTable is null)
         {
             return DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.TableMissing);
         }
@@ -263,42 +263,7 @@ public class ExcelDateLabelPositionMutator(
         return WriteCell(table, columnMap, selectedIndex, "DateLabelPosition", placement?.ToString(), bodyIndex);
     }
 
-    /// <summary>
-    /// Locates the visible <c>tblGanttData</c> table across every worksheet of
-    /// the active workbook. The table is matched by its name (Ordinal-
-    /// insensitive), never by position, so a reordered sheet cannot redirect
-    /// the write.
-    /// </summary>
-    internal virtual bool TryFindTable(
-        Sheets sheets, out Worksheet? worksheet, out ListObject? table)
-    {
-        worksheet = null;
-        table = null;
-        int sheetCount = GetSheetCount(sheets);
-        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
-        {
-            object candidate = GetSheetAt(sheets, sheetIndex);
-            if (candidate is not Worksheet worksheetCandidate)
-            {
-                continue;
-            }
-
-            ListObjects listObjects = worksheetCandidate.ListObjects;
-            int tableCount = listObjects.Count;
-            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
-            {
-                ListObject located = GetTableAt(listObjects, tableIndex);
-                if (GanttChartContract.IsDataTableName(located.Name))
-                {
-                    worksheet = worksheetCandidate;
-                    table = located;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+    // Table traversal is inherited from ExcelTableAdapterBase.
 
     /// <summary>
     /// Builds the schema-column to table-column index map from live
@@ -470,15 +435,7 @@ public class ExcelDateLabelPositionMutator(
     /// <summary>Test seam over the COM <c>Range.Value2</c> setter.</summary>
     internal virtual void SetRangeValues(Excel.Range range, object? value) => range.Value2 = value;
 
-    /// <summary>Test seam over the COM <c>Sheets.Count</c> property.</summary>
-    internal virtual int GetSheetCount(Sheets sheets) => sheets.Count;
-
-    /// <summary>Test seam over the COM parameterised <c>Sheets.Item</c> property.</summary>
-    internal virtual object GetSheetAt(Sheets sheets, int index) => sheets[index];
-
-    /// <summary>Test seam over the COM parameterised <c>ListObjects.Item</c> property.</summary>
-    internal virtual ListObject GetTableAt(ListObjects listObjects, int index) =>
-        listObjects[index];
+    // GetSheetCount, GetSheetAt, and GetTableAt are inherited from ExcelTableAdapterBase.
 
     /// <summary>Test seam over the COM parameterised <c>ListColumns.Item</c> property.</summary>
     internal virtual ListColumn GetColumnAt(ListColumns columns, int index) =>
