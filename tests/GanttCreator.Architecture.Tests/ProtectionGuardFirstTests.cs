@@ -237,6 +237,10 @@ public sealed class ProtectionGuardFirstTests
         // and touches no host member: every style and text write goes through the
         // ExcelShapeWriter host surface, whose entry point owns the guard.
         "src/GanttCreator.Office/ShapeAppearanceWriter.cs",
+        // Refactor Phase 4: the shape-write batch state. It stores the proxies the writer
+        // resolved and the timings it measured; it calls the host only through the two
+        // shape seams the writer passes in, and that writer's entry points own the guard.
+        "src/GanttCreator.Office/ShapeWriteBatch.cs",
         // Refactor Phase 5: the refresh pipeline's dependency and options records.
         // Two declarations plus required-port validation; no COM proxy, no
         // worksheet mutation, nothing for a protection guard to authorise.

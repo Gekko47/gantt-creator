@@ -138,61 +138,18 @@ public class ExcelShapeWriter(
     /// <summary>The appearance collaborator, created lazily by <c>Appearance()</c>.</summary>
     private ShapeAppearanceWriter? _appearance;
 
-    /// <summary>Whether a reconciliation batch is open (ADR-0054).</summary>
-    private bool _batchActive;
-
     /// <summary>
-    /// The shapes collection resolved once for the open batch, or <see langword="null"/>
-    /// outside a batch or after a refused resolution.
-    /// </summary>
-    private Excel.Shapes? _batchShapes;
-
-    /// <summary>
-    /// Shape proxies resolved during the open batch, keyed by exact name. A name can still
-    /// appear or disappear inside a batch (creates and deletes), so this is a memo of
-    /// successful lookups, not an authoritative list.
-    /// </summary>
-    private Dictionary<string, Excel.Shape>? _batchProxies;
-
-    /// <summary>
-    /// The ownership answer already read for a shape name in the open batch, so one walk
-    /// can answer every later ownership question without a second host read.
+    /// The batch state: the hoisted shapes collection, the proxy and tag memos, the
+    /// template cache, the name-index flag, and the per-step create timings (ADR-0054).
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>Empty outside a batch, and that is the contract.</b> Only a batch fills it, and
-    /// both batch boundaries clear it, because a remembered "owned" answer would be a
-    /// correctness defect the moment a user edited a shape's alternative text between two
-    /// standalone calls — R4.8's near-miss case. A non-batch call therefore always reads
-    /// the host, as it did before this field existed.
-    /// </para>
-    /// <para>
-    /// <b>Why it is sound inside a batch, and what would break it.</b> The answer is
-    /// reusable only because nothing but this writer can change a shape's alternative text
-    /// while the batch runs: events are off for the whole refresh (ADR-0020), the refresh
-    /// is a single STA call, and the writer maintains this memo at the two points that can
-    /// change ownership — <see cref="ApplyOwnershipStamp"/> writes a tag and
-    /// <see cref="Delete"/> removes a shape. The name index carries the same argument and
-    /// states it in the same terms.
-    /// </para>
-    /// <para>
-    /// <b>Measured reason.</b> A converged pass read every owned shape's tag twice: once in
-    /// <see cref="ListOwned"/> to build the owned set, and once per shape in the geometry
-    /// verification; and the first name lookup also walked every shape's <c>Name</c> a
-    /// second time to build the batch index. On the owner's 148-shape workbook those were
-    /// <c>ownedms=29.6</c> and <c>verify=31.9</c> of a 195 ms automatic pass.
-    /// </para>
+    /// One instance for the writer's whole life, opened and closed by
+    /// <see cref="BeginBatch"/>. Every member is reset on open and cleared on close, so a
+    /// read outside a batch sees the same empty state the individual fields used to hold;
+    /// the contract that the tag memo is empty outside a batch lives on
+    /// <see cref="ShapeWriteBatch.Tags"/>.
     /// </remarks>
-    private readonly Dictionary<string, bool> _batchTags = new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// The first shape created for each appearance signature in the open batch. A later
-    /// create with the same signature duplicates this shape instead of paying
-    /// <c>AddShape</c> and the style writes again. Only shapes created in this batch are
-    /// cached, so a reconcile delete later in the same plan can never remove a template
-    /// a subsequent create still needs.
-    /// </summary>
-    private Dictionary<ShapeTemplateKey, Excel.Shape>? _batchTemplates;
+    private readonly ShapeWriteBatch _batch = new(trace);
 
     /// <summary>
     /// The appearance members a template duplicate must share with the request. Geometry,
@@ -204,7 +161,7 @@ public class ExcelShapeWriter(
     /// keeps the source line's drawing direction, and a left/top/width/height write does
     /// not flip it, so a right-to-left source must not serve a left-to-right request.
     /// </remarks>
-    private readonly record struct ShapeTemplateKey(
+    internal readonly record struct ShapeTemplateKey(
         OfficeShapeKind Kind,
         bool HostOwnsExtent,
         ColourHex? FillColour,
@@ -316,23 +273,6 @@ public class ExcelShapeWriter(
                 request.LeftInsetPt);
     }
 
-    // Per-step create timings for the open batch, in Stopwatch ticks (R5.18n). The live
-    // trace reports one `write=` figure for the whole pass, which cannot distinguish
-    // "Excel is slow at AddShape" from "we issue too many round trips per shape": a
-    // create costs ~31 ms live against ~1.6 ms for an update, and the difference is the
-    // ten-or-so COM calls a create makes. Accumulated, never per shape, so a 52-shape
-    // pass still writes one record.
-    private long _createTicksLookup;
-    private long _createTicksAdd;
-    private long _createTicksStyle;
-    private long _createTicksOwnership;
-    private int _createCount;
-
-    /// <summary>
-    /// Whether the open batch has built its complete name index (see
-    /// <see cref="EnsureBatchNameIndex"/>).
-    /// </summary>
-    private bool _batchNameIndexed;
 
     /// <inheritdoc />
     /// <remarks>
@@ -344,43 +284,27 @@ public class ExcelShapeWriter(
     /// </remarks>
     public IDisposable BeginBatch()
     {
-        if (_batchActive)
+        if (_batch.Active)
         {
             throw new InvalidOperationException(
                 "A shape-write batch is already open. Batches do not nest, because the inner "
                 + "scope would release the resolution the outer one is still using.");
         }
 
-        _batchActive = true;
-        _batchShapes = null;
-        _batchProxies = new Dictionary<string, Excel.Shape>(StringComparer.Ordinal);
-        _batchTags.Clear();
-        _batchTemplates = ReusesTemplates ? [] : null;
-        _createTicksLookup = 0;
-        _createTicksAdd = 0;
-        _createTicksStyle = 0;
-        _createTicksOwnership = 0;
-        _createCount = 0;
-        _batchNameIndexed = false;
+        _batch.Open(ReusesTemplates);
         return new BatchScope(this);
     }
 
-    /// <summary>Ends a batch and releases the proxies it was holding.</summary>
+    /// <summary>Ends a batch and releases the state it was holding.</summary>
     private sealed class BatchScope(ExcelShapeWriter owner) : IDisposable
     {
         /// <inheritdoc />
-        public void Dispose()
-        {
-            // Reported before the state is cleared, and only when the caller asked for
-            // trace records: this is a measurement of the pass, not a product behaviour.
-            owner.ReportCreateSteps();
-            owner._batchActive = false;
-            owner._batchShapes = null;
-            owner._batchProxies = null;
-            owner._batchTags.Clear();
-            owner._batchTemplates = null;
-            owner._batchNameIndexed = false;
-        }
+        /// <remarks>
+        /// Closing reports the create-step record before the state is cleared, and only when
+        /// the caller asked for trace records: a measurement of the pass, not a product
+        /// behaviour.
+        /// </remarks>
+        public void Dispose() => owner._batch.Close();
     }
 
     /// <summary>
@@ -389,87 +313,19 @@ public class ExcelShapeWriter(
     /// </summary>
     /// <param name="shapes">The batch's resolved shapes collection.</param>
     /// <remarks>
-    /// <para>
-    /// <b>Measured cost of not having this.</b> Excel's name indexer RAISES for a name it
-    /// does not hold, and a COM exception costs ~26 ms to cross the boundary. The first
-    /// live plot after Initialise writes 52 shapes onto a sheet with none, so every
-    /// create paid a miss: <c>gantt.shape.create-steps n=52 lookup=1355.0 add=119.3
-    /// style=31.6 ownership=13.2</c> — 1355 ms of a 1529 ms write, and 1984 ms of a
-    /// click-to-plot the user reported as "feels like four seconds". Creating the
-    /// shapes was never the expensive part.
-    /// </para>
-    /// <para>
-    /// After one scan, a name that is not in the index is <em>proven</em> absent: events
-    /// are off for the whole refresh (ADR-0020), so nothing can add a shape behind this
-    /// pass. Creates add themselves through <see cref="Remember"/>, so a later lookup of
-    /// a shape this batch created still hits.
-    /// </para>
+    /// The scan and its measured rationale live on <see cref="ShapeWriteBatch.EnsureNameIndex"/>;
+    /// this method exists only to hand that class the two shape seams, so a test subclass
+    /// that overrides <see cref="GetShapeCount"/> or <see cref="GetShapeAt"/> stays on the
+    /// path.
     /// </remarks>
-    private void EnsureBatchNameIndex(Excel.Shapes shapes)
-    {
-        if (_batchProxies is null || _batchNameIndexed)
-        {
-            return;
-        }
-
-        int count = GetShapeCount(shapes);
-        for (int index = 1; index <= count; index++)
-        {
-            Excel.Shape? shape = GetShapeAt(shapes, index);
-            if (shape is null)
-            {
-                continue;
-            }
-
-            string name = shape.Name;
-            if (!string.IsNullOrWhiteSpace(name))
-            {
-                _ = _batchProxies.TryAdd(name, shape);
-            }
-        }
-
-        _batchNameIndexed = true;
-    }
-
-    /// <summary>
-    /// Writes one record splitting the batch's create cost by COM step, so the next
-    /// attempt at making the first plot faster is aimed at the expensive step instead of
-    /// at whichever one looks likely.
-    /// </summary>
-    private void ReportCreateSteps()
-    {
-        if (_trace is null || _createCount == 0)
-        {
-            return;
-        }
-
-        static double Ms(long ticks)
-        {
-            return ticks * 1000d / Stopwatch.Frequency;
-        }
-
-        _trace(string.Create(
-            CultureInfo.InvariantCulture,
-            $"gantt.shape.create-steps n={_createCount}"
-            + $" lookup={Ms(_createTicksLookup):F1}"
-            + $" add={Ms(_createTicksAdd):F1}"
-            + $" style={Ms(_createTicksStyle):F1}"
-            + $" ownership={Ms(_createTicksOwnership):F1}"));
-    }
+    private void EnsureBatchNameIndex(Excel.Shapes shapes) =>
+        _batch.EnsureNameIndex(shapes, GetShapeCount, GetShapeAt);
 
     /// <summary>Remembers a resolved proxy for the rest of the batch, when one is open.</summary>
     /// <param name="name">The exact shape name.</param>
     /// <param name="shape">The resolved shape, or <see langword="null"/>.</param>
     /// <returns>The shape, so a lookup can return it directly.</returns>
-    private Excel.Shape? Remember(string name, Excel.Shape? shape)
-    {
-        if (shape is not null && _batchProxies is not null)
-        {
-            _batchProxies[name] = shape;
-        }
-
-        return shape;
-    }
+    private Excel.Shape? Remember(string name, Excel.Shape? shape) => _batch.Remember(name, shape);
 
     /// <summary>
     /// Maps a protection outcome to the refusal a mutating operation returns, or
@@ -596,7 +452,7 @@ public class ExcelShapeWriter(
         // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
         // reconcile batch the target was already checked when it was resolved and events are
         // off for the whole pass, so the repeated query can only return the same answer.
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return RefuseCreate(request, guardRefusal.Refusal!.Value, "guard");
         }
@@ -617,7 +473,7 @@ public class ExcelShapeWriter(
         if (_trace is not null)
         {
             long now = Stopwatch.GetTimestamp();
-            _createTicksLookup += now - stepStart;
+            _batch.Timings.Lookup += now - stepStart;
             stepStart = now;
         }
 
@@ -626,8 +482,8 @@ public class ExcelShapeWriter(
         // again. A host that refuses the duplicate falls through to the normal create,
         // so this is an optimisation and never a new refusal path.
         ShapeTemplateKey templateKey = ShapeTemplateKey.For(request);
-        if (_batchTemplates is not null
-            && _batchTemplates.TryGetValue(templateKey, out Excel.Shape? template)
+        if (_batch.Templates is not null
+            && _batch.Templates.TryGetValue(templateKey, out Excel.Shape? template)
             && CreateFromTemplate(request, template) is { } duplicatedOutcome)
         {
             return duplicatedOutcome;
@@ -654,7 +510,7 @@ public class ExcelShapeWriter(
         if (_trace is not null)
         {
             long now = Stopwatch.GetTimestamp();
-            _createTicksAdd += now - stepStart;
+            _batch.Timings.Add += now - stepStart;
             stepStart = now;
         }
 
@@ -681,7 +537,7 @@ public class ExcelShapeWriter(
         if (_trace is not null)
         {
             long now = Stopwatch.GetTimestamp();
-            _createTicksStyle += now - stepStart;
+            _batch.Timings.Style += now - stepStart;
             stepStart = now;
         }
 
@@ -694,8 +550,8 @@ public class ExcelShapeWriter(
         ShapeWriteOutcome stamped = ApplyOwnershipOrDiscard(created, request.PrimitiveId);
         if (_trace is not null)
         {
-            _createTicksOwnership += Stopwatch.GetTimestamp() - stepStart;
-            _createCount++;
+            _batch.Timings.Ownership += Stopwatch.GetTimestamp() - stepStart;
+            _batch.Timings.Count++;
         }
 
         if (stamped.Succeeded)
@@ -703,9 +559,9 @@ public class ExcelShapeWriter(
             // The first shape of this appearance is the batch's template. Only shapes
             // created in this batch are cached: a reconcile delete later in the same plan
             // could otherwise remove a template a later create still needs.
-            if (_batchTemplates is not null)
+            if (_batch.Templates is not null)
             {
-                _ = _batchTemplates.TryAdd(templateKey, created);
+                _ = _batch.Templates.TryAdd(templateKey, created);
             }
 
             // The new shape is a valid proxy for the rest of the batch: the geometry check
@@ -787,15 +643,15 @@ public class ExcelShapeWriter(
         if (_trace is not null)
         {
             long now = Stopwatch.GetTimestamp();
-            _createTicksAdd += now - stepStart;
+            _batch.Timings.Add += now - stepStart;
             stepStart = now;
         }
 
         ShapeWriteOutcome stamped = ApplyDuplicateOwnershipOrDiscard(duplicate, request.PrimitiveId);
         if (_trace is not null)
         {
-            _createTicksOwnership += Stopwatch.GetTimestamp() - stepStart;
-            _createCount++;
+            _batch.Timings.Ownership += Stopwatch.GetTimestamp() - stepStart;
+            _batch.Timings.Count++;
         }
 
         if (!stamped.Succeeded)
@@ -873,7 +729,7 @@ public class ExcelShapeWriter(
         // the key is too granular. Recorded only; it changes no decision.
         long groupStarted = Stopwatch.GetTimestamp();
 
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return ShapeGroupWriteOutcome.Refused(requests[0].PrimitiveId, guardRefusal.Refusal!.Value);
         }
@@ -1129,7 +985,7 @@ public class ExcelShapeWriter(
         // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
         // reconcile batch the target was already checked when it was resolved and events are
         // off for the whole pass, so the repeated query can only return the same answer.
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return guardRefusal;
         }
@@ -1261,7 +1117,7 @@ public class ExcelShapeWriter(
         // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
         // reconcile batch the target was already checked when it was resolved and events are
         // off for the whole pass, so the repeated query can only return the same answer.
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return guardRefusal;
         }
@@ -1290,11 +1146,11 @@ public class ExcelShapeWriter(
         // A deleted name must not be served from the batch memo afterwards: a later create
         // in the same batch legitimately reuses it. The remembered ownership answer goes
         // with it, or the new shape would be judged by the old shape's tag.
-        if (_batchProxies is not null)
+        if (_batch.Proxies is not null)
         {
             string deletedName = NameFor(primitiveId);
-            _ = _batchProxies.Remove(deletedName);
-            _ = _batchTags.Remove(deletedName);
+            _ = _batch.Proxies.Remove(deletedName);
+            _ = _batch.Tags.Remove(deletedName);
         }
 
         return ShapeWriteOutcome.Ok();
@@ -1342,9 +1198,9 @@ public class ExcelShapeWriter(
             // what EnsureBatchNameIndex would spend a second pass doing. Feeding it here
             // means the reconcile's first name lookup is a dictionary hit rather than
             // another full scan with a Name read per shape.
-            if (_batchProxies is not null)
+            if (_batch.Proxies is not null)
             {
-                _ = _batchProxies.TryAdd(name, shape);
+                _ = _batch.Proxies.TryAdd(name, shape);
             }
 
             // Phase-0 inventory: a chart-shaped shape that is NOT owned, or any
@@ -1362,11 +1218,11 @@ public class ExcelShapeWriter(
             }
         }
 
-        if (_batchProxies is not null)
+        if (_batch.Proxies is not null)
         {
             // The loop above covered index 1..Count, so every name the host holds is now
             // in the memo and an absent name can be answered without a host call.
-            _batchNameIndexed = true;
+            _batch.NameIndexed = true;
         }
 
         // Ordinal sort so the returned order is a property of the shape names
@@ -1382,7 +1238,7 @@ public class ExcelShapeWriter(
 
         // Same guard-first rule as every other entry point, and it is load-bearing here too: an
         // unlock clears `Locked`, which the host refuses on a sheet the add-in does not own.
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return guardRefusal;
         }
@@ -1413,7 +1269,7 @@ public class ExcelShapeWriter(
     /// <inheritdoc />
     public ShapeWriteOutcome LockOwnedShapes()
     {
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return guardRefusal;
         }
@@ -1600,7 +1456,7 @@ public class ExcelShapeWriter(
         // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
         // reconcile batch the target was already checked when it was resolved and events are
         // off for the whole pass, so the repeated query can only return the same answer.
-        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        if (!_batch.Active && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
             return guardRefusal;
         }
@@ -1729,10 +1585,10 @@ public class ExcelShapeWriter(
     {
         // Resolved once per batch: the target cannot change while a refresh runs, because
         // ADR-0020's scope disables events for the whole pass (ADR-0054).
-        if (_batchShapes is not null)
+        if (_batch.Shapes is not null)
         {
             refusal = null;
-            return _batchShapes;
+            return _batch.Shapes;
         }
 
         Excel.Application? application = _application;
@@ -1780,9 +1636,9 @@ public class ExcelShapeWriter(
             return null;
         }
 
-        if (_batchActive)
+        if (_batch.Active)
         {
-            _batchShapes = shapes;
+            _batch.Shapes = shapes;
         }
 
         refusal = null;
@@ -1972,8 +1828,8 @@ public class ExcelShapeWriter(
 
         // One read per name per batch: the owned-set walk and the geometry/content
         // verification both ask the same question about the same shape, and the answer
-        // cannot change while the batch runs (see _batchTags).
-        if (_batchTags.TryGetValue(shapeName, out bool known))
+        // cannot change while the batch runs (see _batch.Tags).
+        if (_batch.Tags.TryGetValue(shapeName, out bool known))
         {
             return known;
         }
@@ -1983,9 +1839,9 @@ public class ExcelShapeWriter(
             _ownership.TagForName(shapeName),
             StringComparison.Ordinal);
 
-        if (_batchActive)
+        if (_batch.Active)
         {
-            _batchTags[shapeName] = owned;
+            _batch.Tags[shapeName] = owned;
         }
 
         return owned;
@@ -2059,11 +1915,11 @@ public class ExcelShapeWriter(
 
         // The batch remembers what it just wrote. A shape created in this plan is then
         // found by name and proved owned without either host read repeating (see
-        // _batchTags and EnsureBatchNameIndex).
+        // _batch.Tags and EnsureBatchNameIndex).
         _ = Remember(name, shape);
-        if (_batchActive)
+        if (_batch.Active)
         {
-            _batchTags[name] = true;
+            _batch.Tags[name] = true;
         }
 
         // ADR-0055: an owned shape is locked by default, so the user cannot drag it out of place
@@ -2515,9 +2371,9 @@ public class ExcelShapeWriter(
 
         // Inside a batch the same name is looked up by the geometry check, the update and
         // the z-order pass; one indexed lookup serves all three (ADR-0054).
-        if (_batchProxies is not null)
+        if (_batch.Proxies is not null)
         {
-            if (_batchProxies.TryGetValue(name, out Excel.Shape? cached))
+            if (_batch.Proxies.TryGetValue(name, out Excel.Shape? cached))
             {
                 return cached;
             }
@@ -2526,7 +2382,7 @@ public class ExcelShapeWriter(
             // missing name. This is the difference between one scan per batch and one
             // COM exception per create (see EnsureBatchNameIndex).
             EnsureBatchNameIndex(shapes);
-            return _batchProxies.TryGetValue(name, out Excel.Shape? indexed) ? indexed : null;
+            return _batch.Proxies.TryGetValue(name, out Excel.Shape? indexed) ? indexed : null;
         }
 
         // The host's name indexer is the fast path: one lookup instead of a scan of
