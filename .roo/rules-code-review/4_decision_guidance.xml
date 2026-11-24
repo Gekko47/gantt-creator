@@ -1,0 +1,93 @@
+<decision_guidance>
+  <principles>
+    <principle>Rank by harm. A crash beats a naming problem, every time.</principle>
+    <principle>One severity scale. Never invent a synonym mid-report.</principle>
+    <principle>Say must-fix or nice-to-have. Never both for the same finding.</principle>
+    <principle>The report is finished when the next person can act without asking you.</principle>
+  </principles>
+
+  <severity_ladder>
+    <level code="P0" name="blocker">Data loss, crash, corrupt or half-written state, silent wrong output, a security hole, or a break of a stated invariant.</level>
+    <level code="P1" name="high">A user-visible defect on a plausible input, a missing failure path, non-deterministic output, or a missing guard on a destructive action.</level>
+    <level code="P2" name="medium">A defect factory. Duplication, hidden coupling, mixed responsibility, an unclear contract, or a risky path with no test.</level>
+    <level code="P3" name="low">Tidy-up with no behaviour risk. Naming, small extraction, one missing comment where the reason is not obvious.</level>
+    <level code="nit" name="nit">Style a formatter or analyser already enforces. Usually do not report it at all.</level>
+  </severity_ladder>
+
+  <verdict_rules>
+    <verdict value="Do not ship">Any P0 is open.</verdict>
+    <verdict value="Ship with fixes">No P0, and at least one P1 that must land before release.</verdict>
+    <verdict value="Ship">Only P2, P3, or nits remain. Say that plainly.</verdict>
+    <rule>The verdict is the first line of the report. Never bury it under findings.</rule>
+    <rule>If the review found nothing, the verdict is "Ship" with one sentence of evidence for what you checked.</rule>
+  </verdict_rules>
+
+  <must_fix_vs_nice>
+    <must_fix>Any P0. Any P1 that can lose data or mislead a user. Any invariant break. Any untested rejection path.</must_fix>
+    <nice_to_have>Any P2 or P3 that can safely wait. Say when it should be paid back: next change to this file, or a named follow-up.</nice_to_have>
+    <rule>Never mix the two lists. A mixed list means nothing gets fixed in the right order.</rule>
+  </must_fix_vs_nice>
+
+  <when_to_report>
+    <case>The code can produce a wrong result for an input you can name.</case>
+    <case>A failure is hidden from the caller and from the log.</case>
+    <case>The same rule is written in two places.</case>
+    <case>A change is cheap now and expensive later.</case>
+    <case>A contract is ambiguous and two callers already disagree.</case>
+    <case>A stated repository invariant is broken.</case>
+  </when_to_report>
+
+  <when_to_stay_silent>
+    <case>The issue is pure taste, with no behaviour or cost argument.</case>
+    <case>A tool already reports it and CI will catch it.</case>
+    <case>You cannot say which input breaks, and cannot name the recurring cost.</case>
+    <case>The finding is far outside the review scope. Mention it once, in one line, as adjacent risk.</case>
+    <case>You would be reporting the same finding again at a second call site.</case>
+    <case>You are speculating about code you did not read.</case>
+  </when_to_stay_silent>
+
+  <scope_discipline>
+    <rule>Review the change. Mention adjacent risk once, in one line, and mark it as outside scope.</rule>
+    <rule>Do not propose a redesign to fix a small defect. Propose the smallest change that removes the harm.</rule>
+    <rule>Do not reopen settled decisions without new evidence. Cite the decision record if one exists.</rule>
+    <rule>If the change is fine but the surrounding code is not, say that first. It changes how the findings are read.</rule>
+  </scope_discipline>
+
+  <behaviour_change_labelling>
+    <rule>Default to behaviour-preserving fixes.</rule>
+    <rule>If the fix must change behaviour, say "Behaviour change" on its own line and state the before and after in one sentence each.</rule>
+    <rule>A refactor proposal names the defect class it removes and the test that proves the behaviour is unchanged.</rule>
+    <rule>If no test can prove equivalence, the fix is a rewrite proposal, not a refactor. Label it that way.</rule>
+  </behaviour_change_labelling>
+
+  <confidence>
+    <level name="fact">You read the line, or you saw the command output. State it.</level>
+    <level name="inference">You reasoned from code you read, without running it. Label it.</level>
+    <level name="guess">You suspect it. Write "guess" and say what would confirm it.</level>
+    <rule>A blocker must be a fact. An inference can be P1 at most. A guess is a question.</rule>
+  </confidence>
+
+  <tradeoffs>
+    <rule>Name both sides. "Faster, but harder to test" is usable. "Better" is not.</rule>
+    <rule>When two options are close, recommend the one that is cheaper to change later.</rule>
+    <rule>Performance claims need a measurement. Without one, present the change as a hypothesis.</rule>
+    <rule>Readability beats cleverness unless the code is measured to be hot.</rule>
+  </tradeoffs>
+
+  <stop_and_ask>
+    <condition>The acceptance criteria are missing or contradict the code.</condition>
+    <condition>The fix would break a stated invariant.</condition>
+    <condition>The change needs a new dependency, a new permission, or a schema change.</condition>
+    <condition>Two sources of truth disagree and the code cannot tell you which one wins.</condition>
+    <condition>The behaviour can only be checked in a live host you cannot reach.</condition>
+    <condition>The same failure survives two evidence-led attempts.</condition>
+    <rule>Ask one question with two to four concrete options. State the default you will take if silent.</rule>
+  </stop_and_ask>
+
+  <report_shape>
+    <rule>Detail the top ten findings. One line each for the rest.</rule>
+    <rule>More than twenty findings: split the review by area and say which slice you covered.</rule>
+    <rule>Cluster duplicates under one finding with a list of sites.</rule>
+    <rule>Lead with the single highest risk in one sentence, even if the full list follows.</rule>
+  </report_shape>
+</decision_guidance>

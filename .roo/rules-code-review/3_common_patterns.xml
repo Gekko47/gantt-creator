@@ -1,0 +1,229 @@
+<common_patterns>
+  <overview>
+    Reusable fixes for the defects this mode reports most often.
+    Use these as the shape of the improved code. Adapt names to the file under review.
+    Every sample keeps the original behaviour unless the pattern note says otherwise.
+    Samples are in C#, the language of this repository. The ideas are language-neutral.
+  </overview>
+
+  <pattern name="guard_clauses">
+    <symptom>Deep nesting hides the normal path. The failure path needs a hunt to find.</symptom>
+    <fix>Reject each invalid case at the top. Leave the normal path flat and last.</fix>
+    <before><![CDATA[
+if (row != null)
+{
+    if (row.Start.HasValue)
+    {
+        if (row.Start.Value <= row.Finish)
+        {
+            Draw(row);
+        }
+    }
+}
+]]></before>
+    <after><![CDATA[
+if (row is null) return;
+if (!row.Start.HasValue) return;
+if (row.Start.Value > row.Finish) return;
+
+Draw(row);
+]]></after>
+    <note>Same behaviour, same side effects. Only the reading cost drops.</note>
+  </pattern>
+
+  <pattern name="validator_with_positive_test">
+    <symptom>A new rejection branch is added with no test that reaches it.</symptom>
+    <fix>Ship the validator and the test that feeds it bad input, in the same change.</fix>
+    <before><![CDATA[
+public static void ValidateWidth(double width)
+{
+    if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+}
+// no test reaches this throw
+]]></before>
+    <after><![CDATA[
+public static void ValidateWidth(double width)
+{
+    if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+}
+
+[Fact]
+public void ValidateWidth_RejectsZero()
+{
+    Assert.Throws<ArgumentOutOfRangeException>(() => ValidateWidth(0));
+}
+
+[Fact]
+public void ValidateWidth_RejectsNegative()
+{
+    Assert.Throws<ArgumentOutOfRangeException>(() => ValidateWidth(-1));
+}
+]]></after>
+    <note>An untested rejection path is assumed broken until proven otherwise.</note>
+  </pattern>
+
+  <pattern name="try_pattern">
+    <symptom>Expected absence is signalled by throwing and catching an exception.</symptom>
+    <fix>Use a Try method that returns a boolean and an out value. Keep exceptions for the unexpected.</fix>
+    <before><![CDATA[
+try
+{
+    var sheet = workbook.Sheets["Config"];
+    Use(sheet);
+}
+catch (Exception)
+{
+    // sheet is missing, carry on
+}
+]]></before>
+    <after><![CDATA[
+if (!TryGetSheet(workbook, "Config", out var sheet)) return;
+
+Use(sheet);
+]]></after>
+    <note>Also removes the catch-all that was hiding every other failure.</note>
+  </pattern>
+
+  <pattern name="empty_collection_contract">
+    <symptom>A method returns null sometimes and a list other times. Callers all guard differently.</symptom>
+    <fix>Return an empty collection. State it in the name or the doc comment. Drop the null guards.</fix>
+    <before><![CDATA[
+public IReadOnlyList<Entity> ReadRows()
+{
+    if (table is null) return null;
+    return table.Rows.Select(ToEntity).ToList();
+}
+]]></before>
+    <after><![CDATA[
+public IReadOnlyList<Entity> ReadRows()
+{
+    if (table is null) return Array.Empty<Entity>();
+    return table.Rows.Select(ToEntity).ToList();
+}
+]]></after>
+    <note>Callers can now loop without a null check. One contract, not many guesses.</note>
+  </pattern>
+
+  <pattern name="explicit_result_over_magic_value">
+    <symptom>Failure is signalled by -1, an empty string, or a null that also means "not found".</symptom>
+    <fix>Return a small result type that carries success, the value, and the reason.</fix>
+    <before><![CDATA[
+int index = FindLane("Design");   // -1 means missing
+if (index >= 0) { ... }
+]]></before>
+    <after><![CDATA[
+var lookup = FindLane("Design");
+if (!lookup.Found) { Log(lookup.Reason); return; }
+Use(lookup.Index);
+]]></after>
+    <note>Use this when the reason matters. For pure presence checks the Try pattern is smaller.</note>
+  </pattern>
+
+  <pattern name="extract_method_mixed_responsibility">
+    <symptom>One method validates, computes, formats, and writes. Changing the format risks the validation.</symptom>
+    <fix>Extract by reason to change. Keep the original method as a short sequence of named steps.</fix>
+    <before><![CDATA[
+public void Render(Row row)
+{
+    // 40 lines: parse, validate, compute geometry, set colour, write to the sheet
+}
+]]></before>
+    <after><![CDATA[
+public void Render(Row row)
+{
+    var entry = ParseRow(row);
+    var sceneItem = BuildSceneItem(entry);
+    DrawSceneItem(sceneItem);
+}
+
+private Entry ParseRow(Row row) { ... }        // parsing rules change here
+private SceneItem BuildSceneItem(Entry e) { ... } // geometry rules change here
+private void DrawSceneItem(SceneItem s) { ... }   // output rules change here
+]]></after>
+    <note>Do not extract a method for a single call site with no separate reason to change.</note>
+  </pattern>
+
+  <pattern name="split_flag_parameter">
+    <symptom>A boolean parameter switches the whole behaviour of a method or constructor.</symptom>
+    <fix>Split into two named operations, or make the caller state the choice in a named type.</fix>
+    <before><![CDATA[
+Draw(row, true);   // what does true mean here?
+]]></before>
+    <after><![CDATA[
+DrawCollapsed(row);
+DrawExpanded(row);
+]]></after>
+    <note>If both cases really share the body, keep one method and pass a named enum instead.</note>
+  </pattern>
+
+  <pattern name="deterministic_clock_and_culture">
+    <symptom>The result depends on today's date, the machine culture, or dictionary order.</symptom>
+    <fix>Pass the time and the culture in. Order collections explicitly.</fix>
+    <before><![CDATA[
+var label = DateTime.Now.ToString("d");
+var first = lookup.Values.First();
+]]></before>
+    <after><![CDATA[
+var label = clock.Today.ToString("d", culture);
+var first = lookup.Values.OrderBy(v => v.Key, StringComparer.Ordinal).First();
+]]></after>
+    <note>Tests can now pin the date and the culture. The output stops moving between machines.</note>
+  </pattern>
+
+  <pattern name="resource_ownership">
+    <symptom>A handle, stream, or COM object is created and released only on the happy path.</symptom>
+    <fix>Own it in one place. Release it on every exit path.</fix>
+    <before><![CDATA[
+var stream = File.OpenWrite(path);
+WritePng(stream, image);
+stream.Dispose();
+]]></before>
+    <after><![CDATA[
+using var stream = File.OpenWrite(path);
+WritePng(stream, image);
+]]></after>
+    <note>If the object is not disposable, wrap it in one tested helper and call that helper once.</note>
+  </pattern>
+
+  <pattern name="single_enumeration">
+    <symptom>A lazy sequence is walked more than once. The second walk recomputes or re-queries.</symptom>
+    <fix>Materialise once, then reuse the list.</fix>
+    <before><![CDATA[
+if (rows.Any()) { foreach (var row in rows) Draw(row); }
+]]></before>
+    <after><![CDATA[
+var items = rows.ToList();
+if (items.Count == 0) return;
+foreach (var row in items) Draw(row);
+]]></after>
+    <note>Watch for this in loops and in logging. Count and iteration are two walks.</note>
+  </pattern>
+
+  <pattern name="all_or_nothing_update">
+    <symptom>A partial failure leaves half the state changed and no way back.</symptom>
+    <fix>Build the full result first. Apply it in one step. Roll back if the step fails.</fix>
+    <before><![CDATA[
+foreach (var row in rows) { DeleteShapes(row); DrawRow(row); }
+]]></before>
+    <after><![CDATA[
+var plan = rows.Select(BuildDrawPlan).ToList();
+Validate(plan);
+Apply(plan);          // one guarded pass, or nothing
+]]></after>
+    <note>This is the shape to ask for when the review finds a half-rendered chart.</note>
+  </pattern>
+
+  <pattern name="fire_and_forget_async">
+    <symptom>A task is started and never awaited. Failures vanish. Ordering is lost.</symptom>
+    <fix>Await it, or keep the task and observe it on a named path.</fix>
+    <before><![CDATA[
+SaveAsync(document);
+return true;
+]]></before>
+    <after><![CDATA[
+await SaveAsync(document);
+return true;
+]]></after>
+    <note>If the caller cannot await, say so in the finding. Do not hide the failure.</note>
+  </pattern>
+</common_patterns>

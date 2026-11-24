@@ -1,0 +1,73 @@
+<tool_guidance>
+  <order_of_operations>
+    <step order="1">Search the codebase to locate the files under review and their callers.</step>
+    <step order="2">Read the contract files first, then the code, then the tests.</step>
+    <step order="3">Read in batches. One pass for structure, one pass for detail.</step>
+    <step order="4">Run evidence commands only when a finding needs proof.</step>
+    <step order="5">Write nothing unless the user asks for a written report.</step>
+  </order_of_operations>
+
+  <searching>
+    <rule>Start with a meaning-based search, then move to exact pattern search for a symbol.</rule>
+    <rule>Look for callers before judging a method. A method is only wrong relative to its callers.</rule>
+    <rule>Search for the tests of the file under review early. Tests state the intended behaviour.</rule>
+    <rule>Search for a second copy of the same rule. Duplication is the most common P2.</rule>
+    <rule>Stop searching once the finding is proven. More evidence does not change the severity.</rule>
+  </searching>
+
+  <reading>
+    <rule>Read the whole file before quoting a line from it. A line out of context produces wrong findings.</rule>
+    <rule>Read the caller of every method you plan to criticise.</rule>
+    <rule>Read the configuration that changes the behaviour you are judging.</rule>
+    <rule>Do not claim a defect in code you have not read. Say "not reviewed" instead.</rule>
+  </reading>
+
+  <evidence_commands>
+    <rule>Build and run targeted tests when the change builds. Report only output you saw.</rule>
+    <rule>Use a diff command to establish the review scope. Do not guess what changed.</rule>
+    <rule>Prefer a narrow test filter over the whole suite. Speed keeps the review honest.</rule>
+    <rule>Quote the failing assertion, not the whole log.</rule>
+    <rule>Never state that a command ran unless its output appeared.</rule>
+    <rule>If output is truncated or unclear, say so and lower the confidence.</rule>
+  </evidence_commands>
+
+  <forbidden_actions>
+    <rule>Never edit product source, tests, build files, or docs. This mode reports, it does not repair.</rule>
+    <rule>Never run a command that mutates the working tree: checkout, reset, clean, stash, format, or codegen.</rule>
+    <rule>Never install, restore, or upgrade a package to make a review easier.</rule>
+    <rule>Never disable an analyser, a warning, or a failing test to get a clean build for the review.</rule>
+    <rule>Never commit, push, tag, or open a pull request.</rule>
+    <rule>Never write a secret, token, or customer value into a report.</rule>
+  </forbidden_actions>
+
+  <residual_risk>
+    <note>Command execution cannot be made read-only. The ban above is a rule, not a sandbox.</note>
+    <rule>Prefer the least powerful command that answers the question.</rule>
+    <rule>Say so if a command had a side effect, even an intended one.</rule>
+  </residual_risk>
+
+  <writing_reports>
+    <rule>Write a report only when the user asks for a file, or when the review is too long for chat.</rule>
+    <rule>Put review reports under plans/ only. Never elsewhere.</rule>
+    <rule>Name the file for what it reviews, for example plans/refresh-path-review.md.</rule>
+    <rule>Use the report template from 7_communication.xml, unchanged.</rule>
+    <rule>Keep the chat message short when a file is written. State the path, the verdict, and the counts.</rule>
+  </writing_reports>
+
+  <api_verification>
+    <rule>Prefer the compiler, the installed package metadata, and existing call sites over memory.</rule>
+    <rule>Prefer official documentation over blog posts or forum answers.</rule>
+    <rule>If a signature cannot be checked in this workspace, write "unknown" and name what would settle it.</rule>
+    <rule>Never invent a member, an overload, an attribute, an enum value, or a default.</rule>
+    <rule>Never describe behaviour you have not read or run.</rule>
+  </api_verification>
+
+  <delegation>
+    <rule>Fixes belong to code mode. State the finding and the sample, then hand off.</rule>
+    <rule>Design questions belong to architect mode.</rule>
+    <rule>A whole-repo one-shot audit belongs to the ponytail-audit skill, not to a long session here.</rule>
+    <rule>A debt register belongs to the tech-debt skill.</rule>
+    <rule>A safe mechanical refactor loop belongs to the refactor skill.</rule>
+    <rule>Say which one applies, in one line, instead of doing all of them here.</rule>
+  </delegation>
+</tool_guidance>

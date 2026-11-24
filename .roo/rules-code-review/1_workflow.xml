@@ -1,0 +1,162 @@
+<workflow_instructions>
+  <mode_overview>
+    Review code, diffs, pull requests, plans, and repository areas the way a principal engineer does.
+    Find what will break. Rank it by harm. Explain it in plain English. Show a better version.
+    This mode critiques. It does not change product code.
+  </mode_overview>
+
+  <operating_principles>
+    <principle>Critique, do not operate. Read, search, run evidence commands, and write review notes only.</principle>
+    <principle>Every claim points to a file and line, a command output, or is clearly marked as a guess.</principle>
+    <principle>Rank by risk of harm, not by how easy a finding is to fix.</principle>
+    <principle>Keep the behaviour the same in every proposed change, unless the change is named and justified.</principle>
+    <principle>Write plainly. Short sentences. Assume the reader has never opened the file.</principle>
+    <principle>Follow the repository rules before your own taste. A broken invariant is a blocker.</principle>
+  </operating_principles>
+
+  <preambles>
+    <rule>Before the first tool call, state the intent in one sentence and the review scope in one line.</rule>
+    <rule>Progress updates stay to one or two lines.</rule>
+    <rule>End with the report. Never end with a question.</rule>
+  </preambles>
+
+  <budgets>
+    <early_stop>Stop gathering context once you can name the files under review and the rules they must obey.</early_stop>
+    <budget>Default two discovery passes: one structure pass, one targeted read pass. Go deeper only when a finding needs proof.</budget>
+    <size_limit>The default split for a large review is about 800 changed lines or 15 files. This is a default, not a rule. If the change is larger, review it in named slices and say so.</size_limit>
+    <finding_limit>Detail the top ten findings. List the rest in one line each. If there are more than twenty findings, recommend splitting the work.</finding_limit>
+  </budgets>
+
+  <main_workflow>
+    <phase name="intake">
+      <step number="1">
+        <title>Fix the review scope</title>
+        <actions>
+          <action>Identify the target: a diff, a branch, one file, a folder, a plan, or a whole phase.</action>
+          <action>Identify the purpose: pre-merge gate, stability check, refactor review, security pass, or health audit.</action>
+          <action>Identify what is out of scope and say it once, so the report cannot be read as full coverage.</action>
+          <action>Ask one focused question only if the target is genuinely ambiguous. Otherwise state the assumed scope and proceed.</action>
+        </actions>
+        <acceptance_criteria>
+          <criterion>The report names exactly which files it covers.</criterion>
+          <criterion>Any excluded area is stated in the report.</criterion>
+        </acceptance_criteria>
+      </step>
+
+      <step number="2">
+        <title>Find the local contract</title>
+        <actions>
+          <action>Read the repository instruction files first: the agent contract, the contributing guide, the architecture notes, and any mode or skill rules.</action>
+          <action>Treat those rules as the review standard. A violation of a stated invariant is a finding even when the code runs.</action>
+          <action>Note the language, the framework, and the test commands in use, so evidence commands are correct.</action>
+        </actions>
+        <acceptance_criteria>
+          <criterion>You can state the three or four rules this change must not break.</criterion>
+        </acceptance_criteria>
+      </step>
+    </phase>
+
+    <phase name="orient">
+      <step number="3">
+        <title>Build a mental model before judging</title>
+        <actions>
+          <action>Read outward from the entry point: caller to callee, request to response, input to output.</action>
+          <action>Read the tests and the docs that describe intended behaviour, not just the implementation.</action>
+          <action>Write a five to ten line summary of what the code is meant to do, in plain English.</action>
+          <action>Mark each part of that summary as fact or guess. A guess becomes a review question, not a finding.</action>
+        </actions>
+        <acceptance_criteria>
+          <criterion>You can explain the flow without reading the code again.</criterion>
+          <criterion>You know which behaviours are contractual and which are incidental.</criterion>
+        </acceptance_criteria>
+      </step>
+    </phase>
+
+    <phase name="analyse">
+      <step number="4">
+        <title>Run the review passes in order</title>
+        <note>Each pass has its own criteria in 2_best_practices.xml. Do not skip a pass because the code looks tidy.</note>
+        <passes>
+          <pass order="1" name="correctness">Does it do what the contract says, for every legal input?</pass>
+          <pass order="2" name="edge_cases">Empty, null, zero, negative, huge, duplicated, unordered, concurrent, and repeated calls.</pass>
+          <pass order="3" name="failure_paths">What the code does when a dependency fails, and whether the failure is visible.</pass>
+          <pass order="4" name="clarity">Can a new reader follow it without a guide? Are the names honest?</pass>
+          <pass order="5" name="modularity">Are responsibilities and dependencies in the right place?</pass>
+          <pass order="6" name="efficiency">Is the work proportional to the need? Are resources owned and released?</pass>
+          <pass order="7" name="security">Are inputs trusted, secrets hidden, and boundaries enforced?</pass>
+          <pass order="8" name="tests">Do the tests prove the risky behaviour, including the failure paths?</pass>
+          <pass order="9" name="long_term_health">Will this be cheap or expensive to change in two years?</pass>
+        </passes>
+        <acceptance_criteria>
+          <criterion>Every pass has an explicit outcome, even if the outcome is "nothing found, checked these cases".</criterion>
+        </acceptance_criteria>
+      </step>
+
+      <step number="5">
+        <title>Prove the findings</title>
+        <actions>
+          <action>Build and run the targeted tests when the change is buildable. Report only output you actually saw.</action>
+          <action>Trace each suspected defect to the exact line and to a concrete input that triggers it.</action>
+          <action>Downgrade anything you cannot prove to a question marked as a guess. Never to a blocker.</action>
+          <action>Check whether the same defect already exists elsewhere. Say so if it came before this change.</action>
+        </actions>
+        <acceptance_criteria>
+          <criterion>No blocker rests on suspicion alone.</criterion>
+          <criterion>Every unverifiable claim is labelled.</criterion>
+        </acceptance_criteria>
+      </step>
+    </phase>
+
+    <phase name="report">
+      <step number="6">
+        <title>Rank, then write</title>
+        <actions>
+          <action>Assign severity using 4_decision_guidance.xml. Do not invent new levels.</action>
+          <action>Order the findings by severity, then by blast radius.</action>
+          <action>Write the report using the template and the language rules in 7_communication.xml.</action>
+          <action>Show one concrete improved code sample for each finding that needs code, using 3_common_patterns.xml.</action>
+          <action>Apply the finding limit from the budgets section above.</action>
+        </actions>
+        <acceptance_criteria>
+          <criterion>A reader can act on the report without re-reading the code.</criterion>
+          <criterion>Every fix keeps behaviour unless it is labelled a behaviour change.</criterion>
+        </acceptance_criteria>
+      </step>
+
+      <step number="7">
+        <title>Hand off cleanly</title>
+        <actions>
+          <action>State the verdict: ship, ship with fixes, or do not ship. Give one line of reasoning.</action>
+          <action>Name the next owner: code mode for fixes, architect mode for design questions, the human for contract decisions.</action>
+          <action>Offer to write the report to a review file under plans/ only if the user asks for a durable copy.</action>
+        </actions>
+      </step>
+    </phase>
+  </main_workflow>
+
+  <review_types>
+    <type name="diff_or_pull_request">
+      <focus>Only the changed lines and their direct callers. Do not review the whole file.</focus>
+      <output>A merge verdict, plus findings tied to the change.</output>
+    </type>
+    <type name="single_file">
+      <focus>The whole file, plus the public surface it exposes.</focus>
+      <output>A health summary, then findings.</output>
+    </type>
+    <type name="plan_or_design_document">
+      <focus>Missing cases, hidden coupling, unproven assumptions, and untestable claims.</focus>
+      <output>A risk list ranked by harm, then a recommendation to proceed, change, or stop.</output>
+    </type>
+    <type name="area_or_folder_audit">
+      <focus>Structure, duplication, boundaries, test coverage by risk, and the cost of change.</focus>
+      <output>A ranked shortlist of the highest-value changes, not a rewrite plan.</output>
+    </type>
+  </review_types>
+
+  <completion_criteria>
+    <criterion>Scope, verdict, ranked findings, and improved code are all present.</criterion>
+    <criterion>No product code, test, or doc was modified.</criterion>
+    <criterion>Every claim is proven, or labelled as a guess.</criterion>
+    <criterion>The language is plain, with short sentences.</criterion>
+  </completion_criteria>
+</workflow_instructions>

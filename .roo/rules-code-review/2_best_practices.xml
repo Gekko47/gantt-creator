@@ -1,0 +1,141 @@
+<best_practices>
+  <reviewer_discipline>
+    <rule>Read the caller before you judge the callee.</rule>
+    <rule>Judge the change against its contract, not against your preferred style.</rule>
+    <rule>One finding, one cause. If a sentence needs "and" twice, split it.</rule>
+    <rule>Name the defect class. "This is fragile" is not a finding. "This crashes when Finish is blank" is.</rule>
+    <rule>Prefer the smallest fix that removes the defect. Do not attach a rewrite to a bug fix.</rule>
+    <rule>Say when a finding is pre-existing. Do not blame the current change for old debt.</rule>
+    <rule>If the code is good, say so in one line and stop. Do not manufacture findings.</rule>
+  </reviewer_discipline>
+
+  <pass_criteria>
+    <pass name="correctness">
+      <checks>
+        <check>Does each branch match the stated contract?</check>
+        <check>Are units, scales, and rounding consistent across the flow?</check>
+        <check>Is the same value computed twice in two places? If yes, one will drift.</check>
+        <check>Do the tests assert the contract, or only the current output?</check>
+        <check>Is any default value silently accepted where an error is safer?</check>
+      </checks>
+    </pass>
+
+    <pass name="edge_cases">
+      <checks>
+        <check>Empty collection, single item, and duplicates.</check>
+        <check>Null, missing, or whitespace-only input at every public entry point.</check>
+        <check>Zero, negative, and very large numbers. Also boundary values: first, last, exactly the limit.</check>
+        <check>Order independence: does the result change if items arrive in a different order?</check>
+        <check>Repeat calls: is the operation safe to run twice?</check>
+        <check>Concurrent or re-entrant calls, if the code can be reached that way.</check>
+        <check>Partial failure: half the items succeed, then the rest fail.</check>
+      </checks>
+    </pass>
+
+    <pass name="failure_paths">
+      <checks>
+        <check>Is every failure visible to the caller or the log, or is it swallowed?</check>
+        <check>Is a catch block doing real work, or hiding a defect?</check>
+        <check>Does a failure leave the system in a half-changed state?</check>
+        <check>Does the error message name the input and the expected range?</check>
+        <check>Is a retry safe, bounded, and free of fixed delays?</check>
+        <check>Does cleanup run on every exit path, including the error path?</check>
+      </checks>
+    </pass>
+
+    <pass name="clarity">
+      <checks>
+        <check>Does each name say what the value means, not how it is stored?</check>
+        <check>Can a reader follow one screen without scrolling back?</check>
+        <check>Is nesting deeper than three levels? If yes, ask for guard clauses.</check>
+        <check>Are boolean parameters explained by name at the call site, or are they a trap?</check>
+        <check>Does a comment explain why, rather than repeat what the line says?</check>
+        <check>Would a new team member need to ask a question to change this safely?</check>
+      </checks>
+    </pass>
+
+    <pass name="modularity">
+      <checks>
+        <check>Does each unit have one reason to change?</check>
+        <check>Does a low-level unit know about a high-level concern: UI, file system, clock, network?</check>
+        <check>Is a dependency created inside the unit instead of passed in?</check>
+        <check>Is a rule stated in two places? The second copy will rot.</check>
+        <check>Are the boundaries of the project respected: no UI or platform calls from the core logic?</check>
+        <check>Is a public method wider than it needs to be?</check>
+      </checks>
+    </pass>
+
+    <pass name="efficiency">
+      <checks>
+        <check>Is work repeated inside a loop that could be done once before it?</check>
+        <check>Is a collection enumerated more than once when once would do?</check>
+        <check>Is memory or a handle owned, and released on every path?</check>
+        <check>Is a cache correct, or does it serve stale data after a change?</check>
+        <check>Is the hot path doing logging, formatting, or allocation it does not need?</check>
+        <check>Is a measurement claimed without a measurement? Ask for numbers or drop the claim.</check>
+      </checks>
+    </pass>
+
+    <pass name="security">
+      <checks>
+        <check>Is external input validated before use, not after the damage?</check>
+        <check>Are secrets, tokens, personal data, or file contents written to logs or reports?</check>
+        <check>Is a path joined from user input without normalisation?</check>
+        <check>Is a permission, a guard, or an authorisation check missing on a new entry point?</check>
+        <check>Is a dependency added for a task the platform already does?</check>
+        <check>Is deserialisation or reflection used on untrusted input?</check>
+      </checks>
+    </pass>
+
+    <pass name="tests">
+      <checks>
+        <check>Does each new failure branch have a test that makes it fire?</check>
+        <check>Do the tests fail if you revert the fix? If not, they prove nothing.</check>
+        <check>Do the test names state the behaviour, not the method name?</check>
+        <check>Is a risky path tested only through the happy path?</check>
+        <check>Are time, culture, ordering, and randomness controlled in the test?</check>
+        <check>Was a test deleted, weakened, or skipped to make the build pass?</check>
+      </checks>
+    </pass>
+
+    <pass name="long_term_health">
+      <checks>
+        <check>Is the concept documented once, in the place a reader will look first?</check>
+        <check>Is the new code consistent with its neighbours, or a second style?</check>
+        <check>Is configuration kept out of the logic?</check>
+        <check>Will a change to this behaviour require edits in many files?</check>
+        <check>Is there an escape hatch for the next case, or has the design hard-coded today's case?</check>
+      </checks>
+    </pass>
+  </pass_criteria>
+
+  <contract_first_checks>
+    <note>These apply when the repository states them. Read the contract and use its words, not yours.</note>
+    <check>Stated architectural invariants are treated as blockers when broken.</check>
+    <check>A validation branch that rejects bad input ships with a test that feeds it bad input.</check>
+    <check>Deterministic identifiers, ordering, culture, time, and rounding are preserved.</check>
+    <check>No fixed sleeps for synchronisation. Poll a named condition with a deadline.</check>
+    <check>No exceptions swallowed to keep the build green.</check>
+    <check>No test deleted, skipped, or loosened to reach green.</check>
+    <check>No new dependency without a stated reason and a check that the platform cannot already do it.</check>
+    <check>No duplicated rule: one source of truth per policy.</check>
+  </contract_first_checks>
+
+  <noise_control>
+    <rule>Never report what a formatter, linter, or analyser already enforces. It wastes the reader's attention.</rule>
+    <rule>Never report pure taste: brace style, comment wording, method order, or naming you simply prefer.</rule>
+    <rule>Never report an issue you cannot tie to a broken input, a wrong outcome, or a recurring cost.</rule>
+    <rule>Never repeat the same finding for each call site. Report it once and list the sites.</rule>
+    <rule>Never pad the report to look thorough. A short, sharp report gets acted on.</rule>
+    <rule>Report a pre-existing defect once, labelled as pre-existing, and only when it touches this change.</rule>
+  </noise_control>
+
+  <proof_rules>
+    <rule>A defect claim needs a concrete input and the wrong result it produces.</rule>
+    <rule>A cost claim needs a number, a frequency, or a named scenario. Otherwise it is a guess.</rule>
+    <rule>A behaviour-preserving claim needs a named test that runs before and after the change.</rule>
+    <rule>A performance claim needs a measurement you took, or it is dropped.</rule>
+    <rule>An API claim needs a signature you read: source, installed metadata, or official documentation.</rule>
+    <rule>When you cannot check, write "unknown" and say what would settle it.</rule>
+  </proof_rules>
+</best_practices>

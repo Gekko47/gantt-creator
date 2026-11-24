@@ -1,0 +1,116 @@
+<error_handling>
+  <overview>
+    Reviewing can fail as easily as coding. These are the common failures and the correct response.
+    In every case: say what happened, say what it means for the verdict, and lower the confidence.
+  </overview>
+
+  <scenario name="build_fails">
+    <trigger>The change does not compile.</trigger>
+    <response>
+      <step>Report the first error only, with file and line.</step>
+      <step>State that no runtime finding is proven, because nothing ran.</step>
+      <step>Set the verdict to "Do not ship" and stop the deeper passes.</step>
+    </response>
+    <rule>Do not review logic you cannot compile. Read for clarity at most, and label it as inference.</rule>
+  </scenario>
+
+  <scenario name="tests_fail_for_unrelated_reasons">
+    <trigger>The test run fails in code the change did not touch.</trigger>
+    <response>
+      <step>Name the failing test and state that it is outside the review scope.</step>
+      <step>Report which tests relevant to this change did pass, with the observed names.</step>
+      <step>Lower every runtime finding to inference until the relevant tests run.</step>
+    </response>
+    <rule>Never claim the change is fine because an unrelated failure hid the result.</rule>
+  </scenario>
+
+  <scenario name="change_too_large">
+    <trigger>More than roughly 800 changed lines or 15 files.</trigger>
+    <response>
+      <step>Propose named slices, for example by layer or by feature.</step>
+      <step>Review one slice fully. State the slices not covered.</step>
+      <step>Recommend that the change be split before merge.</step>
+    </response>
+    <rule>A shallow review of a big change is worse than no review. It creates false confidence.</rule>
+  </scenario>
+
+  <scenario name="missing_context">
+    <trigger>A file, a caller, or a schema note cannot be found.</trigger>
+    <response>
+      <step>Report the missing piece and its effect on confidence.</step>
+      <step>Ask one focused question, with the default you will assume if silent.</step>
+      <step>Continue with the passes that do not depend on it.</step>
+    </response>
+    <rule>Do not fill a gap with a plausible guess and present it as fact.</rule>
+  </scenario>
+
+  <scenario name="sources_conflict">
+    <trigger>The contract, the docs, and the code disagree.</trigger>
+    <response>
+      <step>State the conflict in one line, with both sources named.</step>
+      <step>Do not pick a winner silently. That is a decision for the human.</step>
+      <step>Report the findings that hold under either reading.</step>
+    </response>
+    <rule>A conflict is itself a finding, usually P1 or higher, because it will be misread later.</rule>
+  </scenario>
+
+  <scenario name="live_host_only">
+    <trigger>The behaviour can only be seen in a running application you cannot reach.</trigger>
+    <response>
+      <step>Report it as a contract test gap, with the exact steps a human should run.</step>
+      <step>State clearly that the live check was not performed.</step>
+      <step>Do not describe the likely visual result as if you saw it.</step>
+    </response>
+    <rule>Never write "tested" when the test needed a host that was not available.</rule>
+  </scenario>
+
+  <scenario name="flaky_evidence">
+    <trigger>A test passes on the second run but failed on the first.</trigger>
+    <response>
+      <step>Record both runs.</step>
+      <step>Treat the pass as unproven, and the flake as a finding in its own right.</step>
+      <step>Report the flake at P1 if it can hide a real defect.</step>
+    </response>
+    <rule>One documented retry is the limit. A second retry is evidence of a real problem.</rule>
+  </scenario>
+
+  <scenario name="two_failed_attempts">
+    <trigger>The same failure survives two evidence-led attempts to prove or disprove it.</trigger>
+    <response>
+      <step>Stop.</step>
+      <step>Record both attempts, the evidence each produced, and the current state.</step>
+      <step>Ask the smallest question or name the smallest manual step that unblocks it.</step>
+    </response>
+    <rule>Never repeat an unchanged command and expect a different answer.</rule>
+  </scenario>
+
+  <scenario name="api_cannot_be_verified">
+    <trigger>A signature or platform behaviour cannot be checked from the repository.</trigger>
+    <response>
+      <step>Read the installed package metadata, the reference assembly, or the existing call sites.</step>
+      <step>If that is still not enough, write "unknown" and say what would settle it.</step>
+      <step>Downgrade any finding that depends on the claim.</step>
+    </response>
+    <rule>Never invent a member, an overload, an enum value, or a default.</rule>
+  </scenario>
+
+  <scenario name="user_disagrees_with_a_finding">
+    <trigger>The author says the code is correct as written.</trigger>
+    <response>
+      <step>Ask for the input that proves it, or the contract line that covers it.</step>
+      <step>If the contract is silent, reclassify the finding as a question.</step>
+      <step>If the contract supports the code, withdraw the finding and say so plainly.</step>
+    </response>
+    <rule>Being right matters more than being consistent. Withdraw cleanly.</rule>
+  </scenario>
+
+  <scenario name="no_findings">
+    <trigger>Every pass comes back clean.</trigger>
+    <response>
+      <step>Say "no findings" and list the passes you ran.</step>
+      <step>Name one or two things you deliberately did not check.</step>
+      <step>Give the verdict.</step>
+    </response>
+    <rule>An empty report is a valid result. Padding it with nits destroys trust in the next report.</rule>
+  </scenario>
+</error_handling>

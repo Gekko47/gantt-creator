@@ -1,0 +1,263 @@
+<complete_examples>
+  <overview>
+    Three worked reviews. Each shows the scope, the reasoning, and the shape of the report.
+    The report text is the style target: plain English, short sentences, verdict first.
+  </overview>
+
+  <example name="diff_review_with_a_crash">
+    <scenario>
+      The user says: "review this change before I merge".
+      The diff adds a method that writes a row to the Gantt table.
+    </scenario>
+
+    <diff_under_review><![CDATA[
+public void AddRow(ActivityRow row)
+{
+    var start = row.Start.Value;
+    var finish = row.Finish.Value;
+    if (finish < start)
+    {
+        finish = start;
+    }
+    table.Rows.Add(start, finish, row.Name.Trim());
+}
+]]></diff_under_review>
+
+    <workflow>
+      <step number="1">
+        <description>Find the contract</description>
+        <approach>Read the agent contract and the table schema note. Confirm that Start is required and Finish is optional for milestones.</approach>
+        <expected_outcome>The rule is clear: Finish may be null. The code calls Value on it. That is a crash.</expected_outcome>
+      </step>
+      <step number="2">
+        <description>Trace the failure</description>
+        <approach>Follow the caller. Confirm nothing upstream guarantees Finish.</approach>
+        <analysis>A milestone row reaches this method with Finish null. The Value call throws. The user sees a generic error and the chart stops.</analysis>
+      </step>
+      <step number="3">
+        <description>Check the tests</description>
+        <approach>Search for tests of AddRow.</approach>
+        <analysis>Only the happy path is tested. No test feeds a null Finish or a blank Name.</analysis>
+      </step>
+      <step number="4">
+        <description>Rank and report</description>
+        <approach>One P0, one P1, one P2. Detail all three. Show the fix once.</approach>
+      </step>
+    </workflow>
+
+    <report><![CDATA[
+VERDICT: Do not ship.
+SCOPE: AddRow in ActivityTableWriter.cs, and its caller in ChartRefresh.cs.
+COUNTS: 1 blocker, 1 high, 1 medium.
+
+TOP RISK: A milestone row crashes the refresh, because Finish is read as if it must exist.
+
+FINDINGS
+| # | Severity | Where | Issue |
+|---|----------|-------|-------|
+| 1 | P0 | ActivityTableWriter.cs:42 | Crash when Finish is null. Milestones are legal rows. |
+| 2 | P1 | ActivityTableWriter.cs:44 | Name is trimmed without a null check. |
+| 3 | P2 | AddRow tests | No test feeds null Finish or blank Name. The rejection path is untested. |
+
+DETAIL
+
+### 1. Crash when Finish is null (P0)
+Where: ActivityTableWriter.cs:42
+What happens: the code calls Value on Finish. A milestone row has no Finish.
+Why it matters: one legal row stops the whole refresh. The user sees a generic error.
+Proof: the schema note says Finish is optional. The caller passes the row unchanged. Guess on the exact message; the throw is certain.
+Fix: read Start as required. Read Finish only when it exists.
+Behaviour change: none. Rows with a Finish behave as before.
+
+public void AddRow(ActivityRow row)
+{
+    var start = row.Start
+        ?? throw new ArgumentException("Start is required.", nameof(row));
+
+    var finish = row.Finish ?? start;
+    if (finish < start) finish = start;
+
+    var name = row.Name?.Trim() ?? string.Empty;
+    table.Rows.Add(start, finish, name);
+}
+
+### 2. Name is trimmed without a null check (P1)
+Where: ActivityTableWriter.cs:44
+What happens: a null Name throws before the row is added.
+Why it matters: the failure is invisible. The row is lost, and the log says nothing useful.
+Fix: fall back to an empty string, as shown above. Add a test for the blank case.
+
+### 3. The rejection path is untested (P2)
+Where: the AddRow tests
+What happens: only a complete row is tested.
+Why it matters: the crash above was reachable, and no test noticed.
+Fix: add two tests.
+
+[Fact]
+public void AddRow_UsesStart_WhenFinishIsNull()
+{
+    var row = new ActivityRow { Start = new DateOnly(2026, 1, 1), Finish = null, Name = "Kickoff" };
+    table.AddRow(row);
+    Assert.Equal(new DateOnly(2026, 1, 1), table.Rows[0].Finish);
+}
+
+[Fact]
+public void AddRow_AcceptsNullName()
+{
+    var row = new ActivityRow { Start = new DateOnly(2026, 1, 1), Finish = null, Name = null };
+    var error = Record.Exception(() => table.AddRow(row));
+    Assert.Null(error);
+}
+
+QUESTIONS
+- Should a null Name be rejected instead of replaced with an empty string? The schema note does not say.
+
+NEXT: code mode applies findings 1 to 3. Re-review after the tests exist.
+]]></report>
+
+    <key_takeaways>
+      <takeaway>Read the contract before the code. It turns a hunch into a blocker.</takeaway>
+      <takeaway>One code sample can fix two findings. Do not paste the same block twice.</takeaway>
+      <takeaway>An open question goes in its own section, not inside a finding.</takeaway>
+    </key_takeaways>
+  </example>
+
+  <example name="plan_review_for_risk">
+    <scenario>
+      The user says: "review this plan before I start".
+      The plan describes replacing the refresh path.
+    </scenario>
+
+    <workflow>
+      <step number="1">
+        <description>Extract the claims</description>
+        <approach>List every claim the plan makes about behaviour, performance, and scope.</approach>
+        <expected_outcome>Seven claims. Two are unproven. One contradicts the current contract.</expected_outcome>
+      </step>
+      <step number="2">
+        <description>Check each claim against the code and the contract</description>
+        <approach>Read the current refresh path and the contract statement about refresh triggering.</approach>
+        <analysis>The plan says selection changes will trigger a refresh. The contract forbids that. This is a blocker, and it is cheap to fix now.</analysis>
+      </step>
+      <step number="3">
+        <description>Rank by cost to discover late</description>
+        <approach>Order the risks by how expensive they become after the work starts.</approach>
+      </step>
+    </workflow>
+
+    <report><![CDATA[
+VERDICT: Do not start until item 1 is resolved.
+SCOPE: the refresh replacement plan, all seven claims.
+COUNTS: 1 blocker, 1 high, 2 medium.
+
+TOP RISK: The plan makes selection changes render. The contract forbids it.
+
+FINDINGS
+
+### 1. Selection changes would render (P0, contract)
+Where: plan section 3, step 2
+What happens: the plan wires selection events into the refresh.
+Why it matters: this breaks a stated invariant. It also makes the chart redraw while the user is reading it.
+Fix: route only chart-affecting edits and chart-setting commands to the refresh. Leave selection alone.
+Cost if found late: the whole event layer is rewritten.
+
+### 2. "Much faster" is not measured (P1)
+Where: plan section 1
+What happens: the goal states a speed-up with no number and no baseline.
+Why it matters: you cannot tell success from failure at the end.
+Fix: state the current duration and the target. Name the test that measures it.
+
+### 3. Rollback is not described (P2)
+Where: plan section 5
+What happens: no way back if the new path misbehaves.
+Why it matters: this path renders every book. A bad build reaches every user.
+Fix: keep the old path behind one switch for one release.
+
+### 4. The plan has no slice boundary (P2)
+Where: plan section 2
+What happens: one large change with no intermediate green states.
+Why it matters: no safe point to stop, review, or revert.
+Fix: split into three slices, each shippable on its own.
+
+NEXT: architect mode revises items 1 and 2. Then this mode re-reviews the plan.
+]]></report>
+
+    <key_takeaways>
+      <takeaway>Review the plan's claims, not its prose.</takeaway>
+      <takeaway>Rank by the cost of finding the problem late.</takeaway>
+      <takeaway>A contract break in a plan is cheaper to fix than in code. Say so.</takeaway>
+    </key_takeaways>
+  </example>
+
+  <example name="area_health_audit">
+    <scenario>
+      The user says: "this folder is getting hard to work in, audit it".
+      The folder has nine files and about 2,400 lines.
+    </scenario>
+
+    <workflow>
+      <step number="1">
+        <description>Map before reading</description>
+        <approach>List the files. Read the public surface of each one. Note who calls whom.</approach>
+        <analysis>Three files hold most of the logic. Two are near-duplicates. One utility class is used by everything.</analysis>
+      </step>
+      <step number="2">
+        <description>Measure the cost of change</description>
+        <approach>For each of the three largest files, count the reasons to change and the callers.</approach>
+        <analysis>The renderer has six reasons to change. Every change touches the utility class.</analysis>
+      </step>
+      <step number="3">
+        <description>Rank the shortlist</description>
+        <approach>Pick the two or three changes with the highest return. Do not produce a rewrite plan.</approach>
+      </step>
+    </workflow>
+
+    <report><![CDATA[
+VERDICT: Healthy enough to change. Two fixes will pay for themselves.
+SCOPE: nine files, about 2,400 lines. Tests were read, not run.
+COUNTS: 0 blockers, 2 high, 3 medium.
+
+TOP RISK: Every change touches one shared helper, so every change carries the same regression risk.
+
+FINDINGS
+
+### 1. The renderer has six reasons to change (P1)
+Where: ChartRenderer.cs, 940 lines
+What happens: parsing, geometry, styling, drawing, logging, and cleanup live together.
+Why it matters: a style change can break geometry, and no test separates them.
+Fix: split along the existing seams. Start with geometry, because it has the most tests.
+
+### 2. Two files are near-duplicates (P1)
+Where: ShapePainter.cs and RasterPainter.cs
+What happens: about 70 percent of the drawing code is copied.
+Why it matters: every fix must be made twice. One copy already differs by accident.
+Fix: extract the shared pass. Keep two thin adapters for the platform calls.
+
+### 3. One helper is a global dependency (P2)
+Where: SheetUtil.cs
+What happens: twelve files call it for unrelated reasons.
+Why it matters: any change to it is a change to the whole area.
+Fix: split it by purpose. Move each group next to its only caller.
+
+### 4. Risk-weighted coverage is uneven (P2)
+Where: tests
+What happens: parsing is well tested. Cleanup and failure paths are not.
+Why it matters: the untested paths are the ones that corrupt state.
+Fix: add tests for the two cleanup paths before the next refactor.
+
+### 5. Logging is mixed with logic (P3)
+Where: across the folder
+What happens: log calls sit inside calculations.
+Why it matters: tests capture noise, and the log level changes the flow.
+Fix: return a result and log at the boundary. Low urgency.
+
+NEXT: code mode takes items 1 and 2 as one slice each. This mode re-reviews after each slice.
+]]></report>
+
+    <key_takeaways>
+      <takeaway>An audit ends with a shortlist, not a plan to rewrite everything.</takeaway>
+      <takeaway>Rank by the cost of change, not by how ugly the code looks.</takeaway>
+      <takeaway>Name what is healthy. It tells the reader what not to touch.</takeaway>
+    </key_takeaways>
+  </example>
+</complete_examples>
