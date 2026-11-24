@@ -1872,17 +1872,15 @@ public class ExcelShapeWriter(
         point is { } value && double.IsFinite(value.X) && double.IsFinite(value.Y);
 
     /// <summary>
-    /// The primitive identifier of the chart title shape, the one owned shape whose name
-    /// is not role-derived.
+    /// The primitive identifier of the chart title shape, forwarded from
+    /// <see cref="GanttChartContract.ChartTitlePrimitiveId"/> so the writer and the
+    /// orchestrator name the one Core authority.
     /// </summary>
     /// <remarks>
-    /// Declared here, next to <see cref="CouldBeOwnedName"/>, and consumed by
-    /// <c>GanttRefreshOrchestrator</c>, because the ownership scan is only sound while
-    /// every name this writer can create is enumerated in one place. Two literals with
-    /// the same text would let a rename of the title silently make the title look
-    /// unowned on every refresh.
+    /// A compile-time constant forward, not a second literal: a rename of the title
+    /// cannot leave this adapter and the contract disagreeing.
     /// </remarks>
-    public const string ChartTitlePrimitiveId = "ChartTitle";
+    public const string ChartTitlePrimitiveId = GanttChartContract.ChartTitlePrimitiveId;
 
     /// <summary>
     /// Whether a worksheet shape name could be one this writer created, and so needs its
@@ -1910,12 +1908,8 @@ public class ExcelShapeWriter(
     /// is recomputed from the <em>live</em> name.
     /// </para>
     /// </remarks>
-    internal static bool CouldBeOwnedName(string name)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return name.Contains(':', StringComparison.Ordinal)
-            || string.Equals(name, ChartTitlePrimitiveId, StringComparison.Ordinal);
-    }
+    internal static bool CouldBeOwnedName(string name) =>
+        GanttChartContract.CouldBeOwnedPrimitiveName(name);
 
     /// <summary>
     /// Determines whether a shape's alternative text is the ownership tag for

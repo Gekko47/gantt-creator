@@ -75,4 +75,47 @@ public class GanttChartContractTests
         Assert.False(GanttChartContract.IsDataTableName(string.Empty));
         Assert.False(GanttChartContract.IsDataTableNameExact(string.Empty));
     }
+
+    [Fact]
+    public void The_chart_title_identifier_is_the_contract_constant()
+    {
+        Assert.Equal("ChartTitle", GanttChartContract.ChartTitlePrimitiveId);
+    }
+
+    [Fact]
+    public void A_role_derived_name_could_be_owned()
+    {
+        Assert.True(GanttChartContract.CouldBeOwnedPrimitiveName("row|1|2:bar"));
+    }
+
+    [Fact]
+    public void The_chart_title_could_be_owned()
+    {
+        Assert.True(GanttChartContract.CouldBeOwnedPrimitiveName(
+            GanttChartContract.ChartTitlePrimitiveId));
+    }
+
+    [Fact]
+    public void A_user_shape_name_could_not_be_owned()
+    {
+        Assert.False(GanttChartContract.CouldBeOwnedPrimitiveName("Rectangle 1"));
+        Assert.False(GanttChartContract.CouldBeOwnedPrimitiveName("charttitle"));
+    }
+
+    [Fact]
+    public void A_blank_ownership_name_is_refused()
+    {
+        Assert.ThrowsAny<ArgumentException>(() =>
+        {
+            _ = GanttChartContract.CouldBeOwnedPrimitiveName(null!);
+        });
+        Assert.ThrowsAny<ArgumentException>(() =>
+        {
+            _ = GanttChartContract.CouldBeOwnedPrimitiveName(string.Empty);
+        });
+        Assert.ThrowsAny<ArgumentException>(() =>
+        {
+            _ = GanttChartContract.CouldBeOwnedPrimitiveName("   ");
+        });
+    }
 }

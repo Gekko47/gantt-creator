@@ -64,4 +64,36 @@ public static class GanttChartContract
     /// </remarks>
     public static bool IsDataTableNameExact(string? tableName) =>
         string.Equals(tableName, GanttTableSchema.TableName, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The primitive identifier of the chart title shape, the one owned shape whose
+    /// name is not role-derived.
+    /// </summary>
+    public const string ChartTitlePrimitiveId = "ChartTitle";
+
+    /// <summary>
+    /// Whether a shape name could be one the renderer created, and so needs its
+    /// ownership tag compared.
+    /// </summary>
+    /// <param name="name">The live shape name; must not be blank.</param>
+    /// <returns>
+    /// <see langword="true"/> for a role-derived name (one containing a colon) or the
+    /// chart title; otherwise <see langword="false"/>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="name"/> is <see langword="null"/>, empty, or whitespace.
+    /// </exception>
+    /// <remarks>
+    /// This is a name test, not an ownership proof: reading a shape's alternative text
+    /// is a host round trip, and most shapes on a sheet are a user's drawings that can
+    /// never be ours. A scene primitive's identifier is always
+    /// <c>"{ownerId}:{role}"</c>; the chart title is the single fixed exception. The tag
+    /// comparison still decides ownership for every name this predicate accepts.
+    /// </remarks>
+    public static bool CouldBeOwnedPrimitiveName(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return name.Contains(':', StringComparison.Ordinal)
+            || string.Equals(name, ChartTitlePrimitiveId, StringComparison.Ordinal);
+    }
 }
