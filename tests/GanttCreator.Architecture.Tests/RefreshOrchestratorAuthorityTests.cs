@@ -70,6 +70,10 @@ public sealed class RefreshOrchestratorAuthorityTests
     [
         "src/GanttCreator.Office/ISceneBuildRequestFactory.cs",
         "src/GanttCreator.Office/ExcelSceneBuildRequestFactory.cs",
+        // The pipeline's dependency record declares the orchestrator's ports,
+        // including this one. It constructs nothing and never calls Create; the
+        // orchestrator remains the only place that builds a request.
+        "src/GanttCreator.Office/GanttRefreshDependencies.cs",
     ];
 
     /// <summary>

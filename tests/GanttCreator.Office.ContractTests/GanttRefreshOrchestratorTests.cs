@@ -1572,7 +1572,7 @@ public class GanttRefreshOrchestratorTests
     {
         RefreshFakes fakes = new();
 
-        Assert.Throws<ArgumentNullException>(() => new GanttRefreshOrchestrator(
+        Assert.Throws<ArgumentNullException>(() => new GanttRefreshDependencies(
             null!,
             fakes.ConfigReader,
             fakes.Guard,

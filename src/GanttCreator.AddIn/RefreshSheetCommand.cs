@@ -416,76 +416,77 @@ internal static class RefreshSheetCommand
         ExcelShapeWriter shapeWriter = CreateLiveShapeWriter(application, trace);
 
         return new GanttRefreshOrchestrator(
-            new ExcelGanttTableReader(application),
-            new ExcelConfigCatalogueReader(application),
-            new ExcelWorksheetProtectionGuard(application),
-            new ExcelPanelGridMeasurement(application),
-            new ExcelDurationWriter(application),
-            new ExcelRowHeightNormaliser(application, trace: trace),
-            new ExcelOutlineGroupWriter(application, trace: trace),
+            new GanttRefreshDependencies(
+                new ExcelGanttTableReader(application),
+                new ExcelConfigCatalogueReader(application),
+                new ExcelWorksheetProtectionGuard(application),
+                new ExcelPanelGridMeasurement(application),
+                new ExcelDurationWriter(application),
+                new ExcelRowHeightNormaliser(application, trace: trace),
+                new ExcelOutlineGroupWriter(application, trace: trace),
 
-            // The text-metrics seam is a real host dependency: Core never measures,
-            // so something must. This is now the FONT-BACKED implementation:
-            // AptosTextMetrics reads the real advances of the typography families
-            // (Aptos / Aptos Narrow, Regular and Bold), which a live Excel probe
-            // measured against the previous flat 4pt-per-character table and found
-            // wrong in BOTH directions -- 44 percent too small for 'W' and 105
-            // percent too large for 'i'. The small end is what clipped labels,
-            // because the shape writer writes AutoSize = msoAutoSizeNone and the
-            // host cannot recover the difference. The advances are read from the
-            // font binaries by scripts/gen-font-advances.py and committed as data,
-            // so the measurement stays deterministic and Office-free.
-            new ExcelSceneBuildRequestFactory(new AptosTextMetrics()),
-            shapeWriter,
+                // The text-metrics seam is a real host dependency: Core never measures,
+                // so something must. This is now the FONT-BACKED implementation:
+                // AptosTextMetrics reads the real advances of the typography families
+                // (Aptos / Aptos Narrow, Regular and Bold), which a live Excel probe
+                // measured against the previous flat 4pt-per-character table and found
+                // wrong in BOTH directions -- 44 percent too small for 'W' and 105
+                // percent too large for 'i'. The small end is what clipped labels,
+                // because the shape writer writes AutoSize = msoAutoSizeNone and the
+                // host cannot recover the difference. The advances are read from the
+                // font binaries by scripts/gen-font-advances.py and committed as data,
+                // so the measurement stays deterministic and Office-free.
+                new ExcelSceneBuildRequestFactory(new AptosTextMetrics()),
+                shapeWriter),
+            new GanttRefreshOptions(
+                // R4.8A D2's two remaining preflight steps, supplied here so the
+                // orchestrator runs them. Both are optional in the options record, which is
+                // what keeps this additive: a caller that omits them gets the pipeline
+                // exactly as it behaved before this row.
+                new ExcelColumnPresentationRestorer(application),
+                new ExcelGanttRowIdentityRepairer(application),
 
-            // R4.8A D2's two remaining preflight steps, supplied here so the
-            // orchestrator runs them. Both are optional in the constructor, which is
-            // what keeps this additive: a caller that omits them gets the pipeline
-            // exactly as it behaved before this row.
-            new ExcelColumnPresentationRestorer(application),
-            new ExcelGanttRowIdentityRepairer(application),
+                // ADR-0020's five-setting scope. It is a single object owned by the
+                // orchestrator, which disposes it on every path; constructing one per
+                // operation would capture-and-restore the same setting several times and
+                // restore the wrong value. The technical-record sink is wired here so a
+                // host that refuses one of the five writes (ADR-0020: every member is
+                // best-effort) is recorded to the log instead of leaving the degradation
+                // silent; a null sink was the previous behaviour.
+                new ExcelApplicationStateScope(application, CommandBoundary.Instance.WriteTechnicalRecord),
 
-            // ADR-0020's five-setting scope. It is a single object owned by the
-            // orchestrator, which disposes it on every path; constructing one per
-            // operation would capture-and-restore the same setting several times and
-            // restore the wrong value. The technical-record sink is wired here so a
-            // host that refuses one of the five writes (ADR-0020: every member is
-            // best-effort) is recorded to the log instead of leaving the degradation
-            // silent; a null sink was the previous behaviour.
-            new ExcelApplicationStateScope(application, CommandBoundary.Instance.WriteTechnicalRecord),
+                // The StyleKey column is engine-owned: every Refresh brings column K
+                // into line with each row's current Type, so the writer is part of the
+                // live composition, not an optional extra.
+                new ExcelStyleKeyWriter(application),
 
-            // The StyleKey column is engine-owned: every Refresh brings column K
-            // into line with each row's current Type, so the writer is part of the
-            // live composition, not an optional extra.
-            new ExcelStyleKeyWriter(application),
+                // The row/cell fill highlighter replaces the cell-notes reporter
+                // (ExcelGanttValidationReporter). Fills are cosmetic Interior.ColorIndex
+                // writes — no SpecialCells scan, no per-cell Comment read, and no stale
+                // note left behind when a row is corrected.
+                new ExcelRowWarningHighlighter(application),
 
-            // The row/cell fill highlighter replaces the cell-notes reporter
-            // (ExcelGanttValidationReporter). Fills are cosmetic Interior.ColorIndex
-            // writes — no SpecialCells scan, no per-cell Comment read, and no stale
-            // note left behind when a row is corrected.
-            new ExcelRowWarningHighlighter(application),
+                // R5.1: heal type-dependent engine-hidden columns on Type change so
+                // switching entity type does not leave stale values the validator
+                // rejects. Runs after identity repair and before validation.
+                new ExcelTypeChangeNormaliser(application),
+                ShapeDeltaCache: _shapeDeltaCache,
+                UseDeltaCache: useDeltaCache,
+                Trace: trace,
 
-            // R5.1: heal type-dependent engine-hidden columns on Type change so
-            // switching entity type does not leave stale values the validator
-            // rejects. Runs after identity repair and before validation.
-            new ExcelTypeChangeNormaliser(application),
-            shapeDeltaCache: _shapeDeltaCache,
-            useDeltaCache: useDeltaCache,
-            trace: trace,
-
-            // ADR-0055: the refresh arms the add-in's own protection (release -> lock -> record) and
-            // claims ownership only of protection this session applied. Both the ownership flag and
-            // the arming memory are session state, because a new orchestrator is built for every
-            // pass; the caller's release window re-applies the protection when the writes finish.
-            protectionOwnership: _protectionOwnership,
-            protectionArming: new WorksheetProtectionArming(
-                // The arming path protects too, so it carries the same diagnostic sink: an arm
-                // that greys the symbols out must be visible in the log, not only a window close.
-                new ExcelWorksheetProtectionPort(application, trace),
-                shapeWriter,
-                _protectionArming,
-                trace),
-            repairColumnClassification: repairColumnClassification);
+                // ADR-0055: the refresh arms the add-in's own protection (release -> lock -> record) and
+                // claims ownership only of protection this session applied. Both the ownership flag and
+                // the arming memory are session state, because a new orchestrator is built for every
+                // pass; the caller's release window re-applies the protection when the writes finish.
+                ProtectionOwnership: _protectionOwnership,
+                ProtectionArming: new WorksheetProtectionArming(
+                    // The arming path protects too, so it carries the same diagnostic sink: an arm
+                    // that greys the symbols out must be visible in the log, not only a window close.
+                    new ExcelWorksheetProtectionPort(application, trace),
+                    shapeWriter,
+                    _protectionArming,
+                    trace),
+                RepairColumnClassification: repairColumnClassification));
     }
 #pragma warning restore CA2000
 

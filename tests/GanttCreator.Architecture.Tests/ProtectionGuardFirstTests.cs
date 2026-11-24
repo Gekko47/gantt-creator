@@ -229,6 +229,10 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
+        // Refactor Phase 5: the refresh pipeline's dependency and options records.
+        // Two declarations plus required-port validation; no COM proxy, no
+        // worksheet mutation, nothing for a protection guard to authorise.
+        "src/GanttCreator.Office/GanttRefreshDependencies.cs",
         // Refactor Phase 2: the shared table locator. It walks sheets and tables and
         // releases the proxies it skips, but performs no data mutation and consults no
         // protection guard. Every mutating derived adapter keeps its own entry-point

@@ -44,39 +44,76 @@ namespace GanttCreator.Office;
 /// </para>
 /// </remarks>
 public sealed class GanttRefreshOrchestrator(
-    IGanttTableReader tableReader,
-    IConfigCatalogueReader configReader,
-    IWorksheetProtectionGuard protectionGuard,
-    IPanelGridMeasurementPort panelMeasurement,
-    IDurationWritePort durationWriter,
-    IRowHeightNormalisationPort rowHeightNormaliser,
-    IOutlineGroupPort outlineWriter,
-    ISceneBuildRequestFactory requestFactory,
-    IShapeWritePort shapeWriter,
-    IColumnPresentationPort? columnPresentation = null,
-    IGanttRowIdentityRepairer? identityRepairer = null,
-    IApplicationStateScope? stateScope = null,
-    IStyleKeyWritePort? styleKeyWriter = null,
-    IRowWarningHighlighter? rowWarningHighlighter = null,
-    ITypeChangeNormaliser? typeChangeNormaliser = null,
-    ChangeTracker? changeTracker = null,
-    ShapeDeltaCache? shapeDeltaCache = null,
-    bool useDeltaCache = true,
-    Action<string>? trace = null,
-    ProtectionOwnershipSource? protectionOwnership = null,
-    WorksheetProtectionArming? protectionArming = null,
-    bool repairColumnClassification = true)
+    GanttRefreshDependencies dependencies,
+    GanttRefreshOptions? options = null)
     : IGanttRefreshOrchestrator
 {
-    private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
-    private readonly IConfigCatalogueReader _configReader = configReader ?? throw new ArgumentNullException(nameof(configReader));
-    private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? throw new ArgumentNullException(nameof(protectionGuard));
-    private readonly IPanelGridMeasurementPort _panelMeasurement = panelMeasurement ?? throw new ArgumentNullException(nameof(panelMeasurement));
-    private readonly IDurationWritePort _durationWriter = durationWriter ?? throw new ArgumentNullException(nameof(durationWriter));
-    private readonly IRowHeightNormalisationPort _rowHeightNormaliser = rowHeightNormaliser ?? throw new ArgumentNullException(nameof(rowHeightNormaliser));
-    private readonly IOutlineGroupPort _outlineWriter = outlineWriter ?? throw new ArgumentNullException(nameof(outlineWriter));
-    private readonly ISceneBuildRequestFactory _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
-    private readonly IShapeWritePort _shapeWriter = shapeWriter ?? throw new ArgumentNullException(nameof(shapeWriter));
+    private readonly IGanttTableReader _tableReader = dependencies.TableReader;
+    private readonly IConfigCatalogueReader _configReader = dependencies.ConfigReader;
+    private readonly IWorksheetProtectionGuard _protectionGuard = dependencies.ProtectionGuard;
+    private readonly IPanelGridMeasurementPort _panelMeasurement = dependencies.PanelMeasurement;
+    private readonly IDurationWritePort _durationWriter = dependencies.DurationWriter;
+    private readonly IRowHeightNormalisationPort _rowHeightNormaliser = dependencies.RowHeightNormaliser;
+    private readonly IOutlineGroupPort _outlineWriter = dependencies.OutlineWriter;
+    private readonly ISceneBuildRequestFactory _requestFactory = dependencies.RequestFactory;
+    private readonly IShapeWritePort _shapeWriter = dependencies.ShapeWriter;
+
+    /// <summary>
+    /// Compatibility constructor for the existing contract-test fakes. The live
+    /// composition uses <see cref="GanttRefreshDependencies"/> and
+    /// <see cref="GanttRefreshOptions"/>; this overload builds them so a test that
+    /// supplies only the ports it needs keeps compiling.
+    /// </summary>
+    internal GanttRefreshOrchestrator(
+        IGanttTableReader tableReader,
+        IConfigCatalogueReader configReader,
+        IWorksheetProtectionGuard protectionGuard,
+        IPanelGridMeasurementPort panelMeasurement,
+        IDurationWritePort durationWriter,
+        IRowHeightNormalisationPort rowHeightNormaliser,
+        IOutlineGroupPort outlineWriter,
+        ISceneBuildRequestFactory requestFactory,
+        IShapeWritePort shapeWriter,
+        IColumnPresentationPort? columnPresentation = null,
+        IGanttRowIdentityRepairer? identityRepairer = null,
+        IApplicationStateScope? stateScope = null,
+        IStyleKeyWritePort? styleKeyWriter = null,
+        IRowWarningHighlighter? rowWarningHighlighter = null,
+        ITypeChangeNormaliser? typeChangeNormaliser = null,
+        ChangeTracker? changeTracker = null,
+        ShapeDeltaCache? shapeDeltaCache = null,
+        bool useDeltaCache = true,
+        Action<string>? trace = null,
+        ProtectionOwnershipSource? protectionOwnership = null,
+        WorksheetProtectionArming? protectionArming = null,
+        bool repairColumnClassification = true)
+        : this(
+            new GanttRefreshDependencies(
+                tableReader,
+                configReader,
+                protectionGuard,
+                panelMeasurement,
+                durationWriter,
+                rowHeightNormaliser,
+                outlineWriter,
+                requestFactory,
+                shapeWriter),
+            new GanttRefreshOptions(
+                columnPresentation,
+                identityRepairer,
+                stateScope,
+                styleKeyWriter,
+                rowWarningHighlighter,
+                typeChangeNormaliser,
+                changeTracker,
+                shapeDeltaCache,
+                useDeltaCache,
+                trace,
+                protectionOwnership,
+                protectionArming,
+                repairColumnClassification))
+    {
+    }
 
     /// <summary>
     /// Writes the <c>StyleKey</c> column so column K matches each row's current
@@ -87,7 +124,7 @@ public sealed class GanttRefreshOrchestrator(
     /// test that is not about style-key state, need not construct one. When it is
     /// absent the pipeline behaves exactly as it did before this row.
     /// </remarks>
-    private readonly IStyleKeyWritePort? _styleKeyWriter = styleKeyWriter;
+    private readonly IStyleKeyWritePort? _styleKeyWriter = options?.StyleKeyWriter;
 
     /// <summary>
     /// The row/cell fill highlighter, or <see langword="null"/> to skip row
@@ -95,7 +132,7 @@ public sealed class GanttRefreshOrchestrator(
     /// cosmetic cell fills rather than cell notes, and no <c>SpecialCells</c>
     /// scan is needed to clear stale reports.
     /// </summary>
-    private readonly IRowWarningHighlighter? _rowWarningHighlighter = rowWarningHighlighter;
+    private readonly IRowWarningHighlighter? _rowWarningHighlighter = options?.RowWarningHighlighter;
 
     /// <summary>
     /// Records whether this refresh's workbook lets the add-in own the Gantt worksheet's
@@ -106,7 +143,7 @@ public sealed class GanttRefreshOrchestrator(
     /// no host call to the pass. Without a source the guard refuses every protected sheet exactly
     /// as it always has.
     /// </remarks>
-    private readonly ProtectionOwnershipSource? _protectionOwnership = protectionOwnership;
+    private readonly ProtectionOwnershipSource? _protectionOwnership = options?.ProtectionOwnership;
 
     /// <summary>
     /// The policy that applies the add-in's own protection, or <see langword="null"/> when this
@@ -119,7 +156,7 @@ public sealed class GanttRefreshOrchestrator(
     /// carries across passes is a session object, because the live composition builds a new
     /// orchestrator for every refresh.
     /// </remarks>
-    private readonly WorksheetProtectionArming? _protectionArming = protectionArming;
+    private readonly WorksheetProtectionArming? _protectionArming = options?.ProtectionArming;
 
     /// <summary>
     /// The setting key that records whether the add-in owns the Gantt worksheet's protection
@@ -129,9 +166,9 @@ public sealed class GanttRefreshOrchestrator(
     private const string _protectGanttSheetSettingKey = "ProtectGanttSheet";
 
     /// <summary>Tracks pending automatic changes until a complete render succeeds.</summary>
-    private readonly ChangeTracker? _changeTracker = changeTracker;
-    private readonly ShapeDeltaCache? _shapeDeltaCache = shapeDeltaCache;
-    private readonly bool _useDeltaCache = useDeltaCache;
+    private readonly ChangeTracker? _changeTracker = options?.ChangeTracker;
+    private readonly ShapeDeltaCache? _shapeDeltaCache = options?.ShapeDeltaCache;
+    private readonly bool _useDeltaCache = options?.UseDeltaCache ?? true;
 
     /// <summary>
     /// Whether this pass re-asserts the column classification, or trusts what the initialiser and the
@@ -143,7 +180,7 @@ public sealed class GanttRefreshOrchestrator(
     /// measured 19-45 ms per pass, the explicit Refresh repairs a column a user unhid, and the
     /// automatic pass exists to keep the chart right rather than to police presentation.
     /// </remarks>
-    private readonly bool _repairColumnClassification = repairColumnClassification;
+    private readonly bool _repairColumnClassification = options?.RepairColumnClassification ?? true;
 
     /// <summary>
     /// Optional diagnostic sink for one refresh's delta and geometry decisions, or
@@ -159,7 +196,7 @@ public sealed class GanttRefreshOrchestrator(
     /// guessed at. The production sink is the rolling log; it degrades internally and
     /// must not throw, exactly like the application-state scope's sink.
     /// </remarks>
-    private readonly Action<string>? _trace = trace;
+    private readonly Action<string>? _trace = options?.Trace;
 
     /// <summary>The scene role suffix that identifies a splitter band primitive.</summary>
     private const string _splitterBandRoleSuffix = ":splitter-band";
@@ -180,7 +217,7 @@ public sealed class GanttRefreshOrchestrator(
     /// and the authoring surface no longer matched the schema the validator enforces.
     /// </para>
     /// </remarks>
-    private readonly IColumnPresentationPort? _columnPresentation = columnPresentation;
+    private readonly IColumnPresentationPort? _columnPresentation = options?.ColumnPresentation;
 
     /// <summary>
     /// Seeds or repairs row identifiers, or <see langword="null"/> to skip the step.
@@ -192,13 +229,13 @@ public sealed class GanttRefreshOrchestrator(
     /// promotion-on-delete and clone-reseed behaviour belongs to the hierarchy row,
     /// not to a Refresh.
     /// </remarks>
-    private readonly IGanttRowIdentityRepairer? _identityRepairer = identityRepairer;
+    private readonly IGanttRowIdentityRepairer? _identityRepairer = options?.IdentityRepairer;
 
     /// <summary>
     /// Normalises type-dependent engine-hidden columns on Type change, or
     /// <see langword="null"/> to skip the step.
     /// </summary>
-    private readonly ITypeChangeNormaliser? _typeChangeNormaliser = typeChangeNormaliser;
+    private readonly ITypeChangeNormaliser? _typeChangeNormaliser = options?.TypeChangeNormaliser;
 
     /// <summary>
     /// The application-state scope, or <see langword="null"/> for the no-op scope.
@@ -207,7 +244,7 @@ public sealed class GanttRefreshOrchestrator(
     /// Optional rather than required, so a caller with no Excel application — and a
     /// test that is not about restoration — does not have to construct one.
     /// </remarks>
-    private readonly IApplicationStateScope? _stateScope = stateScope;
+    private readonly IApplicationStateScope? _stateScope = options?.StateScope;
 
     /// <summary>The scene-to-shape renderer, held as a field so a test can observe
     /// that the orchestrator owns the translation step rather than a caller.</summary>
