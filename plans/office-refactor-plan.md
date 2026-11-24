@@ -444,3 +444,16 @@ Seams they override: `FindGanttWorksheet`, `GetShapes`, `GetShapeCount`, `GetSha
 - [ ] `docs/STATUS.md` updated when a phase completes.
 - [ ] `docs/REPO-MAP.md` updated in the same commit when an entry point, boundary, or test location changes.
 - [ ] Applicable `docs/08-TEST-CHECKLIST.md` sections certified in the commit message.
+
+## Appendix D — execution log
+
+**2026-11-24 — Phase 0 to Phase 2 (partial).**
+
+- Baseline observed: Office contract 1779, Architecture 142, both green; tree clean except the plan file; three pre-existing stashes left untouched.
+- D5 search observed: no external consumer, no `PublicAPI*.txt` baseline; the only references were the two Office files, their tests, and two architecture allow-list entries.
+- Phase 1 landed as `refactor: remove unused cell-note warning highlighter`.
+- S2.1 landed as `refactor: add pure schema column-map builder` (10 Core facts).
+- S2.2 landed as `refactor: route change-analyzer column map through schema`.
+- S2.3 landed: `ExcelTableAdapterBase` (D1) and adoption by six adapters in seven commits. Duration and row-height depth fakes now also stub `Count` and the one-based indexer.
+- S0.4 outcome: the spike compiled with the delegating seam, but two test fakes needed support edits. The plan says a test-support edit is a stop-and-report point, so S2.4, S2.5, and Phases 3-7 are not started.
+- Gate observed after S2.3: `verify-quick.ps1` PASS in 230.2 s — Core 2297, Office contract 1766, AddIn 943, Architecture 142, Raster 127, non-live Office 36; Release build 0 warnings.
