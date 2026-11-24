@@ -49,8 +49,9 @@ public sealed class ExcelTableAdapterBaseTests
         var ganttSheet = new Mock<Excel.Worksheet>();
         _ = ganttSheet.SetupGet(sheet => sheet.ListObjects).Returns(listObjects.Object);
 
+        object chartSheet = new();
         var adapter = new RecordingAdapter();
-        adapter.Sheets.Add(new object());
+        adapter.Sheets.Add(chartSheet);
         adapter.Sheets.Add(ganttSheet.Object);
         adapter.Tables[listObjects.Object] = [skippedTable.Object, matchingTable.Object];
 
@@ -62,7 +63,8 @@ public sealed class ExcelTableAdapterBaseTests
         Assert.True(found);
         Assert.Same(ganttSheet.Object, worksheet);
         Assert.Same(matchingTable.Object, table);
-        Assert.Equal(2, adapter.Released.Count);
+        Assert.Equal(3, adapter.Released.Count);
+        Assert.Contains(chartSheet, adapter.Released);
         Assert.Contains(skippedTable.Object, adapter.Released);
         Assert.Contains(listObjects.Object, adapter.Released);
         Assert.DoesNotContain(matchingTable.Object, adapter.Released);
@@ -97,10 +99,11 @@ public sealed class ExcelTableAdapterBaseTests
     }
 
     [Fact]
-    public void A_non_worksheet_entry_is_skipped_without_being_cast()
+    public void A_non_worksheet_entry_is_skipped_and_released()
     {
+        object chartSheet = new();
         var adapter = new RecordingAdapter();
-        adapter.Sheets.Add(new object());
+        adapter.Sheets.Add(chartSheet);
 
         bool found = adapter.TryLocateTable(
             new Mock<Excel.Sheets>().Object,
@@ -110,7 +113,7 @@ public sealed class ExcelTableAdapterBaseTests
         Assert.False(found);
         Assert.Null(worksheet);
         Assert.Null(table);
-        Assert.Empty(adapter.Released);
+        Assert.Same(chartSheet, Assert.Single(adapter.Released));
     }
 
     [Fact]

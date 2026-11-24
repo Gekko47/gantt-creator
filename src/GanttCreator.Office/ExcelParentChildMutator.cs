@@ -669,48 +669,14 @@ public class ExcelParentChildMutator(
     // Table traversal is inherited from ExcelTableAdapterBase.
 
     /// <summary>
-    /// Builds the schema-column to table-column index map from live
-    /// header names (Ordinal), so a reordered table still maps
-    /// correctly. A missing required column refuses the mutation.
+    /// Builds the schema-column to table-column index map through the shared
+    /// schema rule. A missing required column refuses the mutation.
     /// </summary>
     /// <param name="table">The Gantt data table.</param>
     /// <param name="columnMap">Per-schema-column one-based table indexes, or <see langword="null"/>.</param>
     /// <returns><see langword="true"/> when every required header resolved.</returns>
-    internal virtual bool TryBuildColumnMap(ListObject table, out int[]? columnMap)
-    {
-        columnMap = null;
-        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        int[] map = new int[schema.Count];
-        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
-        ListColumns columns = table.ListColumns;
-        int columnCount = columns.Count;
-        for (int index = 1; index <= columnCount; index++)
-        {
-            ListColumn column = GetColumnAt(columns, index);
-            byName[column.Name] = index;
-        }
-
-        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
-        {
-            GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out int tableIndex))
-            {
-                if (expected.IsRequired)
-                {
-                    return false;
-                }
-
-                map[schemaIndex] = -1;
-            }
-            else
-            {
-                map[schemaIndex] = tableIndex;
-            }
-        }
-
-        columnMap = map;
-        return true;
-    }
+    internal virtual bool TryBuildColumnMap(ListObject table, out int[]? columnMap) =>
+        ExcelTableAdapterBase.TryBuildColumnMap(table, GetColumnAt, out columnMap);
 
     /// <summary>
     /// Bulk-reads the table body into raw cell rows, in body order,
@@ -775,12 +741,9 @@ public class ExcelParentChildMutator(
         Excel.Range tableRange = GetTableRange(table);
         int tableFirstRow = GetRangeRow(tableRange);
         int activeRow = GetRangeRow(activeCell);
-        int bodyOffset = activeRow - tableFirstRow;
         int rowCount = GetListRowCount(rows);
 
-        // The header row (offset 0) and anything at or below the reserved
-        // padding row (offset past the body) name no data row.
-        return bodyOffset < 1 || bodyOffset > rowCount ? 0 : bodyOffset;
+        return ExcelTableAdapterBase.ResolveBodyIndex(activeRow, tableFirstRow, rowCount);
     }
 
     /// <summary>

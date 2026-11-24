@@ -312,6 +312,14 @@ public class ExcelGanttTableReader(
     /// Finds <c>tblGanttData</c> on any worksheet. Chart sheets carry no
     /// list objects and are skipped via the worksheet cast.
     /// </summary>
+    /// <remarks>
+    /// This is the reference traversal the shared
+    /// <see cref="ExcelTableAdapterBase.TryLocateTable"/> mirrors, including its
+    /// release policy: skipped proxies are released, and the returned table and
+    /// owner are not. It keeps its own copy because its out-parameter contract and
+    /// its <see cref="ReleaseAcquired"/> test seam predate the base, and the reader's
+    /// contract tests substitute them directly.
+    /// </remarks>
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="table">The table when found.</param>
     /// <param name="owner">The worksheet that carries the table, when found.</param>

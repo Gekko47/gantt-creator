@@ -192,44 +192,11 @@ public class ExcelStyleKeyMutator(
     }
 
     /// <summary>
-    /// Builds the schema-column to table-column index map from live
-    /// header names (Ordinal). Reuses the label mutator's mapping.
+    /// Builds the schema-column to table-column index map through the shared
+    /// schema rule.
     /// </summary>
-    internal virtual bool TryBuildColumnMap(ListObject table, out int[]? columnMap)
-    {
-        columnMap = null;
-        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        int[] map = new int[schema.Count];
-        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
-        ListColumns columns = table.ListColumns;
-        int columnCount = columns.Count;
-        for (int index = 1; index <= columnCount; index++)
-        {
-            ListColumn column = GetColumnAt(columns, index);
-            byName[column.Name] = index;
-        }
-
-        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
-        {
-            GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out int tableIndex))
-            {
-                if (expected.IsRequired)
-                {
-                    return false;
-                }
-
-                map[schemaIndex] = -1;
-            }
-            else
-            {
-                map[schemaIndex] = tableIndex;
-            }
-        }
-
-        columnMap = map;
-        return true;
-    }
+    internal virtual bool TryBuildColumnMap(ListObject table, out int[]? columnMap) =>
+        ExcelTableAdapterBase.TryBuildColumnMap(table, GetColumnAt, out columnMap);
 
     /// <summary>
     /// Bulk-reads the table body into raw cell rows, in body order.
@@ -277,10 +244,9 @@ public class ExcelStyleKeyMutator(
         Excel.Range tableRange = GetTableRange(table);
         int tableFirstRow = GetRangeRow(tableRange);
         int activeRow = GetRangeRow(activeCell);
-        int bodyOffset = activeRow - tableFirstRow;
         int rowCount = GetListRowCount(rows);
 
-        return bodyOffset < 1 || bodyOffset > rowCount ? 0 : bodyOffset;
+        return ExcelTableAdapterBase.ResolveBodyIndex(activeRow, tableFirstRow, rowCount);
     }
 
     /// <summary>
