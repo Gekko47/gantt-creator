@@ -384,292 +384,45 @@ public static class GanttRowValidator
         }
 
         // Dates by EntityDateMode.
-        DateOnly? start = row.Start;
-        DateOnly? finish = row.Finish;
-        if (definition is not null)
-        {
-            switch (definition.DateMode)
-            {
-                // EntityDateMode.None reads neither date, so ClassifyCellState
-                // has already reported any supplied Start or Finish as
-                // NotUsedByType and blocked it; the clearing below handles the
-                // geometry side. Nothing else is owed here.
-                case EntityDateMode.None:
-                    break;
-                case EntityDateMode.StartFinish:
-                    if (!startBlocked && start is null)
-                    {
-                        Add("Start", GanttValidationCodes.StartRequired, GanttValidationSeverity.Error, "Start is required for this Type.");
-                    }
+        (DateOnly? start, DateOnly? finish) = ValidateDates(
+            row,
+            definition,
+            startBlocked,
+            finishBlocked,
+            startRelevant,
+            finishRelevant,
+            Add);
 
-                    if (!finishBlocked && finish is null)
-                    {
-                        Add(
-                            "Finish",
-                            GanttValidationCodes.FinishRequired,
-                            GanttValidationSeverity.Error,
-                            "Finish is required for this Type."
-                        );
-                    }
-                    else if (!finishBlocked && start is not null && finish is not null && start.Value > finish.Value)
-                    {
-                        Add(
-                            "Finish",
-                            GanttValidationCodes.StartAfterFinish,
-                            GanttValidationSeverity.Error,
-                            "Start must not be after Finish."
-                        );
-                    }
+        GanttRowId? parentId = ValidateParentId(row, parentBlocked, parentRelevant, Add);
 
-                    break;
-                case EntityDateMode.StartOnly:
-                    if (!startBlocked && start is null)
-                    {
-                        Add(
-                            "Start",
-                            GanttValidationCodes.StartRequiredForPoint,
-                            GanttValidationSeverity.Error,
-                            "Start is the single date for this Type and is required."
-                        );
-                    }
+        (string? styleKey, GanttStyleDefinition? styleDefinition) = ValidateStyleKey(
+            row,
+            styleBlocked,
+            definition,
+            styleRegistry,
+            Add);
 
-                    break;
-                default:
-                    break;
-            }
-        }
+        GanttLabelPosition? labelPosition = ValidateLabelPosition(
+            row,
+            labelBlocked,
+            type,
+            definition,
+            styleDefinition,
+            Add);
 
-        if (!startRelevant)
-        {
-            start = null;
-        }
+        (GanttDateLabelPosition? dateLabelPosition, GanttLabelPosition? dateLabelPlacement) =
+            ValidateDateLabelPosition(row, dateLabelBlocked, type, Add);
 
-        if (!finishRelevant)
-        {
-            finish = null;
-        }
+        (string? fill, string? stroke) = ValidateColours(
+            row,
+            fillBlocked,
+            strokeBlocked,
+            type,
+            definition,
+            styleDefinition,
+            Add);
 
-        // ParentId (R4.7A D9). Two cases, split by the child-capability matrix
-        // rather than by `isCriticalInterval`:
-        //   * a Critical Interval MAY carry a parent, but no longer REQUIRES one;
-        //   * any other child-capable type may carry one -- a top-level row simply
-        //     leaves it blank, which is what makes a promoted child valid again
-        //     after its parent is deleted;
-        //   * a type the matrix excludes still reports NotUsedByType.
-        // The `isCriticalInterval` branch used to make ParentId mandatory for that
-        // one type. That contradicted <see cref="EntityHierarchyCatalog"/>, whose
-        // pre-R5.3 matrix listed CriticalInterval among the types that may own
-        // children -- a rule the R5.3 owner ruling (2026-10-10) withdrew, making
-        // the interval child-only and never an owner -- and it contradicted
-        // <c>EntityProjection</c>, which resolves such a child onto the interval's
-        // own lane. The requirement therefore made the catalogue's entry and the
-        // projection's boundary unreachable. A blank ParentId is now legal for
-        // every child-capable type, and no Critical Interval may parent anything:
-        // the capability itself is gone (R5.3 D1), so the depth rule below only
-        // ever evaluates activity-type parents.
-        // The previous `else if (parentText is not null)` branch was reached by any
-        // non-critical row, so a child-capable span carrying a real ParentId emitted
-        // a spurious "not used by this Type" warning *alongside* its legitimate
-        // ParentUnknown error. `parentRelevant` is the same flag ClassifyCellState
-        // used above, so the two decisions cannot disagree.
-        GanttRowId? parentId = null;
-        string? parentText = row.ParentId;
-        if (!parentBlocked && parentRelevant)
-        {
-            // Optional for every child-capable type: blank means top-level, which
-            // is valid. A supplied value must parse, and is then resolved against
-            // the batch by the cross-row parent pass.
-            if (parentText is not null
-                && (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null))
-            {
-                Add(
-                    "ParentId",
-                    GanttValidationCodes.ParentMissingOrMalformed,
-                    GanttValidationSeverity.Error,
-                    "ParentId must be blank or a well-formed row Id."
-                );
-            }
-            else if (parentText is not null)
-            {
-                _ = GanttRowId.TryParse(parentText, out parentId);
-            }
-        }
-        // No "not used by this Type" arm here either: a supplied ParentId on a
-        // type the hierarchy matrix excludes is non-empty and irrelevant, so
-        // ClassifyCellState has already reported it and blocked it.
-
-        // StyleKey: a type whose catalogue row requires one (Custom Activity,
-        // Custom Milestone) demands it; a supplied key must resolve when the
-        // caller supplies the validated style registry.
-        //
-        // A style-key type whose key does not resolve is a WARNING, not a
-        // blocking error: the key names a user-created style the user may
-        // have deleted, and the engine heals such a row to the type's
-        // code-owned default on the next Refresh (StyleKeyWritePlanner).
-        // Blocking here would make the row unrenderable and leave the sheet
-        // carrying a reference to a style that no longer exists -- the
-        // dead end R5.6a removed. The blank case stays blocking: a blank key
-        // is an unconfigured row, not a dangling reference.
-        string? styleKey = row.StyleKey;
-        GanttStyleDefinition? styleDefinition = null;
-        if (!styleBlocked && definition is { RequiresStyleKey: true } && styleKey is null)
-        {
-            Add(
-                "StyleKey",
-                GanttValidationCodes.StyleKeyRequired,
-                GanttValidationSeverity.Error,
-                $"{definition.DisplayName} requires a StyleKey."
-            );
-        }
-        else if (!styleBlocked && styleKey is not null && styleRegistry is not null)
-        {
-            if (!styleRegistry.TryGet(styleKey, out styleDefinition))
-            {
-                Add(
-                    "StyleKey",
-                    GanttValidationCodes.StyleKeyUnknown,
-                    GanttValidationSeverity.Warning,
-                    $"StyleKey '{styleKey}' is not in the configured style catalogue; the built-in default is used until the style is chosen again."
-                );
-            }
-        }
-
-        // LabelPosition: blank resolves later; otherwise exact-enum plus the
-        // selected type's or its named style's capability set.
-        GanttLabelPosition? labelPosition = null;
-        if (
-            !labelBlocked
-            && row.LabelPositionText is not null
-            && type is not null
-            && (definition is not { RequiresStyleKey: true } || styleDefinition is not null)
-        )
-        {
-            if (
-                !Enum.TryParse(row.LabelPositionText, ignoreCase: false, out GanttLabelPosition parsedLabel) || !Enum.IsDefined(parsedLabel)
-            )
-            {
-                Add(
-                    "LabelPosition",
-                    GanttValidationCodes.UnknownLabelPosition,
-                    GanttValidationSeverity.Error,
-                    $"Unknown LabelPosition '{row.LabelPositionText}'."
-                );
-            }
-            else
-            {
-                IReadOnlySet<GanttLabelPosition> allowedLabels = definition!.RequiresStyleKey
-                    ? styleDefinition!.AllowedLabelPositions
-                    : definition!.AllowedLabelPositions;
-                if (type is GanttEntityType.Delineator)
-                {
-                    // A1: the corner set is the floor for a delineator. A custom
-                    // style may narrow within the corners but never offer span
-                    // positions that the corner-label builder cannot render.
-                    allowedLabels = allowedLabels.Intersect(definition!.AllowedLabelPositions).ToHashSet();
-                }
-                if (!allowedLabels.Contains(parsedLabel))
-                {
-                    Add(
-                        "LabelPosition",
-                        GanttValidationCodes.LabelNotAllowedForType,
-                        GanttValidationSeverity.Error,
-                        $"LabelPosition '{row.LabelPositionText}' is not allowed for this Type."
-                    );
-                }
-                else
-                {
-                    labelPosition = parsedLabel;
-                }
-            }
-        }
-
-        // DateLabelPosition (R5.14; delimiter ruling 2026-10-14):
-        // blank resolves to Auto. The cell's vocabulary is
-        // type-dependent: a delineator's date label is
-        // positionable, so its cell names a corner from the
-        // description label's set; every other dated type's cell
-        // names a which-date choice from the type's date-mode-
-        // derived set. The capability is type-only (R5.14 D4) --
-        // a Custom Activity style carries no date mode -- so there
-        // is no style-resolved branch and no StyleUnknown refusal,
-        // unlike LabelPosition above.
-        GanttDateLabelPosition? dateLabelPosition = null;
-        GanttLabelPosition? dateLabelPlacement = null;
-        if (!dateLabelBlocked && row.DateLabelPositionText is not null && type is not null)
-        {
-            if (type.Value == GanttEntityType.Delineator)
-            {
-                if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttLabelPosition parsedPlacement) || !Enum.IsDefined(parsedPlacement))
-                {
-                    Add(
-                        "DateLabelPosition",
-                        GanttValidationCodes.UnknownDateLabelPosition,
-                        GanttValidationSeverity.Error,
-                        $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
-                }
-                else if (!EntityTypeCatalog.IsDateLabelPlacementAllowed(type.Value, parsedPlacement))
-                {
-                    Add(
-                        "DateLabelPosition",
-                        GanttValidationCodes.DateLabelNotAllowedForType,
-                        GanttValidationSeverity.Error,
-                        $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
-                }
-                else
-                {
-                    dateLabelPlacement = parsedPlacement;
-                }
-            }
-            else if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttDateLabelPosition parsedDateLabel) || !Enum.IsDefined(parsedDateLabel))
-            {
-                Add(
-                    "DateLabelPosition",
-                    GanttValidationCodes.UnknownDateLabelPosition,
-                    GanttValidationSeverity.Error,
-                    $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
-            }
-            else if (!EntityTypeCatalog.IsDateLabelPositionAllowed(type.Value, parsedDateLabel))
-            {
-                Add(
-                    "DateLabelPosition",
-                    GanttValidationCodes.DateLabelNotAllowedForType,
-                    GanttValidationSeverity.Error,
-                    $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
-            }
-            else
-            {
-                dateLabelPosition = parsedDateLabel;
-            }
-        }
-
-        // Colours: format plus type capability, or the selected Custom style's
-        // capability. A Custom row with an unresolved style remains blocked by
-        // StyleKeyUnknown and receives no colour-capability finding.
-        string? fill = fillBlocked
-            ? null
-            : ValidateColour(row.FillColourText, isFill: true, type, definition, styleDefinition, Add);
-        string? stroke = strokeBlocked
-            ? null
-            : ValidateColour(row.StrokeColourText, isFill: false, type, definition, styleDefinition, Add);
-
-        // SortOrder: blank or invariant non-negative int.
-        int? sortOrder = null;
-        if (row.SortOrder is not null)
-        {
-            if (!int.TryParse(row.SortOrder, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedSort) || parsedSort < 0)
-            {
-                Add(
-                    "SortOrder",
-                    GanttValidationCodes.BadSortOrder,
-                    GanttValidationSeverity.Error,
-                    $"SortOrder '{row.SortOrder}' must be a non-negative integer."
-                );
-            }
-            else
-            {
-                sortOrder = parsedSort;
-            }
-        }
+        int? sortOrder = ValidateSortOrder(row, Add);
 
         if (id is null || type is null)
         {
@@ -703,6 +456,386 @@ public static class GanttRowValidator
         };
 
         return new ValidatedRow(id, type, definition, @event, hasError);
+    }
+
+    /// <summary>
+    /// Validates the <c>StyleKey</c> against the Type and the style registry.
+    /// </summary>
+    /// <remarks>
+    /// A type whose catalogue row requires one (Custom Activity, Custom Milestone)
+    /// demands it; a supplied key must resolve when the caller supplies the validated
+    /// style registry.
+    ///
+    /// A style-key type whose key does not resolve is a WARNING, not a blocking
+    /// error: the key names a user-created style the user may have deleted, and the
+    /// engine heals such a row to the type's code-owned default on the next Refresh
+    /// (StyleKeyWritePlanner). Blocking here would make the row unrenderable and leave
+    /// the sheet carrying a reference to a style that no longer exists -- the dead end
+    /// R5.6a removed. The blank case stays blocking: a blank key is an unconfigured
+    /// row, not a dangling reference.
+    /// </remarks>
+    private static (string? StyleKey, GanttStyleDefinition? Definition) ValidateStyleKey(
+        GanttRowDto row,
+        bool styleBlocked,
+        EntityTypeDefinition? definition,
+        GanttStyleRegistry? styleRegistry,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        string? styleKey = row.StyleKey;
+        GanttStyleDefinition? styleDefinition = null;
+        if (!styleBlocked && definition is { RequiresStyleKey: true } && styleKey is null)
+        {
+            add(
+                "StyleKey",
+                GanttValidationCodes.StyleKeyRequired,
+                GanttValidationSeverity.Error,
+                $"{definition.DisplayName} requires a StyleKey."
+            );
+        }
+        else if (!styleBlocked && styleKey is not null && styleRegistry is not null)
+        {
+            if (!styleRegistry.TryGet(styleKey, out styleDefinition))
+            {
+                add(
+                    "StyleKey",
+                    GanttValidationCodes.StyleKeyUnknown,
+                    GanttValidationSeverity.Warning,
+                    $"StyleKey '{styleKey}' is not in the configured style catalogue; the built-in default is used until the style is chosen again."
+                );
+            }
+        }
+
+        return (styleKey, styleDefinition);
+    }
+
+    /// <summary>
+    /// Validates the optional <c>LabelPosition</c> against the Type or named style.
+    /// </summary>
+    /// <remarks>
+    /// Blank resolves later; otherwise the value must be an exact enum member in the
+    /// selected type's or its named style's capability set.
+    /// </remarks>
+    private static GanttLabelPosition? ValidateLabelPosition(
+        GanttRowDto row,
+        bool labelBlocked,
+        GanttEntityType? type,
+        EntityTypeDefinition? definition,
+        GanttStyleDefinition? styleDefinition,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        GanttLabelPosition? labelPosition = null;
+        if (
+            !labelBlocked
+            && row.LabelPositionText is not null
+            && type is not null
+            && (definition is not { RequiresStyleKey: true } || styleDefinition is not null)
+        )
+        {
+            if (
+                !Enum.TryParse(row.LabelPositionText, ignoreCase: false, out GanttLabelPosition parsedLabel) || !Enum.IsDefined(parsedLabel)
+            )
+            {
+                add(
+                    "LabelPosition",
+                    GanttValidationCodes.UnknownLabelPosition,
+                    GanttValidationSeverity.Error,
+                    $"Unknown LabelPosition '{row.LabelPositionText}'."
+                );
+            }
+            else
+            {
+                IReadOnlySet<GanttLabelPosition> allowedLabels = definition!.RequiresStyleKey
+                    ? styleDefinition!.AllowedLabelPositions
+                    : definition!.AllowedLabelPositions;
+                if (type is GanttEntityType.Delineator)
+                {
+                    // A1: the corner set is the floor for a delineator. A custom
+                    // style may narrow within the corners but never offer span
+                    // positions that the corner-label builder cannot render.
+                    allowedLabels = allowedLabels.Intersect(definition!.AllowedLabelPositions).ToHashSet();
+                }
+                if (!allowedLabels.Contains(parsedLabel))
+                {
+                    add(
+                        "LabelPosition",
+                        GanttValidationCodes.LabelNotAllowedForType,
+                        GanttValidationSeverity.Error,
+                        $"LabelPosition '{row.LabelPositionText}' is not allowed for this Type."
+                    );
+                }
+                else
+                {
+                    labelPosition = parsedLabel;
+                }
+            }
+        }
+
+        return labelPosition;
+    }
+
+    /// <summary>
+    /// Validates the optional <c>DateLabelPosition</c> against the Type's vocabulary.
+    /// </summary>
+    /// <remarks>
+    /// DateLabelPosition (R5.14; delimiter ruling 2026-10-14): blank resolves to Auto.
+    /// The cell's vocabulary is type-dependent: a delineator's date label is
+    /// positionable, so its cell names a corner from the description label's set;
+    /// every other dated type's cell names a which-date choice from the type's
+    /// date-mode-derived set. The capability is type-only (R5.14 D4) -- a Custom
+    /// Activity style carries no date mode -- so there is no style-resolved branch and
+    /// no StyleUnknown refusal, unlike LabelPosition.
+    /// </remarks>
+    private static (GanttDateLabelPosition? Position, GanttLabelPosition? Placement) ValidateDateLabelPosition(
+        GanttRowDto row,
+        bool dateLabelBlocked,
+        GanttEntityType? type,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        GanttDateLabelPosition? dateLabelPosition = null;
+        GanttLabelPosition? dateLabelPlacement = null;
+        if (!dateLabelBlocked && row.DateLabelPositionText is not null && type is not null)
+        {
+            if (type.Value == GanttEntityType.Delineator)
+            {
+                if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttLabelPosition parsedPlacement) || !Enum.IsDefined(parsedPlacement))
+                {
+                    add(
+                        "DateLabelPosition",
+                        GanttValidationCodes.UnknownDateLabelPosition,
+                        GanttValidationSeverity.Error,
+                        $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
+                }
+                else if (!EntityTypeCatalog.IsDateLabelPlacementAllowed(type.Value, parsedPlacement))
+                {
+                    add(
+                        "DateLabelPosition",
+                        GanttValidationCodes.DateLabelNotAllowedForType,
+                        GanttValidationSeverity.Error,
+                        $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
+                }
+                else
+                {
+                    dateLabelPlacement = parsedPlacement;
+                }
+            }
+            else if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttDateLabelPosition parsedDateLabel) || !Enum.IsDefined(parsedDateLabel))
+            {
+                add(
+                    "DateLabelPosition",
+                    GanttValidationCodes.UnknownDateLabelPosition,
+                    GanttValidationSeverity.Error,
+                    $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
+            }
+            else if (!EntityTypeCatalog.IsDateLabelPositionAllowed(type.Value, parsedDateLabel))
+            {
+                add(
+                    "DateLabelPosition",
+                    GanttValidationCodes.DateLabelNotAllowedForType,
+                    GanttValidationSeverity.Error,
+                    $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
+            }
+            else
+            {
+                dateLabelPosition = parsedDateLabel;
+            }
+        }
+
+        return (dateLabelPosition, dateLabelPlacement);
+    }
+
+    /// <summary>
+    /// Validates the two optional colour overrides.
+    /// </summary>
+    /// <remarks>
+    /// Format plus type capability, or the selected Custom style's capability. A
+    /// Custom row with an unresolved style remains blocked by StyleKeyUnknown and
+    /// receives no colour-capability finding.
+    /// </remarks>
+    private static (string? Fill, string? Stroke) ValidateColours(
+        GanttRowDto row,
+        bool fillBlocked,
+        bool strokeBlocked,
+        GanttEntityType? type,
+        EntityTypeDefinition? definition,
+        GanttStyleDefinition? styleDefinition,
+        Action<string, string, GanttValidationSeverity, string> add) =>
+        (
+            fillBlocked ? null : ValidateColour(row.FillColourText, isFill: true, type, definition, styleDefinition, add),
+            strokeBlocked ? null : ValidateColour(row.StrokeColourText, isFill: false, type, definition, styleDefinition, add)
+        );
+
+    /// <summary>Validates the optional <c>SortOrder</c> as a non-negative invariant int.</summary>
+    private static int? ValidateSortOrder(
+        GanttRowDto row,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        int? sortOrder = null;
+        if (row.SortOrder is not null)
+        {
+            if (!int.TryParse(row.SortOrder, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedSort) || parsedSort < 0)
+            {
+                add(
+                    "SortOrder",
+                    GanttValidationCodes.BadSortOrder,
+                    GanttValidationSeverity.Error,
+                    $"SortOrder '{row.SortOrder}' must be a non-negative integer."
+                );
+            }
+            else
+            {
+                sortOrder = parsedSort;
+            }
+        }
+
+        return sortOrder;
+    }
+
+    /// <summary>
+    /// Validates the date columns against the Type's <see cref="EntityDateMode"/>.
+    /// </summary>
+    /// <remarks>
+    /// A date column the Type does not read is cleared here so geometry never sees a
+    /// value the contract does not use; ClassifyCellState has already reported and
+    /// blocked any supplied value on that column.
+    /// </remarks>
+    private static (DateOnly? Start, DateOnly? Finish) ValidateDates(
+        GanttRowDto row,
+        EntityTypeDefinition? definition,
+        bool startBlocked,
+        bool finishBlocked,
+        bool startRelevant,
+        bool finishRelevant,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        DateOnly? start = row.Start;
+        DateOnly? finish = row.Finish;
+        if (definition is not null)
+        {
+            switch (definition.DateMode)
+            {
+                // EntityDateMode.None reads neither date, so ClassifyCellState
+                // has already reported any supplied Start or Finish as
+                // NotUsedByType and blocked it; the clearing below handles the
+                // geometry side. Nothing else is owed here.
+                case EntityDateMode.None:
+                    break;
+                case EntityDateMode.StartFinish:
+                    if (!startBlocked && start is null)
+                    {
+                        add("Start", GanttValidationCodes.StartRequired, GanttValidationSeverity.Error, "Start is required for this Type.");
+                    }
+
+                    if (!finishBlocked && finish is null)
+                    {
+                        add(
+                            "Finish",
+                            GanttValidationCodes.FinishRequired,
+                            GanttValidationSeverity.Error,
+                            "Finish is required for this Type."
+                        );
+                    }
+                    else if (!finishBlocked && start is not null && finish is not null && start.Value > finish.Value)
+                    {
+                        add(
+                            "Finish",
+                            GanttValidationCodes.StartAfterFinish,
+                            GanttValidationSeverity.Error,
+                            "Start must not be after Finish."
+                        );
+                    }
+
+                    break;
+                case EntityDateMode.StartOnly:
+                    if (!startBlocked && start is null)
+                    {
+                        add(
+                            "Start",
+                            GanttValidationCodes.StartRequiredForPoint,
+                            GanttValidationSeverity.Error,
+                            "Start is the single date for this Type and is required."
+                        );
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (!startRelevant)
+        {
+            start = null;
+        }
+
+        if (!finishRelevant)
+        {
+            finish = null;
+        }
+
+        return (start, finish);
+    }
+
+    /// <summary>
+    /// Validates the optional <c>ParentId</c> against the child-capability matrix.
+    /// </summary>
+    /// <remarks>
+    /// ParentId (R4.7A D9). Two cases, split by the child-capability matrix
+    /// rather than by `isCriticalInterval`:
+    ///   * a Critical Interval MAY carry a parent, but no longer REQUIRES one;
+    ///   * any other child-capable type may carry one -- a top-level row simply
+    ///     leaves it blank, which is what makes a promoted child valid again
+    ///     after its parent is deleted;
+    ///   * a type the matrix excludes still reports NotUsedByType.
+    /// The `isCriticalInterval` branch used to make ParentId mandatory for that
+    /// one type. That contradicted <see cref="EntityHierarchyCatalog"/>, whose
+    /// pre-R5.3 matrix listed CriticalInterval among the types that may own
+    /// children -- a rule the R5.3 owner ruling (2026-10-10) withdrew, making
+    /// the interval child-only and never an owner -- and it contradicted
+    /// <c>EntityProjection</c>, which resolves such a child onto the interval's
+    /// own lane. The requirement therefore made the catalogue's entry and the
+    /// projection's boundary unreachable. A blank ParentId is now legal for
+    /// every child-capable type, and no Critical Interval may parent anything:
+    /// the capability itself is gone (R5.3 D1), so the depth rule below only
+    /// ever evaluates activity-type parents.
+    /// The previous `else if (parentText is not null)` branch was reached by any
+    /// non-critical row, so a child-capable span carrying a real ParentId emitted
+    /// a spurious "not used by this Type" warning *alongside* its legitimate
+    /// ParentUnknown error. `parentRelevant` is the same flag ClassifyCellState
+    /// used above, so the two decisions cannot disagree.
+    /// </remarks>
+    private static GanttRowId? ValidateParentId(
+        GanttRowDto row,
+        bool parentBlocked,
+        bool parentRelevant,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        GanttRowId? parentId = null;
+        string? parentText = row.ParentId;
+        if (!parentBlocked && parentRelevant)
+        {
+            // Optional for every child-capable type: blank means top-level, which
+            // is valid. A supplied value must parse, and is then resolved against
+            // the batch by the cross-row parent pass.
+            if (parentText is not null
+                && (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null))
+            {
+                add(
+                    "ParentId",
+                    GanttValidationCodes.ParentMissingOrMalformed,
+                    GanttValidationSeverity.Error,
+                    "ParentId must be blank or a well-formed row Id."
+                );
+            }
+            else if (parentText is not null)
+            {
+                _ = GanttRowId.TryParse(parentText, out parentId);
+            }
+        }
+        // No "not used by this Type" arm here either: a supplied ParentId on a
+        // type the hierarchy matrix excludes is non-empty and irrelevant, so
+        // ClassifyCellState has already reported it and blocked it.
+
+        return parentId;
     }
 
     private static string? ValidateColour(
