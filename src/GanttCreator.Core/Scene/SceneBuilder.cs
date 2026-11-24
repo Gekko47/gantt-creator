@@ -1616,11 +1616,13 @@ public static class SceneBuilder
         // written from, so both sources agree.
         bool hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
             && definition is { HasFormatting: true };
-        GanttStylePreset? preset = null;
-        if (!hasDefinition)
-        {
-            _ = GanttCatalogues.TryGetPreset(style.StyleKey, out preset);
-        }
+
+        // One question, asked once: a style key that names a code-owned preset is a
+        // BUILT-IN style, and a built-in style never lets a user override its height
+        // or milestone size. This used to be probed three times -- once for the
+        // formatting lookup and twice more below -- so a change to the rule could
+        // reach one probe and miss the other two.
+        bool isBuiltIn = GanttCatalogues.TryGetPreset(style.StyleKey, out GanttStylePreset? preset);
 
         // The bar height. A USER-AUTHORED style may set its own height, and
         // that value is honoured when it is positive -- exactly as the
@@ -1638,15 +1640,27 @@ public static class SceneBuilder
         // is deliberately not a constant: a milestone's default style
         // carries a zero bar height too, and a constant here would give
         // every milestone a bar it does not have.
-        bool userAuthored = hasDefinition
-            && !GanttCatalogues.TryGetPreset(style.StyleKey, out _);
-        double heightPt = userAuthored
-            ? definition!.ActivityHeightPt > 0
+        double heightPt;
+        if (!hasDefinition)
+        {
+            // Capability-only definition, or no registry entry: the catalogue preset
+            // is the authority for this key's metrics.
+            heightPt = preset?.ActivityHeightPt ?? 0;
+        }
+        else if (isBuiltIn)
+        {
+            // A built-in style always follows the code-owned value its registry entry
+            // carries, so the chart knob stays live and the built-in rows stay protected.
+            heightPt = definition!.ActivityHeightPt;
+        }
+        else
+        {
+            // A user style that names its own height is honoured; one that names none
+            // falls back to the height the row's OWN default style carries.
+            heightPt = definition!.ActivityHeightPt > 0
                 ? definition.ActivityHeightPt
-                : DefaultHeightFor(@event.Type)
-            : hasDefinition
-                ? definition!.ActivityHeightPt
-                : preset?.ActivityHeightPt ?? 0;
+                : DefaultHeightFor(@event.Type);
+        }
 
         // The hatch pattern, the standard outline width, and the stroke dash
         // are resolved style tokens, not renderer choices: the guide requires a
@@ -1663,7 +1677,7 @@ public static class SceneBuilder
         double milestoneSizePt = 0;
         if (hasDefinition
             && definition!.MilestoneSizePt > 0
-            && !GanttCatalogues.TryGetPreset(style.StyleKey, out _))
+            && !isBuiltIn)
         {
             milestoneSizePt = definition.MilestoneSizePt;
         }
