@@ -86,7 +86,7 @@ public class ExcelRowWarningHighlighter(
     /// <summary>Pastel amber/yellow = RGB(255, 235, 170) as OLE_COLOR (0x00AAEBFF).</summary>
     private const int _olePastelAmber = 0x00AAEBFF;
 
-    /// <summary>Workbook CustomDocumentProperties key under which highlighted addresses are persisted so they survive workbook close/reopen.</summary>
+    /// <summary>Workbook-scoped defined name under which highlighted addresses are persisted so they survive workbook close/reopen.</summary>
     private const string _highlightsPropertyName = "GanttCreator.RowHighlights";
 
     /// <summary>
@@ -108,6 +108,13 @@ public class ExcelRowWarningHighlighter(
     /// <see langword="null"/> means "recorded by a build that did not store severities"
     /// (a workbook reopened after an upgrade). The address is known and its colour is not,
     /// so the next reconcile re-asserts that one cell once instead of trusting it.
+    /// </para>
+    /// <para>
+    /// <b>The workbook-scoped defined name is the durable truth; this dictionary is one
+    /// pass's cache.</b> The live composition builds a new highlighter for every refresh
+    /// (<c>RefreshSheetCommand.CreateLiveOrchestrator</c>), so an instance cannot carry
+    /// another workbook's addresses. <see cref="LoadHighlights"/> seeds the cache at the
+    /// start of the pass and <see cref="ReconcileHighlights"/> writes it back.
     /// </para>
     /// </remarks>
     private readonly Dictionary<(int Row, int? Column), GanttValidationSeverity?> _previousHighlights = [];
