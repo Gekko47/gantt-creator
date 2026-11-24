@@ -233,6 +233,10 @@ public sealed class ProtectionGuardFirstTests
         // and performs no direct mutation of its own: every read and write goes through
         // the calling adapter's seams, and that adapter's entry point owns the guard.
         "src/GanttCreator.Office/ExcelSingleCellWriter.cs",
+        // Refactor Phase 4: the shape appearance collaborator. It holds no COM proxy
+        // and touches no host member: every style and text write goes through the
+        // ExcelShapeWriter host surface, whose entry point owns the guard.
+        "src/GanttCreator.Office/ShapeAppearanceWriter.cs",
         // Refactor Phase 5: the refresh pipeline's dependency and options records.
         // Two declarations plus required-port validation; no COM proxy, no
         // worksheet mutation, nothing for a protection guard to authorise.

@@ -332,6 +332,31 @@ public class ExcelShapeWriterTests
     }
 
     /// <summary>
+    /// The create path reaches a subclass's <c>ApplyStyle</c> override through the
+    /// appearance collaborator.
+    /// </summary>
+    /// <remarks>
+    /// Refactor Phase 4 moved the style and text containment out of this class into
+    /// <see cref="ShapeAppearanceWriter"/>. The collaborator talks to the writer through
+    /// <see cref="IShapeAppearanceHost"/>, whose explicit implementations forward to the
+    /// same <c>internal virtual</c> members, so the seam-preservation contract still
+    /// holds: every test subclass that overrides <c>ApplyStyle</c> keeps observing the
+    /// call, and this fact proves it for the create path rather than inferring it from
+    /// the shape's post-write state.
+    /// </remarks>
+    [Fact]
+    public void Create_reaches_the_subclass_style_override_through_the_appearance_collaborator()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        OfficeShapeRequest request = RectangleRequest();
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Same(request, Assert.Single(writer.StyledRequests));
+    }
+
+    /// <summary>
     /// An update re-places a shape created under the old rule, so an existing workbook
     /// heals on its next Refresh instead of needing its shapes rebuilt.
     /// </summary>

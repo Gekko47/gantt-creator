@@ -76,7 +76,7 @@ public class ExcelShapeWriter(
     IWorksheetProtectionGuard? protectionGuard = null,
     Action<string>? trace = null,
     ShapeOwnershipScheme? ownershipScheme = null,
-    bool reuseTemplates = false) : IShapeWritePort
+    bool reuseTemplates = false) : IShapeWritePort, IShapeAppearanceHost
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
@@ -112,6 +112,19 @@ public class ExcelShapeWriter(
     internal bool ReusesTemplates { get; } = reuseTemplates;
 
     /// <summary>
+    /// Returns the appearance collaborator, creating it on first use.
+    /// </summary>
+    /// <returns>The appearance collaborator bound to this writer.</returns>
+    /// <remarks>
+    /// A method rather than a lazy property, because the collaborator needs
+    /// <c>this</c> and a field initializer cannot reference it. The collaborator
+    /// receives this writer as its host, so every style and text write still passes
+    /// through the <c>internal virtual</c> seams below and a test subclass's overrides
+    /// stay on the path.
+    /// </remarks>
+    private ShapeAppearanceWriter Appearance() => _appearance ??= new ShapeAppearanceWriter(this);
+
+    /// <summary>
     /// The ownership scheme this adapter stamps and proves: the live chart's scheme by
     /// default, or the staging scheme (R6.2 D4). One instance is one scheme for its
     /// whole life; the two families are distinguished by name prefix and tag, never by
@@ -121,6 +134,9 @@ public class ExcelShapeWriter(
 
     /// <summary>Optional diagnostic sink for the splitter band's live geometry.</summary>
     private readonly Action<string>? _trace = trace;
+
+    /// <summary>The appearance collaborator, created lazily by <c>Appearance()</c>.</summary>
+    private ShapeAppearanceWriter? _appearance;
 
     /// <summary>Whether a reconciliation batch is open (ADR-0054).</summary>
     private bool _batchActive;
@@ -2983,25 +2999,8 @@ public class ExcelShapeWriter(
     /// stamp entirely.
     /// </para>
     /// </remarks>
-    private bool ApplyStyleOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
-    {
-        // CA1031: see the remarks. A throwing style write must not escape Create
-        // as an unhandled COM exception from inside a render command, and must
-        // not replace the typed refusal the caller already has.
-#pragma warning disable CA1031
-        try
-        {
-            ApplyStyle(shape, request);
-        }
-        catch (Exception)
-        {
-            DiscardUnownedShape(shape);
-            return false;
-        }
-#pragma warning restore CA1031
-
-        return true;
-    }
+    private bool ApplyStyleOrDiscard(Excel.Shape shape, OfficeShapeRequest request) =>
+        Appearance().ApplyStyleOrDiscard(shape, request);
 
     /// <summary>
     /// Writes a new text box's content, discarding the shape if the host refuses.
@@ -3030,25 +3029,8 @@ public class ExcelShapeWriter(
     /// every other create failure uses, so the caller needs no new case.
     /// </para>
     /// </remarks>
-    private bool ApplyTextOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
-    {
-        // CA1031: see the remarks. A throwing content write must not escape the
-        // create as an unhandled COM exception, and must not leave an untagged
-        // text box behind for a caller that was told the create failed.
-#pragma warning disable CA1031
-        try
-        {
-            ApplyText(shape, request);
-        }
-        catch (Exception)
-        {
-            DiscardUnownedShape(shape);
-            return false;
-        }
-#pragma warning restore CA1031
-
-        return true;
-    }
+    private bool ApplyTextOrDiscard(Excel.Shape shape, OfficeShapeRequest request) =>
+        Appearance().ApplyTextOrDiscard(shape, request);
 
     /// <summary>
     /// Writes only a duplicated text box's string, discarding it if the host refuses.
@@ -3068,24 +3050,8 @@ public class ExcelShapeWriter(
     /// member that differs. The first shape of each key still takes the full path, so
     /// its formatting is never inherited from an empty host default.
     /// </remarks>
-    private bool ApplyTextContentOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
-    {
-        // CA1031: same rule as ApplyTextOrDiscard - a host failure is a typed refusal,
-        // never an escaping COM exception, and the duplicate must not survive untagged.
-#pragma warning disable CA1031
-        try
-        {
-            ApplyTextContent(shape, request);
-        }
-        catch (Exception)
-        {
-            DiscardUnownedShape(shape);
-            return false;
-        }
-#pragma warning restore CA1031
-
-        return true;
-    }
+    private bool ApplyTextContentOrDiscard(Excel.Shape shape, OfficeShapeRequest request) =>
+        Appearance().ApplyTextContentOrDiscard(shape, request);
 
     /// <summary>
     /// Applies a text box's content on the update path, containing a host failure.
@@ -3108,35 +3074,8 @@ public class ExcelShapeWriter(
     /// <see cref="ApplyTextOrDiscard"/> follows.
     /// </para>
     /// </remarks>
-    private bool TryApplyContent(Excel.Shape shape, OfficeShapeRequest request)
-    {
-        // CA1031: see the remarks. A host refusal must not escape the update as an
-        // unhandled COM exception, and must not replace the typed refusal the
-        // reconciler already knows how to report.
-#pragma warning disable CA1031
-        try
-        {
-            // Read-back verification: a shape whose live typography and string already
-            // match the request pays reads and no writes (ADR-0054 amendment 2026-11-20).
-            if (TextFormattingMatches(shape, request) && TextMatches(shape, request.Text))
-            {
-                return true;
-            }
-
-            ApplyText(shape, request);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-#pragma warning restore CA1031
-
-        return true;
-    }
+    private bool TryApplyContent(Excel.Shape shape, OfficeShapeRequest request) =>
+        Appearance().TryApplyContent(shape, request);
 
     /// <summary>
     /// Writes only the string of a text box whose formatting the grouped pass already applied.
@@ -3144,28 +3083,8 @@ public class ExcelShapeWriter(
     /// <param name="shape">The owned text box.</param>
     /// <param name="request">The request carrying the string.</param>
     /// <returns><see langword="true"/> when the string landed; otherwise a host refusal.</returns>
-    private bool TryApplyTextContent(Excel.Shape shape, OfficeShapeRequest request)
-    {
-        // CA1031: the same rule as TryApplyContent - a host refusal is a typed result,
-        // never an escaping COM exception from inside a render command.
-#pragma warning disable CA1031
-        try
-        {
-            if (TextMatches(shape, request.Text))
-            {
-                return true;
-            }
-
-            ApplyTextContent(shape, request);
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-#pragma warning restore CA1031
-
-        return true;
-    }
+    private bool TryApplyTextContent(Excel.Shape shape, OfficeShapeRequest request) =>
+        Appearance().TryApplyTextContent(shape, request);
 
     /// <summary>
     /// Applies the style on the update path, containing a host failure.
@@ -3190,28 +3109,8 @@ public class ExcelShapeWriter(
     /// <see cref="MapHatchPattern"/>'s contract fault, not a host failure.
     /// </para>
     /// </remarks>
-    private bool TryApplyStyle(Excel.Shape shape, OfficeShapeRequest request)
-    {
-        // CA1031: see the remarks. A host refusal must not escape the update as an
-        // unhandled COM exception, and must not replace the typed refusal the
-        // reconciler already knows how to report.
-#pragma warning disable CA1031
-        try
-        {
-            ApplyStyle(shape, request);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-#pragma warning restore CA1031
-
-        return true;
-    }
+    private bool TryApplyStyle(Excel.Shape shape, OfficeShapeRequest request) =>
+        Appearance().TryApplyStyle(shape, request);
 
     /// <summary>
     /// Maps a resolved hatch pattern onto the host's pattern constant.
@@ -3632,4 +3531,25 @@ public class ExcelShapeWriter(
                 alignment,
                 "The scene produced an alignment with no host mapping. Extend MapAlignment and the guide together."),
         };
+
+    // Explicit implementations of the appearance host surface. They forward to the
+    // internal virtual seams above, so a test subclass's override is still observed and
+    // the collaborator never needs a reference to this class.
+    void IShapeAppearanceHost.ApplyStyle(Excel.Shape shape, OfficeShapeRequest request) =>
+        ApplyStyle(shape, request);
+
+    void IShapeAppearanceHost.ApplyText(Excel.Shape shape, OfficeShapeRequest request) =>
+        ApplyText(shape, request);
+
+    void IShapeAppearanceHost.ApplyTextContent(Excel.Shape shape, OfficeShapeRequest request) =>
+        ApplyTextContent(shape, request);
+
+    bool IShapeAppearanceHost.TextFormattingMatches(Excel.Shape shape, OfficeShapeRequest request) =>
+        TextFormattingMatches(shape, request);
+
+    bool IShapeAppearanceHost.TextMatches(Excel.Shape shape, string? expected) =>
+        TextMatches(shape, expected);
+
+    void IShapeAppearanceHost.DiscardUnownedShape(Excel.Shape shape) =>
+        DiscardUnownedShape(shape);
 }
