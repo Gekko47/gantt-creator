@@ -56,7 +56,7 @@ namespace GanttCreator.Office;
 public class ExcelParentChildMutator(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null,
-    IOutlineGroupPort? outlineGroups = null) : IParentChildMutator
+    IOutlineGroupPort? outlineGroups = null) : ExcelTableAdapterBase, IParentChildMutator
 {
     // object? rather than the interop Application so the AddIn can pass
     // ExcelDnaUtil.Application without naming the interop type (the CS0433
@@ -127,7 +127,7 @@ public class ExcelParentChildMutator(
             return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.NoActiveWorkbook);
         }
 
-        if (!TryFindTable(workbook.Sheets, out Worksheet? worksheet, out ListObject? table)
+        if (!TryLocateTable(workbook.Sheets, out Worksheet? worksheet, out ListObject? table)
             || worksheet is null || table is null)
         {
             return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.TableMissing);
@@ -666,46 +666,7 @@ public class ExcelParentChildMutator(
     internal virtual DemotePlan CreateDemotePlan(IReadOnlyList<GanttEvent> rows, GanttRowId selectedId) =>
         HierarchyMutations.PlanDemoteToChild(rows, selectedId);
 
-    /// <summary>
-    /// Finds <c>tblGanttData</c> on any worksheet. Chart sheets carry no
-    /// list objects and are skipped via the worksheet cast.
-    /// </summary>
-    /// <param name="sheets">The workbook's sheets.</param>
-    /// <param name="worksheet">The worksheet hosting the table.</param>
-    /// <param name="table">The table when found.</param>
-    /// <returns><see langword="true"/> when the table was found.</returns>
-    internal virtual bool TryFindTable(
-        Sheets sheets,
-        out Worksheet? worksheet,
-        out ListObject? table)
-    {
-        worksheet = null;
-        table = null;
-        int count = sheets.Count;
-        for (int index = 1; index <= count; index++)
-        {
-            object sheet = GetSheetAt(sheets, index);
-            if (sheet is not Worksheet candidate)
-            {
-                continue;
-            }
-
-            ListObjects listObjects = candidate.ListObjects;
-            int tableCount = listObjects.Count;
-            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
-            {
-                ListObject located = GetTableAt(listObjects, tableIndex);
-                if (GanttChartContract.IsDataTableName(located.Name))
-                {
-                    worksheet = candidate;
-                    table = located;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+    // Table traversal is inherited from ExcelTableAdapterBase.
 
     /// <summary>
     /// Builds the schema-column to table-column index map from live
@@ -1183,29 +1144,7 @@ public class ExcelParentChildMutator(
         return payload;
     }
 
-    /// <summary>
-    /// Returns the sheet at the one-based index. Test seam over the
-    /// COM parameterised <c>Sheets.Item</c> property.
-    /// </summary>
-    /// <remarks>
-    /// Returns <see cref="object"/> rather than <see cref="Worksheet"/>
-    /// so a chart sheet does not throw here; the caller filters by
-    /// cast, exactly as the table reader does.
-    /// </remarks>
-    /// <param name="sheets">The workbook's sheets.</param>
-    /// <param name="index">The one-based sheet index.</param>
-    /// <returns>The sheet at the index.</returns>
-    internal virtual object GetSheetAt(Sheets sheets, int index) => sheets[index];
-
-    /// <summary>
-    /// Returns the list object at the one-based index. Test seam over
-    /// the COM parameterised <c>ListObjects.Item</c> property.
-    /// </summary>
-    /// <param name="listObjects">The worksheet's list objects.</param>
-    /// <param name="index">The one-based table index.</param>
-    /// <returns>The list object at the index.</returns>
-    internal virtual ListObject GetTableAt(ListObjects listObjects, int index) =>
-        listObjects[index];
+    // GetSheetAt and GetTableAt are inherited from ExcelTableAdapterBase.
 
     /// <summary>
     /// Returns the list column at the one-based index. Test seam over
