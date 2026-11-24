@@ -105,7 +105,10 @@ Describe 'test-scripts.ps1 (end to end)' {
         function Invoke-GateOnFixture {
             param(
                 [Parameter(Mandatory)][hashtable]$Files,
-                [switch]$Serial
+                [switch]$Serial,
+                # 0 leaves the gate's own default (4 workers). A explicit value
+                # drives the parallel path, which is where the CI flake lived.
+                [int]$ThrottleLimit = 0
             )
 
             $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('test-scripts-' + [guid]::NewGuid().ToString('N'))
@@ -118,6 +121,7 @@ Describe 'test-scripts.ps1 (end to end)' {
             $errFile = Join-Path $dir 'gate-err.txt'
             $arguments = @('-NoProfile', '-File', $script:gatePath, '-ScriptsRoot', $dir)
             if ($Serial) { $arguments += '-Serial' }
+            if ($ThrottleLimit -gt 0) { $arguments += @('-ThrottleLimit', $ThrottleLimit) }
 
             $proc = Start-Process -FilePath pwsh -ArgumentList $arguments -NoNewWindow -Wait -PassThru `
                 -RedirectStandardOutput $outFile -RedirectStandardError $errFile
@@ -151,6 +155,108 @@ Describe 'test-scripts.ps1 (end to end)' {
         }
         $r.Exit   | Should -Be 0
         $r.Output | Should -Match 'test-scripts: Total=2, Passed=2, Failed=0'
+    }
+
+    It 'preserves Describe/Context/It structure through the parallel ThrottleLimit path' {
+        # Regression for CI 45193295738 / 45376223093: the parallel dispatch used
+        # to hand FileInfo objects across the runspace boundary and then
+        # intermittently died with "The provided Path argument was null or an
+        # empty collection." before reporting a single file. Every test in a
+        # nested tree must still be discovered, run, and counted.
+        $r = Invoke-GateOnFixture -ThrottleLimit 2 -Files @{
+            'a-nested.Tests.ps1' = @'
+Describe 'outer' {
+    Context 'inner' {
+        It 'one' { 1 | Should -Be 1 }
+        It 'two' { 2 | Should -Be 2 }
+    }
+}
+'@
+            'b-nested.Tests.ps1' = @'
+Describe 'other' {
+    Context 'deep' {
+        It 'three' { 3 | Should -Be 3 }
+        It 'four' { 4 | Should -Be 4 }
+        It 'five' { 5 | Should -Be 5 }
+    }
+}
+'@
+        }
+        $r.Output | Should -Match 'Mode: parallel'
+        $r.Exit   | Should -Be 0
+        $r.Output | Should -Match 'test-scripts: Total=5, Passed=5, Failed=0'
+        $r.Output | Should -Not -Match 'did not produce a result'
+        $r.Output | Should -Not -Match 'unhandled error'
+    }
+
+    It 'names the failing file through the parallel path instead of reporting an unhandled error' {
+        $r = Invoke-GateOnFixture -ThrottleLimit 2 -Files @{
+            'a-pass.Tests.ps1' = "Describe 'pass' { It 'passes' { 1 | Should -Be 1 } }"
+            'b-fail.Tests.ps1' = "Describe 'fail' { It 'fails' { 1 | Should -Be 2 } }"
+        }
+        $r.Output | Should -Match 'Mode: parallel'
+        $r.Exit   | Should -Not -Be 0
+        $r.Output | Should -Match 'b-fail\.Tests\.ps1'
+        $r.Output | Should -Match 'test-scripts: 1 test\(s\) failed'
+        $r.Output | Should -Not -Match 'unhandled error'
+    }
+}
+
+Describe 'Assert-UsablePath (a null or empty path is refused, never defaulted)' {
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\verify-helpers.ps1')
+    }
+
+    It 'accepts a usable path (positive control)' {
+        { Assert-UsablePath -Path (Join-Path $PSScriptRoot 'test-scripts.ps1') -Caller 'control' } |
+            Should -Not -Throw
+    }
+
+    It 'refuses a null path, so Invoke-Pester can never fall back to the current directory' {
+        { Assert-UsablePath -Path $null -Caller 'null case' } |
+            Should -Throw '*null, empty, or whitespace-only path*'
+    }
+
+    It 'refuses an empty path collection' {
+        { Assert-UsablePath -Path @() -Caller 'empty collection' } |
+            Should -Throw '*refusing an empty path collection*'
+    }
+
+    It 'refuses an empty string' {
+        { Assert-UsablePath -Path '' -Caller 'empty string' } |
+            Should -Throw '*null, empty, or whitespace-only path*'
+    }
+
+    It 'refuses a whitespace-only path' {
+        { Assert-UsablePath -Path '   ' -Caller 'whitespace' } |
+            Should -Throw '*null, empty, or whitespace-only path*'
+    }
+
+    It 'refuses an array that contains a blank entry' {
+        { Assert-UsablePath -Path @('C:\valid', '') -Caller 'mixed array' } |
+            Should -Throw '*null, empty, or whitespace-only path*'
+    }
+}
+
+Describe 'test-scripts.ps1 parallel path hardening (CI 45193295738 / 45376223093)' {
+    BeforeAll {
+        $script:gateText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'test-scripts.ps1') -Raw
+    }
+
+    It 'discovers full path strings instead of passing FileInfo objects across -Parallel' {
+        $script:gateText | Should -Match 'ForEach-Object \{ \$_\.FullName \}'
+        $script:gateText | Should -Not -Match '\$file\.FullName'
+    }
+
+    It 'guards the worker path inside its try before Invoke-Pester runs' {
+        $script:gateText | Should -Match 'IsNullOrWhiteSpace\(\$testPath\)'
+        $script:gateText | Should -Match 'IsPathRooted\(\$testPath\)'
+        $script:gateText | Should -Match 'Invoke-Pester -Path \$testPath'
+    }
+
+    It 'imports the exact pinned Pester when tool-versions.psd1 carries one' {
+        $script:gateText | Should -Match 'Import-Module Pester -RequiredVersion \$pin'
+        $script:gateText | Should -Match 'ToolVersions\.Pester\.Version|toolVersions\.Pester\.Version'
     }
 }
 

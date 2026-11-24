@@ -21,6 +21,50 @@
     is the capture-then-judge behaviour the verify scripts rely on.
 #>
 
+function Assert-UsablePath {
+    <#
+    .SYNOPSIS
+        Refuses a null, empty, whitespace-only, or empty-collection path.
+
+    .DESCRIPTION
+        Every path handed to a PowerShell path cmdlet is validated here first.
+        The failure this prevents is not hypothetical: CI runs 45193295738 and
+        45376223093 died at
+        `Value cannot be null. (Parameter 'The provided Path argument was null
+        or an empty collection.')`, which is what PathIntrinsics throws for a
+        null or empty-collection `-Path`, and it named no file and no worker.
+        A null path is worse than a throw for `Invoke-Pester -Path`: that
+        silently falls back to the current directory, so the gate would analyse
+        the wrong tree and still report a verdict.
+
+        Refusals are `throw`s, never `Write-Error`: the caller owns the stream
+        and the exit code (see Get-ScriptTestGateVerdict for the same reason).
+
+    .PARAMETER Path
+        One path, or an array of paths. `$null`, `@()`, `''`, and whitespace
+        are all refused.
+
+    .PARAMETER Caller
+        Label used in the refusal message, so the annotation names the gate.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Caller,
+        [AllowNull()][AllowEmptyCollection()][object]$Path
+    )
+
+    $values = @($Path)
+    # An empty array and a single $null are different inputs that reach the
+    # same broken cmdlet, so both are refused, with distinct messages.
+    if ($values.Count -eq 0) {
+        throw "$($Caller): refusing an empty path collection."
+    }
+    foreach ($value in $values) {
+        if ([string]::IsNullOrWhiteSpace([string]$value)) {
+            throw "$($Caller): refusing a null, empty, or whitespace-only path."
+        }
+    }
+}
+
 function Read-VerifyStepName {
     <#
     .SYNOPSIS
@@ -36,12 +80,13 @@ function Read-VerifyStepName {
     #>
     param([Parameter(Mandatory)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) {
+    Assert-UsablePath -Path $Path -Caller 'Read-VerifyStepName'
+    if (-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) {
         throw "Read-VerifyStepName: file not found: $Path"
     }
 
     $names = New-Object System.Collections.Generic.List[string]
-    $lines = Get-Content -LiteralPath $Path
+    $lines = Get-Content -LiteralPath $Path -ErrorAction Stop
     $insideStep = $false
     $depth = 0
     foreach ($line in $lines) {
@@ -77,11 +122,12 @@ function Read-VerifyDescriptionStepNumber {
     #>
     param([Parameter(Mandatory)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) {
+    Assert-UsablePath -Path $Path -Caller 'Read-VerifyDescriptionStepNumber'
+    if (-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) {
         throw "Read-VerifyDescriptionStepNumber: file not found: $Path"
     }
     $numbers = New-Object System.Collections.Generic.List[int]
-    $lines = Get-Content -LiteralPath $Path
+    $lines = Get-Content -LiteralPath $Path -ErrorAction Stop
     $inDescription = $false
     foreach ($line in $lines) {
         if ($line -match '^\s*\.DESCRIPTION\s*$') { $inDescription = $true; continue }
@@ -108,11 +154,12 @@ function Read-VerifyDescriptionStepLabel {
     #>
     param([Parameter(Mandatory)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path)) {
+    Assert-UsablePath -Path $Path -Caller 'Read-VerifyDescriptionStepLabel'
+    if (-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) {
         throw "Read-VerifyDescriptionStepLabel: file not found: $Path"
     }
     $labels = New-Object System.Collections.Generic.List[string]
-    $lines = Get-Content -LiteralPath $Path
+    $lines = Get-Content -LiteralPath $Path -ErrorAction Stop
     $inDescription = $false
     foreach ($line in $lines) {
         if ($line -match '^\s*\.DESCRIPTION\s*$') { $inDescription = $true; continue }
@@ -282,12 +329,20 @@ function Get-PssaTargetFile {
     #>
     param([Parameter(Mandatory)][string[]]$Path)
 
+    Assert-UsablePath -Path $Path -Caller 'Get-PssaTargetFile'
+
     $files = foreach ($root in $Path) {
-        if (Test-Path -LiteralPath $root -PathType Leaf) {
-            Get-Item -LiteralPath $root
+        # A root that does not exist is reported here rather than silently
+        # contributing zero files, so "the gate analysed nothing" always names
+        # the path that is actually wrong.
+        if (-not (Test-Path -LiteralPath $root -ErrorAction Stop)) {
+            throw "Get-PssaTargetFile: path not found: $root"
+        }
+        if (Test-Path -LiteralPath $root -PathType Leaf -ErrorAction Stop) {
+            Get-Item -LiteralPath $root -ErrorAction Stop
             continue
         }
-        Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction Stop |
             Where-Object { $_.FullName -notmatch '[\\/]_artifacts([\\/]|$)' }
     }
 

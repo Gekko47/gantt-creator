@@ -66,7 +66,15 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 # "<repoRoot>\C:\..." and report the directory as missing.
 $scriptsDir = if ([System.IO.Path]::IsPathRooted($ScriptsRoot)) { $ScriptsRoot } else { Join-Path $repoRoot $ScriptsRoot }
 
-if (-not (Test-Path -LiteralPath $scriptsDir)) {
+# Every path this gate hands to a cmdlet is validated first. A null path is not
+# a harmless edge case: `Invoke-Pester -Path $null` silently falls back to the
+# current directory and still reports a verdict, and PathIntrinsics throws
+# "The provided Path argument was null or an empty collection." for a null or
+# empty-collection -Path with no attribution (CI 45193295738 / 45376223093).
+Assert-UsablePath -Path $repoRoot -Caller 'test-scripts repository root'
+Assert-UsablePath -Path $scriptsDir -Caller 'test-scripts scripts directory'
+
+if (-not (Test-Path -LiteralPath $scriptsDir -ErrorAction Stop)) {
     Write-Error "Scripts directory not found: $scriptsDir"
     exit 1
 }
@@ -76,16 +84,25 @@ if (-not (Test-Path -LiteralPath $scriptsDir)) {
 # -MinimumVersion, so we check the highest installed version against
 # the pinned minimum.
 $versionsPath = Join-Path $repoRoot 'scripts\tool-versions.psd1'
-$script:toolVersions = Import-PowerShellDataFile -LiteralPath $versionsPath
+Assert-UsablePath -Path $versionsPath -Caller 'test-scripts tool-versions'
+$script:toolVersions = Import-PowerShellDataFile -LiteralPath $versionsPath -ErrorAction Stop
 $script:minPesterMajor = $script:toolVersions.Pester.MinimumMajor
+# Exact pin (W11). Absent in a pre-pin psd1, in which case the minimum-major
+# behaviour below is preserved rather than failing the gate.
+$script:pesterVersion = [string]$script:toolVersions.Pester.Version
 
 $installedPester = Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue |
     Sort-Object Version -Descending |
     Select-Object -First 1
 if (-not $installedPester -or $installedPester.Version.Major -lt $script:minPesterMajor) {
-    Write-Host "Installing Pester $($script:minPesterMajor).0+..."
+    Write-Host "Installing Pester $($script:pesterVersion) (minimum major $($script:minPesterMajor))..."
     try {
-        Install-Module -Name Pester -MinimumVersion "$($script:minPesterMajor).0" -Scope CurrentUser -Force -SkipPublisherCheck
+        # An open-ended install is what made CI run a different Pester on every
+        # hosted runner; install the pinned version when the psd1 carries one.
+        $install = @{ Name = 'Pester'; Scope = 'CurrentUser'; Force = $true; SkipPublisherCheck = $true }
+        if ($script:pesterVersion) { $install['RequiredVersion'] = $script:pesterVersion }
+        else { $install['MinimumVersion'] = "$($script:minPesterMajor).0" }
+        Install-Module @install -ErrorAction Stop
     }
     catch {
         if ($env:GITHUB_ACTIONS -eq 'true') {
@@ -96,9 +113,14 @@ if (-not $installedPester -or $installedPester.Version.Major -lt $script:minPest
     }
 }
 
-# Import Pester
+# Import Pester, and state which build of it this gate actually runs: the
+# version and module path are the first things to check when a hosted runner
+# behaves differently from a developer machine.
 try {
-    Import-Module Pester -MinimumVersion "$($script:minPesterMajor).0" -ErrorAction Stop
+    if ($script:pesterVersion) { Import-Module Pester -RequiredVersion $script:pesterVersion -ErrorAction Stop }
+    else { Import-Module Pester -MinimumVersion "$($script:minPesterMajor).0" -ErrorAction Stop }
+    $loadedPester = Get-Module -Name Pester | Select-Object -First 1
+    Write-Host "Pester $($loadedPester.Version) from $($loadedPester.ModuleBase)"
 }
 catch {
     if ($env:GITHUB_ACTIONS -eq 'true') {
@@ -112,7 +134,15 @@ catch {
 # documented name forms ('*.Tests.ps1' and '*Tests.ps1') in one call; the
 # previous two-call fallback meant the second pattern was only reached when
 # the first found nothing, contrary to the documented discovery contract.
-$testFiles = @(Get-ChildItem -Path $scriptsDir -Filter '*Tests.ps1' -ErrorAction SilentlyContinue | Sort-Object Name)
+#
+# Discovery yields FULL PATH STRINGS, not FileInfo objects. A FileInfo crossing
+# the ForEach-Object -Parallel runspace boundary is the input shape that
+# produced "The provided Path argument was null or an empty collection." on
+# hosted runners; a string cannot deserialize into a wrapper whose FullName is
+# null.
+$testFiles = @(Get-ChildItem -LiteralPath $scriptsDir -Filter '*Tests.ps1' -File -ErrorAction Stop |
+        Sort-Object Name |
+        ForEach-Object { $_.FullName })
 
 if ($testFiles.Count -eq 0) {
     # No-silent-pass policy: a gate that finds nothing to check proves
@@ -127,12 +157,21 @@ if ($testFiles.Count -eq 0) {
     exit 1
 }
 
+# The array is non-empty here, so a null or blank entry means discovery produced
+# a path no worker can use. Refuse it with a named message rather than let it
+# reach Invoke-Pester, which silently falls back to the current directory.
+Assert-UsablePath -Path $testFiles -Caller 'test-scripts discovery'
+
 Write-Host "Found $($testFiles.Count) script test file(s):"
-$testFiles | ForEach-Object { Write-Host "  $($_.Name)" }
+$testFiles | ForEach-Object { Write-Host "  $([System.IO.Path]::GetFileName($_))" }
 
 # -Parallel passes $using: values into another runspace, so the pinned Pester
-# major is copied into a local name rather than referenced through $script:.
-$minimumPesterMajor = $script:minPesterMajor
+# version is copied into explicit [string] locals rather than referenced through
+# $script:. Only strings cross that boundary: a FileInfo deserializes into a
+# wrapper whose FullName can be null, which is one of the ways this gate used to
+# fail with "The provided Path argument was null or an empty collection."
+$minimumPesterVersion = "$($script:minPesterMajor).0"
+$pinnedPesterVersion = [string]$script:pesterVersion
 
 # One result object per file, carrying the fields the judge needs and the text
 # of each failure, so the judge does not have to know Pester's result shape.
@@ -141,19 +180,30 @@ $minimumPesterMajor = $script:minPesterMajor
 if ($Serial) {
     Write-Host 'Mode: serial (-Serial)'
     $results = foreach ($testFile in $testFiles) {
-        Write-Host "Running $($testFile.Name)..."
-        $r = Invoke-Pester -Path $testFile.FullName -PassThru -Output Detailed
-        if ($null -eq $r) {
-            [pscustomobject]@{ Name = $testFile.Name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'Pester returned no result object.' }
+        $name = [System.IO.Path]::GetFileName($testFile)
+        Write-Host "Running $name..."
+        # Guarded so a refused or broken path is a named failed file, exactly
+        # as the parallel path reports it.
+        try {
+            if ([string]::IsNullOrWhiteSpace($testFile)) {
+                throw 'refusing a null, empty, or whitespace-only test path'
+            }
+            $r = Invoke-Pester -Path $testFile -PassThru -Output Detailed
+            if ($null -eq $r) {
+                [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'Pester returned no result object.' }
+            }
+            else {
+                $failures = @($r.Failed | ForEach-Object {
+                        $path = if ($_.PSObject.Properties['ExpandedPath']) { $_.ExpandedPath } else { $_.Name }
+                        $first = @($_.ErrorRecord) | Select-Object -First 1
+                        $message = if ($first) { $first.Exception.Message } else { 'failed' }
+                        "$path : $message"
+                    })
+                [pscustomobject]@{ Name = $name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
+            }
         }
-        else {
-            $failures = @($r.Failed | ForEach-Object {
-                    $path = if ($_.PSObject.Properties['ExpandedPath']) { $_.ExpandedPath } else { $_.Name }
-                    $first = @($_.ErrorRecord) | Select-Object -First 1
-                    $message = if ($first) { $first.Exception.Message } else { 'failed' }
-                    "$path : $message"
-                })
-            [pscustomobject]@{ Name = $testFile.Name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
+        catch {
+            [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = $_.Exception.Message }
         }
     }
 }
@@ -167,16 +217,32 @@ else {
     # Every failure inside a runspace is converted into a result object so a
     # crashed worker is judged as a failed file rather than disappearing.
     $results = $testFiles | ForEach-Object -Parallel {
-        $file = $_
-        $minimum = $using:minimumPesterMajor
+        # Explicit [string] locals: the worker owns its own copy of the path, so
+        # no FileInfo wrapper (and no null FullName) can cross the runspace.
+        $testPath = [string]$_
+        $name = [System.IO.Path]::GetFileName($testPath)
+        $minimum = [string]$using:minimumPesterVersion
+        $pin = [string]$using:pinnedPesterVersion
         try {
-            Import-Module Pester -MinimumVersion "$minimum.0" -ErrorAction Stop
+            # The guards sit INSIDE the try so a refused path becomes a named
+            # failed file instead of the unhandled error that named nothing on
+            # CI (runs 45193295738 / 45376223093).
+            if ([string]::IsNullOrWhiteSpace($testPath)) {
+                throw 'refusing a null, empty, or whitespace-only test path'
+            }
+            # A relative path resolves against the worker's own directory, not
+            # the repository; refuse it rather than analyse the wrong tree.
+            if (-not [System.IO.Path]::IsPathRooted($testPath)) {
+                throw "refusing a non-rooted test path: $testPath"
+            }
+            if ($pin) { Import-Module Pester -RequiredVersion $pin -ErrorAction Stop }
+            else { Import-Module Pester -MinimumVersion $minimum -ErrorAction Stop }
             # 6>$null drops the information stream a test's own Write-Host would
             # otherwise interleave across workers; the verdict and the failure
             # text are returned as data below.
-            $r = Invoke-Pester -Path $file.FullName -PassThru -Output None 6>$null
+            $r = Invoke-Pester -Path $testPath -PassThru -Output None 6>$null
             if ($null -eq $r) {
-                [pscustomobject]@{ Name = $file.Name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'Pester returned no result object.' }
+                [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'Pester returned no result object.' }
             }
             else {
                 $failures = @($r.Failed | ForEach-Object {
@@ -185,11 +251,11 @@ else {
                         $message = if ($first) { $first.Exception.Message } else { 'failed' }
                         "$path : $message"
                     })
-                [pscustomobject]@{ Name = $file.Name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
+                [pscustomobject]@{ Name = $name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
             }
         }
         catch {
-            [pscustomobject]@{ Name = $file.Name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = $_.Exception.Message }
+            [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = $_.Exception.Message }
         }
     } -ThrottleLimit $throttle
 
