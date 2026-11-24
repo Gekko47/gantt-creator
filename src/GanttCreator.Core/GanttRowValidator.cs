@@ -254,7 +254,7 @@ public static class GanttRowValidator
                 "Type",
                 GanttValidationCodes.UnknownType,
                 GanttValidationSeverity.Error,
-                $"Unknown Type '{row.TypeText}'; use one of the 17 catalogue display names."
+                $"Unknown Type '{row.TypeText}'; use one of the {EntityTypeCatalog.Entries.Count} catalogue display names."
             );
         }
         else if (!typeBlocked)
@@ -289,26 +289,21 @@ public static class GanttRowValidator
         // still fall through to NotUsedByType below, so nothing becomes silently
         // permitted.
         bool parentRelevant = definition is not null && EntityHierarchyCatalog.ParentIdIsRelevant(parsedType);
-        bool styleRelevant = true;
-        bool labelRelevant = true;
-        bool dateLabelRelevant = true;
-        bool fillRelevant = true;
-        bool strokeRelevant = true;
-        const bool visibleRelevant = true;
-        const bool sortOrderRelevant = true;
-
+        // These five columns are read for every Type, so the relevance argument is a
+        // literal rather than a flag: the previous always-true locals read as though a
+        // rule could make them conditional, and there was none to find.
         bool laneBlocked = ClassifyCellState("LaneId", row.LaneIdCell.State, laneRelevant, Add);
         bool stackBlocked = ClassifyCellState("StackIndex", row.StackIndexCell.State, laneRelevant, Add);
         bool startBlocked = ClassifyCellState("Start", row.StartCell.State, startRelevant, Add);
         bool finishBlocked = ClassifyCellState("Finish", row.FinishCell.State, finishRelevant, Add);
         bool parentBlocked = ClassifyCellState("ParentId", row.ParentIdCell.State, parentRelevant, Add);
-        bool styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, styleRelevant, Add);
-        bool labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, labelRelevant, Add);
-        bool dateLabelBlocked = ClassifyCellState("DateLabelPosition", row.DateLabelPositionCell.State, dateLabelRelevant, Add);
-        bool fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, fillRelevant, Add);
-        bool strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, strokeRelevant, Add);
-        _ = ClassifyCellState("Visible", row.VisibleCell.State, visibleRelevant, Add);
-        _ = ClassifyCellState("SortOrder", row.SortOrderCell.State, sortOrderRelevant, Add);
+        bool styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, relevant: true, Add);
+        bool labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, relevant: true, Add);
+        bool dateLabelBlocked = ClassifyCellState("DateLabelPosition", row.DateLabelPositionCell.State, relevant: true, Add);
+        bool fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, relevant: true, Add);
+        bool strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, relevant: true, Add);
+        _ = ClassifyCellState("Visible", row.VisibleCell.State, relevant: true, Add);
+        _ = ClassifyCellState("SortOrder", row.SortOrderCell.State, relevant: true, Add);
 
         // SiblingOrder (R4.7A D2): engine-maintained, so it is always relevant and
         // is never required. A blank value means "the engine has not assigned one
