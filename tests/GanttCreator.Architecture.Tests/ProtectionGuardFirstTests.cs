@@ -145,7 +145,6 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "HighlightCell"),
         new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ClearHighlight"),
         new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ReconcileHighlights"),
-        new("src/GanttCreator.Office/ExcelWarningHighlighter.cs", "HighlightWarnings"),
         // R5.18h: the column-visibility port hides and unhides the five authoring
         // columns the ribbon's dropdown offers, which is user-visible worksheet
         // state, so it is a data mutation under ADR-0008 D4. Listed at "Apply",
@@ -336,7 +335,6 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IGanttTableReader.cs",
         "src/GanttCreator.Office/IGanttValidationReporter.cs",
         "src/GanttCreator.Office/IRowWarningHighlighter.cs",
-        "src/GanttCreator.Office/IWarningHighlighter.cs",
         "src/GanttCreator.Office/InternalsVisibleTo.cs",
         "src/GanttCreator.Office/ITypeOptionsMaterialiser.cs",
         "src/GanttCreator.Office/IWorkbookInitialiser.cs",
