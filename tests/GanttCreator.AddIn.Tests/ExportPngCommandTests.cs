@@ -360,7 +360,13 @@ public sealed class ExportPngCommandTests
         ExportPngOutcome outcome = ExportPngCommand.Run(
             Request(
                 preflight: Preflight(scene: SceneWithText(family: null)),
-                technicalRecord: records.Add),
+                technicalRecord: records.Add) with
+            {
+                // Host-free render: the pinned label family is a proprietary Office font, so a
+                // hosted runner cannot load it. This test asserts the export's orchestration (the
+                // primitive is rendered and the trace names the family), not the host's fonts.
+                Render = (_, dimensions, _) => new RasterRenderResult(dimensions, RasterDeterminism.Pinned),
+            },
             _ => { },
             failures.Add);
 
@@ -386,7 +392,11 @@ public sealed class ExportPngCommandTests
         ExportPngOutcome outcome = ExportPngCommand.Run(
             Request(
                 preflight: Preflight(scene: SceneWithText(family: GanttCatalogues.LabelFontFamily)),
-                technicalRecord: records.Add),
+                technicalRecord: records.Add) with
+            {
+                // Host-free render, for the same reason as the family-less pin above.
+                Render = (_, dimensions, _) => new RasterRenderResult(dimensions, RasterDeterminism.Pinned),
+            },
             successes.Add,
             _ => { });
 
@@ -415,7 +425,13 @@ public sealed class ExportPngCommandTests
                 fontResolver: (family, _) => string.Equals(
                     family, GanttCatalogues.LabelFontFamily, StringComparison.Ordinal)
                         ? Resolves(family, false)
-                        : PinnedFontResolution.Refused(PinnedFontRefusal.FontFileMissing, null)),
+                        : PinnedFontResolution.Refused(PinnedFontRefusal.FontFileMissing, null)) with
+            {
+                // The substitution TARGET is the pinned label family, which the renderer can only
+                // load where that proprietary face is installed. Render host-free so the assertion
+                // stays about the substitution, not about the runner's font inventory.
+                Render = (_, dimensions, _) => new RasterRenderResult(dimensions, RasterDeterminism.Pinned),
+            },
             successes.Add,
             _ => { });
 
