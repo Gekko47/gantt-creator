@@ -229,6 +229,10 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
+        // Refactor Phase 3: the shared single-cell write path. It holds no COM proxy
+        // and performs no direct mutation of its own: every read and write goes through
+        // the calling adapter's seams, and that adapter's entry point owns the guard.
+        "src/GanttCreator.Office/ExcelSingleCellWriter.cs",
         // Refactor Phase 5: the refresh pipeline's dependency and options records.
         // Two declarations plus required-port validation; no COM proxy, no
         // worksheet mutation, nothing for a protection guard to authorise.

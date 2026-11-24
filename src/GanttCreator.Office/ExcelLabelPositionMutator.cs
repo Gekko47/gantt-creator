@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -283,20 +282,23 @@ public class ExcelLabelPositionMutator(
         object? value,
         int bodyIndex)
     {
-        try
-        {
-            int tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
-            ListRow row = GetListRowAt(GetListRows(table), rowIndex + 1);
-            Excel.Range cell = GetCellAt(GetListRowRange(row), tableIndex);
-            SetRangeValues(cell, value);
-        }
-        catch (COMException)
-        {
-            return LabelPositionMutationOutcome.Refused(
-                LabelPositionMutationRefusalReason.WriteFailed, bodyIndex);
-        }
+        ExcelSingleCellWriter.CellWriteResult result = ExcelSingleCellWriter.Write(
+            table,
+            columnMap,
+            rowIndex,
+            columnName,
+            value,
+            columnOptional: false,
+            GetListRows,
+            GetListRowAt,
+            GetListRowRange,
+            GetCellAt,
+            SetRangeValues);
 
-        return LabelPositionMutationOutcome.Ok(1, bodyIndex);
+        return result == ExcelSingleCellWriter.CellWriteResult.Ok
+            ? LabelPositionMutationOutcome.Ok(1, bodyIndex)
+            : LabelPositionMutationOutcome.Refused(
+                LabelPositionMutationRefusalReason.WriteFailed, bodyIndex);
     }
 
     /// <summary>Returns the active cell. Test seam over <c>Application.ActiveCell</c>.</summary>

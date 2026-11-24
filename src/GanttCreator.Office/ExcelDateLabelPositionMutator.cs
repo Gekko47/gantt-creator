@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -337,32 +336,37 @@ public class ExcelDateLabelPositionMutator(
         object? value,
         int bodyIndex)
     {
-        try
-        {
-            int tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
-            // A pre-R5.14 workbook has no DateLabelPosition column. The
-            // column is optional so the table still reads, but there is no
-            // cell to write: refuse with the typed TableMissing refusal --
-            // whose message tells the user to run Initialise, which
-            // materialises the column -- rather than aiming the write at
-            // a non-existent column index.
-            if (tableIndex < 1)
-            {
-                return DateLabelMutationOutcome.Refused(
-                    DateLabelMutationRefusalReason.TableMissing, bodyIndex);
-            }
+        // A pre-R5.14 workbook has no DateLabelPosition column. The column is
+        // optional so the table still reads, but there is no cell to write:
+        // the shared writer returns ColumnMissing and this adapter maps it to
+        // the typed TableMissing refusal whose message tells the user to run
+        // Initialise, which materialises the column.
+        ExcelSingleCellWriter.CellWriteResult result = ExcelSingleCellWriter.Write(
+            table,
+            columnMap,
+            rowIndex,
+            columnName,
+            value,
+            columnOptional: true,
+            GetListRows,
+            GetListRowAt,
+            GetListRowRange,
+            GetCellAt,
+            SetRangeValues);
 
-            ListRow row = GetListRowAt(GetListRows(table), rowIndex + 1);
-            Excel.Range cell = GetCellAt(GetListRowRange(row), tableIndex);
-            SetRangeValues(cell, value);
-        }
-        catch (COMException)
+        return result switch
         {
-            return DateLabelMutationOutcome.Refused(
-                DateLabelMutationRefusalReason.WriteFailed, bodyIndex);
-        }
-
-        return DateLabelMutationOutcome.Ok(1, bodyIndex);
+            ExcelSingleCellWriter.CellWriteResult.Ok =>
+                DateLabelMutationOutcome.Ok(1, bodyIndex),
+            ExcelSingleCellWriter.CellWriteResult.ColumnMissing =>
+                DateLabelMutationOutcome.Refused(
+                    DateLabelMutationRefusalReason.TableMissing, bodyIndex),
+            ExcelSingleCellWriter.CellWriteResult.WriteFailed =>
+                DateLabelMutationOutcome.Refused(
+                    DateLabelMutationRefusalReason.WriteFailed, bodyIndex),
+            _ => DateLabelMutationOutcome.Refused(
+                DateLabelMutationRefusalReason.WriteFailed, bodyIndex),
+        };
     }
 
     /// <summary>Returns the active cell. Test seam over <c>Application.ActiveCell</c>.</summary>
