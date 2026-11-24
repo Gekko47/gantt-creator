@@ -39,15 +39,16 @@ namespace GanttCreator.Office;
 /// whole column on every Refresh.
 /// </para>
 /// <para>
-/// COM ownership follows the existing adapters: the <c>Application</c>,
-/// <c>Workbook</c>, <c>Worksheet</c>, <c>ListObject</c> and <c>Range</c> objects are
-/// Excel-owned shared roots. This adapter takes no ownership and holds every proxy in
-/// a local used without chained member expressions.
+/// COM ownership follows the approved traversal policy: the shared locator releases
+/// the table and collection proxies it skips, and never releases the table or
+/// worksheet it returns. The <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
+/// <c>ListObject</c> and <c>Range</c> objects are Excel-owned shared roots; every
+/// proxy is held in a local used without chained member expressions.
 /// </para>
 /// </remarks>
 public class ExcelDurationWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IDurationWritePort
+    IWorksheetProtectionGuard? protectionGuard = null) : ExcelTableAdapterBase, IDurationWritePort
 {
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
@@ -263,35 +264,8 @@ public class ExcelDurationWriter(
     internal virtual bool TryFindTable(
         Sheets sheets,
         out Worksheet? worksheet,
-        out ListObject? table)
-    {
-        worksheet = null;
-        table = null;
-        foreach (object? entry in sheets)
-        {
-            if (entry is not Worksheet candidate)
-            {
-                // A chart sheet or any other non-worksheet entry: it cannot carry the
-                // Gantt table, so it is skipped rather than cast.
-                continue;
-            }
-
-            // Held in a local rather than chained into the inner loop, per the
-            // no-chained-COM-calls rule: each proxy is named once and used directly.
-            ListObjects listObjects = candidate.ListObjects;
-            foreach (ListObject candidateTable in listObjects)
-            {
-                if (GanttChartContract.IsDataTableName(candidateTable.Name))
-                {
-                    worksheet = candidate;
-                    table = candidateTable;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+        out ListObject? table) =>
+        TryLocateTable(sheets, out worksheet, out table);
 
     /// <summary>Returns the list column at the one-based index. Test seam.</summary>
     /// <param name="columns">The table's list columns.</param>

@@ -212,9 +212,10 @@ public sealed class ExcelDurationWriterTests
 
     /// <summary>
     /// Wires a sheet's <c>ListObjects</c> collection so it enumerates the supplied
-    /// tables. The PIA type is a COM collection rather than an enumerable, so the
-    /// enumerator has to be stubbed explicitly -- an unconfigured collection
-    /// enumerates as empty and the table lookup would silently never match.
+    /// tables. The PIA type is a COM collection, so the enumerator, the count, and
+    /// the one-based indexer the shared locator reads all have to be stubbed
+    /// explicitly -- an unconfigured collection enumerates as empty and the table
+    /// lookup would silently never match.
     /// </summary>
     /// <param name="tables">The tables the sheet reports.</param>
     /// <returns>A mocked <c>ListObjects</c> collection.</returns>
@@ -223,14 +224,20 @@ public sealed class ExcelDurationWriterTests
         var collection = new Mock<Excel.ListObjects>();
         List<Excel.ListObject> entries = [.. tables];
         _ = collection.Setup(c => c.GetEnumerator()).Returns(() => (System.Collections.IEnumerator)entries.GetEnumerator());
+        _ = collection.SetupGet(c => c.Count).Returns(entries.Count);
+        _ = collection.Setup(c => c[It.IsAny<object>()]).Returns(
+            (object index) => index is int position && position >= 1 && position <= entries.Count
+                ? entries[position - 1]
+                : null!);
         return collection;
     }
 
     /// <summary>
     /// Wires a workbook's <c>Sheets</c> collection so it enumerates the supplied
-    /// entries. The PIA declares <c>GetEnumerator()</c> as returning the non-generic
+    /// entries and answers the count and one-based indexer the shared locator reads.
+    /// The PIA declares <c>GetEnumerator()</c> as returning the non-generic
     /// <see cref="IEnumerator"/> (verified by reflection over the installed
-    /// interop assembly), which is what the adapter's <c>object</c> loop consumes.
+    /// interop assembly).
     /// </summary>
     /// <param name="entries">The sheets, of any kind, the workbook reports.</param>
     /// <returns>A mocked <c>Sheets</c> collection.</returns>
@@ -239,6 +246,11 @@ public sealed class ExcelDurationWriterTests
         var sheets = new Mock<Excel.Sheets>();
         List<object> list = [.. entries];
         _ = sheets.Setup(s => s.GetEnumerator()).Returns(() => (System.Collections.IEnumerator)list.GetEnumerator());
+        _ = sheets.SetupGet(s => s.Count).Returns(list.Count);
+        _ = sheets.Setup(s => s[It.IsAny<object>()]).Returns(
+            (object index) => index is int position && position >= 1 && position <= list.Count
+                ? list[position - 1]
+                : null!);
         return sheets;
     }
 

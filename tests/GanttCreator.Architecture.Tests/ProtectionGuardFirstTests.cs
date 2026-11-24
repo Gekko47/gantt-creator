@@ -229,6 +229,11 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
+        // Refactor Phase 2: the shared table locator. It walks sheets and tables and
+        // releases the proxies it skips, but performs no data mutation and consults no
+        // protection guard. Every mutating derived adapter keeps its own entry-point
+        // guard. Release policy: D1 in plans/office-refactor-plan.md.
+        "src/GanttCreator.Office/ExcelTableAdapterBase.cs",
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
         // R5.13: the shared body projection. It is pure -- it reads the raw
         // cell matrix the adapters already bulk-read and projects it into the
