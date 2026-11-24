@@ -676,7 +676,7 @@ public class ExcelParentChildMutator(
     /// <param name="columnMap">Per-schema-column one-based table indexes, or <see langword="null"/>.</param>
     /// <returns><see langword="true"/> when every required header resolved.</returns>
     internal virtual bool TryBuildColumnMap(ListObject table, out int[]? columnMap) =>
-        ExcelTableAdapterBase.TryBuildColumnMap(table, GetColumnAt, out columnMap);
+        TryBuildColumnMap(table, GetColumnAt, out columnMap);
 
     /// <summary>
     /// Bulk-reads the table body into raw cell rows, in body order,
@@ -743,7 +743,7 @@ public class ExcelParentChildMutator(
         int activeRow = GetRangeRow(activeCell);
         int rowCount = GetListRowCount(rows);
 
-        return ExcelTableAdapterBase.ResolveBodyIndex(activeRow, tableFirstRow, rowCount);
+        return ResolveBodyIndex(activeRow, tableFirstRow, rowCount);
     }
 
     /// <summary>
