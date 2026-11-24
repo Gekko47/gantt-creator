@@ -51,6 +51,40 @@ public class GanttStyleRegistryTests
     }
 
     [Fact]
+    public void Resolver_keeps_the_alpha_of_an_eight_digit_row_override()
+    {
+        // R11.1 owner ruling (2026-11-24): a per-row override accepts #RRGGBBAA
+        // exactly as the style and theme paths do. This is the joint between the
+        // validator's output (the override text) and the scene's style, so the
+        // alpha the validator now accepts must survive resolution rather than
+        // being read as an opaque colour.
+        var registry = new GanttStyleRegistry([
+            new GanttStyleDefinition(
+                "AsPlannedActivity",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill | EntityColourCapability.Stroke,
+                GanttLabelPosition.Auto,
+                FillColour: "#92D050",
+                StrokeColour: "#548235",
+                HatchPattern: GanttHatchPattern.None)]);
+
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.AsPlannedActivity,
+            registry,
+            styleKey: null,
+            fillColour: "#FF000080",
+            strokeColour: "#00FF0040",
+            textColour: null,
+            labelPosition: null,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal(0x80FF0000u, resolved!.FillColour!.ARGB);
+        Assert.Equal(0x4000FF00u, resolved.StrokeColour!.ARGB);
+    }
+
+    [Fact]
     public void Resolver_falls_back_to_the_type_default_for_an_unknown_style()
     {
         var registry = new GanttStyleRegistry([
