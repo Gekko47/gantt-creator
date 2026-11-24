@@ -546,6 +546,12 @@ Goal: produce a signed, installable, reversible release supported by evidence.
 
 Exit demonstration: a non-developer installs on a clean supported machine, builds a Gantt, transfers editable shapes to PowerPoint, exports a verified 300-DPI PNG, and uninstalls without residual configuration.
 
+## Phase 11 — core code-health remediation
+
+| ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
+| --- | --- | --- | --- |
+| R11.1 | Close the eight ranked `GanttCreator.Core` review findings with behaviour-preserving refactors, plus the owner-ruled `#RRGGBBAA` acceptance for per-row colour overrides | `GanttCreator.Core.Tests` green; no golden baseline change | Not required: Core only, no COM path or rendered-pixel change |
+
 ## Cross-phase compatibility matrix
 
 Test at phase exits and before release:
