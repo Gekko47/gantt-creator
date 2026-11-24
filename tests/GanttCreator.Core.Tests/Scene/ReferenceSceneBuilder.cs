@@ -29,15 +29,42 @@ internal static class ReferenceSceneBuilder
     ]);
 
     /// <summary>Gets the chart-owned frame and band styles.</summary>
+    /// <remarks>
+    /// The three text-bearing styles carry typography and a text colour because a
+    /// scene that names neither is not renderable: the R8.3 pinned-font raster
+    /// renderer fails closed on a blank family and paints nothing for a null text
+    /// colour (ADR-0070). The values are the code-owned catalogue defaults, not new
+    /// literals, so the fixture states what a Phase 4 adapter would read rather than
+    /// inventing a font. Geometry is unaffected: header and title boxes are measured
+    /// by the injected metrics seam, never derived from these style members.
+    /// </remarks>
     internal static FrameBandsTheme FrameTheme { get; } =
         new(
             new SceneStyle("Background", fillColour: ColourHex.Parse("#FFFFFF")),
             new SceneStyle("AlternateBand", fillColour: ColourHex.Parse("#F2F2F2")),
             new SceneStyle("MinorGrid", strokeColour: ColourHex.Parse("#D9D9D9"), outlineWidthPt: 0.5),
             new SceneStyle("MajorGrid", strokeColour: ColourHex.Parse("#808080"), outlineWidthPt: 1),
-            new SceneStyle("YearHeader", fillColour: ColourHex.Parse("#D9D9D9"), bold: true, alignment: GanttTextAlignment.Centre),
-            new SceneStyle("PeriodHeader", fillColour: ColourHex.Parse("#F2F2F2"), alignment: GanttTextAlignment.Centre),
-            new SceneStyle("Title", bold: true));
+            new SceneStyle(
+                "YearHeader",
+                fillColour: ColourHex.Parse("#D9D9D9"),
+                bold: true,
+                alignment: GanttTextAlignment.Centre,
+                fontFamily: GanttCatalogues.LabelFontFamily,
+                fontSizePt: GanttCatalogues.TypographyDefault("YearFontSizePt"),
+                textColour: ColourHex.Parse("#000000")),
+            new SceneStyle(
+                "PeriodHeader",
+                fillColour: ColourHex.Parse("#F2F2F2"),
+                alignment: GanttTextAlignment.Centre,
+                fontFamily: GanttCatalogues.LabelFontFamily,
+                fontSizePt: GanttCatalogues.TypographyDefault("HeaderFontSizePt"),
+                textColour: ColourHex.Parse("#000000")),
+            new SceneStyle(
+                "Title",
+                bold: true,
+                fontFamily: GanttCatalogues.LabelFontFamily,
+                fontSizePt: GanttCatalogues.TypographyDefault("TitleFontSizePt"),
+                textColour: ColourHex.Parse("#000000")));
 
     private static GanttStyleDefinition Style(string key, string fill, string stroke, double height) =>
         new(

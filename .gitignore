@@ -485,3 +485,7 @@ scripts/_artifacts/l12-diagnostic/
 # docs/STATUS.md, so committing the brief would add a second, unaudited source of requirements.
 docs/GanttCreator_R3_R4_Remediation_Brief.md
 [Oo]bj/
+
+# R8.4: the representative raster baseline metadata sidecars are committed golden
+# artefacts, not build output, so the *.meta rule above must not catch them.
+!tests/golden/**/*.meta

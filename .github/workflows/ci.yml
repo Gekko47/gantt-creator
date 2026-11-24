@@ -98,6 +98,41 @@ jobs:
         # asserts the workflow imports the psd1 and references that property.
         # The W11 tripwire is that import+reference, not a literal in this step.
 
+      - name: Install Pester (pinned, deterministic)
+        # The script-lint gate must run the SAME Pester on every hosted runner.
+        # An open-ended install ran whatever "newest >= 6" happened to be, and
+        # the parallel worker startup then failed intermittently with
+        # "The provided Path argument was null or an empty collection."
+        # (CI runs 45193295738 / 45376223093). Register the gallery once, mark
+        # it trusted, install the exact pin from scripts/tool-versions.psd1,
+        # import it, then print the version and module path so a future
+        # mismatch is readable from the job log alone instead of needing an
+        # authenticated log download.
+        run: |
+          $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
+          $pesterVersion = [string]$versions.Pester.Version
+          $pesterFloor = "$($versions.Pester.MinimumMajor).0"
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          $installed = Get-Module -ListAvailable Pester |
+            Where-Object { $_.Version -eq [version]$pesterVersion } |
+            Select-Object -First 1
+          if (-not $installed) {
+            Install-Module Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -RequiredVersion $pesterVersion -Force
+          $loaded = Get-Module Pester | Select-Object -First 1
+          Write-Host "Pester floor: $pesterFloor"
+          Write-Host "Pester pinned: $pesterVersion"
+          Write-Host "Pester loaded: $($loaded.Version) from $($loaded.ModuleBase)"
+          Write-Host "PSGallery policy: $((Get-PSRepository -Name PSGallery).InstallationPolicy)"
+          Write-Host "PSModulePath: $env:PSModulePath"
+          if ($loaded.Version -ne [version]$pesterVersion) {
+            throw "Pester $($loaded.Version) loaded, expected the pinned $pesterVersion"
+          }
+
       - name: Script lint (Pester)
         # Delegates to the same entry point as verify-quick.ps1 step 7 so a
         # local PASS predicts a CI PASS. Never inline Pester invocation logic

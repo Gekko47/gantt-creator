@@ -82,6 +82,21 @@ public interface IExcelApplicationAdapter
     bool? HasActiveWorkbook();
 
     /// <summary>
+    /// Reads the active workbook's folder path (R8.8 D9), which the PNG save dialog opens at.
+    /// </summary>
+    /// <returns>
+    /// The workbook's folder, or <see langword="null"/> when no workbook is open or it has
+    /// never been saved (an empty path).
+    /// </returns>
+    /// <remarks>
+    /// A default of <see langword="null"/> is supplied because this probe's failure mode is
+    /// "not determinable", exactly like <see cref="HasActiveWorkbook"/>'s: the dialog then
+    /// opens at the host default, and a narrow fake that does not care about the folder needs
+    /// no implementation.
+    /// </remarks>
+    string? ActiveWorkbookFolder() => null;
+
+    /// <summary>
     /// Writes a message to Excel's status bar, non-modally.
     /// </summary>
     /// <param name="message">The message to show.</param>

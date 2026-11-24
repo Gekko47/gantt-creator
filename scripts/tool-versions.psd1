@@ -6,10 +6,14 @@
 # local and CI cannot recur. See AGENTS.md "Test layers" and
 # docs/04-TEST-STRATEGY.md.
 @{
-    # Pester. CI installs newest >= 6.0; local runs 6.2.0. When a
-    # known-broken version ships, add a minimum here and assert it from
-    # Pester.
+    # Pester. CI installs the exact Version below, never "newest >=
+    # MinimumMajor": an open-ended install ran a different Pester on every
+    # hosted runner and produced the intermittent parallel worker-startup
+    # failure in CI runs 45193295738 / 45376223093. MinimumMajor stays the
+    # floor the runner (scripts/test-scripts.ps1) enforces at runtime, and
+    # an exact Version equal to it keeps local and CI identical.
     Pester = @{
+        Version      = '6.2.0'
         MinimumMajor = 6
     }
 

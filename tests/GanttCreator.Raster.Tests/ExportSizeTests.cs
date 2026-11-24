@@ -1,242 +1,169 @@
-using System.Globalization;
-
 namespace GanttCreator.Raster.Tests;
 
 /// <summary>
-/// Tests for <see cref="ExportSize"/>: width/unit parsing and the
-/// scene-aspect pixel conversion. Pure tests; no SkiaSharp or file I/O.
+/// The points-to-pixels conversion at 300 DPI (R8.1, re-scoped 2026-11-23). The PNG is
+/// the chart's own size, so this is the only sizing boundary: no width or unit input, and
+/// each dimension is rounded exactly once.
 /// </summary>
-public class ExportSizeTests
+/// <remarks>
+/// The recorded R8.4 golden dimensions are reproduced here from the composition's points,
+/// which is the proof that withdrawing the cm/in/px grammar changes no output.
+/// </remarks>
+public sealed class ExportSizeTests
 {
-    [Theory]
-    [InlineData("10cm", ExportUnit.Centimetres, 10.0)]
-    [InlineData("4in", ExportUnit.Inches, 4.0)]
-    [InlineData("800px", ExportUnit.Pixels, 800.0)]
-    [InlineData("  15 cm  ", ExportUnit.Centimetres, 15.0)]
-    [InlineData("2.5IN", ExportUnit.Inches, 2.5)]
-    public void ParseWidth_accepts_valid_formats(string input, ExportUnit expectedUnit, double expectedValue)
-    {
-        WidthRequest result = ExportSize.ParseWidth(input);
-        Assert.Equal(expectedUnit, result.Unit);
-        Assert.Equal(expectedValue, result.Value);
-    }
-
-    [Theory]
-    [InlineData("10")]
-    [InlineData("cm")]
-    [InlineData("")]
-    [InlineData("-5in")]
-    [InlineData("metres")]
-    public void ParseWidth_rejects_invalid_format(string input) => _ = Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
-
-    [Theory]
-    [InlineData("NaNcm")]
-    [InlineData("Infinitycm")]
-    [InlineData("-Infinitycm")]
-    [InlineData("1e999cm")]
-    [InlineData("NaNpx")]
-    [InlineData("Infinityin")]
-    public void ParseWidth_rejects_non_finite_values(string input) => _ = Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
+    /// <summary>Converts a centimetre width to the points the composition carries.</summary>
+    private static double PointsFromCm(double cm) => cm / 2.54 * ExportSize.PointsPerInch;
 
     [Fact]
-    public void ParseWidth_null_throws() => _ = Assert.Throws<ArgumentNullException>(() => ExportSize.ParseWidth(null!));
-
-    [Fact]
-    public void ParseWidth_is_culture_invariant()
+    public void A_72_point_composition_is_300_pixels_square()
     {
-        // "2.5in" must parse identically regardless of the current
-        // culture's decimal separator. This is the core offline/localisation
-        // guarantee from the entity guide.
-        CultureInfo previous = CultureInfo.CurrentCulture;
-        try
-        {
-            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
-            WidthRequest result = ExportSize.ParseWidth("2.5in");
-            Assert.Equal(2.5, result.Value);
-        }
-        finally
-        {
-            CultureInfo.CurrentCulture = previous;
-        }
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(72, 72);
+
+        Assert.Equal(300, px.PixelWidth);
+        Assert.Equal(300, px.PixelHeight);
     }
 
     [Fact]
-    public void ToPixels_cm_uses_correct_conversion()
+    public void A_ten_centimetre_composition_converts_to_the_recorded_1181_pixels()
     {
-        // 10 cm at 300 DPI = 10/2.54 * 300 ≈ 1181 px
-        var req = new WidthRequest(ExportUnit.Centimetres, 10.0);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0);
+        // The withdrawn 10 cm arm's number: 10 / 2.54 * 300 = 1181.10… → 1181.
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(PointsFromCm(10), 360);
+
         Assert.Equal(1181, px.PixelWidth);
     }
 
     [Fact]
-    public void ToPixels_in_uses_correct_conversion()
+    public void A_four_inch_composition_converts_to_the_recorded_1200_pixels()
     {
-        // 4 in at 300 DPI = 1200 px
-        var req = new WidthRequest(ExportUnit.Inches, 4.0);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0);
-        Assert.Equal(1200, px.PixelWidth);
-    }
-
-    [Fact]
-    public void ToPixels_px_preserves_requested_width()
-    {
-        var req = new WidthRequest(ExportUnit.Pixels, 600.0);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0);
-        Assert.Equal(600, px.PixelWidth);
-    }
-
-    [Fact]
-    public void ToPixels_height_respects_aspect_ratio()
-    {
-        // 720 pt wide, 360 pt tall → 2:1 ratio. Height = half of width.
-        var req = new WidthRequest(ExportUnit.Inches, 4.0);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0);
+        // 4 in = 288 pt; 288 / 72 * 300 = 1200 exactly.
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(288, 144);
 
         Assert.Equal(1200, px.PixelWidth);
         Assert.Equal(600, px.PixelHeight);
     }
 
     [Fact]
-    public void ToPixels_zero_scene_width_throws()
+    public void An_a4_landscape_composition_reproduces_the_ratified_golden_dimensions()
     {
-        var req = new WidthRequest(ExportUnit.Inches, 4.0);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 0.0, sceneHeightPt: 360.0));
+        // The R8.4 ratified width: 29.7 cm = 841.8897637795276 pt → 3508 px. The scene's
+        // aspect yields the recorded 1906 px height (1906 * 72 / 300 = 457.44 pt).
+        const double widthPt = 841.8897637795276;
+        const double heightPt = 457.44;
+
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(widthPt, heightPt);
+
+        Assert.Equal(3508, px.PixelWidth);
+        Assert.Equal(1906, px.PixelHeight);
     }
 
     [Fact]
-    public void ToPixels_negative_request_value_throws()
+    public void The_dimensions_preserve_the_compositions_aspect()
     {
-        var req = new WidthRequest(ExportUnit.Pixels, -5.0);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+        // 720 x 360 pt is 2:1, so the pixels keep a 2:1 ratio.
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(720, 360);
+
+        Assert.Equal(3000, px.PixelWidth);
+        Assert.Equal(1500, px.PixelHeight);
     }
 
     [Fact]
-    public void ToPixels_nan_request_value_throws()
+    public void A_pixel_target_converts_to_points_and_back_unchanged()
     {
-        var req = new WidthRequest(ExportUnit.Pixels, double.NaN);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
-    }
+        // 800 px at 300 DPI is 800 * 72 / 300 = 192 pt; the conversion round-trips.
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(192, 96);
 
-    [Fact]
-    public void ToPixels_infinity_request_value_throws()
-    {
-        var req = new WidthRequest(ExportUnit.Pixels, double.PositiveInfinity);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
-    }
-
-    [Fact]
-    public void ToPixels_nan_scene_height_throws()
-    {
-        var req = new WidthRequest(ExportUnit.Inches, 4.0);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: double.NaN));
-    }
-
-    [Fact]
-    public void ToPixels_nan_scene_width_throws()
-    {
-        var req = new WidthRequest(ExportUnit.Inches, 4.0);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: double.NaN, sceneHeightPt: 360.0));
+        Assert.Equal(800, px.PixelWidth);
+        Assert.Equal(400, px.PixelHeight);
     }
 
     [Theory]
-    [InlineData("0px")]
-    [InlineData("0cm")]
-    [InlineData("0.000in")]
-    [InlineData("-0.001cm")]
-    public void ParseWidth_rejects_non_positive_width(string input) =>
-        _ = Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
-
-    [Fact]
-    public void ToPixels_zero_scene_height_throws()
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void A_non_positive_width_is_refused(double widthPt)
     {
-        // A zero scene height yields a zero computed pixel height, which the
-        // height guard must reject so ToPixels cannot return a PixelDimensions
-        // with a zero height.
-        var req = new WidthRequest(ExportUnit.Pixels, 600.0);
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 0.0));
+            () => ExportSize.ToPixelsFromPoints(widthPt, 360));
     }
 
-    [Fact]
-    public void ToPixels_zero_request_value_throws()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void A_non_positive_height_is_refused(double heightPt)
     {
-        var req = new WidthRequest(ExportUnit.Pixels, 0.0);
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+            () => ExportSize.ToPixelsFromPoints(720, heightPt));
     }
 
     [Fact]
-    public void ToPixels_max_dimension_is_accepted()
+    public void A_nan_width_is_refused()
     {
-        // A very flat scene keeps the total within MaxTotalPixels
-        // (65535 × 1456 ≈ 95.4M < 100M) while still exercising the
-        // per-axis MaxPixelDimension boundary.
-        var req = new WidthRequest(ExportUnit.Pixels, ExportSize.MaxPixelDimension);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 16.0);
-        Assert.Equal(65_535, px.PixelWidth);
-        Assert.Equal(1_456, px.PixelHeight);
-    }
-
-    [Fact]
-    public void ToPixels_width_above_limit_throws()
-    {
-        var req = new WidthRequest(ExportUnit.Pixels, ExportSize.MaxPixelDimension + 1);
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+            () => ExportSize.ToPixelsFromPoints(double.NaN, 360));
     }
 
     [Fact]
-    public void ToPixels_height_above_limit_throws()
+    public void An_infinite_height_is_refused()
     {
-        // 1000 px wide on a 720 x 72,000 pt scene → height = 1000 * 72000 / 720
-        // = 100,000 px, above the practical export limit.
-        var req = new WidthRequest(ExportUnit.Pixels, 1000.0);
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 72_000.0));
+            () => ExportSize.ToPixelsFromPoints(720, double.PositiveInfinity));
     }
 
     [Fact]
-    public void ToPixels_total_budget_allows_square_at_boundary()
+    public void A_width_near_the_per_axis_maximum_is_accepted()
     {
-        // 10,000 * 10,000 = 100,000,000 == MaxTotalPixels (100,000,000),
-        // which is within budget. Square scene (1:1) so height == width.
-        var req = new WidthRequest(ExportUnit.Pixels, 10_000.0);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0);
+        // 15,728 pt is 65,533.3 px — inside the 65,535 px per-axis limit.
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(15_728, 16);
+
+        Assert.Equal(65_533, px.PixelWidth);
+    }
+
+    [Fact]
+    public void A_width_above_the_per_axis_limit_is_refused()
+    {
+        // 15,728.5 pt is 65,535.4 px, above the per-axis limit before rounding.
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixelsFromPoints(15_728.5, 16));
+    }
+
+    [Fact]
+    public void A_height_above_the_per_axis_limit_is_refused()
+    {
+        // 72,000 pt is 300,000 px, well above the practical per-axis limit.
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixelsFromPoints(1000, 72_000));
+    }
+
+    [Fact]
+    public void The_total_budget_allows_a_square_at_the_boundary()
+    {
+        // 2,400 pt is 10,000 px; 10,000 x 10,000 = 100,000,000.
+        PixelDimensions px = ExportSize.ToPixelsFromPoints(2400, 2400);
+
         Assert.Equal(10_000, px.PixelWidth);
         Assert.Equal(10_000, px.PixelHeight);
     }
 
     [Fact]
-    public void ToPixels_total_budget_rejects_square_beyond_boundary()
+    public void The_total_budget_rejects_a_square_beyond_the_boundary()
     {
-        // 10,001 * 10,001 = 100,020,001 > MaxTotalPixels (100,000,000).
-        var req = new WidthRequest(ExportUnit.Pixels, 10_001.0);
+        // 2,401 pt is 10,004.17 px → 10,004² = 100,080,016 > 100,000,000.
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0));
+            () => ExportSize.ToPixelsFromPoints(2401, 2401));
     }
 
     [Fact]
-    public void ToPixels_subpixel_width_rounding_to_zero_is_rejected()
+    public void A_sub_pixel_width_that_rounds_to_zero_is_refused()
     {
-        // 0.4 px is positive and finite pre-rounding but rounds to 0.
-        var req = new WidthRequest(ExportUnit.Pixels, 0.4);
+        // 0.1 pt is 0.4167 px: positive and finite pre-rounding, zero after.
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0));
+            () => ExportSize.ToPixelsFromPoints(0.1, 100));
     }
 
     [Fact]
-    public void ToPixels_subpixel_height_rounding_to_zero_is_rejected()
+    public void A_sub_pixel_height_that_rounds_to_zero_is_refused()
     {
-        // Width 0.6 rounds to 1 (OK), but height = 0.6 * (1/100) = 0.006 rounds to 0.
-        var req = new WidthRequest(ExportUnit.Pixels, 0.6);
+        // The width is fine; the height rounds to a zero-pixel export.
         _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 1.0));
+            () => ExportSize.ToPixelsFromPoints(100, 0.1));
     }
 }

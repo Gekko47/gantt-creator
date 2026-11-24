@@ -44,6 +44,21 @@
     `ShowMinorGrid` (`TRUE`), `ShowMajorGrid` (`TRUE`).
     `PlotStartMode`/`PlotFinishMode`/`TimeScale` value enums are fixed by
     R3.3/R5.1; until then the stored text is the default only.
+  - **D3 amendment (2026-11-23, schema version 28).** Phase 8's PNG-export
+    revision adds two approved keys: `PngExportTarget` (`clipboard` | `file`,
+    default `clipboard`) and `LastPngExportFolder` (blank; the folder the last
+    successful PNG file export wrote to). Both are written by the export
+    command and its split-button target toggle through the existing
+    `WriteSettings` path. Per D4 the settings table still regenerates to
+    exactly the approved key set, so a version-27 workbook reports a
+    catalogue-hash mismatch and the remedy is **Repair**, which preserves
+    present values and appends the two defaults. The settings table now
+    reaches row 100, so `tblGanttConfig`'s anchor moves from `A100` to
+    `A102` to keep the blank buffer row the extent invariant requires.
+    `PngExportTarget` is validated against its closed two-value set (a bad
+    value is refused, never defaulted behind the user's back);
+    `LastPngExportFolder` accepts any text and the consumer falls back to the
+    workbook's folder when it names no existing directory.
   - **D4 — Regeneration policy.** The writer never destroys user content:
     `tblGanttTypes` and `tblGanttMetrics` regenerate only from the
     code-owned catalogues; `tblGanttStyles` regenerates built-in keys and

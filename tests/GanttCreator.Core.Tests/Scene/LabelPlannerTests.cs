@@ -227,10 +227,12 @@ public sealed class LabelPlannerTests
         );
 
         Assert.Equal(GanttLabelPosition.Inside, inner.Position);
-        Assert.Same(inside, inner.Primitive!.Style);
+        // The primitive names the label family when the style has none (R8.8 font
+        // contract), so equality is asserted against the same normalised style.
+        Assert.Equal(inside.WithLabelFontFamilyIfMissing(), inner.Primitive!.Style);
 
         Assert.Equal(GanttLabelPosition.Right, outer.Position);
-        Assert.Same(outside, outer.Primitive!.Style);
+        Assert.Equal(outside.WithLabelFontFamilyIfMissing(), outer.Primitive!.Style);
     }
 
     [Fact]

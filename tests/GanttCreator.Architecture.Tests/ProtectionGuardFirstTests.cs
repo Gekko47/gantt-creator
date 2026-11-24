@@ -247,6 +247,9 @@ public sealed class ProtectionGuardFirstTests
         // performs no workbook write itself: persisting the row is delegated to the registered
         // IConfigCatalogueWriter, which consults the guard, so there is nothing here to guard.
         "src/GanttCreator.Office/AutoRefreshPreferences.cs",
+        // R8.8: the PNG-export preference cache is a session snapshot of two settings rows;
+        // the writes go through IConfigCatalogueWriter, which consults the guard.
+        "src/GanttCreator.Office/PngExportPreferences.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",
@@ -307,6 +310,9 @@ public sealed class ProtectionGuardFirstTests
         // Composes a style record from the code-owned catalogue; writes nothing and
         // touches no COM object, so it is read-only and consults no guard.
         "src/GanttCreator.Office/ExportPanelTheme.cs",
+        // R8.7 D4: the shared export-composition rule and the host-free aspect record
+        // build requests and resolve bounds in memory; they touch no COM object.
+        "src/GanttCreator.Office/ExportComposition.cs",
         "src/GanttCreator.Office/ShapeOwnershipTag.cs",
         "src/GanttCreator.Office/ShapeDeltaCache.cs",
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",

@@ -39,7 +39,7 @@ At session start, read [the repository map](docs/REPO-MAP.md) for project respon
 - Milestones and delineators read `Start` as their single date and do not use `Finish` for geometry.
 - Editable export is an all-shape temporary composition, generated only on request and grouped before copy.
 - PowerPoint transfer requests `ppPasteShape` and verifies the returned shape range. Never report success based only on a non-throwing COM call.
-- PNG export is generated only on request. Width is user-selected; height preserves the scene aspect ratio; output pixel dimensions and 300-DPI metadata are verified.
+- PNG export is generated only on request at the chart's own size — the export composition's bounds at 300 DPI — with no separate width or unit input. The image is copied to the clipboard by default; the Export PNG split button's menu switches the main action to a verified file write whose dialog defaults to the workbook's folder and remembers the user's folder choice. Output pixel dimensions and 300-DPI metadata are verified. A chart font the raster engine cannot resolve falls back to the pinned label font with a reported substitution — never a silent swap and never a whole-export refusal (owner ruling 2026-11-23).
 - Core operation is offline. No telemetry, web fonts, cloud API, online licence check, or hidden network fallback.
 
 ## Required task protocol

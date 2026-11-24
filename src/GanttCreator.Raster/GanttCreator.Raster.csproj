@@ -18,4 +18,37 @@
     -->
     <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      R8.2 / ADR-0071: the Skia primitive renderer. SkiaSharp is a package
+      reference, not a project reference, so Raster's Core-only project graph
+      is unchanged and the architecture suite's dependency-direction facts
+      keep passing. The native binary ships beside the packed XLL (D5).
+    -->
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      R8.5/R8.6: the Raster test project exercises the internal PNG chunk walk
+      and the density patch (the replace-in-place arm), matching the Office
+      adapter's InternalsVisibleTo precedent. The public export surface stays
+      small; only the byte-level plumbing is shared with the tests, and their
+      assertions still run through an independent parser.
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GanttCreator.Raster.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <!--
+      R8.8: ExportPngCommandTests asserts the export's orchestration (which family the
+      trace names, whether a substitution is reported) and must not depend on the host
+      having the pinned label face installed, because that face is a proprietary Office
+      font a hosted runner does not carry. The internal RasterRenderResult constructor
+      lets those tests supply a font-free render through the existing PngRender seam,
+      so the assertions stay about the command instead of the machine's fonts.
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GanttCreator.AddIn.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

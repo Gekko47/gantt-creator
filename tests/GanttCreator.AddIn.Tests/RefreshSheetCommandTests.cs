@@ -14,6 +14,10 @@ namespace GanttCreator.AddIn.Tests;
 /// observable consequences: exactly one invocation, no retry, and no presentation on
 /// success.
 /// </remarks>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public class RefreshSheetCommandTests
 {
     private static GanttRefreshOutcome Success() =>
@@ -203,6 +207,28 @@ public class RefreshSheetCommandTests
         Assert.Equal(
             -1,
             source.IndexOf(repair, repairAt + repair.Length, StringComparison.Ordinal));
+    }
+
+    // ---------------------------------------------------------------------
+    // R8.8 — a completed refresh marks the chart current for Export PNG.
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Both refresh paths mark the chart current after a completed pass (R8.8): the
+    /// marker sits inside each success branch beside the warnings publish, so a refused
+    /// pass records nothing and the Export PNG command runs its own refresh when false.
+    /// </summary>
+    [Fact]
+    public void Both_refresh_paths_mark_the_chart_current_after_a_completed_pass()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "GanttCreator.AddIn", "RefreshSheetCommand.cs"));
+
+        int first = source.IndexOf("MarkChartRenderCurrent", StringComparison.Ordinal);
+        Assert.True(first > 0, "The explicit refresh path must mark the chart current.");
+        Assert.True(
+            source.IndexOf("MarkChartRenderCurrent", first + 1, StringComparison.Ordinal) > first,
+            "The automatic refresh path must mark the chart current too.");
     }
 
     private static string FindRepositoryRoot()

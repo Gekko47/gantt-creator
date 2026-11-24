@@ -360,14 +360,15 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_28_approved_keys()
+    public void Settings_contains_exactly_the_30_approved_keys()
     {
         // R5.6a added the six chart-chrome colour keys (schema version 20),
         // taking 19 to 25. ADR-0055 added ProtectGanttSheet (schema version
         // 22), taking 25 to 26. R5.18h added HiddenColumns (schema version 24),
         // taking 26 to 27. R5.20 added AutoRefreshEnabled (schema version 25),
-        // taking 27 to 28.
-        Assert.Equal(28, GanttCatalogues.Settings.Count);
+        // taking 27 to 28. R8.8 added PngExportTarget and LastPngExportFolder
+        // (schema version 28), taking 28 to 30.
+        Assert.Equal(30, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -404,6 +405,8 @@ public class GanttConfigCatalogueTests
         "ProtectGanttSheet",
         "HiddenColumns",
         "AutoRefreshEnabled",
+        "PngExportTarget",
+        "LastPngExportFolder",
     ];
 
     [Fact]
@@ -992,7 +995,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "49f8668099af3add5a3fa872c7f50cf25d964908e78c247ac3659acc1488540f";
+        "173ad65cba2a3bf2579fb9c42ee773661380369ef7a4dacfe763883299dc2f7e";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

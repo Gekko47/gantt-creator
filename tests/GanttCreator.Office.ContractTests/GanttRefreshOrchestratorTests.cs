@@ -1998,4 +1998,5 @@ public class GanttRefreshOrchestratorTests
         Assert.False(fakes.SheetProtectionArming.IsArmed);
         Assert.False(fakes.SheetProtection.State!.ContentsProtected);
     }
+
 }

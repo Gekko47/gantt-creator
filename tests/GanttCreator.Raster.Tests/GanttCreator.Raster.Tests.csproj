@@ -20,4 +20,22 @@
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
     <ProjectReference Include="..\..\src\GanttCreator.Raster\GanttCreator.Raster.csproj" />
   </ItemGroup>
+
+  <!--
+    R8.2: the category-1 raster golden baseline (the fixture scene JSON, the
+    exact BGRA pixel baseline, and the human-review PNG) is committed under
+    tests/golden/raster/ and copied to the test output, so the comparison
+    reads the committed file rather than a source-relative path (checklist G).
+    R8.4 adds the shared reference scene: the representative suite loads the
+    committed golden scene through SceneSnapshot.Deserialize rather than a
+    second fixture copy.
+  -->
+  <ItemGroup>
+    <None Include="..\golden\raster\**\*" Link="golden\raster\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\golden\scene\reference-scene.json" Link="golden\scene\reference-scene.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

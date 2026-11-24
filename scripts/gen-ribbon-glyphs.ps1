@@ -286,6 +286,13 @@ $glyphs = [ordered]@{
         'M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3'
         'm7 21 5-5 5 5'
     )
+    # Lucide `image-down`: the Export PNG button (R8.8).
+    'export-png'        = @(
+        'M10.3 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10l-3.1-3.1a2 2 0 0 0-2.814.014L6 21'
+        'm14 19 3 3v-5.5'
+        'm17 22 3-3'
+        'circle:9,9,2'
+    )
 }
 
 # Control id -> glyph slug and pixel size. This is the single source for what the
@@ -327,6 +334,7 @@ $controlGlyphs = [ordered]@{
     btnRefreshSheet         = @{ Glyph = 'refresh-chart'; Size = 32 }
     btnCopyEditable         = @{ Glyph = 'copy-editable'; Size = 32 }
     btnSendToPowerPoint     = @{ Glyph = 'send-to-powerpoint'; Size = 32 }
+    btnExportPng            = @{ Glyph = 'export-png'; Size = 32 }
     btnWarnings             = @{ Glyph = 'warnings'; Size = 16 }
     btnDiagnostics          = @{ Glyph = 'diagnostics'; Size = 16 }
     btnOpenLog              = @{ Glyph = 'open-log'; Size = 16 }

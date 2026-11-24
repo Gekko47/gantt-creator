@@ -12,6 +12,10 @@ namespace GanttCreator.AddIn.Tests;
 /// set? A checkbox that wrote one thing and reported another looks broken while
 /// working perfectly, which is worse than an error.
 /// </remarks>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public class RibbonValueContractTests
 {
     /// <summary>

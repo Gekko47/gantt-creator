@@ -81,6 +81,14 @@ internal class RibbonStateService
     private HashSet<string> _hiddenColumns = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Gets a value indicating whether a refresh has completed since the workbook state
+    /// last changed (R8.8). The Export PNG command consumes it to decide whether the chart
+    /// it would export matches the sheet: false after a workbook switch or before the first
+    /// completed render, true after one. Workbook-scoped like the warnings snapshots.
+    /// </summary>
+    internal bool ChartRenderCurrent { get; private set; }
+
+    /// <summary>
     /// Whether the next successful settings read should re-seed the persisted session switches
     /// (R5.20).
     /// </summary>
@@ -1804,6 +1812,9 @@ internal class RibbonStateService
 
         AutoRefreshPreferences.Shared.ApplyStored(
             settings.TryGetValue(GanttAutoRefresh.SettingKey, out string? stored) ? stored : null);
+
+        // R8.8: the same activation read seeds the PNG-export target and remembered folder.
+        PngExportPreferences.Shared.ApplyStored(settings);
     }
 
     private void LoadPlotSettingsFromWorkbook()
@@ -2260,7 +2271,7 @@ internal class RibbonStateService
     internal virtual bool GetEnabled(string? controlId) => controlId switch
     {
         // Owner ruling 2026-11-09: the two toggles replace the shape pair. A toggle is always
-        // available on an initialised sheet â€” what varies is the state it reports, not whether it
+        // available on an initialised sheet — what varies is the state it reports, not whether it
         // can be pressed. R5.16b adds the active-sheet gate like every other chart command.
         RibbonControlIds.ToggleChartLock
             or RibbonControlIds.ToggleCellLock
@@ -2268,6 +2279,73 @@ internal class RibbonStateService
             _state.HasActiveWorkbook && _state.SheetInitialised && _state.ActiveSheetIsGanttSheet,
         _ => _state.IsEnabled(controlId),
     };
+
+    /// <summary>
+    /// Records that a refresh completed (R8.8), so the next Export PNG click knows the
+    /// chart on the sheet matches the table. Store-only: nothing queries this during a
+    /// ribbon refresh, so it costs no invalidation.
+    /// </summary>
+    internal void MarkChartRenderCurrent() => ChartRenderCurrent = true;
+
+    /// <summary>
+    /// Selects the PNG-export target from the pressed menu toggle (R8.8), persists it in the
+    /// workbook, and re-queries the two toggles and the main button's label.
+    /// </summary>
+    /// <param name="controlId">The toggle's control id, or null when unprobeable.</param>
+    /// <remarks>
+    /// A toggled-off press still selects its own target, so the pair behaves as radio buttons:
+    /// clicking the active row never leaves both rows unpressed. A refused persist leaves the
+    /// session choice standing; the workbook row is re-written on the next change.
+    /// </remarks>
+    internal void SetPngExportTarget(string? controlId)
+    {
+        PngExportTarget target =
+            string.Equals(controlId, RibbonControlIds.ExportPngTargetFile, StringComparison.Ordinal)
+                ? PngExportTarget.File
+                : PngExportTarget.Clipboard;
+        PngExportPreferences.Shared.Target = target;
+
+        _ = _catalogueWriter?.WriteSettings(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [GanttPngExport.TargetSettingKey] = GanttPngExport.Format(target),
+        });
+
+        InvalidateControl(RibbonControlIds.ExportPng);
+        InvalidateControl(RibbonControlIds.ExportPngTargetClipboard);
+        InvalidateControl(RibbonControlIds.ExportPngTargetFile);
+    }
+
+    /// <summary>
+    /// Records the folder a successful file export wrote to (R8.8 D9): the session snapshot and
+    /// the workbook row, so the next save dialog reopens there.
+    /// </summary>
+    /// <param name="folder">The chosen folder, or null/blank to record nothing.</param>
+    internal void PersistPngExportFolder(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return;
+        }
+
+        PngExportPreferences.Shared.Folder = folder;
+        _ = _catalogueWriter?.WriteSettings(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [GanttPngExport.FolderSettingKey] = folder,
+        });
+    }
+
+    /// <summary>
+    /// Resolves the save dialog's initial folder (R8.8 D9): the remembered folder when it still
+    /// exists, else the active workbook's own folder, else null for the host default.
+    /// </summary>
+    /// <returns>The initial directory, or null.</returns>
+    internal string? ResolvePngExportInitialFolder()
+    {
+        string remembered = PngExportPreferences.Shared.Folder;
+        return !string.IsNullOrWhiteSpace(remembered) && Directory.Exists(remembered)
+            ? remembered
+            : _applicationAdapter?.ActiveWorkbookFolder();
+    }
 
     /// <summary>
     /// Gets whether the Ribbon group with <paramref name="groupId"/> is visible
@@ -2635,6 +2713,35 @@ internal class RibbonStateService
     {
         _ = control;
         return AutoRefreshLabel(AutoRefreshPreferences.Shared.AutoRefreshEnabled);
+    }
+
+    /// <summary>Gets whether the clipboard is the selected PNG-export target (R8.8).</summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <returns><see langword="true"/> when the main export action copies to the clipboard.</returns>
+    internal static bool GetExportPngClipboardPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return PngExportPreferences.Shared.Target == PngExportTarget.Clipboard;
+    }
+
+    /// <summary>Gets whether the verified file write is the selected PNG-export target (R8.8).</summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <returns><see langword="true"/> when the main export action writes a file.</returns>
+    internal static bool GetExportPngFilePressed(IRibbonControl? control)
+    {
+        _ = control;
+        return PngExportPreferences.Shared.Target == PngExportTarget.File;
+    }
+
+    /// <summary>Gets the Export PNG main button's label, which names its current target (R8.8).</summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <returns>The target-specific label, so the main action's ability is visible.</returns>
+    internal static string GetExportPngLabel(IRibbonControl? control)
+    {
+        _ = control;
+        return PngExportPreferences.Shared.Target == PngExportTarget.File
+            ? "Export PNG to file"
+            : "Export PNG to clipboard";
     }
 
     /// <summary>
@@ -4208,6 +4315,10 @@ internal class RibbonStateService
         // configuration, a blocked row) and leave the user with greyed-out buttons and no way to
         // fold a section. It is inert on an unprotected sheet.
         RefreshSheetCommand.RepairOutlineSymbols();
+
+        // R8.8: the chart-current fact belongs to the workbook it was recorded for, so a
+        // switch clears it until the new workbook's first completed refresh marks its own.
+        ChartRenderCurrent = false;
         _lastSuccessfulSceneWarnings = [];
         _currentValidationIssues = [];
         _lastSuccessfulRenderAtUtc = null;

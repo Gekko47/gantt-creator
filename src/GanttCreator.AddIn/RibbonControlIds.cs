@@ -367,6 +367,22 @@ internal static class RibbonControlIds
     /// </summary>
     internal const string SendToPowerPoint = "btnSendToPowerPoint";
 
+    /// <summary>
+    /// The Export PNG button (R8.8). It shares Copy Editable's Ready + active-Gantt-sheet
+    /// gate, so the command ensures freshness itself rather than gating the button on a
+    /// prior refresh.
+    /// </summary>
+    internal const string ExportPng = "btnExportPng";
+
+    /// <summary>The Export PNG split button (R8.8): the main action plus its target menu.</summary>
+    internal const string ExportPngSplit = "spbExportPng";
+
+    /// <summary>The menu toggle that makes the clipboard the main action (R8.8).</summary>
+    internal const string ExportPngTargetClipboard = "btnExportPngTargetClipboard";
+
+    /// <summary>The menu toggle that makes the verified file write the main action (R8.8).</summary>
+    internal const string ExportPngTargetFile = "btnExportPngTargetFile";
+
     /// <summary>The Diagnostics group, visible in every mode.</summary>
     internal const string DiagnosticsGroup = "grpDiagnostics";
 }

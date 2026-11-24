@@ -188,6 +188,7 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+            RibbonStateService.Instance.MarkChartRenderCurrent();
             RibbonStateService.ClearStatusBar();
         }
         else
@@ -255,6 +256,7 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+            RibbonStateService.Instance.MarkChartRenderCurrent();
 
             // R5.1a: an AUTO end's displayed date comes from the range the chart
             // just used. Reading it off the outcome costs two comparisons and only

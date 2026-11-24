@@ -98,11 +98,17 @@ internal enum EditableExportPreflightRefusal
 /// <see cref="ChartPaddingPt.Uniform(double)"/> (D-R7.4). Scene-space, so the fit scales it
 /// with the group.
 /// </param>
+/// <param name="Settings">
+/// The workbook's effective settings map, carried so the PNG export's canvas background is
+/// read from the same configuration the scene was built from instead of a second read
+/// (R8.8 D1).
+/// </param>
 internal sealed record EditableExportPreparation(
     IReadOnlyList<GanttEvent> Events,
     PanelCellGrid Grid,
     ExportBoundsOutcome Resolution,
-    double InsetPt);
+    double InsetPt,
+    IReadOnlyDictionary<string, string> Settings);
 
 /// <summary>The typed result of one shared editable-export pre-flight run (R7.6 D4).</summary>
 /// <param name="Preparation">The resolved preparation, or <see langword="null"/> on a refusal.</param>
@@ -223,11 +229,15 @@ internal static class EditableExportPreflight
 {
     /// <summary>
     /// The settings key that selects the export composition (catalogue default <c>TRUE</c>).
-    /// The key and its default are owned by <see cref="GanttCatalogues"/>; this constant names
-    /// the one read, and an explicit case-insensitive <c>FALSE</c> is the only chart-only
-    /// request.
     /// </summary>
-    internal const string ExportIncludeDataPanelSettingKey = "ExportIncludeDataPanel";
+    /// <remarks>
+    /// The key, its default and the parse rule are owned by
+    /// <see cref="ExportComposition"/> so the Office-side export-aspect record and the
+    /// AddIn-side commands read one authority (R8.7 D4). This constant re-exports the
+    /// name for the existing command call sites.
+    /// </remarks>
+    internal const string ExportIncludeDataPanelSettingKey =
+        ExportComposition.ExportIncludeDataPanelSettingKey;
 
     /// <summary>The themed metric token the placement inset reads (D-R7.4).</summary>
     internal const string OuterPaddingToken = "ChartOuterPaddingPt";
@@ -361,7 +371,8 @@ internal static class EditableExportPreflight
                     validation.Events,
                     measuredGrid,
                     resolution,
-                    ResolveInsetPt(config.Metrics)),
+                    ResolveInsetPt(config.Metrics),
+                    config.Settings),
                 droppedRows);
     }
 
@@ -389,18 +400,12 @@ internal static class EditableExportPreflight
     /// <param name="settings">The workbook's effective settings map.</param>
     /// <returns>Chart-only on an explicit case-insensitive <c>FALSE</c>; otherwise table-plus-chart.</returns>
     /// <remarks>
-    /// Fail-open toward the catalogue default (<c>TRUE</c>), matching the automatic-refresh
-    /// parse precedent: a typo cannot silently change what an export covers, and the catalogue
-    /// remains the key's authority.
+    /// The rule lives in <see cref="ExportComposition"/> so the Office-side aspect record
+    /// and every command apply the identical fail-open parse (R8.7 D4). This forwarding
+    /// member keeps the existing pre-flight call sites unchanged.
     /// </remarks>
-    internal static ExportSelection SelectExportSelection(IReadOnlyDictionary<string, string> settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        return settings.TryGetValue(ExportIncludeDataPanelSettingKey, out string? stored)
-            && string.Equals(stored?.Trim(), "FALSE", StringComparison.OrdinalIgnoreCase)
-                ? ExportSelection.ChartOnly
-                : ExportSelection.TablePlusChart;
-    }
+    internal static ExportSelection SelectExportSelection(IReadOnlyDictionary<string, string> settings) =>
+        ExportComposition.SelectExportSelection(settings);
 
     /// <summary>Resolves the scene-space placement inset from the themed metrics (D-R7.4).</summary>
     /// <param name="themedMetrics">The workbook's themed metrics, possibly empty.</param>

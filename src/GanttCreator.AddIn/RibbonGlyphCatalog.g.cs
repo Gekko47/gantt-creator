@@ -101,6 +101,7 @@ internal static class RibbonGlyphCatalog
         ["btnRefreshSheet"] = new Entry("refresh-chart", 32),
         ["btnCopyEditable"] = new Entry("copy-editable", 32),
         ["btnSendToPowerPoint"] = new Entry("send-to-powerpoint", 32),
+        ["btnExportPng"] = new Entry("export-png", 32),
         ["btnWarnings"] = new Entry("warnings", 16),
         ["btnDiagnostics"] = new Entry("diagnostics", 16),
         ["btnOpenLog"] = new Entry("open-log", 16),

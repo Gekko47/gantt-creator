@@ -257,25 +257,25 @@ tagged `TransferSoak` and runs through its own measured gate; the routine
 
 ## PNG renderer
 
-The raster renderer consumes the same scene, plus export width and theme background.
+The raster renderer consumes the same scene, at the chart's own size and with the theme background.
 
-For width in centimetres:
+The pixel dimensions are the export composition's scene bounds in points, rendered at 300 DPI:
 
 ```text
-pixelWidth  = round(widthCm / 2.54 * 300)
-pixelHeight = round(pixelWidth * sceneHeightPoints / sceneWidthPoints)
+pixelWidth  = round(sceneWidthPoints  / 72 * 300)
+pixelHeight = round(sceneHeightPoints / 72 * 300)
 ```
 
-For inches, `pixelWidth = round(widthInches * 300)`. For pixels, the entered value is the pixel width and 300 DPI metadata determines its nominal physical size. In every case:
+There is no separate width or unit input (owner ruling 2026-11-23): the image is the chart the user sees, so the composition's bounds are the size. In every case:
 
-- height is calculated, never independently entered;
+- height follows the composition, never independently entered;
 - the exact scene bounds are the crop bounds;
 - dimensions must be positive and under a documented memory/pixel safety limit;
 - background transparency/colour is explicit;
 - the PNG contains `pHYs` density values for 300 DPI (`11811` pixels per metre, subject to integer rounding);
 - a post-write validator reopens the file and checks signature, dimensions, density, and non-empty image content before success is shown.
 
-The Ribbon exposes width, unit (`cm`, `in`, `px`), and export action. It may show the calculated height and pixel dimensions before save.
+The Ribbon exposes the export action, not a width control. The main Export PNG button delivers to the currently selected target — the clipboard by default — and the split button's menu toggles that target between the clipboard and a verified file write. A file write's dialog opens at the remembered export folder, else the workbook's folder, and remembers the chosen folder on success. The button is gated on the same state as Copy Editable; the command itself ensures freshness, running the explicit-refresh pipeline only when the workbook has not rendered since it was opened, so a first export after opening never demands a manual Refresh. Before any target action the command resolves the scene's text families through the renderer's pinned font resolver; an unresolvable family renders through the pinned label font and reports the substitution in the status bar (ADR-0070 D3 amendment), while a missing pinned set remains the typed refusal.
 
 ## Ribbon and commands
 
@@ -284,7 +284,7 @@ Use RibbonX, not Office.js or a task-pane web UI. The first release groups comma
 - **Data**: initialise table, add activity, add milestone, add delineator, validate.
 - **Chart**: refresh, date range, scale, workbook styling, show/hide labels.
 - **Selected Entity**: shape/line colour, label position, use Type default; enabled only for one expanded entity row.
-- **Export**: copy editable, send to PowerPoint, PNG width/unit, export PNG.
+- **Export**: copy editable, send to PowerPoint, export PNG (clipboard by default, verified file on the menu).
 - **Support**: diagnostics, logs, version, offline help.
 
 Every callback is a thin error boundary that invokes an application command. No callback contains parsing, geometry, shape-building, or PowerPoint logic. Dynamic Ribbon state getters must be fast and side-effect-free.

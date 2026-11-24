@@ -747,10 +747,17 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
 
     /// <summary>
     /// D2: typography is copied from the resolved style tokens and nothing is
-    /// invented between token and property. A token the scene did not resolve
-    /// stays absent rather than being defaulted, because a defaulted font would
-    /// read as a resolved one.
+    /// invented between token and property. A size or weight the scene did not
+    /// resolve stays absent rather than being defaulted, because a defaulted value
+    /// would read as a resolved one.
     /// </summary>
+    /// <remarks>
+    /// The font family is the exception the R8.8 contract creates: a text primitive
+    /// that declared no family stores the label family
+    /// (<see cref="SceneStyle.WithLabelFontFamilyIfMissing"/>), so the shape carries
+    /// that family instead of null. The remaining typography tokens are still copied
+    /// verbatim, which is what this pin keeps checking.
+    /// </remarks>
     [Fact]
     public void Typography_is_copied_from_the_style_tokens_and_an_absent_token_stays_absent()
     {
@@ -784,7 +791,7 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         Assert.True(withTokens.Bold);
 
         OfficeShapeRequest withoutTokens = outcome.Requests.Single(r => r.PrimitiveId == "row-2:unstyled");
-        Assert.Null(withoutTokens.FontFamily);
+        Assert.Equal(GanttCatalogues.LabelFontFamily, withoutTokens.FontFamily);
         Assert.Null(withoutTokens.FontSizePt);
         Assert.Null(withoutTokens.Bold);
     }

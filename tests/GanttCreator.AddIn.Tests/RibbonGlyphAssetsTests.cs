@@ -8,6 +8,10 @@ namespace GanttCreator.AddIn.Tests;
 /// The asset half of the glyph contract: every catalogued control has a picture in both
 /// palettes at its declared size, and nothing on the path throws.
 /// </summary>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public sealed class RibbonGlyphAssetsTests
 {
     private const string _workbookRibbonId = "Microsoft.Excel.Workbook";

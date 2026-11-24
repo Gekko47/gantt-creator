@@ -9,7 +9,12 @@ public sealed record SceneText : ScenePrimitive
     /// <param name="zLayer">The scene layer.</param>
     /// <param name="text">The text content.</param>
     /// <param name="textBounds">The resolved text bounds in points.</param>
-    /// <param name="style">The resolved style.</param>
+    /// <param name="style">
+    /// The resolved style. A style that names no font family is stored through
+    /// <see cref="SceneStyle.WithLabelFontFamilyIfMissing"/>: the scene, not the renderer,
+    /// names the font, so a text primitive can never reach a renderer without one
+    /// (R8.8 live defect, 2026-11-23).
+    /// </param>
     /// <param name="alignment">The resolved text alignment.</param>
     /// <param name="entityType">The source entity type, when known.</param>
     /// <param name="laneOrder">The lane ordering value, when known.</param>
@@ -51,7 +56,7 @@ public sealed record SceneText : ScenePrimitive
 
         Text = text;
         TextBounds = textBounds;
-        Style = style;
+        Style = style.WithLabelFontFamilyIfMissing();
         Alignment = alignment;
         LeftInsetPt = leftInsetPt;
     }

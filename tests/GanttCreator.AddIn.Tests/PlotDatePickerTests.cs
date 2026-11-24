@@ -14,6 +14,10 @@ namespace GanttCreator.AddIn.Tests;
 /// The picker seam is substituted, so no test builds a WinForms control off the
 /// STA thread and no test can block on a modal dialog.
 /// </remarks>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public sealed class PlotDatePickerTests
 {
     private static int s_nextRowId;

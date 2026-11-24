@@ -1,55 +1,43 @@
-using System.Globalization;
-
 namespace GanttCreator.Raster;
 
 /// <summary>
-/// The unit of the user-entered export width.
-/// </summary>
-public enum ExportUnit
-{
-    /// <summary>Centimetres. Converted to pixels at 300 DPI.</summary>
-    Centimetres,
-
-    /// <summary>Inches. Converted to pixels at 300 DPI.</summary>
-    Inches,
-
-    /// <summary>Raw pixels. The entered value is the final width.</summary>
-    Pixels
-}
-
-/// <summary>
-/// A parsed, validated export-width request.
-/// </summary>
-/// <param name="Unit">The unit of <paramref name="Value"/>.</param>
-/// <param name="Value">The positive width in <paramref name="Unit"/>.</param>
-public readonly record struct WidthRequest(ExportUnit Unit, double Value);
-
-/// <summary>
-/// The calculated pixel dimensions of an export, derived from a
-/// width request and the scene aspect ratio.
+/// The calculated pixel dimensions of an export, derived from the export
+/// composition's bounds in points at 300 DPI.
 /// </summary>
 /// <param name="PixelWidth">The rounded pixel width.</param>
 /// <param name="PixelHeight">The rounded pixel height.</param>
 public readonly record struct PixelDimensions(int PixelWidth, int PixelHeight);
 
 /// <summary>
-/// Parses and converts export-width requests. All parsing is
-/// culture-invariant because user input such as "2.5in" must not
-/// be interpreted differently on month-day-year vs day-month-year
-/// locales. See docs/07-GANTT-ENTITY-GUIDE.md coordinate policy.
+/// Converts the export composition's bounds in points to pixel dimensions at
+/// 300 DPI.
 /// </summary>
+/// <remarks>
+/// <para>
+/// The PNG is the chart the user sees (owner ruling 2026-11-23), so there is no
+/// width or unit input: the composition's own bounds are the size. The former
+/// <c>cm</c>/<c>in</c>/<c>px</c> width grammar was withdrawn with the R8.7 control
+/// surface it fed; this type is now the single points-to-pixels boundary.
+/// </para>
+/// <para>
+/// Each dimension is rounded exactly once at the final boundary, through
+/// <see cref="Math.Round(double)"/>'s default (<see cref="MidpointRounding.ToEven"/>),
+/// which is the single-rounding-boundary rule
+/// <c>docs/02-ARCHITECTURE.md</c> ("Coordinate and rounding policy") states.
+/// </para>
+/// </remarks>
 public static class ExportSize
 {
     /// <summary>Rendering resolution: 300 dots per inch.</summary>
     public const double Dpi = 300.0;
 
-    /// <summary>Inches per centimetre.</summary>
-    public const double CmPerInch = 2.54;
+    /// <summary>Points per inch, the denominator of the points-to-pixels conversion.</summary>
+    public const double PointsPerInch = 72.0;
 
     /// <summary>
     /// Practical upper bound for any single exported pixel dimension. This
     /// sits far below int.MaxValue but above every rasterizer's bitmap
-    /// limit, so absurd user input fails here with an actionable message
+    /// limit, so an absurd composition fails here with an actionable message
     /// instead of surfacing as a GDI+/Skia allocation failure at encode time.
     /// </summary>
     public const double MaxPixelDimension = 65_535;
@@ -58,8 +46,7 @@ public static class ExportSize
     /// Maximum total pixel count (width × height) for an export. Sized as a
     /// tested safe allocation budget: the raster pipeline's 32-bit pixel
     /// format costs 4 bytes per pixel, so a full-frame buffer is 4 × pixel
-    /// count. The old 2,000,000,000-pixel budget implied a ~8 GB frame plus
-    /// working buffers; the new 100,000,000-pixel budget keeps a full frame
+    /// count. The 100,000,000-pixel budget keeps a full frame
     /// around 400 MB with headroom for the renderer's working buffers, while
     /// the per-axis <see cref="MaxPixelDimension"/> still governs each side.
     /// Square boundary: √100,000,000 = 10,000.
@@ -67,53 +54,20 @@ public static class ExportSize
     public const long MaxTotalPixels = 100_000_000L;
 
     /// <summary>
-    /// Parses a width string such as "10cm", "4in", or "800px"
-    /// (case-insensitive, surrounding whitespace ignored) into a
-    /// <see cref="WidthRequest"/>.
+    /// Converts the export composition's width and height in points to pixel
+    /// dimensions at 300 DPI, rounding each dimension exactly once.
     /// </summary>
-    /// <exception cref="FormatException">Unknown unit or invalid value.</exception>
-    public static WidthRequest ParseWidth(string input)
-    {
-        ArgumentNullException.ThrowIfNull(input);
-        input = input.Trim();
-
-        // Switch expression: a suffix is matched exactly once and
-        // unknown units fall through to a single failure point.
-        return input switch
-        {
-            var s when s.EndsWith("cm", StringComparison.OrdinalIgnoreCase) =>
-                new WidthRequest(ExportUnit.Centimetres, ParseValue(s[..^2])),
-            var s when s.EndsWith("in", StringComparison.OrdinalIgnoreCase) =>
-                new WidthRequest(ExportUnit.Inches, ParseValue(s[..^2])),
-            var s when s.EndsWith("px", StringComparison.OrdinalIgnoreCase) =>
-                new WidthRequest(ExportUnit.Pixels, ParseValue(s[..^2])),
-            _ => throw new FormatException($"Unknown unit in '{input}'.")
-        };
-    }
-
-    /// <summary>
-    /// Converts a width request and scene dimensions (in points) to
-    /// pixel dimensions. The height preserves the scene aspect ratio;
-    /// it is calculated, never entered independently.
-    /// </summary>
-    /// <param name="request">The parsed width request. <see cref="WidthRequest.Value"/> must be finite and greater than zero.</param>
-    /// <param name="sceneWidthPt">The scene width in points. Must be finite and greater than zero.</param>
-    /// <param name="sceneHeightPt">The scene height in points. Must be finite and greater than zero.</param>
-    /// <exception cref="ArgumentOutOfRangeException">A dimension value is
-    /// not finite, or sceneWidthPt or sceneHeightPt is not greater than
-    /// zero, or the computed pixel dimensions exceed the per-axis limit of
-    /// <see cref="MaxPixelDimension"/> or
+    /// <param name="sceneWidthPt">The composition width in points. Must be finite and greater than zero.</param>
+    /// <param name="sceneHeightPt">The composition height in points. Must be finite and greater than zero.</param>
+    /// <returns>The rounded pixel dimensions.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// A dimension is not finite or not greater than zero, the computed pixel
+    /// dimensions exceed the per-axis limit of <see cref="MaxPixelDimension"/> or
     /// the total pixel budget of <see cref="MaxTotalPixels"/>, or a sub-pixel
-    /// request rounds to a zero dimension.
+    /// extent rounds to a zero dimension.
     /// </exception>
-    public static PixelDimensions ToPixels(WidthRequest request, double sceneWidthPt, double sceneHeightPt)
+    public static PixelDimensions ToPixelsFromPoints(double sceneWidthPt, double sceneHeightPt)
     {
-        if (!double.IsFinite(request.Value) || request.Value <= 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(request), request.Value, "Width request Value must be finite and greater than zero.");
-        }
-
         if (!double.IsFinite(sceneWidthPt) || sceneWidthPt <= 0)
         {
             throw new ArgumentOutOfRangeException(
@@ -126,20 +80,13 @@ public static class ExportSize
                 nameof(sceneHeightPt), sceneHeightPt, "Scene height must be finite and greater than zero.");
         }
 
-        double pixelWidth = request.Unit switch
-        {
-            ExportUnit.Centimetres => request.Value / CmPerInch * Dpi,
-            ExportUnit.Inches => request.Value * Dpi,
-            ExportUnit.Pixels => request.Value,
-            _ => throw new ArgumentOutOfRangeException(nameof(request))
-        };
-
-        double pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
+        double pixelWidth = sceneWidthPt / PointsPerInch * Dpi;
+        double pixelHeight = sceneHeightPt / PointsPerInch * Dpi;
 
         if (!double.IsFinite(pixelWidth) || pixelWidth > MaxPixelDimension)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(request), pixelWidth,
+                nameof(sceneWidthPt), pixelWidth,
                 $"Computed pixel width exceeds the practical export limit of {MaxPixelDimension} px.");
         }
 
@@ -155,13 +102,13 @@ public static class ExportSize
         int pxWidth = (int)Math.Round(pixelWidth);
         int pxHeight = (int)Math.Round(pixelHeight);
 
-        // Reject rounded dimensions below 1: a sub-pixel request like 0.4 px is
-        // positive and finite pre-rounding but rounds to 0, which must not
-        // produce a zero-pixel export.
+        // Reject rounded dimensions below 1: a sub-pixel extent is positive and
+        // finite pre-rounding but rounds to 0, which must not produce a
+        // zero-pixel export.
         if (pxWidth < 1 || pxHeight < 1)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(request),
+                nameof(sceneWidthPt),
                 $"Rounded pixel dimensions must each be at least 1 px (got {pxWidth}x{pxHeight}).");
         }
 
@@ -173,30 +120,11 @@ public static class ExportSize
         if (totalPixels > MaxTotalPixels)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(request), totalPixels,
+                nameof(sceneHeightPt), totalPixels,
                 $"Combined pixel dimensions ({pxWidth}x{pxHeight} = {totalPixels} px) exceed the maximum total of {MaxTotalPixels} pixels.");
         }
 #pragma warning restore IDE0046
 
         return new PixelDimensions(pxWidth, pxHeight);
-    }
-
-    private static double ParseValue(string text)
-    {
-        text = text.Trim();
-
-        // Tuple switch: validates emptiness, parseability, sign, and
-        // finiteness in one expression. Zero is rejected: a zero-width
-        // export is meaningless and would surface as a rasterizer failure
-        // far from the cause (decision recorded in the W4 work item).
-        return (text.Length, double.TryParse(text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out double value), value <= 0, double.IsFinite(value)) switch
-        {
-            (0, _, _, _) => throw new FormatException("Width value is empty."),
-            (_, false, _, _) => throw new FormatException($"'{text}' is not a valid width value."),
-            (_, true, true, _) => throw new FormatException("Width value must be greater than zero."),
-            (_, true, _, false) => throw new FormatException($"'{text}' is not a finite number."),
-            _ => value
-        };
     }
 }

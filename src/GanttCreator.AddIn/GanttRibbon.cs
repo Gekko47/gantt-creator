@@ -353,6 +353,83 @@ public class GanttRibbon : ExcelRibbon
     private static void RunSendToPowerPoint() => SendToPowerPointCommand.RunForExcel();
 
     /// <summary>
+    /// Called when the user clicks Export PNG (R8.8). The callback is a thin error boundary
+    /// exactly like Copy Editable: the command runs across the project-wide
+    /// <see cref="CommandBoundary"/> and the ribbon state is refreshed afterwards.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnExportPngClick(IRibbonControl control)
+        => OnExportPngClick(
+            control,
+            CommandBoundary.Instance,
+            RunExportPng,
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Export PNG command across an injected boundary. Internal so contract tests can
+    /// verify the routing with a deterministic boundary and a stub command instead of the
+    /// singleton and a live save dialog.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The export command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    internal static void OnExportPngClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(
+            () => ResolveCommandName(control, nameof(OnExportPngClick)),
+            command,
+            nameof(OnExportPngClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>Runs the PNG export in the current Excel session (R8.8).</summary>
+    private static void RunExportPng() => ExportPngCommand.RunForExcel();
+
+    /// <summary>
+    /// Called when either PNG-export target toggle is pressed (R8.8). The pressed state is
+    /// advisory: the control's id names the target and the state service keeps the pair
+    /// radio-style, so clicking the active row can never leave both rows unpressed.
+    /// </summary>
+    /// <param name="control">The menu toggle that raised the event.</param>
+    /// <param name="pressed">
+    /// Whether the toggle is now pressed. Unused, because the id is the key; declared because a
+    /// <c>toggleButton</c> handler must match Excel's callback signature.
+    /// </param>
+    public void OnExportPngTargetClick(IRibbonControl control, bool pressed)
+    {
+        _ = pressed;
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnExportPngTargetClick)),
+            () => RibbonStateService.Instance.SetPngExportTarget(control?.Id),
+            nameof(OnExportPngTargetClick));
+    }
+
+    /// <summary>Gets whether the clipboard target toggle is pressed (R8.8). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> when the clipboard is the main action's target.</returns>
+    public bool GetExportPngClipboardPressed(IRibbonControl control) =>
+        RibbonStateService.GetExportPngClipboardPressed(control);
+
+    /// <summary>Gets whether the file target toggle is pressed (R8.8). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> when the verified file write is the main action's target.</returns>
+    public bool GetExportPngFilePressed(IRibbonControl control) =>
+        RibbonStateService.GetExportPngFilePressed(control);
+
+    /// <summary>Gets the Export PNG main button's target-specific label (R8.8). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The label naming the main action's current target.</returns>
+    public string GetExportPngLabel(IRibbonControl control) =>
+        RibbonStateService.GetExportPngLabel(control);
+
+    /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): presses to flip whether the chart's elements
     /// can be dragged. One control replaces the old Unlock shape / Lock shapes pair, and its pressed
     /// state is the lock state, so it can always be found and always shows what is true.

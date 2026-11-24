@@ -22,6 +22,10 @@ namespace GanttCreator.AddIn.Tests;
 /// constructor), the <see cref="GetCustomUI"/> behaviour, and the RibbonX
 /// namespace / IDs / callback contract. None of these require Excel.
 /// </summary>
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public class GanttRibbonTests
 {
     private const string WorkbookRibbonId = "Microsoft.Excel.Workbook";
@@ -661,6 +665,10 @@ public class GanttRibbonTests
                 // R7.6: Send to PowerPoint follows Copy Editable in the Export group's
                 // document order and shares its corrected Mode == Ready gate.
                 RibbonControlIds.SendToPowerPoint,
+                // R8.8: Export PNG is the Export group's split button's main action, gated on
+                // the same Ready + active-Gantt-sheet fact as Copy Editable; the command
+                // ensures chart freshness itself.
+                RibbonControlIds.ExportPng,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 // Owner ruling 2026-11-09: the CHART and CELL lock toggles replace the shape pair.
@@ -676,6 +684,11 @@ public class GanttRibbonTests
                 RibbonControlIds.ToggleAutoRefresh,
                 RibbonControlIds.ToggleCellLock,
                 RibbonControlIds.ToggleChartLock,
+                // R8.8: the two PNG-export target toggles live in the Export PNG split
+                // button's menu, after the Sheet group in document order. They are gated on
+                // the same facts so the target can always be switched.
+                RibbonControlIds.ExportPngTargetClipboard,
+                RibbonControlIds.ExportPngTargetFile,
                 // R5.5: the description-label dropdown is the first
                 // selection-gated control — it shares the workbook+initialised
                 // part of the truth table and adds the single-row condition
@@ -2533,6 +2546,62 @@ public class GanttRibbonTests
 
         Assert.Equal(0, refreshed);
         Assert.Equal(0, completed);
+    }
+
+    // ---------------------------------------------------------------------
+    // R8.8 — the Export group's action surface.
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// R8.8 (owner ruling 2026-11-23): the Export group carries the three actions and no
+    /// width input. The width/unit/preset/preview surface is withdrawn, so an edit box,
+    /// dropdown or preview label reappearing here fails this pin.
+    /// </summary>
+    [Fact]
+    public void The_export_group_carries_the_actions_and_no_width_input()
+    {
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = NamespaceCustomUI2010;
+        XElement group = doc.Descendants(ns + "group")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportGroup);
+
+        Assert.Empty(group.Descendants(ns + "editBox"));
+        Assert.Empty(group.Descendants(ns + "dropDown"));
+        Assert.Empty(group.Descendants(ns + "labelControl"));
+
+        XElement export = group.Descendants(ns + "button")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPng);
+        Assert.Equal("OnExportPngClick", (string?)export.Attribute("onAction"));
+        Assert.Equal("GetEnabled", (string?)export.Attribute("getEnabled"));
+    }
+
+    /// <summary>
+    /// R8.8: the Export PNG action is a split button whose menu carries the two radio-style
+    /// target toggles, each wired to its pressed getter and the shared onAction, and whose
+    /// main button's label states the current target.
+    /// </summary>
+    [Fact]
+    public void The_export_png_action_is_a_split_button_with_a_target_menu()
+    {
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = NamespaceCustomUI2010;
+        XElement split = doc.Descendants(ns + "splitButton")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPngSplit);
+
+        XElement primary = split.Descendants(ns + "button")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPng);
+        Assert.Equal("GetExportPngLabel", (string?)primary.Attribute("getLabel"));
+        Assert.Equal("OnExportPngClick", (string?)primary.Attribute("onAction"));
+
+        XElement clipboard = split.Descendants(ns + "toggleButton")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPngTargetClipboard);
+        Assert.Equal("GetExportPngClipboardPressed", (string?)clipboard.Attribute("getPressed"));
+        Assert.Equal("OnExportPngTargetClick", (string?)clipboard.Attribute("onAction"));
+
+        XElement file = split.Descendants(ns + "toggleButton")
+            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPngTargetFile);
+        Assert.Equal("GetExportPngFilePressed", (string?)file.Attribute("getPressed"));
+        Assert.Equal("OnExportPngTargetClick", (string?)file.Attribute("onAction"));
     }
 
     /// <summary>

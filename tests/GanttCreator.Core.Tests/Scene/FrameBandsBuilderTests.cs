@@ -663,7 +663,9 @@ public sealed class FrameBandsBuilderTests
         SceneText title = Assert.Single(outcome.Result!.Primitives.OfType<SceneText>(), text => text.PrimitiveId == "chart:title-text");
         Assert.EndsWith("…", title.Text, StringComparison.Ordinal);
         Assert.Contains(outcome.Result.Warnings, warning => warning.Code == "TitleOverflow");
-        Assert.Equal(_theme.Title, title.Style);
+        // The title keeps the theme style; the primitive adds the label family when the
+        // style names none (R8.8 font contract), so the pin compares the same normalised style.
+        Assert.Equal(_theme.Title.WithLabelFontFamilyIfMissing(), title.Style);
     }
 
     [Fact]

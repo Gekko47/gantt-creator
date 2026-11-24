@@ -5,6 +5,10 @@ using Moq;
 
 namespace GanttCreator.AddIn.Tests;
 
+// Shares the diagnostics-service collection: this class drives product callbacks that
+// resolve the process-wide CommandBoundary/DiagnosticsService singletons at call time, so
+// running it beside the host-lifecycle tests injects technical records into their logs.
+[Collection("diagnostics-service")]
 public sealed class RepairConfigCommandTests
 {
     private static ConfigIntegrityCheckOutcome Check(params ConfigIntegrityFinding[] findings) =>
@@ -188,6 +192,92 @@ public sealed class RepairConfigCommandTests
 
         Assert.Contains("open workbook", Assert.Single(messages), StringComparison.OrdinalIgnoreCase);
         repairer.Verify(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    /// <summary>
+    /// The repairer must reuse the host's catalogue writer, because that instance carries the
+    /// rolling log. The adapter's default writer has no sink, so a host-rejected write discards
+    /// its exception, HRESULT and table progress with the typed refusal (live 2026-11-24, where
+    /// the first Fix failed with no record at all).
+    /// </summary>
+    [Fact]
+    public void RunForExcel_reuses_the_logged_host_catalogue_writer()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "GanttCreator.AddIn", "RepairConfigCommand.cs"));
+
+        Assert.Contains(
+            "catalogueWriter: RibbonStateService.Instance.GetCatalogueWriter()",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_traces_the_repair_outcome()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true))
+            .Returns(ConfigRepairOutcome.Ok(1, 0, 0));
+        var records = new List<string>();
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            _ => { },
+            trace: records.Add);
+
+        Assert.Contains(
+            records,
+            record => string.Equals(
+                record,
+                "gantt.repair outcome repaired=1 confirm-skipped=0 refused=0 quarantined=0",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Run_traces_a_repairer_refusal()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true))
+            .Returns(ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused));
+        var records = new List<string>();
+        var messages = new List<string>();
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            messages.Add,
+            trace: records.Add);
+
+        Assert.Contains(
+            records,
+            record => string.Equals(record, "gantt.repair refused=CatalogueWriteRefused", StringComparison.Ordinal));
+        Assert.Contains("safely write", Assert.Single(messages), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "src"))
+                && File.Exists(Path.Combine(directory.FullName, "GanttCreator.slnx")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the repository root.");
     }
 
     [Fact]
