@@ -40,7 +40,7 @@ namespace GanttCreator.Office;
 /// <list type="table">
 /// <listheader><term>Severity</term><description>RGB colour</description></listheader>
 /// <item><term><see cref="GanttValidationSeverity.Error"/></term><description>RGB(255, 200, 200) — pastel red/pink</description></item>
-/// <item><term><see cref="GanttValidationSeverity.Warning"/></term><description>RGB(255, 235, 170) — pastel amber/yellow</description></item>
+/// <item><term><see cref="GanttValidationSeverity.Warning"/></term><description><see cref="GanttCatalogues.WarningFill"/> (#FFF2CC) — the code-owned pastel warning fill</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -83,8 +83,11 @@ public class ExcelRowWarningHighlighter(
     /// <summary>Pastel red/pink = RGB(255, 200, 200) as OLE_COLOR (0x00C8C8FF).</summary>
     private const int _olePastelRed = 0x00C8C8FF;
 
-    /// <summary>Pastel amber/yellow = RGB(255, 235, 170) as OLE_COLOR (0x00AAEBFF).</summary>
-    private const int _olePastelAmber = 0x00AAEBFF;
+    /// <summary>
+    /// The code-owned warning fill (<see cref="GanttCatalogues.WarningFill"/>), converted
+    /// once to OLE_COLOR. The error fill stays the pastel red constant above.
+    /// </summary>
+    private static readonly int _oleWarningFill = ToOleColor(GanttCatalogues.WarningFill);
 
     /// <summary>Workbook-scoped defined name under which highlighted addresses are persisted so they survive workbook close/reopen.</summary>
     private const string _highlightsPropertyName = "GanttCreator.RowHighlights";
@@ -502,9 +505,24 @@ public class ExcelRowWarningHighlighter(
         severity switch
         {
             GanttValidationSeverity.Error => _olePastelRed,
-            GanttValidationSeverity.Warning => _olePastelAmber,
+            GanttValidationSeverity.Warning => _oleWarningFill,
             _ => (int)XlColorIndex.xlColorIndexNone,
         };
+
+    /// <summary>
+    /// Converts a Core colour to the OLE_COLOR form Excel writes to
+    /// <c>Interior.Color</c>: <c>0x00BBGGRR</c>.
+    /// </summary>
+    /// <param name="colour">The Core colour to convert.</param>
+    /// <returns>The OLE_COLOR value.</returns>
+    private static int ToOleColor(ColourHex colour)
+    {
+        uint argb = colour.ARGB;
+        int red = (int)((argb >> 16) & 0xFF);
+        int green = (int)((argb >> 8) & 0xFF);
+        int blue = (int)(argb & 0xFF);
+        return (blue << 16) | (green << 8) | red;
+    }
 
     /// <summary>
     /// Orders severities so one address carrying two findings keeps the stronger colour.

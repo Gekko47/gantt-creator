@@ -23,8 +23,8 @@ public sealed class ExcelRowWarningHighlighterTests
     /// <summary>Pastel red/pink = RGB(255, 200, 200) as OLE_COLOR.</summary>
     private const int _pastelRed = 0x00C8C8FF;
 
-    /// <summary>Pastel amber/yellow = RGB(255, 235, 170) as OLE_COLOR.</summary>
-    private const int _pastelAmber = 0x00AAEBFF;
+    /// <summary>The code-owned warning fill (#FFF2CC) as OLE_COLOR.</summary>
+    private const int _warningFill = 0x00CCF2FF;
 
     /// <summary>The OLE colour Excel uses to remove a fill.</summary>
     private const int _cleared = (int)Excel.XlColorIndex.xlColorIndexNone;
@@ -50,7 +50,7 @@ public sealed class ExcelRowWarningHighlighterTests
 
         _ = harness.Highlighter.HighlightRow(1, GanttValidationSeverity.Warning);
 
-        Assert.Equal([_pastelAmber], harness.RowColours(1));
+        Assert.Equal([_warningFill], harness.RowColours(1));
     }
 
     [Fact]
@@ -220,7 +220,7 @@ public sealed class ExcelRowWarningHighlighterTests
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, outcome.NotesWritten);
-        Assert.Equal([_pastelAmber], harness.CellColours(2, 3));
+        Assert.Equal([_warningFill], harness.CellColours(2, 3));
         Assert.Empty(harness.RowColours(2));
     }
 
@@ -413,7 +413,7 @@ public sealed class ExcelRowWarningHighlighterTests
         Assert.Equal(9, outcome.NotesWritten);
         Assert.Equal([_pastelRed], harness.RowColours(1));
         Assert.Equal([_cleared], harness.RowColours(3));
-        Assert.Equal([_pastelAmber], harness.CellColours(3, 2));
+        Assert.Equal([_warningFill], harness.CellColours(3, 2));
     }
 
     /// <summary>
@@ -456,7 +456,7 @@ public sealed class ExcelRowWarningHighlighterTests
             [new HighlightTarget(2, 3, GanttValidationSeverity.Error)]);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal([_pastelAmber, _pastelRed], harness.CellColours(2, 3));
+        Assert.Equal([_warningFill, _pastelRed], harness.CellColours(2, 3));
     }
 
     /// <summary>
@@ -497,7 +497,7 @@ public sealed class ExcelRowWarningHighlighterTests
         Assert.True(second.Succeeded);
         Assert.Equal(0, second.NotesWritten);
         Assert.Equal([_cleared], harness.RowColours(2));
-        Assert.Equal([_pastelAmber], harness.CellColours(2, 3));
+        Assert.Equal([_warningFill], harness.CellColours(2, 3));
     }
 
     [Fact]
