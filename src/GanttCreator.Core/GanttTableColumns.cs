@@ -217,6 +217,61 @@ public sealed class GanttTableSchema
     }
 
     /// <summary>
+    /// Builds the schema-column to table-column index map from live header names
+    /// (Ordinal comparison), so a reordered table still maps correctly.
+    /// </summary>
+    /// <param name="headerNames">The live table's header names, in table order.</param>
+    /// <param name="columnMap">
+    /// Per-schema-column one-based table indexes, or <see langword="null"/> when a
+    /// required column is absent. A missing optional column maps to <c>-1</c>.
+    /// </param>
+    /// <returns><see langword="true"/> when every required header resolved.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="headerNames"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// This is the single authority for the map the Office adapters build before a
+    /// read or write. A null or empty header is skipped rather than matched, which
+    /// is how the bulk <c>Value2</c> path already behaves.
+    /// </remarks>
+    public static bool TryBuildColumnMap(IReadOnlyList<string> headerNames, out int[]? columnMap)
+    {
+        ArgumentNullException.ThrowIfNull(headerNames);
+
+        IReadOnlyList<GanttTableColumn> schema = Default.Columns;
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new(headerNames.Count, StringComparer.Ordinal);
+        for (int index = 0; index < headerNames.Count; index++)
+        {
+            string? name = headerNames[index];
+            if (!string.IsNullOrEmpty(name))
+            {
+                byName[name] = index + 1;
+            }
+        }
+
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        {
+            GanttTableColumn expected = schema[schemaIndex];
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
+            {
+                if (expected.IsRequired)
+                {
+                    columnMap = null;
+                    return false;
+                }
+
+                map[schemaIndex] = -1;
+            }
+            else
+            {
+                map[schemaIndex] = tableIndex;
+            }
+        }
+
+        columnMap = map;
+        return true;
+    }
+
+    /// <summary>
     /// The first-release schema: the visible columns in authoring order, followed
     /// by the engine columns in contract order. R4.7A added <c>SiblingOrder</c>
     /// immediately after <c>ParentId</c> and advanced the schema version 3 → 4.
