@@ -188,7 +188,7 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
-            PublishExportAspect(outcome, RibbonStateService.Instance, fullInvalidation: true);
+            RibbonStateService.Instance.MarkChartRenderCurrent();
             RibbonStateService.ClearStatusBar();
         }
         else
@@ -256,7 +256,7 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
-            PublishExportAspect(outcome, RibbonStateService.Instance, fullInvalidation: false);
+            RibbonStateService.Instance.MarkChartRenderCurrent();
 
             // R5.1a: an AUTO end's displayed date comes from the range the chart
             // just used. Reading it off the outcome costs two comparisons and only
@@ -311,41 +311,6 @@ internal static class RefreshSheetCommand
         CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
             CultureInfo.InvariantCulture,
             $"gantt.refresh command ms={Stopwatch.GetElapsedTime(since).TotalMilliseconds:0.#} source={(automatic ? "automatic" : "manual")}"));
-
-    /// <summary>
-    /// Publishes the export aspect a completed pass recorded to the ribbon state (R8.7
-    /// D4/D5), so the PNG preview converts against the chart the user is looking at.
-    /// A refused pass records nothing — the preview keeps describing the last completed
-    /// render — and an unchanged aspect costs no invalidation at all.
-    /// </summary>
-    /// <param name="outcome">The completed refresh outcome.</param>
-    /// <param name="stateService">The ribbon state receiving the aspect.</param>
-    /// <param name="fullInvalidation">
-    /// True on the explicit path, which re-queries every getter anyway; false on the
-    /// automatic path, which invalidates only the preview label and the export action.
-    /// </param>
-    internal static void PublishExportAspect(
-        GanttRefreshOutcome outcome,
-        RibbonStateService stateService,
-        bool fullInvalidation)
-    {
-        ArgumentNullException.ThrowIfNull(outcome);
-        ArgumentNullException.ThrowIfNull(stateService);
-
-        if (!outcome.Succeeded || !stateService.UpdateExportAspect(outcome.ExportAspect))
-        {
-            return;
-        }
-
-        if (fullInvalidation)
-        {
-            stateService.Invalidate();
-            return;
-        }
-
-        stateService.InvalidateControl(RibbonControlIds.PngPreviewLabel);
-        stateService.InvalidateControl(RibbonControlIds.ExportPng);
-    }
 
     /// <summary>Runs an injected refresh, for tests and for the R4.9 wiring.</summary>
     /// <param name="orchestrator">The refresh service to invoke.</param>

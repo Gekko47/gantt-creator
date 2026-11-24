@@ -698,15 +698,9 @@ public class GanttRibbonTests
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.SizeDropdown,
                 RibbonControlIds.Margin,
-                // R8.7: the PNG unit and preset dropdowns sit in the Export group,
-                // which follows the Size group in document order; the width box is an
-                // edit box, so it appears in the edit-box group below.
-                RibbonControlIds.PngUnit,
-                RibbonControlIds.PngSize,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
                 RibbonControlIds.MarginCm,
-                RibbonControlIds.PngWidth,
             ],
             gatedIds);
     }
@@ -2545,103 +2539,30 @@ public class GanttRibbonTests
     }
 
     // ---------------------------------------------------------------------
-    // R8.7 — the PNG width surface in the Export group.
+    // R8.8 — the Export group's action surface.
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// R8.7: the Export group carries the width box, the unit and preset dropdowns and
-    /// the preview label, each wired to its callback. A control in the XML with no
-    /// callback — or a callback whose name drifted from the control — is the defect
-    /// this pins; the arity is pinned separately by
-    /// <see cref="RibbonCallbackSignatureTests"/>.
+    /// R8.8 (owner ruling 2026-11-23): the Export group carries the three actions and no
+    /// width input. The width/unit/preset/preview surface is withdrawn, so an edit box,
+    /// dropdown or preview label reappearing here fails this pin.
     /// </summary>
     [Fact]
-    public void The_export_group_carries_the_png_width_surface()
+    public void The_export_group_carries_the_actions_and_no_width_input()
     {
         XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = NamespaceCustomUI2010;
         XElement group = doc.Descendants(ns + "group")
             .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportGroup);
 
-        XElement width = group.Descendants(ns + "editBox")
-            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.PngWidth);
-        Assert.Equal("GetPngWidth", (string?)width.Attribute("getText"));
-        Assert.Equal("OnPngWidthChange", (string?)width.Attribute("onChange"));
-        Assert.Equal("GetEnabled", (string?)width.Attribute("getEnabled"));
+        Assert.Empty(group.Descendants(ns + "editBox"));
+        Assert.Empty(group.Descendants(ns + "dropDown"));
+        Assert.Empty(group.Descendants(ns + "labelControl"));
 
-        XElement unit = group.Descendants(ns + "dropDown")
-            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.PngUnit);
-        Assert.Equal("GetPngUnit", (string?)unit.Attribute("getSelectedItemIndex"));
-        Assert.Equal("OnPngUnitChange", (string?)unit.Attribute("onAction"));
-        Assert.Equal("GetEnabled", (string?)unit.Attribute("getEnabled"));
-
-        XElement preset = group.Descendants(ns + "dropDown")
-            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.PngSize);
-        Assert.Equal("GetPngSizeItemCount", (string?)preset.Attribute("getItemCount"));
-        Assert.Equal("GetPngSizeItemID", (string?)preset.Attribute("getItemID"));
-        Assert.Equal("GetPngSizeItemLabel", (string?)preset.Attribute("getItemLabel"));
-        Assert.Equal("GetPngSizeSelectedIndex", (string?)preset.Attribute("getSelectedItemIndex"));
-        Assert.Equal("OnPngSizeChange", (string?)preset.Attribute("onAction"));
-        Assert.Equal("GetEnabled", (string?)preset.Attribute("getEnabled"));
-
-        XElement preview = group.Descendants(ns + "labelControl")
-            .Single(element => (string?)element.Attribute("id") == RibbonControlIds.PngPreviewLabel);
-        Assert.Equal("GetPngPreview", (string?)preview.Attribute("getLabel"));
-
-        // R8.8: the command's button is in the same group and carries the readiness gate.
         XElement export = group.Descendants(ns + "button")
             .Single(element => (string?)element.Attribute("id") == RibbonControlIds.ExportPng);
         Assert.Equal("OnExportPngClick", (string?)export.Attribute("onAction"));
         Assert.Equal("GetEnabled", (string?)export.Attribute("getEnabled"));
-    }
-
-    /// <summary>
-    /// R8.7: the two input handlers commit through the state service — the same
-    /// store-then-invalidate path the service tests pin — so the ribbon never holds
-    /// a second copy of the input.
-    /// </summary>
-    [Fact]
-    public void The_png_width_and_unit_handlers_commit_through_the_state_service()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-
-        GanttRibbon.OnPngWidthChange(null, " 12 ", service);
-        GanttRibbon.OnPngUnitChange(null, RibbonControlIds.PngUnitIn, 1, service);
-
-        Assert.Equal("12", GanttRibbon.GetPngWidth(null, service));
-        Assert.Equal(1, GanttRibbon.GetPngUnit(null, service));
-    }
-
-    /// <summary>
-    /// R8.7 D6: selecting a preset writes the catalogue width and the centimetre unit
-    /// atomically, so the preview and the box can never disagree about the unit.
-    /// </summary>
-    [Fact]
-    public void The_png_preset_handler_writes_the_preset_width_and_unit()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-
-        GanttRibbon.OnPngSizeChange(null, PngPreview.PresetItemId(SizePresets.A4Portrait), 0, service);
-
-        Assert.Equal(
-            PngPreview.CmText(SizePresets.A4Portrait.WidthPt),
-            GanttRibbon.GetPngWidth(null, service));
-        Assert.Equal(0, GanttRibbon.GetPngUnit(null, service));
-    }
-
-    /// <summary>
-    /// R8.7 D5: before a completed render records an aspect the label says so, rather
-    /// than showing a size computed from nothing.
-    /// </summary>
-    [Fact]
-    public void The_png_preview_reports_the_not_available_state_before_a_render()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-
-        Assert.Equal(PngPreview.NotAvailableText, GanttRibbon.GetPngPreview(null, service));
     }
 
     /// <summary>

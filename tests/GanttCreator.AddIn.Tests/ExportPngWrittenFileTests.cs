@@ -35,12 +35,9 @@ public sealed class ExportPngWrittenFileTests
             Assert.Equal(outcome.Dimensions.PixelWidth, inspection.Width);
             Assert.Equal(outcome.Dimensions.PixelHeight, inspection.Height);
 
-            // The dimensions are the command's own budget over the pre-flight's bounds, so
-            // the file cannot be sized from the preview's cached aspect.
-            PixelDimensions expected = ExportSize.ToPixels(
-                ExportSize.ParseWidth("10cm"),
-                Bounds.Width,
-                Bounds.Height);
+            // The dimensions are the chart's own bounds at 300 DPI, so the file cannot be
+            // sized from any cached value: 800 pt x 400 pt → 3333 x 1667 px.
+            PixelDimensions expected = ExportSize.ToPixelsFromPoints(Bounds.Width, Bounds.Height);
             Assert.Equal(expected, outcome.Dimensions);
         }
         finally
@@ -118,8 +115,6 @@ public sealed class ExportPngWrittenFileTests
                 new StubMeasurement(),
                 (_, _, _, _, _) => SceneBuildRequestOutcome.Ok(new SceneBuildRequest()),
                 (_, _, _) => new ExportBoundsOutcome(new ExportBounds(Bounds), null, null, scene)),
-            "10",
-            ExportUnit.Centimetres,
             new FixedDialog(path),
             (s, dimensions, background) => SceneRasterRenderer.Render(s, dimensions, background),
             PngExportEncoder.Encode,

@@ -70,17 +70,14 @@ internal enum ExportPngRefusal
     /// <summary>The export bounds or scene were refused, so no file was written.</summary>
     BoundsRefused = 10,
 
-    /// <summary>The stored width text no longer parses as a width request.</summary>
-    InvalidWidth = 11,
-
-    /// <summary>The width converts to pixels beyond the safety limits.</summary>
-    WidthRefused = 12,
+    /// <summary>The composition's bounds convert to pixels beyond the safety limits.</summary>
+    DimensionsRefused = 11,
 
     /// <summary>The render refused (a pinned font could not be loaded).</summary>
-    RenderRefused = 13,
+    RenderRefused = 12,
 
     /// <summary>The atomic write or its post-write validation refused.</summary>
-    WriteRefused = 14,
+    WriteRefused = 13,
 }
 
 /// <summary>The typed result of one PNG export run (R8.8).</summary>
@@ -139,8 +136,6 @@ internal sealed record ExportPngOutcome(
 /// The shared pre-flight request (table reader, configuration reader, grid measurement,
 /// export request factory, bounds resolver). Required.
 /// </param>
-/// <param name="WidthText">The stored width number, read at execution time. Required.</param>
-/// <param name="Unit">The unit the number is expressed in.</param>
 /// <param name="Dialog">The save-file dialog port. Required.</param>
 /// <param name="Render">The render entry. Required.</param>
 /// <param name="Encode">The encode entry. Required.</param>
@@ -148,8 +143,6 @@ internal sealed record ExportPngOutcome(
 /// <param name="TechnicalRecord">Receives the export records, or null to discard them.</param>
 internal sealed record ExportPngRequest(
     EditableExportPreflightRequest? Preflight,
-    string? WidthText,
-    ExportUnit Unit,
     ISaveFileDialogPort? Dialog,
     PngRender? Render,
     PngEncode? Encode,
@@ -157,25 +150,26 @@ internal sealed record ExportPngRequest(
     Action<string>? TechnicalRecord = null);
 
 /// <summary>
-/// R8.8 D1: the Export PNG click. Runs the shared pre-flight, its own width parse and pixel
-/// budget against the fresh bounds, the save dialog, the render, the encode, and the atomic
-/// write with post-write validation — reporting success only after the file was validated.
+/// R8.8 D1/D7: the Export PNG click. Runs the shared pre-flight, sizes the image from the
+/// fresh composition bounds at 300 DPI, shows the save dialog, renders, encodes, and writes
+/// atomically with post-write validation — reporting success only after the file was validated.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The order is the contract.</b> Every input-dependent refusal (pre-flight, parse, pixel
+/// <b>The order is the contract.</b> Every input-dependent refusal (pre-flight, dimension
 /// budget) precedes the dialog, so a refused export never makes the user pick a path first;
 /// the render precedes the write, and the write's own validator precedes success.
 /// </para>
 /// <para>
-/// <b>The command never trusts the preview's cached aspect.</b> The pixel dimensions come from
-/// the pre-flight's own resolved bounds, so a table changed since the last render cannot make
-/// the command write a file sized for a chart that no longer exists.
+/// <b>The image is the chart's own size (owner ruling 2026-11-23).</b> The pixel dimensions
+/// derive from the pre-flight's freshly resolved export-composition bounds in points, so the
+/// PNG is what the user sees and a table changed since the last render can never size the
+/// file for a chart that no longer exists. There is no width input.
 /// </para>
 /// <para>
-/// <b>The render is synchronous on Excel's command thread</b> (D6). Typical widths cost a few
-/// million pixels and the <see cref="ExportSize.MaxTotalPixels"/> budget bounds the legal
-/// worst case; cancellation for long non-COM rendering is R9.1's row.
+/// <b>The render is synchronous on Excel's command thread</b> (D6). The
+/// <see cref="ExportSize.MaxTotalPixels"/> budget bounds the legal worst case; cancellation
+/// for long non-COM rendering is R9.1's row.
 /// </para>
 /// <para>
 /// <b>A scene-contract fault is not caught here.</b> <see cref="SceneRasterRenderer.Render"/>
@@ -189,14 +183,14 @@ internal static class ExportPngCommand
 {
     /// <summary>The one actionable line used when a required dependency is absent.</summary>
     internal const string ConstructionMessage =
-        "The export could not start. Run Refresh chart, then export again.";
+        "The export could not start. Try again, or run Refresh chart if the problem persists.";
 
     /// <summary>The file name the save dialog is pre-filled with.</summary>
     internal const string SuggestedFileName = "gantt.png";
 
     /// <summary>
-    /// Runs the live PNG export in the current Excel session: reads the stored width and unit
-    /// at execution, wires the production seams, runs once, and restores the add-in tab.
+    /// Runs the live PNG export in the current Excel session: wires the production seams,
+    /// runs once, and restores the add-in tab.
     /// </summary>
     /// <remarks>
     /// <b>No protection window and no application-state scope.</b> The pre-flight reads and
@@ -225,8 +219,6 @@ internal static class ExportPngCommand
 
         ExportPngRequest request = new(
             preflight,
-            RibbonStateService.Instance.GetPngWidthText(),
-            RibbonStateService.Instance.GetPngUnit(),
             new WindowsSaveFileDialogPort(),
             RenderLive,
             EncodeLive,
@@ -307,34 +299,17 @@ internal static class ExportPngCommand
                 preflight.DroppedRowCount);
         }
 
-        // Stage 2 — the command's own parse and pixel budget against the FRESH bounds (D1).
-        WidthRequest widthRequest;
-        try
-        {
-            widthRequest = ExportSize.ParseWidth(PngPreview.ComposeInput(request.WidthText ?? string.Empty, request.Unit));
-        }
-        catch (FormatException ex)
-        {
-            return Refuse(
-                ExportPngRefusal.InvalidWidth,
-                $"{ex.Message} Check the PNG width and unit, then export again.",
-                failurePresenter,
-                preflight.DroppedRowCount);
-        }
-
+        // Stage 2 — pixel dimensions from the FRESH composition bounds at 300 DPI (D7).
         PixelDimensions dimensions;
         try
         {
-            dimensions = ExportSize.ToPixels(
-                widthRequest,
-                bounds.Bounds.Width,
-                bounds.Bounds.Height);
+            dimensions = ExportSize.ToPixelsFromPoints(bounds.Bounds.Width, bounds.Bounds.Height);
         }
         catch (ArgumentOutOfRangeException ex)
         {
             return Refuse(
-                ExportPngRefusal.WidthRefused,
-                $"{TrimParameterSuffix(ex.Message)} Choose a smaller PNG width and export again.",
+                ExportPngRefusal.DimensionsRefused,
+                $"{TrimParameterSuffix(ex.Message)} Reduce the chart's size and export again.",
                 failurePresenter,
                 preflight.DroppedRowCount);
         }
@@ -348,10 +323,9 @@ internal static class ExportPngCommand
         }
 
         // Diagnosis hook (live defect 2026-11-23): the raster renderer refuses a text
-        // primitive whose style names no font family, and the scene builders historically
-        // left FontFamily null because only the raster path reads it. The trace names the
-        // style keys and families BEFORE the refusal, so a live export says which family
-        // the scene is missing instead of only that one is missing.
+        // primitive whose style names no font family. The trace names the style keys and
+        // families BEFORE the refusal, so a live export says which family the scene is
+        // missing instead of only that one is missing.
         TraceTextFamilies(scene, request.TechnicalRecord);
 
         // Stage 4 + 5 — render, then encode. The render owns the surface; the bytes outlive it.

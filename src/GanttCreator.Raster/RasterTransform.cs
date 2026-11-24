@@ -12,7 +12,7 @@ namespace GanttCreator.Raster;
 /// <c>pixels = round(points / 72 * dpi * scale)</c> and requires the edge
 /// rounding to be chosen once. R8.2's decision I1 reads that formula against
 /// the passed <see cref="PixelDimensions"/>: the X and Y factors are derived
-/// from the dimensions <see cref="ExportSize.ToPixels"/> already rounded, so
+/// from the dimensions <see cref="ExportSize.ToPixelsFromPoints"/> already rounded, so
 /// the canvas is filled exactly instead of a shared scale being re-derived and
 /// landing one pixel outside it.
 /// </para>

@@ -15,19 +15,13 @@ namespace GanttCreator.Raster.Tests;
 /// </remarks>
 public class PngMetadataTests
 {
-    private const double _sceneWidthPt = 600;
-    private const double _sceneHeightPt = 326;
-
     [Theory]
-    [InlineData("2cm")]
-    [InlineData("1in")]
-    [InlineData("800px")]
-    public void Dimensions_are_exact_for_each_supported_unit(string request)
+    [InlineData(56.69291338582677, 30.8)]   // ≈2 cm wide at the scene's aspect
+    [InlineData(72, 39.12)]                  // 1 in wide
+    [InlineData(192, 104.32)]                // an 800 px target at 300 DPI
+    public void Dimensions_are_exact_for_each_composition_size(double widthPt, double heightPt)
     {
-        PixelDimensions dimensions = ExportSize.ToPixels(
-            ExportSize.ParseWidth(request),
-            _sceneWidthPt,
-            _sceneHeightPt);
+        PixelDimensions dimensions = ExportSize.ToPixelsFromPoints(widthPt, heightPt);
 
         using RasterRenderResult result = PngTestSupport.RenderRect(dimensions);
         PngExportBytes png = PngExportEncoder.Encode(result);

@@ -62,8 +62,6 @@ public sealed class ExportPngCommandTests
 
     private static ExportPngRequest Request(
         Action? onRender = null,
-        string? widthText = "10",
-        ExportUnit unit = ExportUnit.Centimetres,
         ISaveFileDialogPort? dialog = null,
         PngWrite? write = null,
         EditableExportPreflightRequest? preflight = null,
@@ -71,8 +69,6 @@ public sealed class ExportPngCommandTests
         Action<string>? technicalRecord = null) =>
         new(
             preflight ?? Preflight(),
-            widthText,
-            unit,
             dialog ?? new StubDialog("out.png"),
             (scene, dimensions, background) =>
             {
@@ -116,41 +112,29 @@ public sealed class ExportPngCommandTests
     }
 
     /// <summary>
-    /// Every input-dependent refusal precedes the dialog, so a refused export never makes
-    /// the user choose a path first (D1).
+    /// The dimension budget is checked against the FRESH composition bounds and precedes
+    /// the dialog, so an over-sized chart never makes the user choose a path first (D1/D7).
     /// </summary>
     [Fact]
-    public void Run_refuses_an_invalid_width_before_the_dialog()
+    public void Run_refuses_an_over_budget_composition_before_the_dialog()
     {
         var dialog = new StubDialog("out.png");
         var failures = new List<string>();
+        RectD huge = new(0, 0, 100_000, 400);
+        GanttScene hugeScene = GanttScene.TryCreate(huge, huge, [], []).Scene!;
+        EditableExportPreflightRequest preflight = Preflight() with
+        {
+            BoundsResolver = (_, _, _) =>
+                new ExportBoundsOutcome(new ExportBounds(huge), null, null, hugeScene),
+        };
 
         ExportPngOutcome outcome = ExportPngCommand.Run(
-            Request(widthText: "abc", dialog: dialog),
+            Request(preflight: preflight, dialog: dialog),
             _ => { },
             failures.Add);
 
         Assert.False(outcome.Succeeded);
-        Assert.Equal(ExportPngRefusal.InvalidWidth, outcome.Refusal);
-        Assert.Equal(0, dialog.Calls);
-        Assert.Single(failures);
-        Assert.False(outcome.Cancelled);
-    }
-
-    /// <summary>The pixel budget is checked against the FRESH bounds, and names the limit.</summary>
-    [Fact]
-    public void Run_refuses_a_width_over_the_limit_before_the_dialog()
-    {
-        var dialog = new StubDialog("out.png");
-        var failures = new List<string>();
-
-        ExportPngOutcome outcome = ExportPngCommand.Run(
-            Request(widthText: "100000", dialog: dialog),
-            _ => { },
-            failures.Add);
-
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(ExportPngRefusal.WidthRefused, outcome.Refusal);
+        Assert.Equal(ExportPngRefusal.DimensionsRefused, outcome.Refusal);
         Assert.Equal(0, dialog.Calls);
         Assert.Contains("65535", failures[0], StringComparison.Ordinal);
         Assert.DoesNotContain("Parameter", failures[0], StringComparison.Ordinal);

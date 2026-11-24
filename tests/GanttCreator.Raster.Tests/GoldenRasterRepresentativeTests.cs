@@ -58,40 +58,40 @@ public sealed class GoldenRasterRepresentativeTests
     private const string _sceneFile = "reference-scene.json";
     private const string _exactMode = "exact";
 
-    private static readonly WidthArm _narrowArm = new("narrow-800px", "800px", 800, 435);
+    private static readonly WidthArm _narrowArm = new("narrow-800px", "800px", 192, 800, 435);
 
     /// <summary>
-    /// Gets the five owner-ratified arms as serializable theory rows: key, width
-    /// request, and exact pixel size. The preset arms derive their width from
-    /// <see cref="SizePresets"/> at full precision (never a hand-typed literal); the
-    /// two pixel arms are the ratified narrow and wide widths.
+    /// Gets the five owner-ratified arms as serializable theory rows: key, the committed
+    /// sidecar width text, the width in points the render consumes, and the exact pixel
+    /// size. The preset arms derive their width from <see cref="SizePresets"/> at full
+    /// precision (never a hand-typed literal); the two pixel arms are the ratified narrow
+    /// and wide widths (px × 72 / 300 points). The width TEXT is retained because the
+    /// committed sidecars record it; the render is sized from the points, so no baseline
+    /// regenerates.
     /// </summary>
-    public static TheoryData<string, string, int, int> Arms { get; } = new()
+    public static TheoryData<string, string, double, int, int> Arms { get; } = new()
     {
-        { "a4-landscape", CmWidth(SizePresets.A4Landscape.WidthPt), 3508, 1906 },
-        { "presentation-16x9", CmWidth(SizePresets.Presentation16x9.WidthPt), 5333, 2898 },
-        { "presentation-4x3", CmWidth(SizePresets.Presentation4x3.WidthPt), 4267, 2318 },
-        { _narrowArm.Key, _narrowArm.WidthText, _narrowArm.PixelWidth, _narrowArm.PixelHeight },
-        { "wide-2400px", "2400px", 2400, 1304 },
+        { "a4-landscape", CmWidth(SizePresets.A4Landscape.WidthPt), SizePresets.A4Landscape.WidthPt, 3508, 1906 },
+        { "presentation-16x9", CmWidth(SizePresets.Presentation16x9.WidthPt), SizePresets.Presentation16x9.WidthPt, 5333, 2898 },
+        { "presentation-4x3", CmWidth(SizePresets.Presentation4x3.WidthPt), SizePresets.Presentation4x3.WidthPt, 4267, 2318 },
+        { _narrowArm.Key, _narrowArm.WidthText, _narrowArm.WidthPt, _narrowArm.PixelWidth, _narrowArm.PixelHeight },
+        { "wide-2400px", "2400px", 576, 2400, 1304 },
     };
 
     /// <summary>One owner-ratified representative render width.</summary>
-    private sealed record WidthArm(string Key, string WidthText, int PixelWidth, int PixelHeight);
+    private sealed record WidthArm(string Key, string WidthText, double WidthPt, int PixelWidth, int PixelHeight);
 
     [Theory]
     [MemberData(nameof(Arms))]
     public void The_representative_render_at_each_approved_width_matches_its_approved_baseline(
-        string key, string widthText, int pixelWidth, int pixelHeight)
+        string key, string widthText, double widthPt, int pixelWidth, int pixelHeight)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(widthText);
 
-        WidthArm arm = new(key, widthText, pixelWidth, pixelHeight);
+        WidthArm arm = new(key, widthText, widthPt, pixelWidth, pixelHeight);
         GanttScene scene = LoadReferenceScene();
-        PixelDimensions dimensions = ExportSize.ToPixels(
-            ExportSize.ParseWidth(arm.WidthText),
-            scene.ChartBounds.Width,
-            scene.ChartBounds.Height);
+        PixelDimensions dimensions = DimensionsFor(scene, arm);
 
         Assert.Equal(arm.PixelWidth, dimensions.PixelWidth);
         Assert.Equal(arm.PixelHeight, dimensions.PixelHeight);
@@ -112,10 +112,7 @@ public sealed class GoldenRasterRepresentativeTests
     public void A_repeated_render_at_one_width_produces_an_identical_digest()
     {
         GanttScene scene = LoadReferenceScene();
-        PixelDimensions dimensions = ExportSize.ToPixels(
-            ExportSize.ParseWidth(_narrowArm.WidthText),
-            scene.ChartBounds.Width,
-            scene.ChartBounds.Height);
+        PixelDimensions dimensions = DimensionsFor(scene, _narrowArm);
 
         using RasterRenderResult first = SceneRasterRenderer.Render(scene, dimensions, RasterBackground.Transparent);
         using RasterRenderResult second = SceneRasterRenderer.Render(scene, dimensions, RasterBackground.Transparent);
@@ -213,8 +210,23 @@ public sealed class GoldenRasterRepresentativeTests
     private static string GoldenDirectory =>
         Path.Combine(AppContext.BaseDirectory, "golden", _goldenSubdirectory);
 
+    /// <summary>
+    /// Formats a width in points as the committed sidecar's centimetre text. The 2.54
+    /// factor is this suite's own display formatting, not a second sizing authority:
+    /// the render is sized from points through <see cref="ExportSize.ToPixelsFromPoints"/>.
+    /// </summary>
     private static string CmWidth(double widthPt) =>
-        (widthPt / SizePresets.PointsPerInch * ExportSize.CmPerInch).ToString("R", CultureInfo.InvariantCulture) + "cm";
+        (widthPt / SizePresets.PointsPerInch * 2.54).ToString("R", CultureInfo.InvariantCulture) + "cm";
+
+    /// <summary>
+    /// The pixel dimensions for one arm: its width in points and the scene's own aspect
+    /// height, converted once at 300 DPI. This reproduces the withdrawn
+    /// <c>ExportSize.ToPixels(WidthRequest, …)</c> numbers exactly.
+    /// </summary>
+    private static PixelDimensions DimensionsFor(GanttScene scene, WidthArm arm) =>
+        ExportSize.ToPixelsFromPoints(
+            arm.WidthPt,
+            arm.WidthPt * scene.ChartBounds.Height / scene.ChartBounds.Width);
 
     private static string MetaPath(string directory, WidthArm arm) =>
         Path.Combine(directory, "representative-" + arm.Key + ".meta");
@@ -225,10 +237,7 @@ public sealed class GoldenRasterRepresentativeTests
     private static RasterRenderResult RenderArm(WidthArm arm)
     {
         GanttScene scene = LoadReferenceScene();
-        PixelDimensions dimensions = ExportSize.ToPixels(
-            ExportSize.ParseWidth(arm.WidthText),
-            scene.ChartBounds.Width,
-            scene.ChartBounds.Height);
+        PixelDimensions dimensions = DimensionsFor(scene, arm);
         return SceneRasterRenderer.Render(scene, dimensions, RasterBackground.Transparent);
     }
 
@@ -245,10 +254,7 @@ public sealed class GoldenRasterRepresentativeTests
         {
             Dictionary<string, string> recorded = ReadMeta(directory, arm);
             GanttScene scene = LoadReferenceScene();
-            PixelDimensions dimensions = ExportSize.ToPixels(
-                ExportSize.ParseWidth(arm.WidthText),
-                scene.ChartBounds.Width,
-                scene.ChartBounds.Height);
+            PixelDimensions dimensions = DimensionsFor(scene, arm);
             using RasterRenderResult result = SceneRasterRenderer.Render(scene, dimensions, RasterBackground.Transparent);
 
             foreach ((string field, string expected) in CurrentFields(arm, result))

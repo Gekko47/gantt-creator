@@ -206,65 +206,25 @@ public class RefreshSheetCommandTests
     }
 
     // ---------------------------------------------------------------------
-    // R8.7 D4/D5 — the export aspect published by a completed refresh.
+    // R8.8 — a completed refresh marks the chart current for Export PNG.
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// A completed pass hands its recorded aspect to the ribbon state, so the PNG
-    /// preview converts against the chart the user is looking at — not against a
-    /// second composition built for the preview.
+    /// Both refresh paths mark the chart current after a completed pass (R8.8): the
+    /// marker sits inside each success branch beside the warnings publish, so a refused
+    /// pass records nothing and the Export PNG command runs its own refresh when false.
     /// </summary>
     [Fact]
-    public void PublishExportAspect_records_the_aspect_from_a_completed_pass()
+    public void Both_refresh_paths_mark_the_chart_current_after_a_completed_pass()
     {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        GanttRefreshOutcome outcome = GanttRefreshOutcome.Ok(
-            [],
-            shapesWritten: 0,
-            durationCellsWritten: 0,
-            styleKeyCellsWritten: 0,
-            exportAspect: new ExportAspectPt(800, 400));
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "GanttCreator.AddIn", "RefreshSheetCommand.cs"));
 
-        RefreshSheetCommand.PublishExportAspect(outcome, service, fullInvalidation: false);
-
-        string preview = service.GetPngPreviewText();
-        Assert.NotEqual(PngPreview.NotAvailableText, preview);
-        Assert.Contains("px", preview, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// A refused pass records nothing, so the preview keeps describing the last
-    /// completed render rather than a chart that was never written (D5).
-    /// </summary>
-    [Fact]
-    public void PublishExportAspect_ignores_a_refused_pass()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        GanttRefreshOutcome outcome = Refused(GanttRefreshRefusal.PartialReconciliation)
-            with { ExportAspect = new ExportAspectPt(800, 400) };
-
-        RefreshSheetCommand.PublishExportAspect(outcome, service, fullInvalidation: true);
-
-        Assert.Equal(PngPreview.NotAvailableText, service.GetPngPreviewText());
-    }
-
-    /// <summary>
-    /// A completed pass that resolves no aspect clears the previous one: an aspect
-    /// recorded for an earlier composition is stale, and D5 forbids showing it
-    /// against a changed table.
-    /// </summary>
-    [Fact]
-    public void PublishExportAspect_clears_a_stale_aspect_when_a_completed_pass_has_none()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        Assert.True(service.UpdateExportAspect(new ExportAspectPt(800, 400)));
-
-        RefreshSheetCommand.PublishExportAspect(Success(), service, fullInvalidation: true);
-
-        Assert.Equal(PngPreview.NotAvailableText, service.GetPngPreviewText());
+        int first = source.IndexOf("MarkChartRenderCurrent", StringComparison.Ordinal);
+        Assert.True(first > 0, "The explicit refresh path must mark the chart current.");
+        Assert.True(
+            source.IndexOf("MarkChartRenderCurrent", first + 1, StringComparison.Ordinal) > first,
+            "The automatic refresh path must mark the chart current too.");
     }
 
     private static string FindRepositoryRoot()

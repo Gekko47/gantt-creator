@@ -3,7 +3,6 @@ using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
-using GanttCreator.Raster;
 
 namespace GanttCreator.AddIn;
 
@@ -82,22 +81,12 @@ internal class RibbonStateService
     private HashSet<string> _hiddenColumns = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// The user-entered PNG width text, in <see cref="_pngUnit"/> (R8.7). Session
-    /// state exactly like <see cref="_hiddenColumns"/>: never persisted, and it
-    /// survives a workbook switch because it is a user preference rather than a
-    /// document fact. Only the exported aspect is workbook-scoped (D5).
+    /// Gets a value indicating whether a refresh has completed since the workbook state
+    /// last changed (R8.8). The Export PNG command consumes it to decide whether the chart
+    /// it would export matches the sheet: false after a workbook switch or before the first
+    /// completed render, true after one. Workbook-scoped like the warnings snapshots.
     /// </summary>
-    private string _pngWidthText = PngPreview.DefaultWidthText;
-
-    /// <summary>The selected PNG width unit (R8.7). Never silently converts the value (D3).</summary>
-    private ExportUnit _pngUnit = PngPreview.DefaultUnit;
-
-    /// <summary>
-    /// The export aspect recorded by the last completed render, or null before one
-    /// (R8.7 D4/D5). Workbook-scoped: cleared on a workbook switch, and never
-    /// trusted by the export command, which resolves its own bounds.
-    /// </summary>
-    private ExportAspectPt? _exportAspect;
+    internal bool ChartRenderCurrent { get; private set; }
 
     /// <summary>
     /// Whether the next successful settings read should re-seed the persisted session switches
@@ -2285,144 +2274,15 @@ internal class RibbonStateService
             or RibbonControlIds.ToggleCellLock
             or RibbonControlIds.ToggleAutoRefresh =>
             _state.HasActiveWorkbook && _state.SheetInitialised && _state.ActiveSheetIsGanttSheet,
-        // R8.7: the width/unit/preset inputs are editable while the Ready group is
-        // visible (the user may pre-type a width); only the export action carries the
-        // readiness gate, and that gate is PngExportReady.
-        RibbonControlIds.PngWidth
-            or RibbonControlIds.PngUnit
-            or RibbonControlIds.PngSize =>
-            _state.Mode == RibbonMode.Ready && _state.ActiveSheetIsGanttSheet,
-        RibbonControlIds.ExportPng => PngExportReady,
         _ => _state.IsEnabled(controlId),
     };
 
-    /// <summary>Gets the user-entered PNG width text (R8.7).</summary>
-    /// <returns>The stored width text. A pure read: no Excel probe, no ribbon call.</returns>
-    internal string GetPngWidthText() => _pngWidthText;
-
-    /// <summary>Gets the stored PNG unit (R8.7).</summary>
-    /// <returns>The unit the width number is expressed in; the dropdown index is derived from it.</returns>
-    internal ExportUnit GetPngUnit() => _pngUnit;
-
-    /// <summary>Gets the PNG unit dropdown's selected index (R8.7).</summary>
-    /// <returns>0 for centimetres, 1 for inches, 2 for pixels.</returns>
-    internal int GetPngUnitIndex() => PngPreview.UnitIndex(_pngUnit);
-
-    /// <summary>Gets the PNG preset dropdown's selected index (R8.7 D6).</summary>
-    /// <returns>The matching preset index, or -1 for a custom width.</returns>
-    internal int GetPngPresetIndex() => PngPreview.PresetIndex(_pngWidthText, _pngUnit);
-
     /// <summary>
-    /// Gets the calculated-height and pixel-dimension preview text (R8.7 D1/D2/D5).
+    /// Records that a refresh completed (R8.8), so the next Export PNG click knows the
+    /// chart on the sheet matches the table. Store-only: nothing queries this during a
+    /// ribbon refresh, so it costs no invalidation.
     /// </summary>
-    /// <returns>
-    /// The delegated <see cref="ExportSize"/> output for the current input and cached
-    /// aspect; the actionable validation message when the input is invalid; or the
-    /// not-available text before a completed render records an aspect. Fast and
-    /// side-effect-free: it parses a short string and formats cached numbers.
-    /// </returns>
-    internal string GetPngPreviewText()
-    {
-        if (_exportAspect is not { } aspect)
-        {
-            return PngPreview.NotAvailableText;
-        }
-
-        PngEvaluation evaluation = PngPreview.Evaluate(_pngWidthText, _pngUnit, aspect);
-        return evaluation.Valid
-            ? PngPreview.FormatPreview(evaluation.Request, evaluation.Dimensions)
-            : evaluation.Message;
-    }
-
-    /// <summary>
-    /// Gets whether the stored width number converts within the safety limits (R8.7
-    /// D2). The input half of <see cref="PngExportReady"/>.
-    /// </summary>
-    internal bool PngInputValid => _exportAspect is { } aspect
-        ? PngPreview.Evaluate(_pngWidthText, _pngUnit, aspect).Valid
-        : PngPreview.IsValidInput(_pngWidthText, _pngUnit);
-
-    /// <summary>
-    /// Gets whether the Export PNG command may run (R8.7 D2/D5): a valid width AND an
-    /// aspect recorded by a completed render, on a Ready workbook with the Gantt sheet
-    /// active. R8.8's button consumes this; R8.7 pins the fact.
-    /// </summary>
-    internal bool PngExportReady =>
-        PngInputValid
-        && _exportAspect is not null
-        && _state.Mode == RibbonMode.Ready
-        && _state.ActiveSheetIsGanttSheet;
-
-    /// <summary>
-    /// Commits a user-entered PNG width (R8.7). Store-only: the text is kept
-    /// verbatim (trimmed) so the preview can name an invalid value, and the export
-    /// action stays disabled until <see cref="PngInputValid"/> is true. Invalidates
-    /// the ribbon, which re-queries the preview label and the export button.
-    /// </summary>
-    /// <param name="widthText">The committed width text, or null when none was supplied.</param>
-    internal void SetPngWidth(string? widthText)
-    {
-        _pngWidthText = widthText?.Trim() ?? string.Empty;
-        Invalidate();
-    }
-
-    /// <summary>
-    /// Commits a PNG unit dropdown selection (R8.7 D3). The number is NOT converted:
-    /// it means "value in the selected unit", so switching cm→in keeps the value and
-    /// the preview recomputes. A null or unknown id leaves the unit unchanged.
-    /// </summary>
-    /// <param name="itemId">The selected unit item id, or null when unprobeable.</param>
-    internal void SetPngUnit(string? itemId)
-    {
-        if (!PngPreview.TryParseUnitId(itemId, out ExportUnit unit) || unit == _pngUnit)
-        {
-            return;
-        }
-
-        _pngUnit = unit;
-        Invalidate();
-    }
-
-    /// <summary>
-    /// Commits a PNG preset dropdown selection (R8.7 D6): writes the preset's width
-    /// at full precision in centimetres and selects the centimetre unit atomically.
-    /// A null or unknown id leaves the input unchanged.
-    /// </summary>
-    /// <param name="itemId">The selected preset item id, or null when unprobeable.</param>
-    internal void SetPngPreset(string? itemId)
-    {
-        if (PngPreview.FindPreset(itemId) is not { } preset)
-        {
-            return;
-        }
-
-        _pngWidthText = PngPreview.CmText(preset.WidthPt);
-        _pngUnit = ExportUnit.Centimetres;
-        Invalidate();
-    }
-
-    /// <summary>
-    /// Records the export aspect a completed refresh produced, or null when no aspect
-    /// resolved (R8.7 D4/D5). A refused pass never calls this, so the preview keeps
-    /// describing the last completed render.
-    /// </summary>
-    /// <param name="aspect">The recorded aspect, or null for the not-available state.</param>
-    /// <returns>
-    /// Whether the cached value changed. The explicit pass wants a full re-query; the
-    /// automatic pass invalidates only the preview label and the export action, because
-    /// it re-runs on every debounced edit and a full re-query per pass is the cost
-    /// <c>RunSilentForExcel</c> deliberately avoids.
-    /// </returns>
-    internal bool UpdateExportAspect(ExportAspectPt? aspect)
-    {
-        if (_exportAspect == aspect)
-        {
-            return false;
-        }
-
-        _exportAspect = aspect;
-        return true;
-    }
+    internal void MarkChartRenderCurrent() => ChartRenderCurrent = true;
 
     /// <summary>
     /// Gets whether the Ribbon group with <paramref name="groupId"/> is visible
@@ -4364,10 +4224,9 @@ internal class RibbonStateService
         // fold a section. It is inert on an unprotected sheet.
         RefreshSheetCommand.RepairOutlineSymbols();
 
-        // R8.7 D5: the cached export aspect belongs to the workbook it was recorded
-        // from, so a switch clears it and the preview shows the not-available state
-        // until the new workbook's first completed render records its own.
-        _exportAspect = null;
+        // R8.8: the chart-current fact belongs to the workbook it was recorded for, so a
+        // switch clears it until the new workbook's first completed refresh marks its own.
+        ChartRenderCurrent = false;
         _lastSuccessfulSceneWarnings = [];
         _currentValidationIssues = [];
         _lastSuccessfulRenderAtUtc = null;
