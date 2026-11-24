@@ -274,6 +274,14 @@ Describe 'test-scripts.ps1 parallel path hardening (CI 45193295738 / 45376223093
         $script:gateText | Should -Match 'ScriptStackTrace'
         $script:gateText | Should -Match 'FullyQualifiedErrorId'
     }
+
+    It 'pre-creates the Pester registry key before any worker starts (fresh-runner race)' {
+        # Pester creates HKCU\Software\Pester on first use; concurrent workers
+        # raced that create on a fresh runner and the losers failed their whole
+        # container (CI 45411123131). A developer machine already has the key,
+        # which is why this never reproduced locally.
+        $script:gateText | Should -Match 'HKCU:\\Software\\Pester'
+    }
 }
 
 Describe 'Format-CheckAnnotation' {

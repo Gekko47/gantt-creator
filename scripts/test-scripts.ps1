@@ -243,6 +243,27 @@ catch {
 }
 '@
 
+# Pester creates HKCU\Software\Pester the first time a container runs (its
+# TestRegistry support). Workers that start together race that create, and every
+# loser fails its whole container with
+# "Was not able to create a Pester Registry key for TestRegistry ... A key in
+# this path already exists", which then also surfaced as
+# "The provided Path argument was null or an empty collection." (CI 45411123131,
+# 45403782855). A developer machine already has the key, which is why this only
+# ever failed on a fresh runner, and why the file that lost the race changed
+# between runs. Create it once here so no worker races; -Force is a no-op when
+# it exists.
+if ($IsWindows) {
+    try {
+        $null = New-Item -Path 'HKCU:\Software\Pester' -Force -ErrorAction Stop
+    }
+    catch {
+        # Best effort: when the key cannot be created the previous behaviour
+        # stands and Pester reports exactly what it reported before.
+        Write-Host "test-scripts: could not pre-create HKCU:\Software\Pester: $($_.Exception.Message)"
+    }
+}
+
 # One result object per file, carrying the fields the judge needs and the text
 # of each failure, so the judge does not have to know Pester's result shape.
 # The builder is inlined in both paths because a scriptblock cannot be shared
