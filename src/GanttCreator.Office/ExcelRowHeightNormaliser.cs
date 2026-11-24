@@ -150,7 +150,7 @@ public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNor
 public class ExcelRowHeightNormaliser(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null,
-    Action<string>? trace = null) : IRowHeightNormalisationPort
+    Action<string>? trace = null) : ExcelTableAdapterBase, IRowHeightNormalisationPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
@@ -853,30 +853,8 @@ public class ExcelRowHeightNormaliser(
     internal virtual bool TryFindTable(
         Excel.Sheets sheets,
         out Excel.Worksheet? worksheet,
-        out Excel.ListObject? table)
-    {
-        worksheet = null;
-        table = null;
-        foreach (object? entry in sheets)
-        {
-            if (entry is not Excel.Worksheet candidate || candidate.ListObjects is not { } listObjects)
-            {
-                continue;
-            }
-
-            foreach (Excel.ListObject candidateTable in listObjects)
-            {
-                if (GanttChartContract.IsDataTableName(candidateTable.Name))
-                {
-                    worksheet = candidate;
-                    table = candidateTable;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+        out Excel.ListObject? table) =>
+        TryLocateTable(sheets, out worksheet, out table);
 
     /// <summary>Gets a table's data-body range. Test seam over the COM parameterised property.</summary>
     /// <param name="table">The table.</param>

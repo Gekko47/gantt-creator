@@ -147,20 +147,32 @@ public sealed class ExcelRowHeightNormaliserDepthTests
         List<Excel.ListObject> tables = [table];
         _ = listObjects.Setup(c => c.GetEnumerator())
             .Returns(() => (System.Collections.IEnumerator)tables.GetEnumerator());
+        _ = listObjects.SetupGet(c => c.Count).Returns(tables.Count);
+        _ = listObjects.Setup(c => c[It.IsAny<object>()]).Returns(
+            (object index) => index is int position && position >= 1 && position <= tables.Count
+                ? tables[position - 1]
+                : null!);
         Mock<Excel.Worksheet> sheet = new();
         _ = sheet.SetupGet(s => s.ListObjects).Returns(listObjects.Object);
         Mock<Excel.Sheets> sheets = new();
         List<object> entries = [sheet.Object];
         _ = sheets.Setup(s => s.GetEnumerator())
             .Returns(() => (System.Collections.IEnumerator)entries.GetEnumerator());
+        _ = sheets.SetupGet(s => s.Count).Returns(entries.Count);
+        _ = sheets.Setup(s => s[It.IsAny<object>()]).Returns(
+            (object index) => index is int position && position >= 1 && position <= entries.Count
+                ? entries[position - 1]
+                : null!);
         return sheets.Object;
     }
 
     private static Excel.Sheets EmptySheets()
     {
         Mock<Excel.Sheets> sheets = new();
+        List<object> entries = [];
         _ = sheets.Setup(s => s.GetEnumerator())
-            .Returns(() => (System.Collections.IEnumerator)new List<object>().GetEnumerator());
+            .Returns(() => (System.Collections.IEnumerator)entries.GetEnumerator());
+        _ = sheets.SetupGet(s => s.Count).Returns(entries.Count);
         return sheets.Object;
     }
 
