@@ -364,42 +364,10 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.NullRequest);
         }
 
-        // R4.8A D4. The live sheet's real cells are the data panel, so drawing one
-        // would cover the user's own cells.
-        //
-        // Checked FIRST, before the content and measurement validations, and that
-        // order is deliberate rather than incidental. A panel on a live request is a
-        // request-construction error: it is true of the request itself, independent
-        // of its events or its measurements, and it is the one condition the caller
-        // must fix before anything else can be diagnosed. Checked after EmptyEvents,
-        // an otherwise-valid live request that merely also carried a panel would be
-        // reported as having no events, and the caller would go looking for rows that
-        // were there all along.
-        //
-        // It is also checked before any geometry is derived, because the panel's
-        // bounds feed the frame rectangle (BuildFramePanelAndScene reads the built
-        // panel to size the chart background) — a live request carrying a panel
-        // would otherwise have produced a wrong frame before anything could notice.
-        if (!SceneCompositionProfiles.DrawsDataPanel(request.Profile) && request.Panel is not null)
+        // The order is fixed: the panel-first rule is documented on ValidateRequest.
+        if (ValidateRequest(request) is { } refusal)
         {
-            return Refused(SceneBuilderRefusal.LiveProfileCarriesPanel);
-        }
-
-        if (request.Events is null
-            || (!request.AllowEmptyEvents && request.Events.Count == 0)
-            || request.Events.Any(@event => @event is null))
-        {
-            return Refused(SceneBuilderRefusal.EmptyEvents);
-        }
-
-        if (request.Metrics is null)
-        {
-            return Refused(SceneBuilderRefusal.NullMetrics);
-        }
-
-        if (request.Grid is null)
-        {
-            return Refused(SceneBuilderRefusal.NullPanelGrid);
+            return Refused(refusal);
         }
 
         // The plot bounds are the only caller-supplied rectangle. The panel's bounds
@@ -662,6 +630,43 @@ public static class SceneBuilder
         return BuildFramePanelAndScene(request, timeScale, plotBounds, laneLayout, placements, laneParticipants, plotGlobalEntities, delineatorStyles, delineatorLabelPositions, styles, parentVisibleBounds, primitives, warnings);
     }
 
+    /// <summary>
+    /// Validates the request inputs that do not bind a value: panel, events, metrics, grid.
+    /// </summary>
+    /// <returns>The first refusal, or <see langword="null"/> when the request is usable.</returns>
+    /// <remarks>
+    /// R4.8A D4. The live sheet's real cells are the data panel, so drawing one would
+    /// cover the user's own cells.
+    ///
+    /// The panel check is FIRST, before the content and measurement validations, and
+    /// that order is deliberate rather than incidental. A panel on a live request is a
+    /// request-construction error: it is true of the request itself, independent of its
+    /// events or its measurements, and it is the one condition the caller must fix
+    /// before anything else can be diagnosed. Checked after EmptyEvents, an
+    /// otherwise-valid live request that merely also carried a panel would be reported
+    /// as having no events, and the caller would go looking for rows that were there
+    /// all along.
+    ///
+    /// It is also checked before any geometry is derived, because the panel's bounds
+    /// feed the frame rectangle (BuildFramePanelAndScene reads the built panel to size
+    /// the chart background) - a live request carrying a panel would otherwise have
+    /// produced a wrong frame before anything could notice.
+    /// </remarks>
+    private static SceneBuilderRefusal? ValidateRequest(SceneBuildRequest request)
+    {
+        bool panelOnLiveProfile =
+            !SceneCompositionProfiles.DrawsDataPanel(request.Profile) && request.Panel is not null;
+        bool noEvents = request.Events is null
+            || (!request.AllowEmptyEvents && request.Events.Count == 0)
+            || request.Events.Any(@event => @event is null);
+
+        // Ordered conditional chain: the first failing input is the reported refusal.
+        return panelOnLiveProfile ? SceneBuilderRefusal.LiveProfileCarriesPanel
+            : noEvents ? SceneBuilderRefusal.EmptyEvents
+            : request.Metrics is null ? SceneBuilderRefusal.NullMetrics
+            : request.Grid is null ? SceneBuilderRefusal.NullPanelGrid
+            : null;
+    }
 
     /// <summary>One event's resolved scene style and its resolved height.</summary>
     /// <param name="Style">The resolved scene style.</param>
