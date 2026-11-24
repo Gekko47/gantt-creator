@@ -191,6 +191,57 @@ public sealed class RepairConfigCommandTests
     }
 
     [Fact]
+    public void Run_traces_the_repair_outcome()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true))
+            .Returns(ConfigRepairOutcome.Ok(1, 0, 0));
+        var records = new List<string>();
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            _ => { },
+            trace: records.Add);
+
+        Assert.Contains(
+            records,
+            record => string.Equals(
+                record,
+                "gantt.repair outcome repaired=1 confirm-skipped=0 refused=0 quarantined=0",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Run_traces_a_repairer_refusal()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true))
+            .Returns(ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused));
+        var records = new List<string>();
+        var messages = new List<string>();
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            messages.Add,
+            trace: records.Add);
+
+        Assert.Contains(
+            records,
+            record => string.Equals(record, "gantt.repair refused=CatalogueWriteRefused", StringComparison.Ordinal));
+        Assert.Contains("safely write", Assert.Single(messages), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Run_rejects_null_dependencies()
     {
         var checker = new Mock<IConfigIntegrityChecker>();

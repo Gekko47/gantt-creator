@@ -35,12 +35,13 @@ public sealed class ExportPngCommandTests
     /// <summary>Builds a pre-flight request whose every stage succeeds host-free.</summary>
     private static EditableExportPreflightRequest Preflight(
         IReadOnlyDictionary<string, string>? settings = null,
-        GanttScene? scene = null)
+        GanttScene? scene = null,
+        ConfigReadRefusalReason? configRefusal = null)
     {
         GanttScene built = scene ?? EmptyScene();
         return new EditableExportPreflightRequest(
             new StubTableReader(),
-            new StubConfigReader(settings ?? new Dictionary<string, string>()),
+            new StubConfigReader(settings ?? new Dictionary<string, string>(), configRefusal),
             new StubMeasurement(),
             (_, _, _, _, _) => SceneBuildRequestOutcome.Ok(new SceneBuildRequest()),
             (_, _, _) => new ExportBoundsOutcome(new ExportBounds(Bounds), null, null, built));
@@ -256,6 +257,51 @@ public sealed class ExportPngCommandTests
         Assert.Equal(ExportPngRefusal.TableReadRefused, outcome.Refusal);
         Assert.Equal(0, dialog.Calls);
         Assert.Contains("table could not be read", failures[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A configuration the reader cannot accept is reported with the remedy, not as a dead end.
+    /// The live 2026-11-24 report was a schema-27 workbook whose export said only that the
+    /// configuration could not be read, so the user discovered Fix through Refresh instead; the
+    /// export now names Fix itself and records the reader's reason.
+    /// </summary>
+    [Fact]
+    public void Run_names_the_repair_remedy_when_the_configuration_cannot_be_read()
+    {
+        var failures = new List<string>();
+        var records = new List<string>();
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(
+                preflight: Preflight(configRefusal: ConfigReadRefusalReason.RowCountMismatch),
+                technicalRecord: records.Add),
+            _ => { },
+            failures.Add);
+
+        Assert.Equal(ExportPngRefusal.ConfigReadRefused, outcome.Refusal);
+        Assert.Contains("Run Fix", failures[0], StringComparison.Ordinal);
+        Assert.Contains(
+            records,
+            record => string.Equals(
+                record,
+                "gantt.export config refused=RowCountMismatch",
+                StringComparison.Ordinal));
+    }
+
+    /// <summary>An absent workbook is not sent to Fix: that command cannot create one.</summary>
+    [Fact]
+    public void Run_does_not_send_an_absent_workbook_to_the_repair_remedy()
+    {
+        var failures = new List<string>();
+
+        ExportPngOutcome outcome = ExportPngCommand.Run(
+            Request(preflight: Preflight(configRefusal: ConfigReadRefusalReason.NoActiveWorkbook)),
+            _ => { },
+            failures.Add);
+
+        Assert.Equal(ExportPngRefusal.ConfigReadRefused, outcome.Refusal);
+        Assert.DoesNotContain("Run Fix", failures[0], StringComparison.Ordinal);
+        Assert.Contains("no active workbook", failures[0], StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The stages run in the contract's order: read, dialog, render, write.</summary>
@@ -573,14 +619,17 @@ public sealed class ExportPngCommandTests
         public GanttTableReadOutcome Read(IReadOnlyList<int> rowNumbers) => Read();
     }
 
-    private sealed class StubConfigReader(IReadOnlyDictionary<string, string> settings)
-        : IConfigCatalogueReader
+    private sealed class StubConfigReader(
+        IReadOnlyDictionary<string, string> settings,
+        ConfigReadRefusalReason? refusal = null) : IConfigCatalogueReader
     {
-        public ConfigReadOutcome Read() => ConfigReadOutcome.Ok(
-            "wb-id",
-            settings,
-            GanttStyleRegistry.Empty,
-            new Dictionary<string, double>());
+        public ConfigReadOutcome Read() => refusal is { } reason
+            ? ConfigReadOutcome.Refused(reason)
+            : ConfigReadOutcome.Ok(
+                "wb-id",
+                settings,
+                GanttStyleRegistry.Empty,
+                new Dictionary<string, double>());
     }
 
     private sealed class StubMeasurement : IPanelGridMeasurementPort

@@ -1,3 +1,4 @@
+using System.Globalization;
 using GanttCreator.Core.ConfigIntegrity;
 using GanttCreator.Office;
 
@@ -31,7 +32,8 @@ internal static class RepairConfigCommand
             new ExcelWorkbookRecovery(
                 application,
                 trace: CommandBoundary.Instance.WriteTechnicalRecord),
-            RibbonStateService.Instance.ScheduleAutomaticRefresh
+            RibbonStateService.Instance.ScheduleAutomaticRefresh,
+            CommandBoundary.Instance.WriteTechnicalRecord
         );
     }
 
@@ -42,13 +44,19 @@ internal static class RepairConfigCommand
     /// <param name="presenter">Receives the summary or typed refusal message.</param>
     /// <param name="recovery">The structural table recovery port, or null to keep the legacy flow.</param>
     /// <param name="onChanged">Schedules one coalesced automatic refresh after a mutation.</param>
+    /// <param name="trace">
+    /// Receives one outcome record per terminal path, or null to discard it. Without it a repair
+    /// that presents a refusal leaves no log line, which is what made the live 2026-11-24 Fix
+    /// failure undiagnosable.
+    /// </param>
     internal static void Run(
         IConfigIntegrityChecker checker,
         IConfigRepairer repairer,
         Func<string, bool> confirm,
         Action<string> presenter,
         IWorkbookRecovery? recovery = null,
-        Action? onChanged = null
+        Action? onChanged = null,
+        Action<string>? trace = null
     )
     {
         ArgumentNullException.ThrowIfNull(checker);
@@ -63,6 +71,7 @@ internal static class RepairConfigCommand
             inspection = recovery.Inspect();
             if (inspection.Refusal is { } recoveryRefusal)
             {
+                Trace(trace, "gantt.repair recovery refused=" + recoveryRefusal);
                 Present(presenter, TranslateRecoveryRefusal(recoveryRefusal));
                 return;
             }
@@ -76,6 +85,7 @@ internal static class RepairConfigCommand
                         ?? "Fix will rebuild the Gantt table. Continue?");
                 if (!confirmed)
                 {
+                    Trace(trace, "gantt.repair cancelled");
                     Present(presenter, CancelledMessage);
                     return;
                 }
@@ -83,6 +93,7 @@ internal static class RepairConfigCommand
                 recoveryOutcome = recovery.Recover(inspection, confirmed);
                 if (recoveryOutcome.Refusal is { } failedRecovery)
                 {
+                    Trace(trace, "gantt.repair recovery refused=" + failedRecovery);
                     Present(presenter, TranslateRecoveryRefusal(failedRecovery));
                     return;
                 }
@@ -92,6 +103,7 @@ internal static class RepairConfigCommand
         ConfigIntegrityCheckOutcome check = checker.Check();
         if (check.Refusal is not null)
         {
+            Trace(trace, "gantt.repair check refused=" + check.Refusal.Value);
             Present(presenter, TranslateRefusal(check.Refusal.Value));
             return;
         }
@@ -99,6 +111,7 @@ internal static class RepairConfigCommand
         ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build(check.Findings);
         if (plan.Findings.Count == 0)
         {
+            TraceOutcome(trace, repaired: 0, skipped: 0, refused: 0, quarantined: 0);
             Present(presenter, BuildNoRepairSummary(inspection, recoveryOutcome));
             ScheduleRefreshIfChanged(onChanged, recoveryOutcome, repaired: 0);
             return;
@@ -107,6 +120,12 @@ internal static class RepairConfigCommand
         int confirmCount = plan.ConfirmRequiredFindings.Count;
         if (plan.RefusedFindings.Count > 0)
         {
+            TraceOutcome(
+                trace,
+                repaired: 0,
+                skipped: 0,
+                refused: plan.RefusedFindings.Count,
+                quarantined: plan.QuarantinedFindings.Count);
             Present(
                 presenter,
                 BuildSummaryWithRecovery(
@@ -126,11 +145,18 @@ internal static class RepairConfigCommand
         ConfigRepairOutcome outcome = repairer.Repair(plan, confirmedRepair);
         if (outcome.Refusal is not null)
         {
+            Trace(trace, "gantt.repair refused=" + outcome.Refusal.Value);
             Present(presenter, TranslateRefusal(outcome.Refusal.Value));
             ScheduleRefreshIfChanged(onChanged, recoveryOutcome, repaired: 0);
             return;
         }
 
+        TraceOutcome(
+            trace,
+            outcome.RepairedCount,
+            outcome.ConfirmationSkippedCount,
+            outcome.RefusedCount,
+            outcome.QuarantinedCount);
         Present(
             presenter,
             BuildSummaryWithRecovery(
@@ -142,6 +168,20 @@ internal static class RepairConfigCommand
                 outcome.QuarantinedCount));
         ScheduleRefreshIfChanged(onChanged, recoveryOutcome, outcome.RepairedCount);
     }
+
+    private static void Trace(Action<string>? trace, string record) => trace?.Invoke(record);
+
+    private static void TraceOutcome(
+        Action<string>? trace,
+        int repaired,
+        int skipped,
+        int refused,
+        int quarantined) =>
+        Trace(
+            trace,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.repair outcome repaired={repaired} confirm-skipped={skipped} refused={refused} quarantined={quarantined}"));
 
     private static void ScheduleRefreshIfChanged(
         Action? onChanged,
@@ -212,7 +252,7 @@ internal static class RepairConfigCommand
             string sheet = inspection?.TargetSheetName ?? "the Gantt worksheet";
             parts.Add(
                 string.Create(
-                    System.Globalization.CultureInfo.InvariantCulture,
+                    CultureInfo.InvariantCulture,
                     $"Rebuilt tblGanttData on '{sheet}' and adopted {recoveryOutcome.AdoptedRowCount} row(s)."));
         }
 

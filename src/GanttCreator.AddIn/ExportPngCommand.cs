@@ -344,6 +344,16 @@ internal static class ExportPngCommand
         EditableExportPreflightOutcome preflight = EditableExportPreflight.Run(preflightRequest);
         if (!preflight.Succeeded || preflight.Preparation is not { } preparation)
         {
+            // The export names the configuration reader's own reason, so a schema-change
+            // refusal (RowCountMismatch, a moved catalogue hash) is diagnosable from the log
+            // rather than only from the refresh line that preceded it (live 2026-11-24).
+            if (preflight.ConfigRefusal is { } configRefusal)
+            {
+                request.TechnicalRecord?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.export config refused={configRefusal}"));
+            }
+
             return Refuse(
                 TranslatePreflightRefusal(preflight.Refusal),
                 DescribePreflightRefusal(preflight),
@@ -591,7 +601,7 @@ internal static class ExportPngCommand
             EditableExportPreflightRefusal.TableReadRefused =>
                 "The table could not be read, so no PNG was produced.",
             EditableExportPreflightRefusal.ConfigReadRefused =>
-                "The workbook configuration could not be read, so no PNG was produced.",
+                ConfigRefusalMessage(preflight.ConfigRefusal),
             EditableExportPreflightRefusal.MeasurementRefused =>
                 "The table could not be measured, so no PNG was produced.",
             EditableExportPreflightRefusal.ExportRequestRefused =>
@@ -607,6 +617,23 @@ internal static class ExportPngCommand
             EditableExportPreflightRefusal.MissingBoundsResolver => ConstructionMessage,
             _ => ConstructionMessage,
         };
+
+    /// <summary>
+    /// Builds the configuration refusal's one actionable line.
+    /// </summary>
+    /// <param name="refusal">The configuration reader's typed refusal, when one exists.</param>
+    /// <returns>The user-facing sentence naming the remedy.</returns>
+    /// <remarks>
+    /// The reader's typed reason decides the remedy. A workbook whose configuration cannot be
+    /// read in place needs a repair — a schema change has no migration (ADR-0029 D6), so Fix
+    /// is the only command that can clear it — while an absent workbook needs one opened, and
+    /// sending that user to Fix names a command that cannot help. The live 2026-11-24 report
+    /// showed the old single sentence left the export a dead end until Refresh named Fix.
+    /// </remarks>
+    private static string ConfigRefusalMessage(ConfigReadRefusalReason? refusal) =>
+        refusal == ConfigReadRefusalReason.NoActiveWorkbook
+            ? "There is no active workbook to export, so no PNG was produced."
+            : "The workbook's Gantt Creator configuration needs repair, so no PNG was produced. Run Fix, then export again.";
 
     /// <summary>Removes .NET's parameter-name suffix from an out-of-range message.</summary>
     /// <param name="message">The exception message.</param>
