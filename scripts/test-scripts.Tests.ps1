@@ -254,9 +254,25 @@ Describe 'test-scripts.ps1 parallel path hardening (CI 45193295738 / 45376223093
         $script:gateText | Should -Match 'Invoke-Pester -Path \$testPath'
     }
 
-    It 'imports the exact pinned Pester when tool-versions.psd1 carries one' {
-        $script:gateText | Should -Match 'Import-Module Pester -RequiredVersion \$pin'
-        $script:gateText | Should -Match 'ToolVersions\.Pester\.Version|toolVersions\.Pester\.Version'
+    It 'hands each worker the parent-resolved Pester manifest (fix B)' {
+        # The parent resolves Pester once; a worker that imported by
+        # -RequiredVersion repeated a PSModulePath lookup inside a fresh
+        # runspace, which is where the hosted-runner failure surfaced.
+        $script:gateText | Should -Match 'Import-Module -Name \$pesterManifest'
+        $script:gateText | Should -Match 'toolVersions\.Pester\.Version'
+    }
+
+    It 'dispatches through one reusable runspace pool, not a per-file parallel pipeline (fix A)' {
+        $script:gateText | Should -Match 'CreateRunspacePool'
+        $script:gateText | Should -Not -Match 'ForEach-Object -Parallel'
+        $script:gateText | Should -Match 'AddScript\(\$workerScript\)\.AddArgument\(\$testPath\)'
+    }
+
+    It 'prints the call site and exception identity when an unhandled error escapes' {
+        # Three CI runs reported only the message, which is why the call site was
+        # never visible.
+        $script:gateText | Should -Match 'ScriptStackTrace'
+        $script:gateText | Should -Match 'FullyQualifiedErrorId'
     }
 }
 

@@ -52,9 +52,25 @@ $scriptRoot = Split-Path -Parent $PSCommandPath
 # An unexpected terminating error must still name itself in the check-run
 # annotations: without this the step reports only "Process completed with exit
 # code 1", which is the gap that made the 2026-11-18 CI failure unreadable.
+#
+# The message alone has twice been insufficient. CI runs 45193295738,
+# 45376223093 and 45392542633 all reported
+# "The provided Path argument was null or an empty collection." with no call
+# site, so the detail below (exception identity, activity, target and script
+# stack trace) is printed to the job log alongside the one-line annotation.
 trap {
     if ($env:GITHUB_ACTIONS -eq 'true') {
         Write-Host (Format-CheckAnnotation -Title 'test-scripts: unhandled error' -Message $_.Exception.Message)
+    }
+    Write-Host 'test-scripts: unhandled error detail:'
+    Write-Host ("  type: " + $_.Exception.GetType().FullName)
+    Write-Host ("  fullyQualifiedErrorId: " + $_.FullyQualifiedErrorId)
+    Write-Host ("  activity: " + $_.CategoryInfo.Activity + " | target: " + $_.CategoryInfo.TargetName)
+    Write-Host ("  scriptStackTrace: " + $_.ScriptStackTrace)
+    $inner = $_.Exception
+    while ($null -ne $inner.InnerException) {
+        $inner = $inner.InnerException
+        Write-Host ("  inner: " + $inner.GetType().FullName + ": " + $inner.Message)
     }
     Write-Error -Message $_.Exception.Message -ErrorAction Continue
     exit 1
@@ -120,7 +136,19 @@ try {
     if ($script:pesterVersion) { Import-Module Pester -RequiredVersion $script:pesterVersion -ErrorAction Stop }
     else { Import-Module Pester -MinimumVersion "$($script:minPesterMajor).0" -ErrorAction Stop }
     $loadedPester = Get-Module -Name Pester | Select-Object -First 1
-    Write-Host "Pester $($loadedPester.Version) from $($loadedPester.ModuleBase)"
+    # The resolved manifest is what the workers import. Resolving Pester once, in
+    # this process, and handing the manifest path to every runspace removes the
+    # per-runspace PSModulePath lookup that a hosted runner can fail inside.
+    # A versioned module directory name (e.g. Pester\6.2.0) is not itself a
+    # module, so the manifest inside it is the importable path.
+    $script:pesterModuleBase = [string]$loadedPester.ModuleBase
+    Assert-UsablePath -Path $script:pesterModuleBase -Caller 'test-scripts Pester module base'
+    $script:pesterManifest = Join-Path $script:pesterModuleBase 'Pester.psd1'
+    Assert-UsablePath -Path $script:pesterManifest -Caller 'test-scripts Pester manifest'
+    if (-not (Test-Path -LiteralPath $script:pesterManifest -PathType Leaf -ErrorAction Stop)) {
+        throw "test-scripts: Pester manifest not found: $($script:pesterManifest)"
+    }
+    Write-Host "Pester $($loadedPester.Version) from $($script:pesterManifest)"
 }
 catch {
     if ($env:GITHUB_ACTIONS -eq 'true') {
@@ -135,11 +163,10 @@ catch {
 # previous two-call fallback meant the second pattern was only reached when
 # the first found nothing, contrary to the documented discovery contract.
 #
-# Discovery yields FULL PATH STRINGS, not FileInfo objects. A FileInfo crossing
-# the ForEach-Object -Parallel runspace boundary is the input shape that
-# produced "The provided Path argument was null or an empty collection." on
-# hosted runners; a string cannot deserialize into a wrapper whose FullName is
-# null.
+# Discovery yields FULL PATH STRINGS, not FileInfo objects. A FileInfo crossing a
+# runspace boundary is one input shape that produced "The provided Path argument
+# was null or an empty collection." on hosted runners; a string cannot
+# deserialize into a wrapper whose FullName is null.
 $testFiles = @(Get-ChildItem -LiteralPath $scriptsDir -Filter '*Tests.ps1' -File -ErrorAction Stop |
         Sort-Object Name |
         ForEach-Object { $_.FullName })
@@ -165,13 +192,43 @@ Assert-UsablePath -Path $testFiles -Caller 'test-scripts discovery'
 Write-Host "Found $($testFiles.Count) script test file(s):"
 $testFiles | ForEach-Object { Write-Host "  $([System.IO.Path]::GetFileName($_))" }
 
-# -Parallel passes $using: values into another runspace, so the pinned Pester
-# version is copied into explicit [string] locals rather than referenced through
-# $script:. Only strings cross that boundary: a FileInfo deserializes into a
-# wrapper whose FullName can be null, which is one of the ways this gate used to
-# fail with "The provided Path argument was null or an empty collection."
-$minimumPesterVersion = "$($script:minPesterMajor).0"
-$pinnedPesterVersion = [string]$script:pesterVersion
+# The worker body. It is a here-string rather than a script block so the pool can
+# hand each file to a fresh PowerShell instance as typed arguments: no closure is
+# captured, and the path the worker validates is exactly the path it runs. The
+# guards are inside the try so a refused path is reported as a named failed file.
+$workerScript = @'
+param([string]$testPath, [string]$pesterManifest)
+
+$name = '<unknown>'
+try {
+    if ([string]::IsNullOrWhiteSpace($testPath)) {
+        throw 'refusing a null, empty, or whitespace-only test path'
+    }
+    if (-not [System.IO.Path]::IsPathRooted($testPath)) {
+        throw "refusing a non-rooted test path: $testPath"
+    }
+    $name = [System.IO.Path]::GetFileName($testPath)
+    # Import the module this gate already resolved, by manifest path, so the
+    # runspace does not perform its own PSModulePath lookup.
+    Import-Module -Name $pesterManifest -ErrorAction Stop
+    $r = Invoke-Pester -Path $testPath -PassThru -Output None 6>$null
+    if ($null -eq $r) {
+        [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'Pester returned no result object.' }
+    }
+    else {
+        $failures = @($r.Failed | ForEach-Object {
+                $path = if ($_.PSObject.Properties['ExpandedPath']) { $_.ExpandedPath } else { $_.Name }
+                $first = @($_.ErrorRecord) | Select-Object -First 1
+                $message = if ($first) { $first.Exception.Message } else { 'failed' }
+                "$path : $message"
+            })
+        [pscustomobject]@{ Name = $name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
+    }
+}
+catch {
+    [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = $_.Exception.Message }
+}
+'@
 
 # One result object per file, carrying the fields the judge needs and the text
 # of each failure, so the judge does not have to know Pester's result shape.
@@ -214,52 +271,45 @@ else {
     $throttle = if ($ThrottleLimit -gt 0) { $ThrottleLimit } else { $defaultThrottle }
     Write-Host "Mode: parallel ($throttle worker(s))"
 
-    # Every failure inside a runspace is converted into a result object so a
-    # crashed worker is judged as a failed file rather than disappearing.
-    $results = $testFiles | ForEach-Object -Parallel {
-        # Explicit [string] locals: the worker owns its own copy of the path, so
-        # no FileInfo wrapper (and no null FullName) can cross the runspace.
-        $testPath = [string]$_
-        $name = [System.IO.Path]::GetFileName($testPath)
-        $minimum = [string]$using:minimumPesterVersion
-        $pin = [string]$using:pinnedPesterVersion
-        try {
-            # The guards sit INSIDE the try so a refused path becomes a named
-            # failed file instead of the unhandled error that named nothing on
-            # CI (runs 45193295738 / 45376223093).
-            if ([string]::IsNullOrWhiteSpace($testPath)) {
-                throw 'refusing a null, empty, or whitespace-only test path'
-            }
-            # A relative path resolves against the worker's own directory, not
-            # the repository; refuse it rather than analyse the wrong tree.
-            if (-not [System.IO.Path]::IsPathRooted($testPath)) {
-                throw "refusing a non-rooted test path: $testPath"
-            }
-            if ($pin) { Import-Module Pester -RequiredVersion $pin -ErrorAction Stop }
-            else { Import-Module Pester -MinimumVersion $minimum -ErrorAction Stop }
-            # 6>$null drops the information stream a test's own Write-Host would
-            # otherwise interleave across workers; the verdict and the failure
-            # text are returned as data below.
-            $r = Invoke-Pester -Path $testPath -PassThru -Output None 6>$null
-            if ($null -eq $r) {
-                [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'Pester returned no result object.' }
-            }
-            else {
-                $failures = @($r.Failed | ForEach-Object {
-                        $path = if ($_.PSObject.Properties['ExpandedPath']) { $_.ExpandedPath } else { $_.Name }
-                        $first = @($_.ErrorRecord) | Select-Object -First 1
-                        $message = if ($first) { $first.Exception.Message } else { 'failed' }
-                        "$path : $message"
-                    })
-                [pscustomobject]@{ Name = $name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
-            }
-        }
-        catch {
-            [pscustomobject]@{ Name = $name; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = $_.Exception.Message }
-        }
-    } -ThrottleLimit $throttle
+    # ONE runspace pool, opened once and reused for every file. The previous
+    # parallel-pipeline form created its own runspaces per invocation, and on the
+    # hosted runner that startup path threw
+    # "The provided Path argument was null or an empty collection." before any
+    # worker body ran (CI runs 45193295738, 45376223093, 45392542633). Opening the
+    # pool here makes the startup explicit, and each worker receives its path as
+    # a typed AddArgument value rather than through a captured closure.
+    $results = @()
+    $invocations = @()
+    $pool = [runspacefactory]::CreateRunspacePool(1, $throttle)
+    try {
+        $pool.Open()
+        $invocations = @(foreach ($testPath in $testFiles) {
+                $shell = [powershell]::Create()
+                $shell.RunspacePool = $pool
+                $null = $shell.AddScript($workerScript).AddArgument($testPath).AddArgument($script:pesterManifest)
+                [pscustomobject]@{ Shell = $shell; Handle = $shell.BeginInvoke() }
+            })
 
-    $results = @($results | Sort-Object Name)
+        # A worker that throws, or returns nothing, becomes a failed file rather
+        # than disappearing, so the judge still sees one result per file.
+        $collected = @(foreach ($invocation in $invocations) {
+                try {
+                    # PowerShell.EndInvoke(IAsyncResult) returns the worker's
+                    # output collection; PowerShellAsyncResult has no EndInvoke.
+                    $emitted = @($invocation.Shell.EndInvoke($invocation.Handle))
+                    if ($emitted.Count -gt 0 -and $null -ne $emitted[0]) { $emitted[0] }
+                    else { [pscustomobject]@{ Name = '<unknown>'; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = 'the worker returned no result' } }
+                }
+                catch {
+                    [pscustomobject]@{ Name = '<unknown>'; Total = 0; Passed = 0; Failed = 0; Failures = @(); Error = ('the worker failed to report: ' + $_.Exception.Message) }
+                }
+            })
+        $results = @($collected | Sort-Object Name)
+    }
+    finally {
+        foreach ($invocation in $invocations) { $invocation.Shell.Dispose() }
+        $pool.Dispose()
+    }
 }
 
 # The verdict rules live in Get-ScriptTestGateVerdict (scripts/verify-helpers.ps1)
