@@ -1510,6 +1510,7 @@ public class GanttRowValidatorTests
     [InlineData("red")]
     [InlineData("#FFF")]
     [InlineData("#1234567")]
+    [InlineData("#1234567G")]
     public void Bad_colour_format_is_a_blocking_error(string colour)
     {
         GanttRowDto row = ValidSpan(fillColourText: colour);
@@ -1531,6 +1532,22 @@ public class GanttRowValidatorTests
         GanttEvent @event = Assert.Single(outcome.Events);
         Assert.Equal("#FF0000", @event.FillColour);
         Assert.Equal("#00FF00", @event.StrokeColour);
+    }
+
+    [Fact]
+    public void Eight_digit_colour_with_alpha_is_accepted_and_normalised_to_uppercase()
+    {
+        // The style and theme paths accept #RRGGBBAA, so a per-row override must
+        // accept it too. The alpha byte is not dropped: OfficeStyleMapper turns it
+        // into fill/line transparency and the raster renderer passes it to Skia.
+        GanttRowDto row = ValidSpan(fillColourText: "#ff000080", strokeColourText: "#00ff00FF");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Equal("#FF000080", @event.FillColour);
+        Assert.Equal("#00FF00FF", @event.StrokeColour);
     }
 
     [Fact]
@@ -1835,7 +1852,9 @@ public class GanttRowValidatorTests
         Assert.Equal("StackIndex must be zero or greater.", MessageFor(outcome, GanttValidationCodes.StackIndexNegative));
         Assert.Equal("Start must not be after Finish.", MessageFor(outcome, GanttValidationCodes.StartAfterFinish));
         Assert.Equal("Unknown LabelPosition 'Sideways'.", MessageFor(outcome, GanttValidationCodes.UnknownLabelPosition));
-        Assert.Equal("FillColour 'red' must be '#RRGGBB'.", MessageFor(outcome, GanttValidationCodes.BadColourFormat));
+        Assert.Equal(
+            "FillColour 'red' must be '#RRGGBB' or '#RRGGBBAA'.",
+            MessageFor(outcome, GanttValidationCodes.BadColourFormat));
         Assert.Equal(
             "SortOrder 'abc' must be a non-negative integer.",
             MessageFor(outcome, GanttValidationCodes.BadSortOrder));
@@ -2296,8 +2315,8 @@ public class GanttRowValidatorTests
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
 
-            // The #RRGGBB contract has no i/I, so this pins exact label and
-            // type behaviour plus colour normalization; it does not claim to
+            // The #RRGGBB/#RRGGBBAA contract has no i/I, so this pins exact label
+            // and type behaviour plus colour normalization; it does not claim to
             // distinguish Turkish casing for hex colours.
             GanttRowDto row = ValidSpan(fillColourText: "#ff0000", sortOrder: "3", labelPositionText: "Inside");
             GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);

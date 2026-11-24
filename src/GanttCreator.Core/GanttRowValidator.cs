@@ -854,7 +854,11 @@ public static class GanttRowValidator
         string field = isFill ? "FillColour" : "StrokeColour";
         if (!IsHexColour(text))
         {
-            add(field, GanttValidationCodes.BadColourFormat, GanttValidationSeverity.Error, $"{field} '{text}' must be '#RRGGBB'.");
+            add(
+                field,
+                GanttValidationCodes.BadColourFormat,
+                GanttValidationSeverity.Error,
+                $"{field} '{text}' must be '#RRGGBB' or '#RRGGBBAA'.");
             return null;
         }
 
@@ -890,25 +894,12 @@ public static class GanttRowValidator
         return text.ToUpperInvariant();
     }
 
-    private static bool IsHexColour(string text)
-    {
-        if (text.Length != 7 || text[0] != '#')
-        {
-            return false;
-        }
-
-        for (int i = 1; i < text.Length; i++)
-        {
-            char c = text[i];
-            bool isHex = c is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F');
-            if (!isHex)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    // One grammar, shared with the style and theme paths: ColourHex accepts
+    // #RRGGBB and #RRGGBBAA and requires uppercase, so normalise case first.
+    // The length guard keeps a row override to those two forms -- no whitespace.
+    private static bool IsHexColour(string text) =>
+        (text.Length == 7 || text.Length == 9)
+        && ColourHex.TryParse(text.ToUpperInvariant(), out _);
 
     private static void CheckCriticalParents(
         IReadOnlyList<GanttRowDto> rows,
