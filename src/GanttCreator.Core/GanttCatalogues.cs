@@ -604,8 +604,14 @@ public static class GanttCatalogues
         string? milestoneToken,
         GanttStrokeDash strokeDash = GanttStrokeDash.Solid)
     {
-        EntityTypeDefinition definition = EntityTypeCatalog.Entries.First(entry =>
-            string.Equals(entry.DefaultStyleKey, styleKey, StringComparison.Ordinal));
+        // Named, not a bare LINQ failure: this guard can only fire when a preset row
+        // and the entity catalogue disagree, and the message has to say which style
+        // key broke so the two tables can be reconciled. The invariant itself is
+        // pinned by StylePresets_contains_one_row_per_non_empty_DefaultStyleKey.
+        EntityTypeDefinition definition = EntityTypeCatalog.Entries.FirstOrDefault(entry =>
+                string.Equals(entry.DefaultStyleKey, styleKey, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException(
+                $"Built-in style '{styleKey}' has no matching entity-type definition.");
         GanttLabelPosition defaultLabelPosition = styleKey switch
         {
             "DelayEvent" => GanttLabelPosition.Inside,
