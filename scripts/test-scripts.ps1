@@ -222,6 +222,19 @@ try {
                 $message = if ($first) { $first.Exception.Message } else { 'failed' }
                 "$path : $message"
             })
+        # Pester reports a container-level failure (a throwing BeforeAll) without
+        # an ErrorRecord on each test, so the verdict said only "failed". Attach
+        # the first few error-stream messages to THIS result, never as a second
+        # object: one result per file is the verdict's contract.
+        # $Error is an ArrayList that the engine appends to while a pipeline runs,
+        # so it is read by index; enumerating it throws "Collection was modified".
+        if ($r.FailedCount -gt 0 -and $Error.Count -gt 0) {
+            $detail = @()
+            for ($i = 0; $i -lt [Math]::Min(3, $Error.Count); $i++) {
+                $detail += $Error[$i].Exception.Message
+            }
+            $failures = @($failures + ('container errors: ' + ($detail -join ' || ')))
+        }
         [pscustomobject]@{ Name = $name; Total = $r.TotalCount; Passed = $r.PassedCount; Failed = $r.FailedCount; Failures = $failures; Error = '' }
     }
 }
