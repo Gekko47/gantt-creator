@@ -1394,17 +1394,88 @@ public sealed class ProtectionGuardFirstTests
     }
 
     /// <summary>
+    /// The declared read order for the shape-writer partial family.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The classification and ordering rules below are written per adapter, not per file. A
+    /// type split across partial files is still one adapter with one entry point, so its
+    /// parts are concatenated under the primary path before the rules run. Without this a
+    /// split would register the mutating half separately and could never satisfy "the guard
+    /// read precedes the first mutation": the guard lives in the entry point's part, while
+    /// the writes live in another.
+    /// </para>
+    /// <para>
+    /// The order is declared rather than alphabetical because the order rule compares text
+    /// positions. <c>Creation</c> holds <c>Create</c>, the registered entry method, so it
+    /// must be read directly after the primary: an alphabetical read puts the appearance
+    /// writes first and the guard read last, which fails the rule for a code order that is
+    /// actually correct. An undeclared part fails the scan by name, so adding a partial
+    /// file is a deliberate act rather than a silent loss of coverage.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] ShapeWriterPartOrder =
+    [
+        "ExcelShapeWriter.cs",
+        "ExcelShapeWriter.Creation.cs",
+        "ExcelShapeWriter.Update.cs",
+        "ExcelShapeWriter.Identity.cs",
+        "ExcelShapeWriter.Geometry.cs",
+        "ExcelShapeWriter.Ownership.cs",
+        "ExcelShapeWriter.Placement.cs",
+        "ExcelShapeWriter.Host.cs",
+        "ExcelShapeWriter.Appearance.cs",
+        "ExcelShapeWriter.Text.cs",
+    ];
+
+    /// <summary>
     /// Reads every Office adapter source, keyed by its repo-relative path with
-    /// forward slashes.
+    /// forward slashes. The shape writer's partial family is folded, in the declared
+    /// order, into its primary file.
     /// </summary>
     /// <returns>Repo-relative path → source text.</returns>
     private static Dictionary<string, string> ReadOfficeSources()
     {
         var directory = Path.Combine(LocateRepoRoot(), "src", "GanttCreator.Office");
+        var files = Directory.GetFiles(directory, "*.cs")
+            .ToDictionary(
+                file => Path.GetFileName(file),
+                File.ReadAllText,
+                StringComparer.Ordinal);
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var file in Directory.GetFiles(directory, "*.cs"))
+
+        string primary = ShapeWriterPartOrder[0];
+        foreach (string part in ShapeWriterPartOrder)
         {
-            sources[OfficeSourceDirectory + "/" + Path.GetFileName(file)] = File.ReadAllText(file);
+            if (!files.ContainsKey(part))
+            {
+                throw new InvalidOperationException(
+                    $"The declared shape-writer part {part} is missing from {OfficeSourceDirectory}.");
+            }
+        }
+
+        foreach (string name in files.Keys)
+        {
+            if (name.StartsWith("ExcelShapeWriter.", StringComparison.Ordinal)
+                && !ShapeWriterPartOrder.Contains(name, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The shape-writer part {name} is not declared in ShapeWriterPartOrder.");
+            }
+        }
+
+        sources[OfficeSourceDirectory + "/" + primary] = string.Join(
+            Environment.NewLine,
+            ShapeWriterPartOrder.Select(part => files[part]));
+
+        foreach (var file in files)
+        {
+            if (ShapeWriterPartOrder.Contains(file.Key, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            sources[OfficeSourceDirectory + "/" + file.Key] = file.Value;
         }
 
         return sources;
