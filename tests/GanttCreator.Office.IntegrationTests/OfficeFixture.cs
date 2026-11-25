@@ -244,6 +244,19 @@ internal class OfficeFixture : IAsyncLifetime
     /// makes it visible. The goal is zero. A test that forces an escalation on
     /// purpose (to prove the escalation path works) sets
     /// <summary>
+    /// The Application RCW's reference count after this teardown released it, or
+    /// <c>-1</c> when no application was released.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Marshal.ReleaseComObject(object)"/> returns the remaining count. Zero is
+    /// the only value that proves this fixture was the last managed holder: anything above
+    /// it means another RCW still references Excel, which is the leak the forced-kill count
+    /// cannot tell apart from the host's own shutdown behaviour. Recorded per teardown so
+    /// the two can be separated.
+    /// </remarks>
+    internal int RemainingApplicationRefs { get; private set; } = -1;
+
+    /// <summary>
     /// Whether this fixture loaded the packed add-in into its Excel instance.
     /// </summary>
     /// <remarks>
@@ -351,7 +364,8 @@ internal class OfficeFixture : IAsyncLifetime
                     LastGracefulExitElapsedMs,
                     _quitOutcome,
                     _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds,
-                    XllRegistered));
+                    XllRegistered,
+                    RemainingApplicationRefs));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -374,13 +388,17 @@ internal class OfficeFixture : IAsyncLifetime
     /// forced kill with <see langword="true"/> is the host-lifetime constraint; one with
     /// <see langword="false"/> is a leak or a hang and must be treated as one.
     /// </param>
+    /// <param name="Rcw">
+    /// The Application reference count after the release, or -1 when none was released.
+    /// </param>
     private sealed record ForcedKillRecord(
         string? Test,
         int Count,
         long GracefulExitMs,
         string Quit,
         long BodyMs,
-        bool Xll);
+        bool Xll,
+        int Rcw);
 
     /// <summary>
     /// Names the test method that is tearing this fixture down.
@@ -971,7 +989,7 @@ internal class OfficeFixture : IAsyncLifetime
         {
             if (_excel != null)
             {
-                Marshal.ReleaseComObject(_excel);
+                RemainingApplicationRefs = Marshal.ReleaseComObject(_excel);
             }
         }
         catch (COMException ex)

@@ -598,6 +598,11 @@ public class OfficeFixtureTests
             Assert.Contains("\"BodyMs\":", line, StringComparison.Ordinal);
             Assert.Contains("\"Xll\":false", line, StringComparison.Ordinal);
 
+            // No application was released here, so the reference count is the sentinel
+            // rather than a fabricated zero: a zero would claim "last managed holder"
+            // when nothing was released at all.
+            Assert.Contains("\"Rcw\":-1", line, StringComparison.Ordinal);
+
             // Positive control for the same field: the flag is what separates the host's
             // XLL lifetime constraint from a test leak, so a record that can never say
             // "true" would silently classify every XLL body as a leak.
