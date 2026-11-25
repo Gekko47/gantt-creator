@@ -214,6 +214,18 @@ internal class OfficeFixture : IAsyncLifetime
     public int ProcessId => _excelProcessId;
 
     /// <summary>
+    /// How long the owned Excel host took to launch, in milliseconds — the
+    /// <c>new Application()</c> call inside <see cref="InitializeAsync"/>, not the workbook
+    /// work that follows it.
+    /// </summary>
+    /// <remarks>
+    /// Recorded because a per-class host (P12) would save exactly this per body, so the number
+    /// decides whether that restructure earns its isolation risk. It is measured on each run
+    /// rather than inferred from an earlier experiment's figure.
+    /// </remarks>
+    internal long HostLaunchMs { get; private set; }
+
+    /// <summary>
     /// Every EXCEL.EXE process ID this fixture launched, primary first. Empty when
     /// no new process could be identified, in which case the orphan check and the
     /// shell sweep have nothing to act on.
@@ -375,7 +387,8 @@ internal class OfficeFixture : IAsyncLifetime
                     _quitOutcome,
                     _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds,
                     XllRegistered,
-                    RemainingApplicationRefs));
+                    RemainingApplicationRefs,
+                    HostLaunchMs));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -401,6 +414,11 @@ internal class OfficeFixture : IAsyncLifetime
     /// <param name="Rcw">
     /// The Application reference count after the release, or -1 when none was released.
     /// </param>
+    /// <param name="HostMs">
+    /// How long the Excel host took to launch for this fixture. A per-class host would save
+    /// exactly this per body, so it is the figure that decides whether that restructure is
+    /// worth its isolation risk.
+    /// </param>
     private sealed record ForcedKillRecord(
         string? Test,
         int Count,
@@ -408,7 +426,8 @@ internal class OfficeFixture : IAsyncLifetime
         string Quit,
         long BodyMs,
         bool Xll,
-        int Rcw);
+        int Rcw,
+        long HostMs);
 
     /// <summary>
     /// Names the test method that is tearing this fixture down.
@@ -676,6 +695,7 @@ internal class OfficeFixture : IAsyncLifetime
         // Snapshot existing Excel processes so we can identify the one
         // this fixture creates, and so the launch watchdog can reap any
         // new Excel processes if new Application() hangs.
+        Stopwatch hostLaunch = Stopwatch.StartNew();
         var before = Process.GetProcessesByName("EXCEL")
             .Select(p => p.Id)
             .ToHashSet();
@@ -724,6 +744,7 @@ internal class OfficeFixture : IAsyncLifetime
             // which causes the COM call to fail fast instead of hanging.
             app = new Application();
             launchCompleted = true;
+            HostLaunchMs = hostLaunch.ElapsedMilliseconds;
 #pragma warning disable CA1849
             cts.Cancel();
 #pragma warning restore CA1849

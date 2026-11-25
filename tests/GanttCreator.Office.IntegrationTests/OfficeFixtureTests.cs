@@ -641,6 +641,10 @@ public class OfficeFixtureTests
             // rather than a fabricated zero: a zero would claim "last managed holder"
             // when nothing was released at all.
             Assert.Contains("\"Rcw\":-1", line, StringComparison.Ordinal);
+            // The host launch time is recorded on every teardown, because a per-class host would
+            // save exactly it per body (P12). A fake fixture launched nothing, so it reads 0 rather
+            // than being absent: an unmeasured field would read as "no launch cost".
+            Assert.Contains("\"HostMs\":0", line, StringComparison.Ordinal);
 
             // Positive control for the same field: the flag is what separates the host's
             // XLL lifetime constraint from a test leak, so a record that can never say

@@ -498,8 +498,8 @@ real workbook is enough.
    non-zero value names a genuine bug. This replaces "forced exits must be zero".
 2. **Forced exits are an Excel residency metric.** Keep the existing per-teardown ceiling of 1 and
    report the total and the trend; do not gate a zero that the host controls.
-3. **P12 keeps its value for a different reason:** one Excel per XLL class removes ~N process
-   starts and ~N teardown waits per class, i.e. it is a *runtime* change, not a leak fix.
+3. **P12 was re-scoped to a pure runtime change and has now been measured and withdrawn** (below):
+   the host launch it would save is 743 ms, not the 2.8 s an earlier experiment suggested.
 4. **P13 became smaller and is landed** (below): gate `Rcw`, keep the ceiling, delete the
    "escalating fraction" narrative that reads the kill as a leak, and keep the Xll/Rcw fields for
    diagnosis.
@@ -634,6 +634,22 @@ are the experiment's parameters: the spike exists to observe whether Excel's del
 survives deleting the source shapes, so the window is the observation, not a synchronisation cost.
 That closes the whole wait family with numbers — Excel 464 s (fixed), PowerPoint 0–1 ms, clipboard
 12 s of deliberate measurement — and leaves body work plus host start-up as the suite's real cost.
+
+### P12 — one host per class is worth 35 s, and is withdrawn (2026-11-25)
+
+The remaining candidate was one Excel host per test **class** instead of per body. `OfficeFixture` now
+records the launch it actually pays (`HostMs`, the `new Application()` call), and 16 real bodies across
+`AddRow`, `OutlineGroup` and `GanttTableReader` measured **mean 743 ms, max 1,158 ms, 11,881 ms total**
+— not the 2.8 s an earlier experiment recorded, which must have included the workbook work that
+follows the launch.
+
+The arithmetic follows directly: 68 bodies across ~21 workbook classes means ~47 launches avoided,
+i.e. about **35 s per run** — 4% of a 14-minute suite. Against that, a per-class host replaces
+per-body process isolation with per-class processes, so every body after the first inherits the
+previous body's leftover sheets, defined names and add-in state; that is exactly what the suite's
+fresh-workbook-per-body design avoids, and no test asserts it can tolerate the difference. **35 s does
+not buy that risk**, so P12 is withdrawn with the measurement in the record rather than implemented.
+The `HostMs` field stays: it makes the next such question a one-run answer instead of an estimate.
 
 Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
 riskier because it changes the fixture's per-body isolation).
