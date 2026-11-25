@@ -734,6 +734,78 @@ the one the P4 round already implied and this round proves: the window's job is 
 happen, so it has a floor, and 3 s is it. The 1 s experiment is recorded in the fixture's comment
 so nobody repeats it.
 
+### P7 — the state-delta audit, and the ceiling it puts on one workbook per class (2026-11-25)
+
+P7 (option F in [`p1b-p7-pre-implementation-review.md`](p1b-p7-pre-implementation-review.md)) was
+approved "behind its prerequisites", and the first prerequisite is this audit: what state does a body
+leave behind that the next body in the same class would inherit? Counting the tree answers the
+structural half of it, and the answer re-prices the item.
+
+**The fixture does not own a workbook.** Every live class constructs its own
+[`OfficeFixture`](../tests/GanttCreator.Office.IntegrationTests/OfficeFixture.cs) inside the test
+body and then calls `CreateWorkbook()` itself:
+
+| Measure | Count |
+|---|---|
+| Live classes that construct a fixture in the body | 22 |
+| `new OfficeFixture(...)` sites | 59 (46 outside `OfficeFixtureTests`) |
+| `CreateWorkbook()` sites | 47 (43 outside `OfficeFixtureTests`) |
+| `RegisterXll(...)` sites | 23 |
+| Classes with more than one body, and the cases they hold | 10 classes, 35 of the 46 live cases |
+
+So P7 is not "move one assignment to a class fixture". The workbook is created by the body and
+tracked by the fixture for teardown, so a per-class workbook needs a **reset-to-pristine API** plus
+rewiring 46 fixture constructions, 43 workbook creations and 23 pack registrations.
+
+**The state deltas a reset would have to clear**, enumerated from what the classes' own bodies do:
+
+1. live and staging shapes, their groups, and their ownership tags;
+2. the `tblGanttData` list object — rows, hidden columns, hidden rows and outline levels;
+3. the `_GanttCreatorConfig` VeryHidden sheet and its schema version;
+4. the sheet-scoped defined name (plot anchor);
+5. sheet protection, which the add-in's own automatic refresh arms (ADR-0055);
+6. row heights and column widths, written by the normaliser and column-visibility bodies;
+7. validation highlight fills, written by the `ValidationReporter` bodies;
+8. workbook close/save state, which some bodies change mid-test;
+9. application state — `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, status bar, selection —
+   already restored per ADR-0020, so this one is a delta the current discipline covers;
+10. clipboard contents, from the copy bodies;
+11. the loaded pack and any scheduler state, which under P7 would span a whole class instead of one
+    body.
+
+**One delta of eleven has live evidence.** `InitialiseSheetIntegrationTests` already has a
+`NonPristineArtefact` theory — `Shape`, `Comment`, `ThreadedComment` — that pollutes a sheet and
+asserts `Initialise` repairs it. That is the seed of the reset protocol and proof for delta 1 only;
+the other ten would be new.
+
+**The ceiling, from the measurements already recorded.** Only the 10 multi-body classes can save
+anything, and the saving is one launch and one teardown per body avoided:
+
+| Lever | Arithmetic | Value |
+|---|---|---|
+| Host launches avoided | 35 bodies − 10 classes = 25 × 743 ms (P12 measurement, max 1,158 ms) | **18.6 s** |
+| Graceful polls avoided | 25 teardowns ≤ 3 s, minus the 10 per-class teardowns that still pay one | **≤ 45 s** |
+| Forced kills avoided | the same 25, at the kill cost the P4b run measured | **≤ 20 s** |
+| Ceiling | | **≈ 65–85 s of a 661 s run, ~10%** |
+
+**Recommendation: do not run P7 as a programme.** Per-body process isolation is the property every
+flake in this suite has so far been explained by — the AddRow protection race, the soak handle
+warm-up, the positional drift — and it is what delta 11 puts at risk for a ~10% saving. Three
+dispositions, for the owner:
+
+- **F1 — narrow it.** Apply per-class hosting only to the five classes with three or more bodies
+  whose bodies already re-initialise from a pristine sheet at their start (AddRow 7, InitialiseSheet
+  6, GanttTableReader 5, OutlineGroup 4, ValidationReporter 3): 25 bodies in 5 classes, ~40 s, and
+  still the full reset protocol.
+- **F2 — stop here.** P7 stays a documented option with its ceiling measured rather than estimated,
+  which is what P12 became.
+- **F3 — spike it.** Rewire AddRow alone behind the reset API and measure the class in the gate: one
+  class, ~10 minutes of gate time, and the number becomes a measurement instead of arithmetic.
+
+Honest limits: the launch figure is measured on this host, the poll and kill figures are computed
+from teardown records rather than from a P7 run, and delta 11 — a pack loaded across a class's
+successive bodies — has no measurement at all.
+
 ### Review close-out (2026-11-25)
 
 A code review of this plan against the tree raised nine findings. Closed in code the same day:
