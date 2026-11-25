@@ -674,6 +674,31 @@ fresh-workbook-per-body design avoids, and no test asserts it can tolerate the d
 not buy that risk**, so P12 is withdrawn with the measurement in the record rather than implemented.
 The `HostMs` field stays: it makes the next such question a one-run answer instead of an estimate.
 
+### P1b — landed and measured live (2026-11-25)
+
+Eight classes carry `OfficeSmoke` at class level in addition to `OfficeIntegration`:
+ShapeRender, StyleRender, TextRender, RefreshIdempotence, AutoRefreshTrigger, StagingLifecycle,
+AddRow and InitialiseSheet. Class-level, so a body added later joins without a second edit; the
+tag set was reviewed against the entity guide's renderer-equivalence table. The subset is
+**24 cases across 22 methods** (one method is a three-row Theory), verified with
+`--list-tests --filter Category=OfficeSmoke` before the gate was touched.
+
+`verify-office.ps1 -Smoke` derives the category **once** and reads it at discovery, the
+single-shard filter and the per-shard conjunction terms. That single variable is the design: a
+literal left at discovery beside a smoke run filter would make the coverage proof report every
+non-smoke test as missing. The bound defaults to **420 s**, and an explicit `-DeadlineSeconds`
+still wins.
+
+**Observed, first live run:** `Deadline: 420 s` adopted, **24 of 24 passed**, shard 0 exit 0
+after **165.4 s** (`coverage: all 22 discovered test(s) ran in a shard, and nothing else ran.`),
+`Reference-count signal: 18 of 18 ... and 0 left one behind`, phase 110.2 s inside fixtures of a
+165.4 s process — **55.1 s outside every fixture, i.e. 2.3 s per test, the same per-test runner
+cost the full gate shows**. Wall end to end ~3.5 min including the build, half the 7-minute
+acceptance. The full gate re-ran unchanged the same evening: **104 tests, 661.1 s, all verdicts
+the same**. P7 stays gated: its measured net ceiling is ~30–60 s (see
+[`p1b-p7-pre-implementation-review.md`](p1b-p7-pre-implementation-review.md)), so it starts only if
+this smoke run is judged insufficient.
+
 ### Review close-out (2026-11-25)
 
 A code review of this plan against the tree raised nine findings. Closed in code the same day:

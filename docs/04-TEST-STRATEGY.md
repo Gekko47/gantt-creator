@@ -336,9 +336,9 @@ Required live tests:
 > explicit `-DeadlineSeconds` still wins. The category is derived once and read by discovery,
 > the single-shard filter and the per-shard conjunction terms, because a literal left at
 > discovery beside a smoke run filter would make the coverage proof report every non-smoke test
-> as missing. The subset discovers **24 cases** (21 methods, one a three-row Theory). The full
-> gate stays the release gate and is unchanged: a smoke pass is a fast signal, never a release
-> verdict.
+> as missing. The subset discovers **24 cases across 22 methods** (one method is a three-row
+> Theory; discovery counts distinct methods, so its line reads 22). The full gate stays the
+> release gate and is unchanged: a smoke pass is a fast signal, never a release verdict.
 
 ## Feature-to-test traceability
 

@@ -13,10 +13,11 @@ trait placement and class-fixture lifetime, and [`verify-office.ps1`](../scripts
 
 ## Verdict
 
-- **P1b — build it now.** The plan's "~12 bodies" was an estimate made before counting: the eight
-  named classes carry **24 test cases** (21 methods plus the 3-row
-  `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` Theory). The measured estimate
-  is **~4 minutes wall**, inside the 420 s deadline with headroom. One commit, one live run.
+- **P1b — built, and the live run confirms the shape.** The plan's "~12 bodies" was an estimate
+  made before counting: the eight named classes carry **24 test cases across 22 methods** (one method
+  is the 3-row `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` Theory; discovery
+  counts distinct methods, so the coverage line reads 22). Measured wall on the first live `-Smoke`
+  run: **165.4 s test process, ~3.5 min end to end**, against the 420 s bound.
 - **P7 — approved, but do not start yet.** Its measured net ceiling is **~30–60 s**, the same order
   as P12's refused 35 s, and the classes with the most bodies are exactly the classes whose bodies
   deliberately start from *different* states, so a shared workbook spends on reset what it saves on
