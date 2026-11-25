@@ -359,6 +359,8 @@ $killAttribution = [ordered]@{}
 $cleanTeardowns = [System.Collections.Generic.List[string]]::new()
 $quitOutcomes = [ordered]@{}
 $overTeardownCeiling = @()
+$rcwMeasured = 0
+$rcwLeaks = @()
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
         foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
@@ -367,12 +369,15 @@ try {
             $count = 0
             $test = $null
             $quit = $null
+            # -1 means the record carried no reference count; that is unmeasured, never zero.
+            $rcw = -1
             if ($trimmed.StartsWith('{')) {
                 try {
                     $rec = $trimmed | ConvertFrom-Json -ErrorAction Stop
                     $count = [int]$rec.Count
                     $test = [string]$rec.Test
                     if ($rec.PSObject.Properties['Quit']) { $quit = [string]$rec.Quit }
+                    if ($rec.PSObject.Properties['Rcw']) { $rcw = [int]$rec.Rcw }
                 } catch { continue }
             } elseif ([int]::TryParse($trimmed, [ref]$count)) {
                 $test = '(unattributed legacy record)'
@@ -381,6 +386,8 @@ try {
             }
             $teardowns++
             $forcedKills += $count
+            if ($rcw -ge 0) { $rcwMeasured++ }
+            if ($rcw -gt 0) { $rcwLeaks += [pscustomobject]@{ Test = $test; Rcw = $rcw } }
             if (-not [string]::IsNullOrEmpty($quit)) {
                 if (-not $quitOutcomes.Contains($quit)) { $quitOutcomes[$quit] = 0 }
                 $quitOutcomes[$quit]++
@@ -403,7 +410,8 @@ try {
 }
 
 Log "Owned-PID manifest record(s): $($finalManifest.Count) (Excel fixture plus every PowerPoint PID it started)"
-Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) (per-teardown ceiling $MaxForcedExitsPerTeardown, end state 0). This measures the Excel shutdown race, not a proxy chain: the soak's orphan verdict is the end-state sweep below."
+Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) (per-teardown ceiling $MaxForcedExitsPerTeardown, end state 0). This is Excel's residency, not a leaked proxy: the leak gate is the reference count below, and the orphan verdict is the end-state sweep."
+Log "Reference-count signal: $rcwMeasured of $teardowns teardown(s) reported an application reference count, and $($rcwLeaks.Count) left one behind. Zero is the leak gate: the fixture must be the last managed holder when it tears down."
 if ($killAttribution.Count -gt 0) {
     Log "Forced-exit signal by test body (descending):"
     foreach ($entry in ($killAttribution.GetEnumerator() | Sort-Object -Property Value -Descending)) {
@@ -439,6 +447,23 @@ if ($straysKilled -gt 0) {
 if ($teardowns -eq 0) {
     Log "FAIL: no teardown record was found in $forcedKillsPath, so the forced-exit signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
     exit 5
+}
+
+# The same fail-closed rule for the leak signal, which the soak is best placed to catch: it is the
+# one gate that performs 25 transfers with repeated staging and deletion, so a proxy left behind by
+# a transfer path would show here first.
+if ($rcwMeasured -eq 0) {
+    Log "FAIL: no teardown record carried an application reference count, so the leak signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
+    exit 5
+}
+
+# The leak gate itself. A non-zero count means the fixture was not the last managed holder.
+if ($rcwLeaks.Count -gt 0) {
+    foreach ($entry in $rcwLeaks) {
+        Log ("  teardown {0} left {1} application reference(s)" -f $entry.Test, $entry.Rcw)
+    }
+    Log "FAIL: $($rcwLeaks.Count) teardown(s) left an application reference behind after releasing the proxy. Evidence preserved under $evidence."
+    exit 7
 }
 
 # Fail closed on the second handoff too: a green soak starts PowerPoint hosts, so an empty

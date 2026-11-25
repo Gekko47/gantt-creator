@@ -40,6 +40,38 @@ Describe 'verify-transfer-soak.ps1' {
         $dict | Should -Match 'measured 2026-11-22: 116 s'
     }
 
+    It 'gates the application reference count, the same leak signal as the routine gate' {
+        # The soak is the one gate that performs 25 transfers with repeated staging and deletion, so
+        # a leaked reference would surface here first. Before this fact existed the soak read the
+        # same teardown record as the routine gate but could not fail on the count (2026-11-25).
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match "Properties\['Rcw'\]"
+        $codeOnly | Should -Match '\$rcwMeasured -eq 0'
+        $codeOnly | Should -Match 'leak signal was NOT measured'
+        $codeOnly | Should -Match '\$rcwLeaks\.Count -gt 0'
+        $codeOnly | Should -Match 'left an application reference behind'
+        $codeOnly | Should -Match 'exit 7'
+    }
+
+    It 'reports the reference count beside the forced-exit signal, and names the kill as residency' {
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Reference-count signal:'
+        $codeOnly | Should -Match "Excel's residency, not a leaked proxy"
+        $codeOnly | Should -Not -Match 'This measures the Excel shutdown race, not a proxy chain'
+    }
+
+    It 'positive control: the leak verdict is detected when it is absent' {
+        # Proves the assertions above can fail: a gate with only the forced-exit signal must pass
+        # none of the reference-count checks.
+        $flagged = "if (`$teardowns -eq 0) { exit 5 }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match "Properties\['Rcw'\]"
+        $codeOnly | Should -Not -Match '\$rcwLeaks\.Count -gt 0'
+        $codeOnly | Should -Not -Match 'Reference-count signal:'
+    }
+
     It 'arms both harness handoff environment variables' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''

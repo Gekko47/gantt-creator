@@ -220,7 +220,11 @@ Office PID in one manifest with it, and no trx survives.
 
 ---
 
-## Part 4 — Sequence, measurement protocol, rollback
+## Part 4 - Sequence, measurement protocol, rollback
+
+> **Superseded by Part 8 for the sequence.** P2, P3 and P3b were withdrawn on measurement, P4 landed,
+> P12 was withdrawn, and the smoke subset (P1b) was never adopted into a roadmap row. Read Part 8 for
+> what actually happened; keep this section for the measurement protocol and the rollback rule.
 
 **Sequence:** P0 → P1 (shards) → P1b (decision) → P2 → P3 → P4 and P5 in either order → P6 → stop
 or P7/P8 by decision. P1 lands before any speed work so the gate exists to measure the rest and so
@@ -234,14 +238,24 @@ number and an unfiltered number in the same sentence.
 phase that does not move the measured wall time is reverted rather than kept "because it is
 tidier".
 
-**Expected shape of the outcome:** a ~17-minute gate becomes ~13–14 minutes from P3 + P4 + P5 + P6,
-and the per-branch gate becomes a ≤ 7-minute smoke run from P1b. If P3's stall is host-specific,
-only P1 and P1b remain, and the honest statement is that the full live suite is a release gate
-measured in tens of minutes.
+**Measured outcome instead of the predicted one (2026-11-25):** the live gate is **848 s (14 m 8 s)**
+and was reached by **P4 alone**; P3, P3b, P5, P6 and P12 contributed nothing measurable and were
+withdrawn. Of the 848 s, ~76 s is build and publish, 319.9 s is test-body work, 144.9 s is teardown
+waits, ~50 s is host launches, leaving **~257 s inside the test host that no line item owns** — the
+largest unmeasured block left. The per-branch smoke run (P1b) does not exist.
+
+**What the plan predicted:** a ~17-minute gate becomes ~13–14 minutes from P3 + P4 + P5 + P6, and
+the per-branch gate becomes a ≤ 7-minute smoke run from P1b. If P3's stall is host-specific, only P1
+and P1b remain, and the honest statement is that the full live suite is a release gate measured in
+tens of minutes.
 
 ---
 
-## Part 5 — What not to do, and why
+## Part 5 - What not to do, and why
+
+> **Partly superseded by Part 8.** The teardown-ordering rule below was conditioned on P2 naming the
+> stall; P2 was withdrawn (the stall is positional), so that condition no longer binds. The rest of
+> this section still holds.
 
 - **Do not raise the deadline and stop.** It restores a verdict without restoring confidence: a
   2,400 s bound on a 1,020 s suite hides a 15-minute regression.
@@ -651,5 +665,18 @@ fresh-workbook-per-body design avoids, and no test asserts it can tolerate the d
 not buy that risk**, so P12 is withdrawn with the measurement in the record rather than implemented.
 The `HostMs` field stays: it makes the next such question a one-run answer instead of an estimate.
 
-Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
-riskier because it changes the fixture's per-body isolation).
+### Review close-out (2026-11-25)
+
+A code review of this plan against the tree raised nine findings. Closed in code the same day:
+
+- **The soak gate now gates the leak.** `verify-transfer-soak.ps1` parses `Rcw`, exits 7 on a
+  non-zero count, and exits 5 when no teardown reported one — the same signal as the routine gate,
+  which matters here because the soak is the only gate that performs 25 transfers. Live proof:
+  `Reference-count signal: 1 of 1 teardown(s) ... and 0 left one behind`, PASS.
+- **Discovery failure is no longer a pass.** `verify-office.ps1` exits 6 when the host lists no
+  tests, with `-AllowUnprovenDiscovery` as the documented opt-out for the Pester harness.
+- **The host-launch figure is reported**, so the P12-style question no longer needs the raw JSONL.
+
+Still open, with owners: the smoke subset (never adopted — build or strike); the ~257 s residual
+(one instrumentation pass); the `Application`-only scope of the leak claim (state it in
+`KNOWN-LIMITATIONS`); the `ConfigRepair` `IdentityDamage` intermittent (needs a reproduction record).

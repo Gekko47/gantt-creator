@@ -312,7 +312,14 @@ Required live tests:
 > **both** directions with `exit 6`: every discovered test must run in a shard, and nothing
 > outside the discovered set may run. Names are compared only after canonicalisation,
 > because the host lists a `[Theory]` as one row per data set
-> (`Method(arg: value)`) while the trx also carries the bare method name.
+> (`Method(arg: value)`) while the trx also carries the bare method name. **`exit 6` also
+> covers discovery itself**: when the host lists no tests the proof cannot run, so the gate
+> fails rather than degrading to an unproven pass, and only the Pester harness may opt out
+> with `-AllowUnprovenDiscovery`. The dedicated soak gate reads the same teardown record and
+> applies the same reference-count verdict, because it is the only gate that performs 25
+> transfers. The routine set currently discovers **104 methods in 40 classes**, and the
+> non-live Office harness (the host-free fixtures and trend evaluators) runs **39** facts in
+> the every-commit gate.
 
 ## Feature-to-test traceability
 

@@ -339,6 +339,30 @@ exit /b 0
         $codeOnly | Should -Match '\$executedNames \| Where-Object \{ \$listedNames -notcontains \$_ \}'
     }
 
+    It 'reports the per-body host launch cost beside the reference count' {
+        # Recorded since 2026-11-25 but read by nothing, so the P12 decision had to open the raw
+        # JSONL. Reported, never gated: it is context for the next host question, not a threshold.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match "Properties\['HostMs'\]"
+        $codeOnly | Should -Match 'Host-launch signal:'
+        $codeOnly | Should -Match '\$hostSumMs'
+        $codeOnly | Should -Match '\$hostMaxMs'
+    }
+
+    It 'fails closed when the test host lists no tests, unless the harness opts out' {
+        # The coverage proof depends on the discovered list, so an empty list means the gate cannot
+        # prove which tests it ran. It used to degrade to one unsharded pass with a warning, which
+        # is exactly the false green the proof exists to stop.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\[switch\]\$AllowUnprovenDiscovery'
+        $codeOnly | Should -Match 'if \(-not \$AllowUnprovenDiscovery\)'
+        $codeOnly | Should -Match 'An unproven run is not a pass'
+        $codeOnly | Should -Match 'NO coverage proof'
+        $codeOnly | Should -Match 'exit 6'
+    }
+
     It 'positive control: the over-coverage verdict is detected when it is absent' {
         # Proves the two assertions above can fail: a source carrying only the missing-test
         # check must pass neither of them.
@@ -457,6 +481,18 @@ exit /b 0
             # multi-line block. The pattern matches from $testArgs = @(
             # through the closing ) on its own line.
             $body = $body -replace '(?ms)\$testArgs = @\([^)]*\)\s*\n', "`$testArgs = @('/c', '$stubCmd')`n"
+            # The stub `dotnet` prints no test names, so the real fail-closed guard would end every
+            # case below with exit 6. The harness therefore opts out explicitly: this script keeps
+            # the guard but also accepts the documented switch, and the guard itself is driven
+            # end-to-end by the case that runs $script:guardScript (the same body, unpatched).
+            $script:guardScript = Join-Path $script:harnessScripts 'verify-office-guard.ps1'
+            $body | Set-Content -LiteralPath $script:guardScript -Encoding utf8NoBOM
+            # Disable exactly the fail-closed branch, leaving the WARN path and every verdict after
+            # it intact. Replacing the outer condition instead would have re-enabled the guard.
+            $body = $body.Replace(
+                'if (-not $AllowUnprovenDiscovery) {',
+                'if ($false) {'
+            )
             $script:harnessScript = Join-Path $script:harnessScripts 'verify-office.ps1'
             $body | Set-Content -LiteralPath $script:harnessScript -Encoding utf8NoBOM
         }
@@ -496,6 +532,24 @@ exit /b 0
             $output | Should -Match 'taskkill failed to stop the dotnet-test process tree'
             $output | Should -Match 'Cleanup failed: dotnet-test process tree.*still active'
             $output | Should -Match 'TIMEOUT'
+        }
+
+        It 'fails closed with exit 6 when the host lists no tests and no opt-out was passed' {
+            # Drives the guard the harness otherwise patches out: the same generated body, unpatched.
+            # A stub `dotnet` lists no tests, which is the exact condition the guard refuses.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:guardScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 6
+            $output | Should -Match 'An unproven run is not a pass'
+            $output | Should -Not -Match 'verify-office: PASS'
         }
 
         It 'passes through exit 0 when dotnet exits promptly (positive control)' {

@@ -45,6 +45,13 @@ param(
     # nothing yet shows that splitting removes it.
     [ValidateRange(1, 8)]
     [int]$ShardCount = 1,
+    # Discovery normally proves the gate ran what it claims: every listed test must run, and nothing
+    # else may. When the host cannot list its tests -- a wedged Excel, a test host that refuses to
+    # start, a changed `--list-tests` banner -- that proof cannot run, and a gate that cannot prove
+    # what it ran is not a gate: it exits 6. This switch exists for exactly one caller, the isolated
+    # Pester harness, whose fake `dotnet` prints no test names; passing it records a warning instead
+    # of a proof, so the loss is visible in the log rather than silent.
+    [switch]$AllowUnprovenDiscovery,
     # 660 rather than 600: the suite completed in 9 m 59 s on 2026-11-09, i.e. one second
     # inside the old default, so the gate was failing on its own deadline rather than on a
     # defect. 660 keeps a real hang bounded and gives the suite room to finish.
@@ -460,11 +467,17 @@ $listedTestNames = @($listedTests | Sort-Object -Unique)
 $gateClasses = @()
 $effectiveShardCount = 1
 if ($listedTests.Count -eq 0) {
-    # Discovery builds the partition; it is not the gate's correctness. The category filter
-    # still selects exactly the gate's tests, so an unreadable list degrades to one unsharded
-    # pass instead of refusing to run. It also keeps the isolated harness -- whose dotnet
-    # stub prints no test names -- on the single-process path it has always exercised.
-    Log 'WARN: the test host listed no OfficeIntegration tests; running one unsharded pass.'
+    # Fail closed. The partition and the both-directions coverage proof both depend on this list,
+    # so an empty list means the gate cannot prove which tests it ran. It used to degrade to one
+    # unsharded pass with a warning, which reintroduced exactly the false green the coverage check
+    # was built to stop (a run that reports PASS on an unproven suite). Only the Pester harness,
+    # whose stub prints no test names, may opt out, and even then the loss is logged.
+    if (-not $AllowUnprovenDiscovery) {
+        Log "FAIL: the test host listed no OfficeIntegration tests, so the partition and the coverage proof cannot run. An unproven run is not a pass. Evidence preserved under $evidence."
+        exit 6
+    }
+
+    Log 'WARN: discovery was unavailable and -AllowUnprovenDiscovery was passed; running one unsharded pass with NO coverage proof.'
 } else {
     $gateClasses = @($listedTests | ForEach-Object { ($_ -split '\.')[-2] } | Sort-Object -Unique)
     $effectiveShardCount = $ShardCount
@@ -698,6 +711,8 @@ $quitOutcomes = [ordered]@{}
 $overTeardownCeiling = @()
 $rcwMeasured = 0
 $rcwLeaks = @()
+$hostSumMs = 0
+$hostMaxMs = 0
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
         foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
@@ -709,6 +724,7 @@ try {
             # -1 means the record carried no reference count (a legacy record, or a
             # teardown that never reached the release). It is unmeasured, never zero.
             $rcw = -1
+            $hostMs = 0
             if ($trimmed.StartsWith('{')) {
                 # One fixture teardown's contribution, with the test that caused it
                 # (ADR-0035's determinism work). The total is unchanged by the
@@ -720,6 +736,7 @@ try {
                     $test = [string]$rec.Test
                     if ($rec.PSObject.Properties['Quit']) { $quit = [string]$rec.Quit }
                     if ($rec.PSObject.Properties['Rcw']) { $rcw = [int]$rec.Rcw }
+                    if ($rec.PSObject.Properties['HostMs']) { $hostMs = [long]$rec.HostMs }
                 } catch { continue }
             } elseif ([int]::TryParse($trimmed, [ref]$count)) {
                 # A bare integer from an older evidence file: still summed, so a
@@ -732,6 +749,8 @@ try {
             $forcedKills += $count
             if ($rcw -ge 0) { $rcwMeasured++ }
             if ($rcw -gt 0) { $rcwLeaks += [pscustomobject]@{ Test = $test; Rcw = $rcw } }
+            $hostSumMs += $hostMs
+            if ($hostMs -gt $hostMaxMs) { $hostMaxMs = $hostMs }
             if (-not [string]::IsNullOrEmpty($quit)) {
                 if (-not $quitOutcomes.Contains($quit)) { $quitOutcomes[$quit] = 0 }
                 $quitOutcomes[$quit]++
@@ -760,6 +779,10 @@ try {
 $killPercent = if ($teardowns -gt 0) { [int][math]::Round(100.0 * $forcedKills / $teardowns) } else { 0 }
 Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) ($killPercent% of teardowns killed; per-teardown ceiling $MaxForcedExitsPerTeardown). This is Excel's residency, not a leaked proxy: the calibration run of 2026-11-25 released the application proxy to 0 references in all 68 teardowns and still killed 46 of them. The total is REPORTED, not gated: it tracks how many Office test bodies touch a workbook."
 Log "Reference-count signal: $rcwMeasured of $teardowns teardown(s) reported an application reference count, and $($rcwLeaks.Count) left one behind. Zero is the leak gate: the fixture must be the last managed holder when it tears down."
+# Reported, never gated: the per-body host cost, so the next question about a per-class host has a
+# number in the run log instead of an estimate carried over from an earlier experiment.
+$hostMeanMs = [int][math]::Round($hostSumMs / [math]::Max(1, $teardowns))
+Log "Host-launch signal: $hostSumMs ms across $teardowns teardown(s), max $hostMaxMs ms, mean $hostMeanMs ms per body."
 
 # Per-test attribution. The total above is the reported number; this is WHERE it
 # comes from, and it is what makes the signal actionable rather than merely
