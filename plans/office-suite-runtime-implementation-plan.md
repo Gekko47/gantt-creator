@@ -591,12 +591,25 @@ steady region (or as a post-warm-up slope) would be a measurement repair rather 
 this is the Phase-7 soak gate (R7.7), so it is recorded for an owner decision instead of changed in
 this round.
 
-**Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. The sharding lever
-stays a **prediction**: a shorter host should avoid the drift the 68-body run shows. The condition for
-testing it is a filter that cannot over-match — each shard term written self-contained as
-`Category=OfficeIntegration&FullyQualifiedName~Class`, so the expression needs no grouping, plus a
-coverage assertion that also fails on *extra* tests, because the current check only proves every
-discovered test ran. P5 (clipboard waits) and P6 (per-class PowerPoint host) are untouched.
+**Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. The condition for
+testing the sharding prediction was a filter that cannot over-match: each shard term self-contained as
+`Category=OfficeIntegration&FullyQualifiedName~Class`, plus a coverage assertion that also fails on
+*extra* tests. **Both landed, and P3b is now answered — negative.** With those in place the gate ran
+two shards twice, both **PASS** with the both-directions coverage proof (`all 104 discovered test(s)
+ran in a shard, and nothing else ran`):
+
+| Run | Wall | Shards |
+|---|---|---|
+| 1 shard (2026-11-25) | 848 s | 778 s of test time |
+| 2 shards, first | 767 s | — |
+| 2 shards, repeat | 863 s | 375.6 s + 390.6 s = **766 s** |
+
+The shard sum equals the single pass, and the wall time is inside run-to-run noise in both
+directions. **Splitting the suite does not recover the position effect**, so `ShardCount` stays 1 and
+P3b is withdrawn. The durable gains of the work are the filter and the two verdicts: they found a real
+discovery defect (every `[Theory]` was invisible to the gate's test list, because the host lists a
+theory only as one row per data set) and a count mismatch that reported 104 discovered against 106
+covered. P5 (clipboard waits) and P6 (per-class PowerPoint host) are untouched.
 
 Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
 riskier because it changes the fixture's per-body isolation).
