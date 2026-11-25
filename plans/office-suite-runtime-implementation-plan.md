@@ -576,8 +576,20 @@ classes into two ~6-minute runs produced half A 92 tests in 5 m 52 s and half B 
 6 m 36 s with one failure**. That is 143 tests, not the gate's 103: a bare `FullyQualifiedName~Class`
 OR list matches by substring and also ignores the category, so it pulled in the 36 non-live bodies
 and the `Category=TransferSoak` body the routine gate deliberately excludes (confirmed in the
-`--list-tests` output). The failure was not captured, so it is not attributed here. The rehearsal
-therefore reproduced P1's own filtering lesson rather than answering the sharding question.
+`--list-tests` output). The failing body was identified afterwards by re-running it alone: it is the
+soak itself, and it fails reproducibly (below). The rehearsal therefore reproduced P1's own filtering
+lesson rather than answering the sharding question.
+
+**Open defect, reproducible: the soak's handle-trend tolerance is defeated by its own cold start.**
+`dotnet test ... --filter "FullyQualifiedName~PowerPointTransferSoakIntegrationTests"` alone:
+**Failed in 1 m 44 s**, `handlesMin=1892 handlesMax=1956 delta=64 > tolerance=50` over 15 attach-arm
+samples. The series names the cause — the attach samples read **1892** (first), then 1951, 1956, and
+settle at **1936-1941** for the remaining twelve; `excelHandles` climbs **1443 -> 1521** across the
+first six attach iterations and then flattens. So the max-minus-min is a **warm-up step, not a rising
+leak**: the steady region varies by 36, inside the tolerance. Measuring the same tolerance over the
+steady region (or as a post-warm-up slope) would be a measurement repair rather than a loosening, but
+this is the Phase-7 soak gate (R7.7), so it is recorded for an owner decision instead of changed in
+this round.
 
 **Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. The sharding lever
 stays a **prediction**: a shorter host should avoid the drift the 68-body run shows. The condition for
