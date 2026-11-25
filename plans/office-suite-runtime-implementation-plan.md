@@ -547,7 +547,30 @@ saved**, the prediction to within a second. End to end the run took 14 m 8 s inc
 build, against 25 m 13 s for the 10 s tree, while test-body work *rose* 247.3 s -> 319.9 s, so the
 difference is the wait and not a lighter suite.
 
-Still open: P2/P3/P3b (the intermittent ~60 s PowerPoint stall — the records show
-`CopyAfterDeleteSpikeIntegrationTests` carrying 66.7 s of body time across 3 bodies and
-`PowerPointSlideFitRouteProbe` 17.1 s in one), P5 (clipboard waits), P6 (per-class PowerPoint host)
-and P12.
+### P2 — the "~60 s stall" is positional, not a hang (2026-11-25, negative)
+
+The 66 s body in the live run was
+`SendToPowerPointIntegrationTests.The_zero_deck_create_arm_pastes_and_ungroups_on_a_fixture_owned_host`,
+the **66th teardown of 68**. Run alone through the same assembly and filter it takes **10 s** (its
+sibling 14 s; both together 26.6 s wall). So there is no fixed stall inside the body, and nothing to
+shrink: the same work is six times slower at the end of the suite than on its own.
+
+The position effect is in the records and is not subtle:
+
+| Teardown positions | Mean body time |
+|---|---|
+| 1-34 | 2.7 s |
+| 35-68 | **6.7 s** |
+
+**It is not leaked hosts.** Immediately after the local runs this session, `Get-Process EXCEL,POWERPNT`
+reported none alive, and the gate's own sweep found no stray, so the degradation is inside the test
+host or below it, not in accumulating Office processes.
+
+**Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. P3b (heavy-first
+ordering) keeps a **prediction** rather than a claim: if the cost is positional, placing the heavy
+bodies early should reduce the total, and a two-shard run that splits the same bodies and compares
+per-body times is the cheap way to tell positional drift from per-body cost before reordering
+anything. P5 (clipboard waits) and P6 (per-class PowerPoint host) are untouched.
+
+Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
+riskier because it changes the fixture's per-body isolation).
