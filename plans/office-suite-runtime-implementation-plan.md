@@ -474,5 +474,33 @@ Every pack-loaded teardown forced a kill (19/19), which is the host constraint, 
 others. Arm A of the probe showed a plain workbook exits, so these are genuine leaks or hangs, and
 they are now a named list rather than part of an undifferentiated ratchet. That list is P11's work.
 
-P12 and P13 are unchanged. The runtime items (P2/P3/P3b stall, P4 exit poll, P5 clipboard, P6
-PowerPoint host) are untouched.
+### P11 result — the leaks do not exist (2026-11-25, negative)
+
+`ReleaseComObject(Application)` now returns the remaining reference count into every teardown
+record (`"Rcw"`). One full gate run later:
+
+| Rcw | Forced kill | Records |
+|---|---|---|
+| `0` | 0 (clean) | 22 |
+| `0` | 1 | **46** |
+
+**Every teardown released to zero.** The fixture was the last managed holder in all 68 teardowns,
+and Excel still survived in 46 of them. There is **no RCW leak in the Office gate.** That kills the
+premise of P11 as written ("clean up the leaky tests") and of Part 7's rule 1 ("no XLL, no kill"):
+a forced kill is not evidence of a leaked reference, and no amount of `ComScope` adoption will
+remove it. My earlier classification by `Xll` was correct as a *correlate* (19/19 killed with the
+pack loaded, 28/49 without) but wrong as a *cause*: plain bodies with `Rcw=0` kill too, so touching a
+real workbook is enough.
+
+**Revised rules:**
+
+1. **`Rcw == 0` on every teardown is the leak gate.** It is measurable, it is already green, and a
+   non-zero value names a genuine bug. This replaces "forced exits must be zero".
+2. **Forced exits are an Excel residency metric.** Keep the existing per-teardown ceiling of 1 and
+   report the total and the trend; do not gate a zero that the host controls.
+3. **P12 keeps its value for a different reason:** one Excel per XLL class removes ~N process
+   starts and ~N teardown waits per class, i.e. it is a *runtime* change, not a leak fix.
+4. **P13 becomes smaller:** gate `Rcw`, keep the ceiling, delete the "escalating fraction" narrative
+   that reads the kill as a leak, and keep the Xll/Rcw fields for diagnosis.
+
+The runtime items (P2/P3/P3b stall, P4 exit poll, P5 clipboard, P6 PowerPoint host) are untouched.
