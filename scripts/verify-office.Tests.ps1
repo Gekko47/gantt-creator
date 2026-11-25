@@ -303,6 +303,19 @@ exit /b 0
         $codeOnly | Should -Match 'exit 6'
     }
 
+    It 'canonicalises both name sets before comparing them' {
+        # A [Theory] is spelled differently by the two sources: --list-tests lists each data
+        # row as `Method(arg: value)` while the trx also carries the bare method name. The
+        # first version stripped only one side and reported a Theory as "ran but was not
+        # listed" on the live two-shard run of 2026-11-25.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$executedNames = @\(\$executedTests'
+        $codeOnly | Should -Match '\$listedNames = @\(\$listedTests'
+        $codeOnly | Should -Match '\$listedNames \| Where-Object \{ \$executedNames -notcontains \$_ \}'
+        $codeOnly | Should -Match '\$executedNames \| Where-Object \{ \$listedNames -notcontains \$_ \}'
+    }
+
     It 'positive control: the over-coverage verdict is detected when it is absent' {
         # Proves the two assertions above can fail: a source carrying only the missing-test
         # check must pass neither of them.

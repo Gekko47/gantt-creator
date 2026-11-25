@@ -618,16 +618,27 @@ if ($gateClasses.Count -gt 0) {
             Log "WARN: could not read $shardTrxName for the coverage check: $($_.Exception.Message)"
         }
     }
-    $missingTests = @($listedTests |
-        Where-Object { $executedTests -notcontains (($_ -split '\(')[0]) })
+    # Both sides are reduced to the same canonical name (everything before the argument
+    # list) BEFORE comparing. The two sources spell a [Theory] differently: --list-tests
+    # lists each data row as `Method(artefactName: "Comment")`, while the trx carries the
+    # same display name for the row and the bare method name for an ordinary test. Comparing
+    # a stripped name against a raw list reported `Initialise_preserves_a_cell_empty_sheet_
+    # with_live_non_cell_state` as "ran but was not listed" on 2026-11-25, which is exactly
+    # the kind of false verdict this check exists to avoid.
+    $executedNames = @($executedTests |
+        Where-Object { -not [string]::IsNullOrEmpty($_) } |
+        ForEach-Object { ($_ -split '\(')[0] } |
+        Sort-Object -Unique)
+    $listedNames = @($listedTests |
+        ForEach-Object { ($_ -split '\(')[0] } |
+        Sort-Object -Unique)
+
+    $missingTests = @($listedNames | Where-Object { $executedNames -notcontains $_ })
     if ($missingTests.Count -gt 0) {
         Log "FAIL: $($missingTests.Count) discovered test(s) ran in no shard, so the partition is incomplete. First: $($missingTests[0]). Evidence preserved under $evidence."
         exit 6
     }
-    $unexpectedTests = @($executedTests |
-        Where-Object { -not [string]::IsNullOrEmpty($_) } |
-        Sort-Object -Unique |
-        Where-Object { $listedTests -notcontains (($_ -split '\(')[0]) })
+    $unexpectedTests = @($executedNames | Where-Object { $listedNames -notcontains $_ })
     if ($unexpectedTests.Count -gt 0) {
         Log "FAIL: $($unexpectedTests.Count) test(s) ran that discovery did not list, so the filter is wider than the gate accounts for. First: $($unexpectedTests[0]). Evidence preserved under $evidence."
         exit 6
