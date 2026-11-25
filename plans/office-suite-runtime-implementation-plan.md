@@ -240,9 +240,18 @@ tidier".
 
 **Measured outcome instead of the predicted one (2026-11-25):** the live gate is **848 s (14 m 8 s)**
 and was reached by **P4 alone**; P3, P3b, P5, P6 and P12 contributed nothing measurable and were
-withdrawn. Of the 848 s, ~76 s is build and publish, 319.9 s is test-body work, 144.9 s is teardown
-waits, ~50 s is host launches, leaving **~257 s inside the test host that no line item owns** — the
-largest unmeasured block left. The per-branch smoke run (P1b) does not exist.
+withdrawn. The per-branch smoke run (P1b) does not exist.
+
+**The residual is measured, and it is the runner (2026-11-25).** The fixture now records setup and
+teardown beside the body, and the gate reconciles all three against each test process's own clock, so
+"test-body work" is no longer one undifferentiated block. One live run: the test process ran
+**701.1 s** — setup **56.7 s** (8.1%, of which **50.4 s** is the host launch), body **197.5 s**
+(28.2%), teardown **206.3 s** (29.4%, of which **148.0 s** is the graceful exit poll). The fixtures
+therefore own **460.5 s**, and **240.6 s (34.3%) is outside every fixture**: test-host start-up,
+discovery, result reporting and the runner's per-test turnaround. That absorbs the ~257 s this plan
+could not place, and it places it as *not* workbook work, *not* COM and *not* a wait — about 2.3 s
+per test that no fixture change can remove. The next lever is therefore the test host's own
+configuration (a work item of its own), not another fixture restructure.
 
 **What the plan predicted:** a ~17-minute gate becomes ~13–14 minutes from P3 + P4 + P5 + P6, and
 the per-branch gate becomes a ≤ 7-minute smoke run from P1b. If P3's stall is host-specific, only P1
@@ -676,7 +685,11 @@ A code review of this plan against the tree raised nine findings. Closed in code
 - **Discovery failure is no longer a pass.** `verify-office.ps1` exits 6 when the host lists no
   tests, with `-AllowUnprovenDiscovery` as the documented opt-out for the Pester harness.
 - **The host-launch figure is reported**, so the P12-style question no longer needs the raw JSONL.
+- **The residual is measured.** The fixture records setup and teardown beside the body and the gate
+  prints the reconciliation above: 240.6 s of a 701.1 s test process is outside every fixture, i.e.
+  the runner. It is no longer an unplaced block; it is a named block with a different owner.
+- **The leak claim is scoped** to the `Application` proxy in `KNOWN-LIMITATIONS` L19.
 
-Still open, with owners: the smoke subset (never adopted — build or strike); the ~257 s residual
-(one instrumentation pass); the `Application`-only scope of the leak claim (state it in
-`KNOWN-LIMITATIONS`); the `ConfigRepair` `IdentityDamage` intermittent (needs a reproduction record).
+Still open, with owners: the smoke subset (never adopted — build or strike); the runner overhead the
+phase split now names (a test-host configuration work item, not another fixture change); the
+`ConfigRepair` `IdentityDamage` intermittent (needs a reproduction record).

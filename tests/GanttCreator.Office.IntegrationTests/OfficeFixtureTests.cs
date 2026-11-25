@@ -288,6 +288,16 @@ public class OfficeFixtureTests
             pid = fixture.ProcessId;
             Assert.True(pid != 0, "Excel launched but process ID was not captured.");
 
+            // Positive control for the setup split: a fixture that really initialised must
+            // report setup time, and setup can never be shorter than the launch it contains.
+            Assert.True(
+                fixture.SetupMs > 0,
+                $"Expected setup to be measured; observed {fixture.SetupMs} ms.");
+            Assert.True(
+                fixture.SetupMs >= fixture.HostLaunchMs,
+                $"Setup {fixture.SetupMs} ms cannot be shorter than the launch " +
+                $"{fixture.HostLaunchMs} ms inside it.");
+
             var registered = fixture.RegisterXll(xllPath);
             Assert.True(registered,
                 $"Application.RegisterXLL returned false for '{xllPath}'.");
@@ -645,6 +655,20 @@ public class OfficeFixtureTests
             // save exactly it per body (P12). A fake fixture launched nothing, so it reads 0 rather
             // than being absent: an unmeasured field would read as "no launch cost".
             Assert.Contains("\"HostMs\":0", line, StringComparison.Ordinal);
+
+            // The phase split is what lets the gate say which part of the wall time the fixtures
+            // own. A fake fixture never initialised, so setup reads 0; teardown and body are
+            // measured to the record and must never be negative.
+            Assert.Contains("\"SetupMs\":0", line, StringComparison.Ordinal);
+            using (var parsed = System.Text.Json.JsonDocument.Parse(line))
+            {
+                Assert.True(
+                    parsed.RootElement.GetProperty("TeardownMs").GetInt64() >= 0,
+                    "Expected a measured teardown duration on the record.");
+                Assert.True(
+                    parsed.RootElement.GetProperty("BodyMs").GetInt64() >= 0,
+                    "Expected a measured body duration on the record.");
+            }
 
             // Positive control for the same field: the flag is what separates the host's
             // XLL lifetime constraint from a test leak, so a record that can never say

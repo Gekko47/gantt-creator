@@ -317,7 +317,13 @@ Required live tests:
 > fails rather than degrading to an unproven pass, and only the Pester harness may opt out
 > with `-AllowUnprovenDiscovery`. The dedicated soak gate reads the same teardown record and
 > applies the same reference-count verdict, because it is the only gate that performs 25
-> transfers. The routine set currently discovers **104 methods in 40 classes**, and the
+> transfers. The record also carries **setup** and **teardown** beside the body, and the gate
+> prints a **phase signal** reconciling the three against the test processes' own clock: on
+> 2026-11-25 the process ran 701.1 s, the fixtures owned 460.5 s (56.7 setup, 197.5 body,
+> 206.3 teardown of which 148.0 was the exit poll), and 240.6 s was outside every fixture —
+> the runner's start-up, discovery, reporting and per-test turnaround. That line exists so a
+> later increase is attributed to the runner or to the fixtures on the run that shows it,
+> without a probe. The routine set currently discovers **104 methods in 40 classes**, and the
 > non-live Office harness (the host-free fixtures and trend evaluators) runs **39** facts in
 > the every-commit gate.
 

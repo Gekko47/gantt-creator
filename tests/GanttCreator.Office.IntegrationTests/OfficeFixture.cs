@@ -226,6 +226,19 @@ internal class OfficeFixture : IAsyncLifetime
     internal long HostLaunchMs { get; private set; }
 
     /// <summary>
+    /// How long everything before the test body took, in milliseconds — from fixture
+    /// construction to the end of <see cref="InitializeAsync"/>, so the host launch,
+    /// the property configuration and the owned-PID adoption and manifest write.
+    /// </summary>
+    /// <remarks>
+    /// The record's body figure is measured from construction to teardown entry, so before
+    /// this field existed setup and body were inseparable and the gate could not say which
+    /// half of a 320 s block was workbook work. Subtracting this from the body figure is
+    /// what makes the setup/body/teardown split reconcile against the gate's wall clock.
+    /// </remarks>
+    internal long SetupMs { get; private set; }
+
+    /// <summary>
     /// Every EXCEL.EXE process ID this fixture launched, primary first. Empty when
     /// no new process could be identified, in which case the orphan check and the
     /// shell sweep have nothing to act on.
@@ -377,6 +390,14 @@ internal class OfficeFixture : IAsyncLifetime
 
         try
         {
+            // Measured to the moment the record is written, so setup + body + teardown
+            // reconciles against the gate's wall clock and the residual outside every
+            // fixture is a number rather than an inference. -1 means teardown never
+            // started, which only a fixture reported from outside DisposeAsync could be.
+            long teardownMs = _bodyMsAtTeardown >= 0
+                ? _lifetime.ElapsedMilliseconds - _bodyMsAtTeardown
+                : 0;
+
             // The test identity is captured when the fixture is CONSTRUCTED -- see the
             // _testName remarks for why it cannot be resolved at report time.
             string record = System.Text.Json.JsonSerializer.Serialize(
@@ -388,7 +409,9 @@ internal class OfficeFixture : IAsyncLifetime
                     _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds,
                     XllRegistered,
                     RemainingApplicationRefs,
-                    HostLaunchMs));
+                    HostLaunchMs,
+                    SetupMs,
+                    teardownMs));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -405,7 +428,10 @@ internal class OfficeFixture : IAsyncLifetime
     /// <param name="Count">How many forced kills this teardown escalated to.</param>
     /// <param name="GracefulExitMs">How long the graceful poll ran before the kill was issued.</param>
     /// <param name="Quit">What teardown's <c>Quit()</c> attempt did.</param>
-    /// <param name="BodyMs">How long the body had been running when teardown began.</param>
+    /// <param name="BodyMs">
+    /// Fixture construction to teardown entry, so setup plus body. Subtract
+    /// <paramref name="SetupMs"/> for the body alone.
+    /// </param>
     /// <param name="Xll">
     /// Whether the packed add-in was loaded into the process this teardown owned. A
     /// forced kill with <see langword="true"/> is the host-lifetime constraint; one with
@@ -419,6 +445,14 @@ internal class OfficeFixture : IAsyncLifetime
     /// exactly this per body, so it is the figure that decides whether that restructure is
     /// worth its isolation risk.
     /// </param>
+    /// <param name="SetupMs">
+    /// Construction to the end of <c>InitializeAsync</c>: launch, property configuration,
+    /// PID adoption and manifest write. 0 when the fixture never initialised.
+    /// </param>
+    /// <param name="TeardownMs">
+    /// Teardown entry to this record, so it contains the graceful poll
+    /// (<paramref name="GracefulExitMs"/>) and the kill, if any.
+    /// </param>
     private sealed record ForcedKillRecord(
         string? Test,
         int Count,
@@ -427,7 +461,9 @@ internal class OfficeFixture : IAsyncLifetime
         long BodyMs,
         bool Xll,
         int Rcw,
-        long HostMs);
+        long HostMs,
+        long SetupMs,
+        long TeardownMs);
 
     /// <summary>
     /// Names the test method that is tearing this fixture down.
@@ -815,6 +851,12 @@ internal class OfficeFixture : IAsyncLifetime
         {
             RecordOwnedProcessId(id);
         }
+
+        // Everything up to here is setup. Captured last so it covers the launch,
+        // the property configuration, the PID adoption and the manifest write; the
+        // record's body figure starts at construction, so this is what separates
+        // the two halves.
+        SetupMs = _lifetime.ElapsedMilliseconds;
 
         return Task.CompletedTask;
     }

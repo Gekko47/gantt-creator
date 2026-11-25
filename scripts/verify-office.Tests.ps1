@@ -35,6 +35,9 @@ rem VERIFY_OFFICE_STUB_RCW models the application reference count the teardown
 rem recorded: unset or 0 is the last-managed-holder case, 1 is a leaked reference,
 rem and 'absent' models a fixture that never wrote the field, which the gate must
 rem read as unmeasured rather than clean.
+rem
+rem The record carries the setup/body/teardown split, with deterministic values so
+rem the phase arithmetic in the report is checkable: setup 100, body 1234, teardown 50.
 if not defined VERIFY_OFFICE_STUB_KILLS set VERIFY_OFFICE_STUB_KILLS=0
 if not defined VERIFY_OFFICE_STUB_RCW set VERIFY_OFFICE_STUB_RCW=0
 set "STUB_RCW_FRAGMENT=,"Rcw":%VERIFY_OFFICE_STUB_RCW%"
@@ -42,7 +45,7 @@ if /i "%VERIFY_OFFICE_STUB_RCW%"=="absent" set "STUB_RCW_FRAGMENT="
 if /i not "%VERIFY_OFFICE_STUB_KILLS%"=="none" (
   if defined GANTTCREATOR_FORCED_KILLS_PATH (
     for %%I in ("%GANTTCREATOR_FORCED_KILLS_PATH%") do if not exist "%%~dpI" mkdir "%%~dpI"
-    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0,"Quit":"returned","BodyMs":1234%STUB_RCW_FRAGMENT%}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0,"Quit":"returned","BodyMs":1234,"SetupMs":100,"TeardownMs":50%STUB_RCW_FRAGMENT%}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
   )
 )
 rem VERIFY_OFFICE_STUB_CLEAN=1 adds a second record whose teardown exited
@@ -350,6 +353,23 @@ exit /b 0
         $codeOnly | Should -Match '\$hostMaxMs'
     }
 
+    It 'splits the fixture time into setup, body and teardown and names the residual' {
+        # 848 s of wall time had ~320 s attributed to "test body work" (which was setup plus
+        # body) and ~257 s owned by nothing. The split makes the phases add up against the
+        # test processes' own clock, so a residual that grows faster than the fixtures reads
+        # as a runner problem rather than a product one.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match "Properties\['SetupMs'\]"
+        $codeOnly | Should -Match "Properties\['TeardownMs'\]"
+        # Body already contains setup, so the body term subtracts it rather than adding both.
+        $codeOnly | Should -Match '\$bodyOnlySumMs \+= \[math\]::Max\(0, \$bodyMs - \$setupMs\)'
+        $codeOnly | Should -Match '\$shardElapsedMsTotal \+= '
+        $codeOnly | Should -Match 'Phase signal: setup'
+        $codeOnly | Should -Match 'leaving \$residualMs ms outside every fixture'
+        $codeOnly | Should -Match '\$shardElapsedMsTotal - \$fixtureSumMs'
+    }
+
     It 'fails closed when the test host lists no tests, unless the harness opts out' {
         # The coverage proof depends on the discovered list, so an empty list means the gate cannot
         # prove which tests it ran. It used to degrade to one unsharded pass with a warning, which
@@ -566,6 +586,13 @@ exit /b 0
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 0
             $output | Should -Match 'verify-office: PASS'
+            # The phase split must reconcile against the record, not merely be printed: the
+            # stub says setup 100, body 1234 and teardown 50, so the body term is 1134 and
+            # the fixtures own 1284 ms. The residual is the harness's own wall time, so only
+            # its shape is asserted.
+            $output | Should -Match 'Phase signal: setup 100 ms, body 1134 ms, teardown 50 ms'
+            $output | Should -Match 'across 1 of 1 record\(s\), so fixtures own 1284 ms'
+            $output | Should -Match 'leaving \d+ ms outside every fixture'
         }
 
         It 'archives the per-run trx before the verdict (positive control)' {

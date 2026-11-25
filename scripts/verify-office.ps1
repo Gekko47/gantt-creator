@@ -499,6 +499,9 @@ $shardOwnedPidPaths = @()
 $shardForcedKillPaths = @()
 $shardExitCodes = @()
 $timedOutShards = @()
+# Sum of the test processes' own wall time, so the phase breakdown below can say how
+# much of it the fixtures account for and how much is the runner's own overhead.
+$shardElapsedMsTotal = [long]0
 
 for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
 {
@@ -621,6 +624,7 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
     # The duration is logged because shard count is a performance decision: a one-shard run and a
     # two-shard run are only comparable if each shard's own wall time is in the report.
     Log ("shard {0}: exit {1} after {2:N1} s" -f $shard, $testProc.ExitCode, $watchdog.Elapsed.TotalSeconds)
+    $shardElapsedMsTotal += [long]$watchdog.Elapsed.TotalMilliseconds
     $shardExitCodes += [int]$testProc.ExitCode
 }
 
@@ -713,6 +717,14 @@ $rcwMeasured = 0
 $rcwLeaks = @()
 $hostSumMs = 0
 $hostMaxMs = 0
+# Phase sums, so the report says which part of the wall time the fixtures own. Setup is
+# a subset of Body, so the body term subtracts it; the graceful poll is a subset of
+# teardown and is reported beside it rather than added.
+$setupSumMs = [long]0
+$bodyOnlySumMs = [long]0
+$teardownSumMs = [long]0
+$gracefulSumMs = [long]0
+$phaseMeasured = 0
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
         foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
@@ -724,7 +736,11 @@ try {
             # -1 means the record carried no reference count (a legacy record, or a
             # teardown that never reached the release). It is unmeasured, never zero.
             $rcw = -1
-            $hostMs = 0
+            $hostMs = [long]0
+            $bodyMs = [long]0
+            $setupMs = -1
+            $teardownMs = [long]0
+            $gracefulMs = [long]0
             if ($trimmed.StartsWith('{')) {
                 # One fixture teardown's contribution, with the test that caused it
                 # (ADR-0035's determinism work). The total is unchanged by the
@@ -737,6 +753,10 @@ try {
                     if ($rec.PSObject.Properties['Quit']) { $quit = [string]$rec.Quit }
                     if ($rec.PSObject.Properties['Rcw']) { $rcw = [int]$rec.Rcw }
                     if ($rec.PSObject.Properties['HostMs']) { $hostMs = [long]$rec.HostMs }
+                    if ($rec.PSObject.Properties['BodyMs']) { $bodyMs = [long]$rec.BodyMs }
+                    if ($rec.PSObject.Properties['SetupMs']) { $setupMs = [long]$rec.SetupMs }
+                    if ($rec.PSObject.Properties['TeardownMs']) { $teardownMs = [long]$rec.TeardownMs }
+                    if ($rec.PSObject.Properties['GracefulExitMs']) { $gracefulMs = [long]$rec.GracefulExitMs }
                 } catch { continue }
             } elseif ([int]::TryParse($trimmed, [ref]$count)) {
                 # A bare integer from an older evidence file: still summed, so a
@@ -751,6 +771,16 @@ try {
             if ($rcw -gt 0) { $rcwLeaks += [pscustomobject]@{ Test = $test; Rcw = $rcw } }
             $hostSumMs += $hostMs
             if ($hostMs -gt $hostMaxMs) { $hostMaxMs = $hostMs }
+            # Setup 0 is a real measurement (a fixture that never initialised), so the
+            # discriminator is the field's presence, not its value: -1 means a record
+            # from before this split.
+            if ($setupMs -ge 0) {
+                $phaseMeasured++
+                $setupSumMs += $setupMs
+                $bodyOnlySumMs += [math]::Max(0, $bodyMs - $setupMs)
+                $teardownSumMs += $teardownMs
+                $gracefulSumMs += $gracefulMs
+            }
             if (-not [string]::IsNullOrEmpty($quit)) {
                 if (-not $quitOutcomes.Contains($quit)) { $quitOutcomes[$quit] = 0 }
                 $quitOutcomes[$quit]++
@@ -783,6 +813,18 @@ Log "Reference-count signal: $rcwMeasured of $teardowns teardown(s) reported an 
 # number in the run log instead of an estimate carried over from an earlier experiment.
 $hostMeanMs = [int][math]::Round($hostSumMs / [math]::Max(1, $teardowns))
 Log "Host-launch signal: $hostSumMs ms across $teardowns teardown(s), max $hostMaxMs ms, mean $hostMeanMs ms per body."
+
+# Phase signal: where the wall time went. The fixture covers construction-to-ready (setup),
+# the body, and teardown; what is left of the test processes' own time is the runner --
+# host start-up, discovery, reporting and per-test turnaround. Reported, never gated: the
+# numbers move with the suite, but the RATIO is what makes a regression localisable without
+# a probe run, and a residual that grows faster than the fixtures is a runner problem, not a
+# product one. -1 setup means a record from before this split, so the count that follows says
+# how many records the sums cover.
+$fixtureSumMs = $setupSumMs + $bodyOnlySumMs + $teardownSumMs
+$residualMs = [math]::Max(0, $shardElapsedMsTotal - $fixtureSumMs)
+Log "Phase signal: setup $setupSumMs ms, body $bodyOnlySumMs ms, teardown $teardownSumMs ms (of which graceful poll $gracefulSumMs ms) across $phaseMeasured of $teardowns record(s), so fixtures own $fixtureSumMs ms."
+Log "Phase signal: the test processes ran $shardElapsedMsTotal ms, leaving $residualMs ms outside every fixture - host start-up, discovery, reporting and per-test turnaround."
 
 # Per-test attribution. The total above is the reported number; this is WHERE it
 # comes from, and it is what makes the signal actionable rather than merely
