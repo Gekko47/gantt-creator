@@ -108,16 +108,27 @@ internal class OfficeFixture : IAsyncLifetime
 
     /// <summary>
     /// The production bound on how long the owned process gets to exit on its own
-    /// after <c>Quit()</c> and a GC pass.
+    /// after <c>Quit()</c> and a GC pass, before teardown kills it.
     /// </summary>
-    private const int DefaultGracefulExitSeconds = 10;
+    /// <remarks>
+    /// Three seconds, calibrated on a measurement instead of a theory. The gate run of
+    /// 2026-11-25 recorded 68 teardowns and split cleanly: the 22 clean teardowns
+    /// recorded <b>0 ms</b> — a process that exits exits before the first poll — while
+    /// the 46 that were killed each spent a whole 10 s window first, 464 s of pure
+    /// waiting across the run. That same run recorded an application reference count
+    /// of 0 in every teardown, and the widened 30 s probe recorded survivors still
+    /// alive, so a survivor is Excel's own residency and no wider window collects it.
+    /// Three seconds keeps a 3x margin over the observed clean exit and removes about
+    /// 7 s from each of the two-thirds of teardowns that end in a kill.
+    /// </remarks>
+    private const int DefaultGracefulExitSeconds = 3;
 
     /// <summary>
     /// Environment variable naming an alternate graceful-exit bound, in seconds.
-    /// Diagnostic only: it exists so one run can discriminate a slow host shutdown
-    /// (the process exits shortly after the 10 s production bound) from a proxy
-    /// chain that never releases (it survives any bound). It is never a fix and
-    /// must not be set in a shipping gate.
+    /// Diagnostic only: it exists so one run can widen the bound without a code edit,
+    /// which is how the 2026-11-25 measurement proved a survivor outlives 30 s with
+    /// zero application references outstanding. It is never a fix and must not be set
+    /// in a shipping gate.
     /// </summary>
     internal const string GracefulExitSecondsVariable = "GANTTCREATOR_GRACEFUL_EXIT_SECONDS";
 
@@ -130,13 +141,12 @@ internal class OfficeFixture : IAsyncLifetime
 
     /// <summary>
     /// How long the owned process gets to exit on its own after <c>Quit()</c> and
-    /// a GC pass. The production bound is 10 s; a process that needs the full
-    /// window is the unreleased-COM-proxy signal, not normal Excel lag. Virtual
-    /// so the escalation test can shorten it instead of spending 10 s. The
-    /// diagnostic environment override in
-    /// <see cref="GracefulExitSecondsVariable"/> lets a single run widen the
-    /// bound without a code edit, which is how a leak is told apart from a slow
-    /// host shutdown.
+    /// a GC pass, before teardown kills it. See
+    /// <see cref="DefaultGracefulExitSeconds"/> for the measurement behind the
+    /// bound. Virtual so the escalation test can shorten it instead of spending
+    /// the production bound. The diagnostic environment override in
+    /// <see cref="GracefulExitSecondsVariable"/> lets a single run widen the bound
+    /// without a code edit.
     /// </summary>
     internal virtual TimeSpan GracefulExitTimeout =>
         int.TryParse(

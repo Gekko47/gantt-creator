@@ -524,4 +524,22 @@ test, an unreported count exits 5, and a positive control proves the three sourc
 a source that has none of the new idioms. The data behind the gate is the measured P11 run (68
 teardowns, all zero); the new verdict itself has harness evidence only until the next live run.
 
-The runtime items (P2/P3/P3b stall, P4 exit poll, P5 clipboard, P6 PowerPoint host) are untouched.
+### P4 — the exit poll is 3 s, and it is the biggest measured lever (landed 2026-11-25)
+
+The same 68 teardown records answer P4 without another run:
+
+| Record set | Graceful wait |
+|---|---|
+| 22 clean teardowns | **0 ms** each (maximum 0) |
+| 46 killed teardowns | 10,056 ms minimum, **464,040 ms** total |
+
+Test-body work in the same run was 247.3 s, so **two-thirds of the suite's wall time was a window
+no survivor could ever satisfy.** `DefaultGracefulExitSeconds` is 3, the comment carries this table,
+and `The_production_graceful_bound_is_three_seconds_and_the_diagnostic_override_wins` pins the bound
+and proves the diagnostic env override still wins. Expected saving ~320 s; the first live run confirms
+it. This is cheaper and safer than P12: it changes one constant, not the fixture's isolation model.
+
+Still open: P2/P3/P3b (the intermittent ~60 s PowerPoint stall — the records show
+`CopyAfterDeleteSpikeIntegrationTests` carrying 66.7 s of body time across 3 bodies and
+`PowerPointSlideFitRouteProbe` 17.1 s in one), P5 (clipboard waits), P6 (per-class PowerPoint host)
+and P12.

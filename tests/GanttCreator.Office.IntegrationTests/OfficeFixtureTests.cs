@@ -569,6 +569,45 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public void The_production_graceful_bound_is_three_seconds_and_the_diagnostic_override_wins()
+    {
+        // Calibrated on 2026-11-25 over 68 live teardowns: the 22 clean ones
+        // recorded 0 ms of graceful wait, so a process that exits never needs the
+        // window, while the 46 killed ones spent 464 s in total inside a 10 s window
+        // that no survivor would ever satisfy. The bound is therefore pure cost on
+        // the two-thirds of teardowns that end in a kill. Pinned here because it is
+        // paid once per teardown, and because the override is what a widened-bound
+        // diagnosis relies on -- the env var must still win over the default.
+        string? previous = Environment.GetEnvironmentVariable(
+            OfficeFixture.GracefulExitSecondsVariable);
+        try
+        {
+            // The plain fixture, not StubbornFixture: that subclass shortens the
+            // bound to 150 ms so the escalation test does not spend the real one.
+            Environment.SetEnvironmentVariable(
+                OfficeFixture.GracefulExitSecondsVariable,
+                null);
+            Assert.Equal(
+                TimeSpan.FromSeconds(3),
+                new OfficeFixture().GracefulExitTimeout);
+
+            Environment.SetEnvironmentVariable(
+                OfficeFixture.GracefulExitSecondsVariable,
+                "7");
+            Assert.Equal(
+                TimeSpan.FromSeconds(7),
+                new OfficeFixture().GracefulExitTimeout);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                OfficeFixture.GracefulExitSecondsVariable,
+                previous);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task Teardown_records_the_quit_outcome_and_the_body_duration()
     {
         // R5.18n D4's discriminator: a Quit() that returns while the process
