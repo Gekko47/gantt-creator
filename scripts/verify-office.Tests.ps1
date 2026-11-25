@@ -303,6 +303,18 @@ exit /b 0
         $codeOnly | Should -Match 'exit 6'
     }
 
+    It 'keeps a Theory in the discovered set even though the host lists it with arguments' {
+        # A [Theory] is listed ONLY as one row per data set, e.g.
+        # `..._state(artefactName: "Shape")`. A discovery pattern that required the line to end
+        # after the method silently dropped every Theory, and the live two-shard run of
+        # 2026-11-25 then reported the method as "ran but was not listed".
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match ([regex]::Escape('(?:\(.*\))?'))
+        $codeOnly | Should -Match '\$listedTestNames'
+        $codeOnly | Should -Match 'gate discovered \$\(\$listedTestNames\.Count\)'
+    }
+
     It 'canonicalises both name sets before comparing them' {
         # A [Theory] is spelled differently by the two sources: --list-tests lists each data
         # row as `Method(arg: value)` while the trx also carries the bare method name. The

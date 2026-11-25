@@ -442,12 +442,21 @@ $listOutput = & dotnet test $Solution -c $Configuration --no-build --no-restore 
 # also captured the `Test run for ... (.NETCoreApp,Version=v10.0)` banner, which became a
 # fake "class", shifted every modulo assignment and produced a filter the runner rejected
 # (`~NETCoreApp,Version=v10`), leaving one shard empty while the gate still passed.
+#
+# The optional `(arguments)` suffix is part of the name, not noise: a [Theory] is listed ONLY
+# as one row per data set, so requiring the line to end after the method dropped every Theory
+# from the discovered set. Measured 2026-11-25: the three
+# `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state(artefactName: ...)` rows
+# were invisible, and the over-coverage check then reported that method as unlisted.
 $listedTests = @($listOutput | ForEach-Object {
     $match = [regex]::Match(
         ([string]$_),
-        '^\s+(GanttCreator\.Office\.IntegrationTests\.[A-Za-z0-9_.]+)\s*$')
+        '^\s+(GanttCreator\.Office\.IntegrationTests\.[A-Za-z0-9_.]+)(?:\(.*\))?\s*$')
     if ($match.Success) { $match.Groups[1].Value }
 })
+# Rows, not methods: a Theory contributes one entry per data set. The counts and verdicts use
+# the distinct method names, so the report never claims more tests than the suite has.
+$listedTestNames = @($listedTests | Sort-Object -Unique)
 $gateClasses = @()
 $effectiveShardCount = 1
 if ($listedTests.Count -eq 0) {
@@ -459,7 +468,7 @@ if ($listedTests.Count -eq 0) {
 } else {
     $gateClasses = @($listedTests | ForEach-Object { ($_ -split '\.')[-2] } | Sort-Object -Unique)
     $effectiveShardCount = $ShardCount
-    Log "gate discovered $($listedTests.Count) test(s) in $($gateClasses.Count) class(es)"
+    Log "gate discovered $($listedTestNames.Count) test(s) in $($gateClasses.Count) class(es)"
 }
 
 $watchdogIntervalSeconds = 5
