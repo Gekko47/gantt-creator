@@ -307,8 +307,12 @@ Required live tests:
 > unmeasured signal is not a zero signal. The **forced exit** is reported as Excel's
 > residency, not gated as a leak: 68 live teardowns on that date released every proxy to
 > 0 references and 46 of them still needed a kill, so the only verdict on it is the
-> per-teardown ceiling of 1 (`exit 4`). The teardown wait is **3 s**, calibrated on that
-> run's clean teardowns measuring **0 ms**. The gate also proves its own coverage in
+> per-teardown ceiling of 1 (`exit 4`). The teardown wait is **3 s**, and it is a measured
+> **floor**: a 1 s window was tried on 2026-11-25, cut the poll from 144.9 s to 68.7 s, and
+> was rejected because the forced-exit count rose from **47 to 62 of 68** teardowns — fifteen
+> processes that had been exiting within three seconds were being killed — and the run got
+> slower (661.2 s to 731.2 s). The window's job is to let a real exit happen. The gate also
+> proves its own coverage in
 > **both** directions with `exit 6`: every discovered test must run in a shard, and nothing
 > outside the discovered set may run. Names are compared only after canonicalisation,
 > because the host lists a `[Theory]` as one row per data set

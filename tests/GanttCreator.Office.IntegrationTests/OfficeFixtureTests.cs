@@ -581,13 +581,13 @@ public class OfficeFixtureTests
     [Fact]
     public void The_production_graceful_bound_is_three_seconds_and_the_diagnostic_override_wins()
     {
-        // Calibrated on 2026-11-25 over 68 live teardowns: the 22 clean ones
-        // recorded 0 ms of graceful wait, so a process that exits never needs the
-        // window, while the 46 killed ones spent 464 s in total inside a 10 s window
-        // that no survivor would ever satisfy. The bound is therefore pure cost on
-        // the two-thirds of teardowns that end in a kill. Pinned here because it is
-        // paid once per teardown, and because the override is what a widened-bound
-        // diagnosis relies on -- the env var must still win over the default.
+        // Calibrated on 2026-11-25 over 68 live teardowns, then tested downwards and
+        // found to be a FLOOR: the clean teardowns record 0 ms, but a 1 s window
+        // raised the forced-exit count from 47 to 62 of 68 -- fifteen processes that
+        // had been exiting within 3 s were being killed -- and made the run slower
+        // (661.2 s to 731.2 s). So this fact pins 3 s as the shortest bound the
+        // evidence supports, and the override is what a widened-bound diagnosis
+        // relies on -- the env var must still win over the default.
         string? previous = Environment.GetEnvironmentVariable(
             OfficeFixture.GracefulExitSecondsVariable);
         try

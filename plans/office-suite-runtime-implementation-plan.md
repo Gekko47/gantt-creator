@@ -715,6 +715,25 @@ the same**. P7 stays gated: its measured net ceiling is ~30–60 s (see
 [`p1b-p7-pre-implementation-review.md`](p1b-p7-pre-implementation-review.md)), so it starts only if
 this smoke run is judged insufficient.
 
+### P4b — the graceful bound tested downwards: rejected on its own measurement (2026-11-25)
+
+The corrected phase data made the exit poll the largest named block (144.9 s of a 650 s test
+time, two-thirds of teardowns killed, clean exits observed at 0 ms), so the bound was taken from
+3 s to 1 s and measured. **It is rejected, and the bound is back at 3 s.**
+
+| Signal | 3 s bound | 1 s bound |
+|---|---|---|
+| Graceful poll, total | 144.9 s | **68.7 s** |
+| Forced exits | 47 of 68 | **62 of 68** |
+| Shard wall | 661.2 s | **731.2 s** |
+
+The poll fell as predicted and the run still got **slower**, because fifteen processes that had
+been exiting on their own within three seconds were now killed: a kill costs more than the wait it
+replaces, and the gate also loses fifteen clean teardowns from its strongest signal. The lesson is
+the one the P4 round already implied and this round proves: the window's job is to let a real exit
+happen, so it has a floor, and 3 s is it. The 1 s experiment is recorded in the fixture's comment
+so nobody repeats it.
+
 ### Review close-out (2026-11-25)
 
 A code review of this plan against the tree raised nine findings. Closed in code the same day:

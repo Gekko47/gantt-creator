@@ -111,15 +111,22 @@ internal class OfficeFixture : IAsyncLifetime
     /// after <c>Quit()</c> and a GC pass, before teardown kills it.
     /// </summary>
     /// <remarks>
-    /// Three seconds, calibrated on a measurement instead of a theory. The gate run of
-    /// 2026-11-25 recorded 68 teardowns and split cleanly: the 22 clean teardowns
-    /// recorded <b>0 ms</b> — a process that exits exits before the first poll — while
-    /// the 46 that were killed each spent a whole 10 s window first, 464 s of pure
-    /// waiting across the run. That same run recorded an application reference count
-    /// of 0 in every teardown, and the widened 30 s probe recorded survivors still
-    /// alive, so a survivor is Excel's own residency and no wider window collects it.
-    /// Three seconds keeps a 3x margin over the observed clean exit and removes about
-    /// 7 s from each of the two-thirds of teardowns that end in a kill.
+    /// <para>
+    /// Three seconds, and now a measured <b>floor</b> rather than a guess. The gate runs of
+    /// 2026-11-25 recorded 68 teardowns each: the clean ones recorded <b>0 ms</b> of wait, while
+    /// the killed ones each spent a whole window — 464 s of pure waiting at the old 10 s bound,
+    /// 144.9 s at 3 s. The application reference count was 0 in every teardown and a 30 s widened
+    /// probe still found survivors alive, so a survivor is Excel's own residency and no wider
+    /// window collects it.
+    /// </para>
+    /// <para>
+    /// <b>One second was measured and rejected the same day.</b> It cut the poll to 68.7 s, but
+    /// the forced-exit count rose from <b>47 to 62 of 68</b> teardowns: fifteen processes that had
+    /// been exiting on their own within three seconds were now being killed, and the run got
+    /// slower rather than faster (661.2 s to 731.2 s). The window's job is to let a real exit
+    /// happen; cutting it below 3 s denies that to real exits, which is a worse gate even when the
+    /// clock is neutral. Three seconds is the shortest bound the evidence supports.
+    /// </para>
     /// </remarks>
     private const int DefaultGracefulExitSeconds = 3;
 
