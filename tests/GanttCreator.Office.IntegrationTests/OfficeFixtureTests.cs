@@ -596,6 +596,16 @@ public class OfficeFixtureTests
             string line = Assert.Single(lines);
             Assert.Contains("\"Quit\":\"not-attempted\"", line, StringComparison.Ordinal);
             Assert.Contains("\"BodyMs\":", line, StringComparison.Ordinal);
+            Assert.Contains("\"Xll\":false", line, StringComparison.Ordinal);
+
+            // Positive control for the same field: the flag is what separates the host's
+            // XLL lifetime constraint from a test leak, so a record that can never say
+            // "true" would silently classify every XLL body as a leak.
+            var withXll = new ReportingStubbornFixture { LivePid = 4344, XllRegistered = true };
+            await withXll.DisposeStubbornAsync().ConfigureAwait(true);
+            lines = await File.ReadAllLinesAsync(path).ConfigureAwait(true);
+            Assert.Equal(2, lines.Length);
+            Assert.Contains("\"Xll\":true", lines[1], StringComparison.Ordinal);
         }
         finally
         {

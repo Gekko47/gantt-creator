@@ -243,6 +243,23 @@ internal class OfficeFixture : IAsyncLifetime
     /// escalation stops the leak from breaking the gate, and this counter is what
     /// makes it visible. The goal is zero. A test that forces an escalation on
     /// purpose (to prove the escalation path works) sets
+    /// <summary>
+    /// Whether this fixture loaded the packed add-in into its Excel instance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A loaded Excel-DNA pack is the measured reason a process can outlive
+    /// <c>Quit()</c>: on 2026-11-25 a plain workbook exited within 10 s, and the same
+    /// workbook with the pack registered did not. The teardown record carries this flag
+    /// so the gate can separate "the host cannot exit while the pack is loaded" from
+    /// "the test leaked a reference" instead of counting both as one forced kill.
+    /// </para>
+    /// <para>
+    /// Settable so a contract test can drive the record both ways without a host.
+    /// </para>
+    /// </remarks>
+    internal bool XllRegistered { get; set; }
+
     /// <see cref="SuppressLeakSignal"/> so its deliberate kill is not counted
     /// against the ratchet.
     /// </remarks>
@@ -333,7 +350,8 @@ internal class OfficeFixture : IAsyncLifetime
                     ForcedKillCount,
                     LastGracefulExitElapsedMs,
                     _quitOutcome,
-                    _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds));
+                    _bodyMsAtTeardown >= 0 ? _bodyMsAtTeardown : _lifetime.ElapsedMilliseconds,
+                    XllRegistered));
             File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -351,12 +369,18 @@ internal class OfficeFixture : IAsyncLifetime
     /// <param name="GracefulExitMs">How long the graceful poll ran before the kill was issued.</param>
     /// <param name="Quit">What teardown's <c>Quit()</c> attempt did.</param>
     /// <param name="BodyMs">How long the body had been running when teardown began.</param>
+    /// <param name="Xll">
+    /// Whether the packed add-in was loaded into the process this teardown owned. A
+    /// forced kill with <see langword="true"/> is the host-lifetime constraint; one with
+    /// <see langword="false"/> is a leak or a hang and must be treated as one.
+    /// </param>
     private sealed record ForcedKillRecord(
         string? Test,
         int Count,
         long GracefulExitMs,
         string Quit,
-        long BodyMs);
+        long BodyMs,
+        bool Xll);
 
     /// <summary>
     /// Names the test method that is tearing this fixture down.
@@ -458,7 +482,9 @@ internal class OfficeFixture : IAsyncLifetime
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(xllPath);
         Application excel = Excel;
-        return excel.RegisterXLL(xllPath);
+        bool registered = excel.RegisterXLL(xllPath);
+        XllRegistered |= registered;
+        return registered;
     }
 
     /// <summary>
