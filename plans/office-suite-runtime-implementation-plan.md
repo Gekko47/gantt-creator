@@ -536,8 +536,16 @@ The same 68 teardown records answer P4 without another run:
 Test-body work in the same run was 247.3 s, so **two-thirds of the suite's wall time was a window
 no survivor could ever satisfy.** `DefaultGracefulExitSeconds` is 3, the comment carries this table,
 and `The_production_graceful_bound_is_three_seconds_and_the_diagnostic_override_wins` pins the bound
-and proves the diagnostic env override still wins. Expected saving ~320 s; the first live run confirms
-it. This is cheaper and safer than P12: it changes one constant, not the fixture's isolation model.
+and proves the diagnostic env override still wins. This is cheaper and safer than P12: it changes one
+constant, not the fixture's isolation model.
+
+**Confirmed live the same day.** `verify-office.ps1 -DeadlineSeconds 2400` **PASS** on Excel
+16.0.20625.20108 x64: 103 of 103 discovered tests ran, 68 teardowns, 47 forced exits, every
+`Quit()` returned, `Reference-count signal: 68 of 68 ... and 0 left one behind`, and the graceful
+wait totalled **144,920 ms (maximum 3,112 ms)** against 464,040 ms at the 10 s bound — **319 s
+saved**, the prediction to within a second. End to end the run took 14 m 8 s including the Release
+build, against 25 m 13 s for the 10 s tree, while test-body work *rose* 247.3 s -> 319.9 s, so the
+difference is the wait and not a lighter suite.
 
 Still open: P2/P3/P3b (the intermittent ~60 s PowerPoint stall — the records show
 `CopyAfterDeleteSpikeIntegrationTests` carrying 66.7 s of body time across 3 bodies and
