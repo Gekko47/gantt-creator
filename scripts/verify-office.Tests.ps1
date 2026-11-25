@@ -315,6 +315,17 @@ exit /b 0
         $codeOnly | Should -Match 'gate discovered \$\(\$listedTestNames\.Count\)'
     }
 
+    It 'logs each shard''s own duration and counts distinct methods in the coverage line' {
+        # A one-shard run and a two-shard run are only comparable if each shard's wall time is
+        # in the report, and the coverage line must not count a [Theory]'s rows as tests: the
+        # 2026-11-25 two-shard run reported "discovered 104" beside "all 106 discovered".
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'shard \{0\}: exit \{1\} after'
+        $codeOnly | Should -Match 'coverage: all \$\(\$listedTestNames\.Count\)'
+        $codeOnly | Should -Not -Match 'coverage: all \$\(\$listedTests\.Count\)'
+    }
+
     It 'canonicalises both name sets before comparing them' {
         # A [Theory] is spelled differently by the two sources: --list-tests lists each data
         # row as `Method(arg: value)` while the trx also carries the bare method name. The

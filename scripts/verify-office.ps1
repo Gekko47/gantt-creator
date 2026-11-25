@@ -605,6 +605,9 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
     }
 
     Save-Trx -TrxName $trxName
+    # The duration is logged because shard count is a performance decision: a one-shard run and a
+    # two-shard run are only comparable if each shard's own wall time is in the report.
+    Log ("shard {0}: exit {1} after {2:N1} s" -f $shard, $testProc.ExitCode, $watchdog.Elapsed.TotalSeconds)
     $shardExitCodes += [int]$testProc.ExitCode
 }
 
@@ -652,7 +655,7 @@ if ($gateClasses.Count -gt 0) {
         Log "FAIL: $($unexpectedTests.Count) test(s) ran that discovery did not list, so the filter is wider than the gate accounts for. First: $($unexpectedTests[0]). Evidence preserved under $evidence."
         exit 6
     }
-    Log "coverage: all $($listedTests.Count) discovered test(s) ran in a shard, and nothing else ran."
+    Log "coverage: all $($listedTestNames.Count) discovered test(s) ran in a shard, and nothing else ran."
 }
 
 # Merge the per-shard signals into the two paths the verdict block already reads, so
@@ -755,7 +758,7 @@ try {
 # The killed fraction is computed as a whole percent with no culture formatting,
 # so the report text is identical on every host locale.
 $killPercent = if ($teardowns -gt 0) { [int][math]::Round(100.0 * $forcedKills / $teardowns) } else { 0 }
-Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) ($killPercent% of teardowns killed; per-teardown ceiling $MaxForcedExitsPerTeardown). This is Excel's residency, not a leaked proxy: on 2026-11-25 all 68 teardowns released the application proxy to 0 references and 46 of them still needed the kill. The total is REPORTED, not gated: it tracks how many Office test bodies touch a workbook."
+Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) ($killPercent% of teardowns killed; per-teardown ceiling $MaxForcedExitsPerTeardown). This is Excel's residency, not a leaked proxy: the calibration run of 2026-11-25 released the application proxy to 0 references in all 68 teardowns and still killed 46 of them. The total is REPORTED, not gated: it tracks how many Office test bodies touch a workbook."
 Log "Reference-count signal: $rcwMeasured of $teardowns teardown(s) reported an application reference count, and $($rcwLeaks.Count) left one behind. Zero is the leak gate: the fixture must be the last managed holder when it tears down."
 
 # Per-test attribution. The total above is the reported number; this is WHERE it
