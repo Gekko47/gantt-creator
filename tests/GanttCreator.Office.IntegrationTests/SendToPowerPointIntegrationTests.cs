@@ -75,6 +75,12 @@ public sealed class SendToPowerPointIntegrationTests(ITestOutputHelper output)
         finally
         {
             await powerPointFixture.DisposeAsync().ConfigureAwait(true);
+            // Recorded after the dispose, because the wait happens inside it. This is the
+            // PowerPoint counterpart of the Excel bound that measured 464 s per run
+            // (2026-11-25): the number decides whether 10 s is cost or calibration.
+            _output.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"pptExitMs={powerPointFixture.LastGracefulExitElapsedMs}"));
             await excelFixture.DisposeAsync().ConfigureAwait(true);
             TryDelete(path);
         }
@@ -120,6 +126,9 @@ public sealed class SendToPowerPointIntegrationTests(ITestOutputHelper output)
         finally
         {
             await powerPointFixture.DisposeAsync().ConfigureAwait(true);
+            _output.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"pptExitMs={powerPointFixture.LastGracefulExitElapsedMs}"));
             await excelFixture.DisposeAsync().ConfigureAwait(true);
         }
     }

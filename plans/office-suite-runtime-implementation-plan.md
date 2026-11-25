@@ -609,7 +609,17 @@ directions. **Splitting the suite does not recover the position effect**, so `Sh
 P3b is withdrawn. The durable gains of the work are the filter and the two verdicts: they found a real
 discovery defect (every `[Theory]` was invisible to the gate's test list, because the host lists a
 theory only as one row per data set) and a count mismatch that reported 104 discovered against 106
-covered. P5 (clipboard waits) and P6 (per-class PowerPoint host) are untouched.
+covered.
+
+### P5/P6 — PowerPoint hosts are not the cost (2026-11-25, negative)
+
+The Excel wait was worth 319 s, so the obvious next question was whether its PowerPoint twin behaved
+the same way. `PowerPointFixture` now records the wait it actually spends, in
+`LastGracefulExitElapsedMs`, and the two send-to-PowerPoint bodies print it: **1 ms** and **0 ms**.
+PowerPoint is gone before the first poll, so its 10 s bound costs nothing, and shortening it would
+change nothing. **P6 (per-class PowerPoint host) therefore has no teardown-wait motive either** — the
+10 s zero-deck body is real work (Excel start, stage, copy, paste, ungroup), not a wait. P5
+(clipboard waits) stays open but is now the only untested wait in the suite.
 
 Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
 riskier because it changes the fixture's per-body isolation).

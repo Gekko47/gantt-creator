@@ -98,7 +98,19 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     /// <summary>The PowerPoint <c>msoGroup</c> shape type identifier.</summary>
     private const int _mssoGroupShapeType = 6;
 
-    private static readonly TimeSpan _gracefulExitTimeout = TimeSpan.FromSeconds(10);
+    /// <summary>
+    /// How long an owned PowerPoint process gets to exit on its own after <c>Quit()</c>, before
+    /// teardown kills it.
+    /// </summary>
+    /// <remarks>
+    /// 10 s, and it is now known to cost nothing. Measured 2026-11-25 through
+    /// <see cref="LastGracefulExitElapsedMs"/> on the two send-to-PowerPoint bodies: the wait read
+    /// <b>1 ms</b> and <b>0 ms</b>, i.e. PowerPoint is gone before the first poll. That is the
+    /// opposite of the Excel twin, which spent 464 s across a 68-teardown run in this window while
+    /// every clean teardown recorded 0 ms. So the bound stays where it is: a shorter one would
+    /// change nothing, and this one already gives a slow host room.
+    /// </remarks>
+    private readonly TimeSpan _gracefulExitTimeout = TimeSpan.FromSeconds(10);
 
     private readonly List<int> _ownedProcessIds = [];
     private readonly Dictionary<int, long> _ownedProcessStartTicks = [];
@@ -120,6 +132,15 @@ internal sealed class PowerPointFixture : IAsyncDisposable
     /// or <c>unknown</c> when no owned process (and therefore no build) exists.
     /// </summary>
     internal string BuildDescription { get; private set; } = "unknown";
+
+    /// <summary>
+    /// How long the last teardown waited for its owned PowerPoint process to exit on its own,
+    /// in milliseconds. 0 means the host had already gone when the first poll ran; a value near
+    /// the bound means the process survived <c>Quit()</c> and was killed. Recorded rather than
+    /// assumed, because it is the PowerPoint counterpart of the Excel wait that measured
+    /// 464,040 ms across one run (2026-11-25).
+    /// </summary>
+    internal long LastGracefulExitElapsedMs { get; private set; }
 
     /// <summary>
     /// The process identifiers this fixture started and therefore owns, primary first.
@@ -1046,11 +1067,14 @@ internal sealed class PowerPointFixture : IAsyncDisposable
             return;
         }
 
+        Stopwatch graceful = Stopwatch.StartNew();
         DateTime deadline = DateTime.UtcNow + _gracefulExitTimeout;
         while (DateTime.UtcNow < deadline && AnyOwnedProcessAlive())
         {
             await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
         }
+
+        LastGracefulExitElapsedMs = graceful.ElapsedMilliseconds;
 
         foreach (int processId in _ownedProcessIds)
         {
