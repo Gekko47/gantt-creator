@@ -300,6 +300,20 @@ Required live tests:
 > routine gate. `PowerPointFixture` writes the same owned-PID manifest as `OfficeFixture`
 > and closes/quits only a host it started.
 
+> **What the routine gate's signals measure (2026-11-25).** The **leak gate is the
+> application reference count**: `OfficeFixture` records what
+> `Marshal.ReleaseComObject(_excel)` returned, a teardown above 0 fails the gate (`exit 7`),
+> and a run in which no teardown reports a count fails closed (`exit 5`) because an
+> unmeasured signal is not a zero signal. The **forced exit** is reported as Excel's
+> residency, not gated as a leak: 68 live teardowns on that date released every proxy to
+> 0 references and 46 of them still needed a kill, so the only verdict on it is the
+> per-teardown ceiling of 1 (`exit 4`). The teardown wait is **3 s**, calibrated on that
+> run's clean teardowns measuring **0 ms**. The gate also proves its own coverage in
+> **both** directions with `exit 6`: every discovered test must run in a shard, and nothing
+> outside the discovered set may run. Names are compared only after canonicalisation,
+> because the host lists a `[Theory]` as one row per data set
+> (`Method(arg: value)`) while the trx also carries the bare method name.
+
 ## Feature-to-test traceability
 
 Every work item links acceptance criterion IDs to test names. Maintain this high-level map:
