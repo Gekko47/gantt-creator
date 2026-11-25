@@ -586,10 +586,17 @@ lesson rather than answering the sharding question.
 samples. The series names the cause — the attach samples read **1892** (first), then 1951, 1956, and
 settle at **1936-1941** for the remaining twelve; `excelHandles` climbs **1443 -> 1521** across the
 first six attach iterations and then flattens. So the max-minus-min is a **warm-up step, not a rising
-leak**: the steady region varies by 36, inside the tolerance. Measuring the same tolerance over the
-steady region (or as a post-warm-up slope) would be a measurement repair rather than a loosening, but
-this is the Phase-7 soak gate (R7.7), so it is recorded for an owner decision instead of changed in
-this round.
+leak**: the steady region varies by 36, inside the tolerance.
+
+**Repaired on the owner's ruling the same day.** `SoakTrend.Handles` excludes the first two attach
+samples (`SoakTrend.HandleWarmUpSamples`) and gates max − min over the steady region; the tolerance
+stays **50**, a steady region shorter than three samples still fails closed, and the failure message
+names the exclusion. Four host-free facts pin it: the recorded series (`Baseline=1920 End=1956
+Delta=36`), a climb that begins inside the warm-up (`Delta=90`, still fails), a two-sample steady
+region, and the growing-series fact now reading `Delta=6` with its verdict unchanged. **Live: the soak
+body passed in 1 m 46 s** with `handlesMin=1952 handlesMax=1972 handlesDelta=20 handlesTolerance=50
+orphans=0` — and the warm-up step on that run was only 12, which is why the old whole-series rule
+failed intermittently rather than always.
 
 **Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. The condition for
 testing the sharding prediction was a filter that cannot over-match: each shard term self-contained as

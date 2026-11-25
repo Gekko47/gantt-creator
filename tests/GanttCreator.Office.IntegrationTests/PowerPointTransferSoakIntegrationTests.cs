@@ -224,7 +224,7 @@ public sealed class PowerPointTransferSoakIntegrationTests(ITestOutputHelper out
 
         Assert.True(
             handleTrend.WithinTolerance,
-            $"Handle-count trend drifted: min={handleTrend.Baseline} max={handleTrend.End} delta={handleTrend.Delta} > tolerance={_handleTrendTolerance} over {attachHandles.Count} attach-arm samples.");
+            $"Handle-count trend drifted: min={handleTrend.Baseline} max={handleTrend.End} delta={handleTrend.Delta} > tolerance={_handleTrendTolerance} over {attachHandles.Count} attach-arm samples (the first {SoakTrend.HandleWarmUpSamples} are excluded as host warm-up).");
         Assert.True(
             workingSetTrend.WithinTolerance,
             $"Working-set trend drifted: first-third={workingSetTrend.Baseline} last-third={workingSetTrend.End} delta={workingSetTrend.Delta} > tolerance={_workingSetTrendToleranceBytes}.");

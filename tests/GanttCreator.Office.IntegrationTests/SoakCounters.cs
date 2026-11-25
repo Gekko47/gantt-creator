@@ -81,22 +81,47 @@ internal sealed record SoakTrendOutcome(bool WithinTolerance, long Baseline, lon
 internal static class SoakTrend
 {
     /// <summary>
-    /// Handle-count trend: flat when the whole series' max − min stays within
+    /// How many leading samples of the attach arm are warm-up rather than measurement.
+    /// </summary>
+    /// <remarks>
+    /// The attach arm reuses one host across iterations, and the first passes allocate the
+    /// steady state: on 2026-11-25 the series read <c>1892, 1951, 1956</c> and then settled at
+    /// 1920-1956, so a whole-series max − min reported a 64 spread against a tolerance of 50 and
+    /// failed a suite whose steady region spans 36. Two samples is the smallest exclusion that
+    /// removes the allocation step; a leak cannot hide in it, because a leak keeps climbing
+    /// through the steady region that is still gated.
+    /// </remarks>
+    internal const int HandleWarmUpSamples = 2;
+
+    /// <summary>
+    /// Handle-count trend: flat when the steady region's max − min stays within
     /// <paramref name="tolerance"/>. The handle count is the gated counter because a real
     /// proxy or handle leak is monotonic in it.
     /// </summary>
     /// <param name="samples">The per-iteration handle counts for one owned process.</param>
     /// <param name="tolerance">The measured maximum acceptable spread.</param>
-    /// <returns>The verdict and the measured spread.</returns>
-    internal static SoakTrendOutcome Handles(IReadOnlyList<int> samples, int tolerance)
+    /// <param name="warmUpSamples">Leading samples to exclude as host warm-up.</param>
+    /// <returns>The verdict and the spread measured over the steady region.</returns>
+    internal static SoakTrendOutcome Handles(
+        IReadOnlyList<int> samples,
+        int tolerance,
+        int warmUpSamples = HandleWarmUpSamples)
     {
-        if (samples.Count == 0)
+        if (samples.Count == 0 || warmUpSamples < 0)
         {
             return new SoakTrendOutcome(WithinTolerance: false, 0, 0, 0);
         }
 
-        int minimum = samples.Min();
-        int maximum = samples.Max();
+        // Fail closed when the steady region is too short to prove anything: an unmeasured
+        // trend is not a flat one, the same discipline as the empty series.
+        int[] steady = [.. samples.Skip(warmUpSamples)];
+        if (steady.Length < 3)
+        {
+            return new SoakTrendOutcome(WithinTolerance: false, 0, 0, 0);
+        }
+
+        int minimum = steady.Min();
+        int maximum = steady.Max();
         return new SoakTrendOutcome(maximum - minimum <= tolerance, minimum, maximum, maximum - minimum);
     }
 
