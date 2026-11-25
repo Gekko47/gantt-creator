@@ -17,10 +17,12 @@
          Office process that appeared during the run
       5. on failure, retains logs and a screenshot manifest under
          scripts/_artifacts/office-evidence/
-      6. reports the forced-exit signal per teardown -- how many owned Excel
-         processes a teardown had to kill after Quit() returned -- fails with
-         exit 4 when a teardown forced more than one exit, and fails closed with
-         exit 5 when no teardown record was written at all
+      6. reports two per-teardown signals: how many owned Excel processes a
+         teardown had to kill after Quit() returned, and how many application
+         references it left behind. The reference count is the leak gate (exit 7
+         when one is not zero); a forced exit is Excel's residency, gated only by
+         the per-teardown ceiling (exit 4). Fails closed with exit 5 when no
+         teardown record was written at all
 #>
 
 [CmdletBinding()]
@@ -96,6 +98,17 @@ param(
     # 2. The signal FAILS CLOSED. A missing or empty forced-kill log used to read as
     #    zero kills and pass; an unmeasured signal is not a zero signal, so that is
     #    now exit 5 with the reason stated.
+    #
+    # 3. The LEAK gate is the application reference count, not the forced exit.
+    #    OfficeFixture records what Marshal.ReleaseComObject returned, so 0 proves
+    #    the fixture was the last managed holder. Measured 2026-11-25 over 68 live
+    #    teardowns: every record read 0 (22 clean, 46 with one forced kill) while
+    #    46 of them still needed the kill. A forced exit is therefore Excel's own
+    #    residency -- a body that touches a workbook can leave a responding,
+    #    windowless Excel behind with no reference outstanding -- and a record
+    #    above 0 is the only leakage this gate can actually observe. Exit 7 on a
+    #    non-zero count, and exit 5 when no teardown reports one, because the same
+    #    fail-closed rule applies.
     #
     # The run total, the recorded-teardown count and the escalating fraction are
     # still logged: they are the numbers R5.18n D4 recorded run over run, and the
@@ -644,6 +657,8 @@ $killAttribution = [ordered]@{}
 $cleanTeardowns = [System.Collections.Generic.List[string]]::new()
 $quitOutcomes = [ordered]@{}
 $overTeardownCeiling = @()
+$rcwMeasured = 0
+$rcwLeaks = @()
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
         foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
@@ -652,6 +667,9 @@ try {
             $count = 0
             $test = $null
             $quit = $null
+            # -1 means the record carried no reference count (a legacy record, or a
+            # teardown that never reached the release). It is unmeasured, never zero.
+            $rcw = -1
             if ($trimmed.StartsWith('{')) {
                 # One fixture teardown's contribution, with the test that caused it
                 # (ADR-0035's determinism work). The total is unchanged by the
@@ -662,6 +680,7 @@ try {
                     $count = [int]$rec.Count
                     $test = [string]$rec.Test
                     if ($rec.PSObject.Properties['Quit']) { $quit = [string]$rec.Quit }
+                    if ($rec.PSObject.Properties['Rcw']) { $rcw = [int]$rec.Rcw }
                 } catch { continue }
             } elseif ([int]::TryParse($trimmed, [ref]$count)) {
                 # A bare integer from an older evidence file: still summed, so a
@@ -672,6 +691,8 @@ try {
             }
             $teardowns++
             $forcedKills += $count
+            if ($rcw -ge 0) { $rcwMeasured++ }
+            if ($rcw -gt 0) { $rcwLeaks += [pscustomobject]@{ Test = $test; Rcw = $rcw } }
             if (-not [string]::IsNullOrEmpty($quit)) {
                 if (-not $quitOutcomes.Contains($quit)) { $quitOutcomes[$quit] = 0 }
                 $quitOutcomes[$quit]++
@@ -695,10 +716,11 @@ try {
 } catch {
     Log "WARN: could not read the forced-kill log: $($_.Exception.Message)"
 }
-# The escalating fraction is computed as a whole percent with no culture
-# formatting, so the report text is identical on every host locale.
-$escalatingPercent = if ($teardowns -gt 0) { [int][math]::Round(100.0 * $forcedKills / $teardowns) } else { 0 }
-Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) ($escalatingPercent% escalated; per-teardown ceiling $MaxForcedExitsPerTeardown, end state 0). This measures an Excel shutdown race, not a proxy chain: a body that releases nothing can still hit it, and releasing the Sheets collection has not produced one in five runs. The total is REPORTED, not gated: it tracks how many Office test bodies exist."
+# The killed fraction is computed as a whole percent with no culture formatting,
+# so the report text is identical on every host locale.
+$killPercent = if ($teardowns -gt 0) { [int][math]::Round(100.0 * $forcedKills / $teardowns) } else { 0 }
+Log "Forced-exit signal: $forcedKills forced exit(s) across $teardowns recorded teardown(s) ($killPercent% of teardowns killed; per-teardown ceiling $MaxForcedExitsPerTeardown). This is Excel's residency, not a leaked proxy: on 2026-11-25 all 68 teardowns released the application proxy to 0 references and 46 of them still needed the kill. The total is REPORTED, not gated: it tracks how many Office test bodies touch a workbook."
+Log "Reference-count signal: $rcwMeasured of $teardowns teardown(s) reported an application reference count, and $($rcwLeaks.Count) left one behind. Zero is the leak gate: the fixture must be the last managed holder when it tears down."
 
 # Per-test attribution. The total above is the reported number; this is WHERE it
 # comes from, and it is what makes the signal actionable rather than merely
@@ -761,6 +783,25 @@ if ($straysKilled -gt 0) {
 if ($teardowns -eq 0) {
     Log "FAIL: no teardown record was found in $forcedKillsPath, so the forced-exit signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
     exit 5
+}
+
+# The same fail-closed rule for the leak signal. A build whose fixture stopped
+# writing the field would otherwise read as "no leaked references", which is the
+# defect exit 5 exists to prevent.
+if ($rcwMeasured -eq 0) {
+    Log "FAIL: no teardown record carried an application reference count, so the leak signal was NOT measured. An unmeasured signal is not a zero signal. Evidence preserved under $evidence."
+    exit 5
+}
+
+# The leak gate. A non-zero count means the fixture was not the last managed holder
+# of the Application proxy when it tore down -- a real defect in the body or in the
+# teardown order, unlike the forced exit above, which the host controls.
+if ($rcwLeaks.Count -gt 0) {
+    foreach ($entry in $rcwLeaks) {
+        Log ("  teardown {0} left {1} application reference(s)" -f $entry.Test, $entry.Rcw)
+    }
+    Log "FAIL: $($rcwLeaks.Count) teardown(s) left an application reference behind after releasing the proxy. Evidence preserved under $evidence."
+    exit 7
 }
 
 # Ratchet on the forced-exit signal, per teardown. One fixture owns one Excel

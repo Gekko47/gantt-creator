@@ -500,7 +500,28 @@ real workbook is enough.
    report the total and the trend; do not gate a zero that the host controls.
 3. **P12 keeps its value for a different reason:** one Excel per XLL class removes ~N process
    starts and ~N teardown waits per class, i.e. it is a *runtime* change, not a leak fix.
-4. **P13 becomes smaller:** gate `Rcw`, keep the ceiling, delete the "escalating fraction" narrative
-   that reads the kill as a leak, and keep the Xll/Rcw fields for diagnosis.
+4. **P13 became smaller and is landed** (below): gate `Rcw`, keep the ceiling, delete the
+   "escalating fraction" narrative that reads the kill as a leak, and keep the Xll/Rcw fields for
+   diagnosis.
+
+### P13 — landed (2026-11-25)
+
+`verify-office.ps1` parses `Rcw` from every teardown record and prints a reference-count line beside
+the forced-exit line. The forced-exit line no longer computes an "escalating percent": it reports the
+killed fraction and states that the kill is residency, citing the 68-teardown measurement in place.
+Three verdicts, in order:
+
+| Signal | Rule | Exit |
+|---|---|---|
+| Application reference count, not zero | a leaked proxy — a real defect | `7` |
+| Application reference count, never reported | unmeasured is not zero | `5` |
+| Forced exits above the per-teardown ceiling | more than one owned process | `4` |
+
+`verify-office.Tests.ps1` gained four facts (42/42 PASS) and its stub a `VERIFY_OFFICE_STUB_RCW` knob
+(`0` default, `1` leak, `absent` unmeasured). The four that matter: a teardown that needed one kill
+and released to zero still **passes** (the corrected meaning), a leaked count exits 7 and names the
+test, an unreported count exits 5, and a positive control proves the three source assertions fail on
+a source that has none of the new idioms. The data behind the gate is the measured P11 run (68
+teardowns, all zero); the new verdict itself has harness evidence only until the next live run.
 
 The runtime items (P2/P3/P3b stall, P4 exit poll, P5 clipboard, P6 PowerPoint host) are untouched.

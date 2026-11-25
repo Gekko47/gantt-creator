@@ -30,17 +30,25 @@ rem gate now fails closed when none was written. VERIFY_OFFICE_STUB_KILLS models
 rem the count: unset or 0 is a clean teardown, 1 is the normal one-kill teardown,
 rem 2 is the positive case for the per-teardown ceiling, and 'none' models the
 rem handoff breaking so no record exists at all.
+rem
+rem VERIFY_OFFICE_STUB_RCW models the application reference count the teardown
+rem recorded: unset or 0 is the last-managed-holder case, 1 is a leaked reference,
+rem and 'absent' models a fixture that never wrote the field, which the gate must
+rem read as unmeasured rather than clean.
 if not defined VERIFY_OFFICE_STUB_KILLS set VERIFY_OFFICE_STUB_KILLS=0
+if not defined VERIFY_OFFICE_STUB_RCW set VERIFY_OFFICE_STUB_RCW=0
+set "STUB_RCW_FRAGMENT=,"Rcw":%VERIFY_OFFICE_STUB_RCW%"
+if /i "%VERIFY_OFFICE_STUB_RCW%"=="absent" set "STUB_RCW_FRAGMENT="
 if /i not "%VERIFY_OFFICE_STUB_KILLS%"=="none" (
   if defined GANTTCREATOR_FORCED_KILLS_PATH (
     for %%I in ("%GANTTCREATOR_FORCED_KILLS_PATH%") do if not exist "%%~dpI" mkdir "%%~dpI"
-    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0,"Quit":"returned","BodyMs":1234}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+    echo {"Test":"stub-teardown","Count":%VERIFY_OFFICE_STUB_KILLS%,"GracefulExitMs":0,"Quit":"returned","BodyMs":1234%STUB_RCW_FRAGMENT%}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
   )
 )
 rem VERIFY_OFFICE_STUB_CLEAN=1 adds a second record whose teardown exited
 rem gracefully, so a test can prove the clean list is reported too.
 if "%VERIFY_OFFICE_STUB_CLEAN%"=="1" (
-  echo {"Test":"stub-clean","Count":0,"GracefulExitMs":0,"Quit":"returned","BodyMs":900}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
+  echo {"Test":"stub-clean","Count":0,"GracefulExitMs":0,"Quit":"returned","BodyMs":900%STUB_RCW_FRAGMENT%}>>"%GANTTCREATOR_FORCED_KILLS_PATH%"
 )
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
@@ -255,6 +263,32 @@ exit /b 0
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match '\$MaxForcedExitsPerTeardown = 1'
+    }
+
+    It 'gates the application reference count at zero and fails closed when it was not measured' {
+        # Measured 2026-11-25 over 68 live teardowns: every record released the
+        # Application proxy to 0 references (22 clean, 46 with one forced kill),
+        # so the kill is the host's residency and the count is the only leak this
+        # gate can observe. A build that stopped writing the field would otherwise
+        # read as "no leaks", which is why the unmeasured case fails closed.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match "Properties\['Rcw'\]"
+        $codeOnly | Should -Match '\$rcwMeasured -eq 0'
+        $codeOnly | Should -Match 'leak signal was NOT measured'
+        $codeOnly | Should -Match '\$rcwLeaks\.Count -gt 0'
+        $codeOnly | Should -Match 'left an application reference behind'
+        $codeOnly | Should -Match 'exit 7'
+    }
+
+    It 'positive control: the reference-count verdict is detected when it is absent' {
+        # Proves the negative assertions above can detect a regression: a source
+        # with no reference-count idiom must fail every one of them.
+        $flagged = "if (`$teardowns -eq 0) { exit 5 }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match "Properties\['Rcw'\]"
+        $codeOnly | Should -Not -Match '\$rcwLeaks\.Count -gt 0'
+        $codeOnly | Should -Not -Match 'left an application reference behind'
     }
 
     It 'fails closed when no teardown record was written' {
@@ -479,7 +513,9 @@ exit /b 0
         It 'reports the forced-exit signal and passes when every teardown forced one exit' {
             # The measured shape of an accepted run: one record, one forced exit.
             # This is the positive control for the per-teardown ceiling, which is
-            # the case the retired absolute total failed on.
+            # the case the retired absolute total failed on. It is ALSO the
+            # positive control for the leak gate's corrected meaning: a teardown
+            # that needed a kill but released the proxy to 0 references passes.
             $outFile = Join-Path $script:harnessRoot 'out.txt'
             $errFile = Join-Path $script:harnessRoot 'err.txt'
             $sep = [System.IO.Path]::PathSeparator
@@ -492,7 +528,43 @@ exit /b 0
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 0
             $output | Should -Match '1 forced exit\(s\) across 1 recorded teardown\(s\)'
+            $output | Should -Match 'Reference-count signal: 1 of 1 teardown\(s\) reported an application reference count, and 0 left one behind'
             $output | Should -Match 'verify-office: PASS'
+        }
+
+        It 'fails with exit 7 when a teardown left an application reference behind' {
+            # The leak gate itself. A non-zero count means the fixture was not the
+            # last managed holder, which no amount of host behaviour explains.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; VERIFY_OFFICE_STUB_RCW = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 7
+            $output | Should -Match 'stub-teardown left 1 application reference\(s\)'
+            $output | Should -Match 'left an application reference behind'
+        }
+
+        It 'fails closed when no teardown reported a reference count' {
+            # Same rule as the missing-log case: an unmeasured leak signal must not
+            # read as a clean one.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; VERIFY_OFFICE_STUB_KILLS = '1'; VERIFY_OFFICE_STUB_RCW = 'absent'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 5
+            $output | Should -Match 'leak signal was NOT measured'
         }
 
         It 'fails when one teardown forced more than one exit' {
