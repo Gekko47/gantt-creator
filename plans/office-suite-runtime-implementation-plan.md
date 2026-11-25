@@ -618,8 +618,15 @@ the same way. `PowerPointFixture` now records the wait it actually spends, in
 `LastGracefulExitElapsedMs`, and the two send-to-PowerPoint bodies print it: **1 ms** and **0 ms**.
 PowerPoint is gone before the first poll, so its 10 s bound costs nothing, and shortening it would
 change nothing. **P6 (per-class PowerPoint host) therefore has no teardown-wait motive either** — the
-10 s zero-deck body is real work (Excel start, stage, copy, paste, ungroup), not a wait. P5
-(clipboard waits) stays open but is now the only untested wait in the suite.
+10 s zero-deck body is real work (Excel start, stage, copy, paste, ungroup), not a wait.
+
+**P5 is answered the same way: there is no clipboard wait to remove.** `WindowsClipboardFormatReader`
+has no poll, retry or deadline — it reads a format once. The only delays anywhere in the clipboard
+path are `CopyAfterDeleteSpikeIntegrationTests`' two **measurement windows** (2 s and 10 s), and they
+are the experiment's parameters: the spike exists to observe whether Excel's delayed rendering
+survives deleting the source shapes, so the window is the observation, not a synchronisation cost.
+That closes the whole wait family with numbers — Excel 464 s (fixed), PowerPoint 0–1 ms, clipboard
+12 s of deliberate measurement — and leaves body work plus host start-up as the suite's real cost.
 
 Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
 riskier because it changes the fixture's per-body isolation).
