@@ -566,11 +566,25 @@ The position effect is in the records and is not subtle:
 reported none alive, and the gate's own sweep found no stray, so the degradation is inside the test
 host or below it, not in accumulating Office processes.
 
-**Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. P3b (heavy-first
-ordering) keeps a **prediction** rather than a claim: if the cost is positional, placing the heavy
-bodies early should reduce the total, and a two-shard run that splits the same bodies and compares
-per-body times is the cheap way to tell positional drift from per-body cost before reordering
-anything. P5 (clipboard waits) and P6 (per-class PowerPoint host) are untouched.
+**A fresh host shows no drift at all.** The four heavy classes run alone — `SendToPowerPoint`,
+`CopyAfterDeleteSpike`, `PowerPointSlideFit` and `PowerPointSlideFitRouteProbe`, 7 tests — reproduce
+their in-suite times almost exactly (22, 10, 19, 39, 13, 10, 13 s), including the zero-deck body at
+**10 s**. So the 66 s reading needs a long-lived host, not a particular neighbour.
+
+**The 2-shard rehearsal was not a measurement (recorded as such).** Splitting the assembly's 44
+classes into two ~6-minute runs produced half A 92 tests in 5 m 52 s and half B **51 tests in
+6 m 36 s with one failure**. That is 143 tests, not the gate's 103: a bare `FullyQualifiedName~Class`
+OR list matches by substring and also ignores the category, so it pulled in the 36 non-live bodies
+and the `Category=TransferSoak` body the routine gate deliberately excludes (confirmed in the
+`--list-tests` output). The failure was not captured, so it is not attributed here. The rehearsal
+therefore reproduced P1's own filtering lesson rather than answering the sharding question.
+
+**Consequences.** P2 is withdrawn as written — there is no 60 s timeout to remove. The sharding lever
+stays a **prediction**: a shorter host should avoid the drift the 68-body run shows. The condition for
+testing it is a filter that cannot over-match — each shard term written self-contained as
+`Category=OfficeIntegration&FullyQualifiedName~Class`, so the expression needs no grouping, plus a
+coverage assertion that also fails on *extra* tests, because the current check only proves every
+discovered test ran. P5 (clipboard waits) and P6 (per-class PowerPoint host) are untouched.
 
 Still open: P3b/P5/P6 as above, and P12 (per-class XLL session, worth the start-up cost only and
 riskier because it changes the fixture's per-body isolation).
