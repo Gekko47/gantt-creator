@@ -34,14 +34,15 @@ param(
     # that finishes keeps its own trx. Each shard is a fresh test host, which is also what
     # lets a finished shard close cleanly instead of being taken down with the run.
     #
-    # DEFAULT 1, deliberately, and the reason is measured. Shards are selected with
-    # `FullyQualifiedName~Class` OR-lists, and VSTest's filter grammar has no grouping: on
-    # 2026-11-25 a 3-shard partition listed 117 tests against 102 discovered (the `~`
-    # operator is a substring match, and the lists overlap), and an earlier
-    # `Category=...&(A|B|C)` form ran 82 of 106 while every shard exited 0 -- a false
-    # PASS. The coverage check below is what now makes that impossible. Until the
-    # partition is expressed as an exact `Shard=N` trait, the default is one shard, which
-    # is the old single pass plus that proof.
+    # DEFAULT 1, and the reason is measured. Shards are now selected with self-contained
+    # `Category=OfficeIntegration&FullyQualifiedName~Class` terms, because VSTest's filter
+    # grammar has no grouping (`Category=...&(A|B|C)` ran 82 of 106 while every shard exited 0,
+    # 2026-11-25) and a bare OR list matches by substring (a rehearsal split ran 143 tests
+    # against the gate's 103, including the excluded TransferSoak body). The coverage check
+    # now fails on either direction, so an under- or over-wide partition cannot pass silently.
+    # The default still stays 1 until a multi-shard run is MEASURED to be faster: the 68-body
+    # run shows a position effect (mean 2.7 s over the first half, 6.7 s over the second), but
+    # nothing yet shows that splitting removes it.
     [ValidateRange(1, 8)]
     [int]$ShardCount = 1,
     # 660 rather than 600: the suite completed in 9 m 59 s on 2026-11-09, i.e. one second
@@ -501,12 +502,18 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
             # listed against 102 discovered), silently widening what the gate runs.
             $filterText = 'Category=OfficeIntegration'
         } else {
-            # A bare OR list, with no parentheses and no category predicate. VSTest's
-            # filter grammar has no grouping: a `Category=OfficeIntegration&(A|B|C)` form
-            # executed 82 of 106 tests while every shard exited 0. Multi-shard is not the
-            # default for that reason; the coverage check after the loop is what makes a
-            # short run impossible to pass silently.
-            $filterText = ($shardClasses | ForEach-Object { "FullyQualifiedName~$_" }) -join '|'
+            # Every term carries its own category predicate, so the expression never needs
+            # grouping: VSTest's filter grammar has none (`Category=OfficeIntegration&(A|B|C)`
+            # executed 82 of 106 while every shard exited 0, 2026-11-25), but `&` binds
+            # tighter than `|`, so `A&B1|A&B2` reads as `(A&B1)|(A&B2)`.
+            #
+            # The bare OR list this replaces matched by substring and ignored the category.
+            # Measured in a rehearsal split the same day: 143 tests ran against the gate's
+            # 103, because it also dragged in the 36 non-live bodies and the excluded
+            # `Category=TransferSoak` body. Both directions of that mistake are now verdicts
+            # in the coverage check below.
+            $filterText = ($shardClasses |
+                ForEach-Object { "Category=OfficeIntegration&FullyQualifiedName~$_" }) -join '|'
         }
 
         # Remove this shard's trx from a previous run BEFORE starting, so a take-over
@@ -592,11 +599,12 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
     $shardExitCodes += [int]$testProc.ExitCode
 }
 
-# Coverage proof. The filter has no category predicate, so a class that mixes categories
-# could drag an untagged test into a shard and, worse, a malformed filter could silently
-# run fewer tests while every shard still exits 0 (measured 2026-11-25: 82 of 106 ran and
-# the gate passed). Compare what ran against what discovery listed, by method name so a
-# [Theory]'s cases do not read as missing.
+# Coverage proof, in BOTH directions. A malformed filter can silently run fewer tests while
+# every shard still exits 0 (measured 2026-11-25: 82 of 106 ran and the gate passed), and a
+# substring OR list can run MORE than discovery listed (same day: 143 against 103, including
+# the excluded TransferSoak body). Either way the gate would be judging a different suite than
+# the one it reports, so both are fails. Names are compared by method, so a [Theory]'s cases
+# do not read as missing.
 if ($gateClasses.Count -gt 0) {
     $executedTests = @()
     foreach ($shardTrxName in $shardTrxNames) {
@@ -616,7 +624,15 @@ if ($gateClasses.Count -gt 0) {
         Log "FAIL: $($missingTests.Count) discovered test(s) ran in no shard, so the partition is incomplete. First: $($missingTests[0]). Evidence preserved under $evidence."
         exit 6
     }
-    Log "coverage: all $($listedTests.Count) discovered test(s) ran in a shard."
+    $unexpectedTests = @($executedTests |
+        Where-Object { -not [string]::IsNullOrEmpty($_) } |
+        Sort-Object -Unique |
+        Where-Object { $listedTests -notcontains (($_ -split '\(')[0]) })
+    if ($unexpectedTests.Count -gt 0) {
+        Log "FAIL: $($unexpectedTests.Count) test(s) ran that discovery did not list, so the filter is wider than the gate accounts for. First: $($unexpectedTests[0]). Evidence preserved under $evidence."
+        exit 6
+    }
+    Log "coverage: all $($listedTests.Count) discovered test(s) ran in a shard, and nothing else ran."
 }
 
 # Merge the per-shard signals into the two paths the verdict block already reads, so

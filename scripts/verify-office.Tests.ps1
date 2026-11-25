@@ -281,6 +281,37 @@ exit /b 0
         $codeOnly | Should -Match 'exit 7'
     }
 
+    It 'builds each shard term as a self-contained category conjunction' {
+        # A bare `FullyQualifiedName~Class` OR list matches by substring and ignores the
+        # category: a rehearsal split on 2026-11-25 ran 143 tests against the gate's 103 and
+        # pulled in the excluded TransferSoak body. Each term now carries its own predicate,
+        # so the expression needs no grouping (`&` binds tighter than `|`).
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Category=OfficeIntegration&FullyQualifiedName~\$_'
+        # The bare form must not survive beside it.
+        $codeOnly | Should -Not -Match 'ForEach-Object \{ "FullyQualifiedName~\$_" \}'
+    }
+
+    It 'fails the gate when a shard ran a test that discovery did not list' {
+        # The other direction from the missing-test check: a filter wider than the gate would
+        # otherwise be judged on a different suite than it reports.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$unexpectedTests\.Count -gt 0'
+        $codeOnly | Should -Match 'discovery did not list'
+        $codeOnly | Should -Match 'exit 6'
+    }
+
+    It 'positive control: the over-coverage verdict is detected when it is absent' {
+        # Proves the two assertions above can fail: a source carrying only the missing-test
+        # check must pass neither of them.
+        $flagged = "if (`$missingTests.Count -gt 0) { exit 6 }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match '\$unexpectedTests\.Count -gt 0'
+        $codeOnly | Should -Not -Match 'discovery did not list'
+    }
+
     It 'positive control: the reference-count verdict is detected when it is absent' {
         # Proves the negative assertions above can detect a regression: a source
         # with no reference-count idiom must fail every one of them.
