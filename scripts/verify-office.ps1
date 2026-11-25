@@ -27,6 +27,21 @@
 param(
     [string]$Solution = 'GanttCreator.slnx',
     [string]$Configuration = 'Release',
+    # Shards. The gate CAN run the OfficeIntegration set as N sequential processes, so a
+    # hang costs one shard's remaining classes rather than the whole run and every shard
+    # that finishes keeps its own trx. Each shard is a fresh test host, which is also what
+    # lets a finished shard close cleanly instead of being taken down with the run.
+    #
+    # DEFAULT 1, deliberately, and the reason is measured. Shards are selected with
+    # `FullyQualifiedName~Class` OR-lists, and VSTest's filter grammar has no grouping: on
+    # 2026-11-25 a 3-shard partition listed 117 tests against 102 discovered (the `~`
+    # operator is a substring match, and the lists overlap), and an earlier
+    # `Category=...&(A|B|C)` form ran 82 of 106 while every shard exited 0 -- a false
+    # PASS. The coverage check below is what now makes that impossible. Until the
+    # partition is expressed as an exact `Shard=N` trait, the default is one shard, which
+    # is the old single pass plus that proof.
+    [ValidateRange(1, 8)]
+    [int]$ShardCount = 1,
     # 660 rather than 600: the suite completed in 9 m 59 s on 2026-11-09, i.e. one second
     # inside the old default, so the gate was failing on its own deadline rather than on a
     # defect. 660 keeps a real hang bounded and gives the suite room to finish.
@@ -122,7 +137,9 @@ function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value 
 # could not be attributed after the fact. Archive a timestamped copy into the
 # ignored evidence directory on every verdict path (timeout, fail, pass).
 function Save-Trx {
-    $trxSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
+    param([string]$TrxName = 'office.trx')
+
+    $trxSource = Join-Path (Split-Path -Parent $PSScriptRoot) "tests/GanttCreator.Office.IntegrationTests/TestResults/$TrxName"
     if (-not (Test-Path -LiteralPath $trxSource)) {
         # Expected on a timeout: the killed run never flushed its results. Saying so is the
         # point - the alternative was archiving whatever an earlier run had left behind.
@@ -130,7 +147,7 @@ function Save-Trx {
         return
     }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmssfff'
-    $archivePath = Join-Path $evidence "office-$stamp.trx"
+    $archivePath = Join-Path $evidence ("office-{0}-{1}.trx" -f $stamp, [System.IO.Path]::GetFileNameWithoutExtension($TrxName))
     try {
         Copy-Item -LiteralPath $trxSource -Destination $archivePath -Force
         Log "Archived trx: $archivePath"
@@ -401,74 +418,212 @@ Log 'build Release -warnaserror'
 dotnet build $Solution -c $Configuration --no-restore -warnaserror
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
+Log "test OfficeIntegration in $ShardCount shard(s) (per-shard external watchdog; blame collector omitted per L12)"
 
-# Remove any trx from a previous run BEFORE starting, so a take-over archive can never
-# present an old run's results as this run's. Measured 2026-11-09: a timed-out gate
-# archived a trx dated four days earlier, and reading it produced a false diagnosis.
-$staleTrx = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
-if (Test-Path -LiteralPath $staleTrx) { Remove-Item -LiteralPath $staleTrx -Force -ErrorAction SilentlyContinue }
+# Discover the gate's tests from the test host before running them, so the shard
+# partition below covers every class the trait selects. A class added later is inside
+# a shard by construction; nothing has to remember to add it to a table here.
+$listOutput = & dotnet test $Solution -c $Configuration --no-build --no-restore --filter 'Category=OfficeIntegration' --list-tests 2>&1
+# Anchor the parse on an indented, full test name. A loose "contains the namespace" match
+# also captured the `Test run for ... (.NETCoreApp,Version=v10.0)` banner, which became a
+# fake "class", shifted every modulo assignment and produced a filter the runner rejected
+# (`~NETCoreApp,Version=v10`), leaving one shard empty while the gate still passed.
+$listedTests = @($listOutput | ForEach-Object {
+    $match = [regex]::Match(
+        ([string]$_),
+        '^\s+(GanttCreator\.Office\.IntegrationTests\.[A-Za-z0-9_.]+)\s*$')
+    if ($match.Success) { $match.Groups[1].Value }
+})
+$gateClasses = @()
+$effectiveShardCount = 1
+if ($listedTests.Count -eq 0) {
+    # Discovery builds the partition; it is not the gate's correctness. The category filter
+    # still selects exactly the gate's tests, so an unreadable list degrades to one unsharded
+    # pass instead of refusing to run. It also keeps the isolated harness -- whose dotnet
+    # stub prints no test names -- on the single-process path it has always exercised.
+    Log 'WARN: the test host listed no OfficeIntegration tests; running one unsharded pass.'
+} else {
+    $gateClasses = @($listedTests | ForEach-Object { ($_ -split '\.')[-2] } | Sort-Object -Unique)
+    $effectiveShardCount = $ShardCount
+    Log "gate discovered $($listedTests.Count) test(s) in $($gateClasses.Count) class(es)"
+}
 
-$testArgs = @(
-    'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
-    '--filter', 'Category=OfficeIntegration',
-    '--logger', 'trx;LogFileName=office.trx'
-)
 $watchdogIntervalSeconds = 5
 $dotnetExe = 'dotnet'
-$testProc = Start-Process -FilePath $dotnetExe -ArgumentList $testArgs -NoNewWindow -PassThru
-$watchdog = [System.Diagnostics.Stopwatch]::StartNew()
-while (-not $testProc.HasExited -and $watchdog.Elapsed.TotalSeconds -lt $DeadlineSeconds)
-{
-    Start-Sleep -Seconds $watchdogIntervalSeconds
-}
-if (-not $testProc.HasExited)
-{
-    # Soft timeout: kill the whole dotnet-test process tree (not just the
-    # launcher -- Stop-Process alone leaves the actual test-host child,
-    # and any Excel it owns, running as an orphan). taskkill /T reaches
-    # the tree; by PID, never by Office process name.
-    # Capture the owned tree first: the sweep below needs the parent PIDs
-    # that were children of this launcher, and once taskkill runs they are
-    # gone. OfficeFixture launches Excel in-process, so the fixture's Excel
-    # is a child of the test host, which is a child of this launcher.
-    $ownedTreePids = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ParentProcessId -eq $testProc.Id } | ForEach-Object { $_.ProcessId })
-    # The owned-PID manifest outlives the killed test host, so read it now.
-    $fixtureManifest = Read-OwnedPidManifest $ownedPidsPath
+# A floor of 1 s, not 60: the isolated harness drives this script with a deliberately short
+# -DeadlineSeconds, and a fixed floor would make its timeout cases unreachable.
+$perShardDeadlineSeconds = [math]::Max(1, [int]($DeadlineSeconds / $effectiveShardCount))
 
-    $cleanupDeadlineSeconds = 30
-    $cleanupWatchdog = [System.Diagnostics.Stopwatch]::StartNew()
-    & taskkill /PID $testProc.Id /T /F 2>$null
-    $taskkillExitCode = $LASTEXITCODE
-    if ($taskkillExitCode -ne 0) {
-        Log "WARN: taskkill failed to stop the dotnet-test process tree (exit $taskkillExitCode)"
-    }
+# Discovery itself invokes dotnet, so anything a stub (or a previous run) wrote to the two
+# signal paths before it is not this run's measurement. Reset after discovery, not only
+# before the build.
+Remove-Item -LiteralPath $ownedPidsPath, $forcedKillsPath -Force -ErrorAction SilentlyContinue
+$shardTrxNames = @()
+$shardOwnedPidPaths = @()
+$shardForcedKillPaths = @()
+$shardExitCodes = @()
+$timedOutShards = @()
 
-    # Give the forced tree kill time to propagate to grandchildren. If the
-    # launcher or any known descendant is still present at the deadline, the
-    # timeout is not a clean shutdown and must be reported as a cleanup failure.
-    while ($cleanupWatchdog.Elapsed.TotalSeconds -lt $cleanupDeadlineSeconds) {
-        if (-not (Test-HarnessProcessTreeActive -RootProcessId $testProc.Id -KnownChildPids $ownedTreePids)) {
-            break
+for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
+{
+    if ($gateClasses.Count -eq 0) {
+        # Unsharded fallback: the legacy single pass, with the legacy paths and the legacy
+        # pre-run trx removal (a stale trx must never be archived as this run's).
+        $shardClasses = @()
+        $filterText = 'Category=OfficeIntegration'
+        $trxName = 'office.trx'
+        $legacyTrxPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
+        if (Test-Path -LiteralPath $legacyTrxPath) { Remove-Item -LiteralPath $legacyTrxPath -Force -ErrorAction SilentlyContinue }
+        $shardOwnedPidPath = $ownedPidsPath
+        $shardForcedKillPath = $forcedKillsPath
+    } else {
+        # Round-robin over the sorted class list: deterministic, and it spreads the heavy
+        # classes rather than letting alphabetical order pile them into one shard.
+        $shardClasses = @($gateClasses | Where-Object { ($gateClasses.IndexOf($_)) % $effectiveShardCount -eq $shard })
+
+        if ($effectiveShardCount -eq 1) {
+            # One shard is the whole gate, so use the exact category filter. An OR list of
+            # every class would also pull in tests that share a class with an
+            # OfficeIntegration test but carry no category themselves (measured: 117
+            # listed against 102 discovered), silently widening what the gate runs.
+            $filterText = 'Category=OfficeIntegration'
+        } else {
+            # A bare OR list, with no parentheses and no category predicate. VSTest's
+            # filter grammar has no grouping: a `Category=OfficeIntegration&(A|B|C)` form
+            # executed 82 of 106 tests while every shard exited 0. Multi-shard is not the
+            # default for that reason; the coverage check after the loop is what makes a
+            # short run impossible to pass silently.
+            $filterText = ($shardClasses | ForEach-Object { "FullyQualifiedName~$_" }) -join '|'
         }
-        Start-Sleep -Seconds 1
-    }
-    if (Test-HarnessProcessTreeActive -RootProcessId $testProc.Id -KnownChildPids $ownedTreePids) {
-        Log "WARN: Cleanup failed: dotnet-test process tree for PID $testProc.Id is still active after ${cleanupDeadlineSeconds}s"
+
+        # Remove this shard's trx from a previous run BEFORE starting, so a take-over
+        # archive can never present an old run's results as this run's.
+        $trxName = "office-shard-$shard.trx"
+        $trxPath = Join-Path (Split-Path -Parent $PSScriptRoot) "tests/GanttCreator.Office.IntegrationTests/TestResults/$trxName"
+        if (Test-Path -LiteralPath $trxPath) { Remove-Item -LiteralPath $trxPath -Force -ErrorAction SilentlyContinue }
+
+        $shardOwnedPidPath = Join-Path $evidence "owned-office-pids-shard-$shard.json"
+        $shardForcedKillPath = Join-Path $evidence "office-forced-kills-shard-$shard.log"
+        Remove-Item -LiteralPath $shardOwnedPidPath, $shardForcedKillPath -Force -ErrorAction SilentlyContinue
+        $shardTrxNames += $trxName
+        $shardOwnedPidPaths += $shardOwnedPidPath
+        $shardForcedKillPaths += $shardForcedKillPath
     }
 
-    # A genuine timeout means OfficeFixture.DisposeAsync never ran, so its
-    # owned Excel can be orphaned outside the killed tree too -- re-run
-    # this script's own sweep. Ownership is primary from the fixture's own
-    # recorded PID, with parentage as a fallback; user-owned Office is never
-    # killed.
-    Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids $ownedTreePids -FixtureManifest $fixtureManifest | Out-Null
-    Save-Trx
-    Log "TIMEOUT: OfficeIntegration tests exceeded the $DeadlineSeconds s deadline and were stopped. Evidence preserved under $evidence."
-    exit 124
+    # Each shard writes its own manifest and kill log; the merge after the loop points
+    # the existing verdict block at one file per signal.
+    $env:GANTTCREATOR_OWNED_PIDS_PATH = $shardOwnedPidPath
+    $env:GANTTCREATOR_FORCED_KILLS_PATH = $shardForcedKillPath
+
+    Log "shard ${shard}: $($shardClasses.Count) class(es), deadline $perShardDeadlineSeconds s"
+    $testArgs = @(
+        'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
+        '--filter', $filterText,
+        '--logger', "trx;LogFileName=$trxName"
+    )
+    $testProc = Start-Process -FilePath $dotnetExe -ArgumentList $testArgs -NoNewWindow -PassThru
+    $watchdog = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not $testProc.HasExited -and $watchdog.Elapsed.TotalSeconds -lt $perShardDeadlineSeconds)
+    {
+        Start-Sleep -Seconds $watchdogIntervalSeconds
+    }
+    if (-not $testProc.HasExited)
+    {
+        # Soft timeout: kill the whole dotnet-test process tree (not just the
+        # launcher -- Stop-Process alone leaves the actual test-host child,
+        # and any Excel it owns, running as an orphan). taskkill /T reaches
+        # the tree; by PID, never by Office process name.
+        # Capture the owned tree first: the sweep below needs the parent PIDs
+        # that were children of this launcher, and once taskkill runs they are
+        # gone. OfficeFixture launches Excel in-process, so the fixture's Excel
+        # is a child of the test host, which is a child of this launcher.
+        $ownedTreePids = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ParentProcessId -eq $testProc.Id } | ForEach-Object { $_.ProcessId })
+        # The owned-PID manifest outlives the killed test host, so read it now.
+        $fixtureManifest = Read-OwnedPidManifest $shardOwnedPidPath
+
+        $cleanupDeadlineSeconds = 30
+        $cleanupWatchdog = [System.Diagnostics.Stopwatch]::StartNew()
+        & taskkill /PID $testProc.Id /T /F 2>$null
+        $taskkillExitCode = $LASTEXITCODE
+        if ($taskkillExitCode -ne 0) {
+            Log "WARN: taskkill failed to stop the dotnet-test process tree (exit $taskkillExitCode)"
+        }
+
+        # Give the forced tree kill time to propagate to grandchildren. If the
+        # launcher or any known descendant is still present at the deadline, the
+        # timeout is not a clean shutdown and must be reported as a cleanup failure.
+        while ($cleanupWatchdog.Elapsed.TotalSeconds -lt $cleanupDeadlineSeconds) {
+            if (-not (Test-HarnessProcessTreeActive -RootProcessId $testProc.Id -KnownChildPids $ownedTreePids)) {
+                break
+            }
+            Start-Sleep -Seconds 1
+        }
+        if (Test-HarnessProcessTreeActive -RootProcessId $testProc.Id -KnownChildPids $ownedTreePids) {
+            Log "WARN: Cleanup failed: dotnet-test process tree for PID $testProc.Id is still active after ${cleanupDeadlineSeconds}s"
+        }
+
+        # A genuine timeout means OfficeFixture.DisposeAsync never ran, so its
+        # owned Excel can be orphaned outside the killed tree too -- re-run
+        # this script's own sweep. Ownership is primary from the fixture's own
+        # recorded PID, with parentage as a fallback; user-owned Office is never
+        # killed.
+        Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids $ownedTreePids -FixtureManifest $fixtureManifest | Out-Null
+        Save-Trx -TrxName $trxName
+        Log "TIMEOUT: shard ${shard} exceeded its $perShardDeadlineSeconds s deadline and was stopped; the other shards' results are kept. Evidence preserved under $evidence."
+        $timedOutShards += $shard
+        continue
+    }
+
+    Save-Trx -TrxName $trxName
+    $shardExitCodes += [int]$testProc.ExitCode
 }
-Save-Trx
+
+# Coverage proof. The filter has no category predicate, so a class that mixes categories
+# could drag an untagged test into a shard and, worse, a malformed filter could silently
+# run fewer tests while every shard still exits 0 (measured 2026-11-25: 82 of 106 ran and
+# the gate passed). Compare what ran against what discovery listed, by method name so a
+# [Theory]'s cases do not read as missing.
+if ($gateClasses.Count -gt 0) {
+    $executedTests = @()
+    foreach ($shardTrxName in $shardTrxNames) {
+        $shardTrxPath = Join-Path (Split-Path -Parent $PSScriptRoot) "tests/GanttCreator.Office.IntegrationTests/TestResults/$shardTrxName"
+        if (-not (Test-Path -LiteralPath $shardTrxPath)) { continue }
+        try {
+            [xml]$shardTrx = Get-Content -LiteralPath $shardTrxPath
+            $executedTests += @($shardTrx.TestRun.Results.UnitTestResult |
+                ForEach-Object { (([string]$_.testName) -split '\(')[0] })
+        } catch {
+            Log "WARN: could not read $shardTrxName for the coverage check: $($_.Exception.Message)"
+        }
+    }
+    $missingTests = @($listedTests |
+        Where-Object { $executedTests -notcontains (($_ -split '\(')[0]) })
+    if ($missingTests.Count -gt 0) {
+        Log "FAIL: $($missingTests.Count) discovered test(s) ran in no shard, so the partition is incomplete. First: $($missingTests[0]). Evidence preserved under $evidence."
+        exit 6
+    }
+    Log "coverage: all $($listedTests.Count) discovered test(s) ran in a shard."
+}
+
+# Merge the per-shard signals into the two paths the verdict block already reads, so
+# the shard split changes where the evidence is written, not how it is judged. The
+# merged owned-PID manifest is also what the NEXT run's preflight sweeps. The unsharded
+# fallback already wrote those paths, so there is nothing to merge.
+if ($shardForcedKillPaths.Count -gt 0) {
+    if (Test-Path -LiteralPath $forcedKillsPath) { Remove-Item -LiteralPath $forcedKillsPath -Force -ErrorAction SilentlyContinue }
+    foreach ($shardLogPath in $shardForcedKillPaths)
+    {
+        if (Test-Path -LiteralPath $shardLogPath) { Get-Content -LiteralPath $shardLogPath | Add-Content -LiteralPath $forcedKillsPath }
+    }
+    if (Test-Path -LiteralPath $ownedPidsPath) { Remove-Item -LiteralPath $ownedPidsPath -Force -ErrorAction SilentlyContinue }
+    foreach ($shardManifestPath in $shardOwnedPidPaths)
+    {
+        if (Test-Path -LiteralPath $shardManifestPath) { Get-Content -LiteralPath $shardManifestPath | Add-Content -LiteralPath $ownedPidsPath }
+    }
+}
+$env:GANTTCREATOR_OWNED_PIDS_PATH = $ownedPidsPath
+$env:GANTTCREATOR_FORCED_KILLS_PATH = $forcedKillsPath
 
 # Post-run sweep on the non-timeout paths too. A fixture-owned Excel that
 # outlived its test holds the packed XLL and breaks the NEXT run's publish step,
@@ -579,9 +734,16 @@ if ($quitOutcomes.Count -gt 0) {
     }
 }
 
-if ($testProc.ExitCode -ne 0) {
-    Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."
-    exit $testProc.ExitCode
+if ($timedOutShards.Count -gt 0) {
+    Log "FAIL: shard(s) $($timedOutShards -join ', ') exceeded their deadline; the shards that finished are archived. Evidence preserved under $evidence."
+    exit 124
+}
+
+$failedShards = @($shardExitCodes | Where-Object { $_ -ne 0 })
+if ($failedShards.Count -gt 0) {
+    $firstFailedExitCode = [int]$failedShards[0]
+    Log "FAIL: $($failedShards.Count) of $($shardExitCodes.Count) shard(s) exited non-zero (first $firstFailedExitCode). Evidence preserved under $evidence."
+    exit $firstFailedExitCode
 }
 
 # A stray that had to be killed is a real leak, not a warning: it means a test
