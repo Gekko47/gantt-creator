@@ -242,16 +242,34 @@ tidier".
 and was reached by **P4 alone**; P3, P3b, P5, P6 and P12 contributed nothing measurable and were
 withdrawn. The per-branch smoke run (P1b) does not exist.
 
-**The residual is measured, and it is the runner (2026-11-25).** The fixture now records setup and
-teardown beside the body, and the gate reconciles all three against each test process's own clock, so
-"test-body work" is no longer one undifferentiated block. One live run: the test process ran
-**701.1 s** — setup **56.7 s** (8.1%, of which **50.4 s** is the host launch), body **197.5 s**
-(28.2%), teardown **206.3 s** (29.4%, of which **148.0 s** is the graceful exit poll). The fixtures
-therefore own **460.5 s**, and **240.6 s (34.3%) is outside every fixture**: test-host start-up,
-discovery, result reporting and the runner's per-test turnaround. That absorbs the ~257 s this plan
-could not place, and it places it as *not* workbook work, *not* COM and *not* a wait — about 2.3 s
-per test that no fixture change can remove. The next lever is therefore the test host's own
-configuration (a work item of its own), not another fixture restructure.
+**The residual is measured — and the first reading of it was wrong (2026-11-25).** The fixture
+records setup and teardown beside the body, and the gate reconciles them. One live run: the test
+process ran **701.1 s** — setup **56.7 s** (of which **50.4 s** is the host launch), body
+**197.5 s**, teardown **206.3 s** (of which **148.0 s** is the graceful exit poll). The 68
+**recorded** fixtures own **460.5 s**, and the first version of the phase line called the remaining
+**240.6 s** "outside every fixture — the runner's per-test turnaround".
+
+That reading was wrong, and two measurements disproved it:
+
+1. **The host-free control:** the same assembly's 39 Office facts that launch nothing ran in
+   **2,655 ms wall against 210 ms of test time** — the runner's own cost is ~2.5 s fixed, not 2.3 s
+   per test.
+2. **The trx sum:** the full run's trx reported **106 results summing 650.2 s** against a 661.1 s
+   process, so the runner's whole overhead is **10.9 s (1.6%)**.
+
+The 240.6 s was therefore not runner time: it was **fixture time in tests that write no teardown
+record** — the 15 bodies that suppress the leak signal because they legitimately force a kill, and
+the ~23 PowerPoint bodies, whose fixture writes to no Office record. The gate now prints three
+figures from three sources (recorded fixtures, the runner's reported test time, the process clock)
+and the arithmetic between them, so the mistake cannot be repeated silently. The corrected split:
+**650.2 s of test time** (477.8 s recorded fixtures, **172.4 s in the 38 unrecorded bodies**) and
+**10.9 s of runner overhead**.
+
+The lever this exposes is not the test host. It is the **graceful exit poll: 144.9 s of the 650 s**,
+because two-thirds of teardowns are killed and each pays the full 3 s window, while a clean exit is
+observed at 0 ms. A 1 s window would save ~92 s on the full run; it changes a calibrated safety
+bound and needs its own measured run before it is adopted, so it is recorded here as the next
+candidate rather than taken.
 
 **What the plan predicted:** a ~17-minute gate becomes ~13–14 minutes from P3 + P4 + P5 + P6, and
 the per-branch gate becomes a ≤ 7-minute smoke run from P1b. If P3's stall is host-specific, only P1
@@ -691,9 +709,7 @@ still wins.
 
 **Observed, first live run:** `Deadline: 420 s` adopted, **24 of 24 passed**, shard 0 exit 0
 after **165.4 s** (`coverage: all 22 discovered test(s) ran in a shard, and nothing else ran.`),
-`Reference-count signal: 18 of 18 ... and 0 left one behind`, phase 110.2 s inside fixtures of a
-165.4 s process — **55.1 s outside every fixture, i.e. 2.3 s per test, the same per-test runner
-cost the full gate shows**. Wall end to end ~3.5 min including the build, half the 7-minute
+`Reference-count signal: 18 of 18 ... and 0 left one behind`. The corrected phase split on the rerun: **160.3 s process, 151.4 s of runner-reported test time, 8.9 s of runner overhead**, and of that test time **106.8 s in the 18 recorded fixtures, 44.6 s in the six suppressed render bodies that write no record** — the figure the first version of the line had mislabelled as runner cost. Wall end to end ~3.5 min including the build, half the 7-minute
 acceptance. The full gate re-ran unchanged the same evening: **104 tests, 661.1 s, all verdicts
 the same**. P7 stays gated: its measured net ceiling is ~30–60 s (see
 [`p1b-p7-pre-implementation-review.md`](p1b-p7-pre-implementation-review.md)), so it starts only if
@@ -710,9 +726,14 @@ A code review of this plan against the tree raised nine findings. Closed in code
 - **Discovery failure is no longer a pass.** `verify-office.ps1` exits 6 when the host lists no
   tests, with `-AllowUnprovenDiscovery` as the documented opt-out for the Pester harness.
 - **The host-launch figure is reported**, so the P12-style question no longer needs the raw JSONL.
-- **The residual is measured.** The fixture records setup and teardown beside the body and the gate
-  prints the reconciliation above: 240.6 s of a 701.1 s test process is outside every fixture, i.e.
-  the runner. It is no longer an unplaced block; it is a named block with a different owner.
+- **The residual is measured, and the measurement corrected itself.** The fixture records setup and
+  teardown beside the body, and the gate now prints three figures from three sources: the recorded
+  fixtures, the runner's reported test time (every trx result), and the process clock. The first
+  version summed only the records and called the difference runner time — 240.6 s of a 701.1 s
+  process. The host-free control (39 facts in 2,655 ms wall against 210 ms of test time) and the trx
+  sum (650.2 s of 661.1 s) disproved that: the runner costs **10.9 s**, and **172.4 s is fixture
+  time in 38 bodies that write no record**. The next candidate lever is the **144.9 s graceful-exit
+  poll**, not the test host.
 - **The leak claim is scoped** to the `Application` proxy in `KNOWN-LIMITATIONS` L19.
 
 ### Owner decisions, approved 2026-11-25

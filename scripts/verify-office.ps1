@@ -643,6 +643,15 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
     $shardExitCodes += [int]$testProc.ExitCode
 }
 
+# The runner's OWN test time, summed from the trx results the coverage proof reads. It is the
+# only figure that covers every body: a suppressed teardown and a PowerPoint fixture write no
+# teardown record, so a sum of records under-counts and blames the runner for the difference --
+# which is exactly what the first version of the phase line did on 2026-11-25 (183 s "outside
+# every fixture" against a trx that accounted for 650 of 661 s). Declared here, before the
+# branch, so the discovery-unavailable fallback reports 0 rather than an empty string: the
+# Pester harness caught that omission on the first run.
+$reportedTestMs = [long]0
+$reportedResults = 0
 # Coverage proof, in BOTH directions. A malformed filter can silently run fewer tests while
 # every shard still exits 0 (measured 2026-11-25: 82 of 106 ran and the gate passed), and a
 # substring OR list can run MORE than discovery listed (same day: 143 against 103, including
@@ -656,8 +665,27 @@ if ($gateClasses.Count -gt 0) {
         if (-not (Test-Path -LiteralPath $shardTrxPath)) { continue }
         try {
             [xml]$shardTrx = Get-Content -LiteralPath $shardTrxPath
-            $executedTests += @($shardTrx.TestRun.Results.UnitTestResult |
-                ForEach-Object { (([string]$_.testName) -split '\(')[0] })
+            $results = @($shardTrx.TestRun.Results.UnitTestResult)
+            foreach ($result in $results) {
+                $reportedResults++
+                $durationText = [string]$result.duration
+                if (-not [string]::IsNullOrEmpty($durationText)) {
+                    # Parse, not TryParse: PowerShell's binder would not resolve TimeSpan's
+                    # four-argument TryParse overload with a [ref], whatever the variable's type,
+                    # and the resulting WARN emptied the whole coverage read on two live runs
+                    # ("Cannot find an overload for TryParse and the argument count: 4").
+                    # Invariant culture, because the trx format is fixed and a locale that
+                    # reads the separators differently must not change the figure.
+                    try {
+                        $reportedTestMs += [long][TimeSpan]::Parse(
+                            $durationText,
+                            [System.Globalization.CultureInfo]::InvariantCulture).TotalMilliseconds
+                    } catch [System.FormatException], [System.OverflowException] {
+                        Log "WARN: unreadable trx duration '$durationText' in $shardTrxName; it is not added to the reported test time."
+                    }
+                }
+            }
+            $executedTests += @($results | ForEach-Object { (([string]$_.testName) -split '\(')[0] })
         } catch {
             Log "WARN: could not read $shardTrxName for the coverage check: $($_.Exception.Message)"
         }
@@ -829,17 +857,23 @@ Log "Reference-count signal: $rcwMeasured of $teardowns teardown(s) reported an 
 $hostMeanMs = [int][math]::Round($hostSumMs / [math]::Max(1, $teardowns))
 Log "Host-launch signal: $hostSumMs ms across $teardowns teardown(s), max $hostMaxMs ms, mean $hostMeanMs ms per body."
 
-# Phase signal: where the wall time went. The fixture covers construction-to-ready (setup),
-# the body, and teardown; what is left of the test processes' own time is the runner --
-# host start-up, discovery, reporting and per-test turnaround. Reported, never gated: the
-# numbers move with the suite, but the RATIO is what makes a regression localisable without
-# a probe run, and a residual that grows faster than the fixtures is a runner problem, not a
-# product one. -1 setup means a record from before this split, so the count that follows says
+# Phase signal: where the wall time went. Three figures, each from a different source, and
+# the arithmetic between them is the point:
+#   1. the RECORDED fixtures (a fixture teardown record carries setup, body and teardown);
+#   2. the runner's own reported test time (every trx result, including the bodies that write
+#      no record: the suppressed render fixtures and the PowerPoint fixtures);
+#   3. the process wall clock.
+# So (3 - 2) is the runner's overhead -- start-up, discovery, reporting -- and (2 - 1) is test
+# time inside bodies with no teardown record. The first version of this line summed only the
+# records, called (3 - 1) "outside every fixture", and thereby mislabelled unrecorded fixture
+# time as runner cost: 183 s against a trx that accounted for 650 of 661 s on 2026-11-25.
+# Reported, never gated. -1 setup means a record from before the split, so phaseMeasured counts
 # how many records the sums cover.
 $fixtureSumMs = $setupSumMs + $bodyOnlySumMs + $teardownSumMs
-$residualMs = [math]::Max(0, $shardElapsedMsTotal - $fixtureSumMs)
-Log "Phase signal: setup $setupSumMs ms, body $bodyOnlySumMs ms, teardown $teardownSumMs ms (of which graceful poll $gracefulSumMs ms) across $phaseMeasured of $teardowns record(s), so fixtures own $fixtureSumMs ms."
-Log "Phase signal: the test processes ran $shardElapsedMsTotal ms, leaving $residualMs ms outside every fixture - host start-up, discovery, reporting and per-test turnaround."
+$runnerOverheadMs = [math]::Max(0, $shardElapsedMsTotal - $reportedTestMs)
+$unrecordedFixtureMs = [math]::Max(0, $reportedTestMs - $fixtureSumMs)
+Log "Phase signal: setup $setupSumMs ms, body $bodyOnlySumMs ms, teardown $teardownSumMs ms (of which graceful poll $gracefulSumMs ms) across $phaseMeasured of $teardowns record(s), so the recorded fixtures own $fixtureSumMs ms."
+Log "Phase signal: the runner reported $reportedTestMs ms of test time across $reportedResults result(s) of the $shardElapsedMsTotal ms process, so its own overhead is $runnerOverheadMs ms; the remaining $unrecordedFixtureMs ms is test time in bodies that write no teardown record (the suppressed render fixtures and the PowerPoint fixtures)."
 
 # Per-test attribution. The total above is the reported number; this is WHERE it
 # comes from, and it is what makes the signal actionable rather than merely

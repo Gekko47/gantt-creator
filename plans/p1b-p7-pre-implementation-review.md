@@ -47,7 +47,10 @@ forces a kill), so they are absent from the kill log but still cost full fixture
 ### Wall estimate, from the 19:30 run's records
 
 - 18 recorded bodies: body ≈ **45.3 s** summed, setup ≈ 15.3 s (mean 0.85 s), teardown ≈ 57.6 s
-  (mean 3.2 s, dominated by the 3 s graceful poll), runner ≈ 41.4 s (2.3 s per test).
+  (mean 3.2 s, dominated by the 3 s graceful poll). The "runner ≈ 2.3 s per test" term written
+  here was **withdrawn after the smoke run**: the host-free control measured the runner at
+  ~2.5 s *fixed* (39 facts in 2,655 ms wall against 210 ms of test time), so this estimate was
+  high by ~40 s; the observed run came in at 160.3 s.
 - 6 suppressed render bodies: ≈ **55–65 s** (render + read-back + their own setup/teardown).
 - Host start and discovery: ≈ 20 s.
 - **Total ≈ 215–235 s ≈ 4 min.** The acceptance run replaces this estimate with a measurement.
@@ -152,6 +155,11 @@ risk surface (ADR-0020/ADR-0055 treat retained workbook state as a first-class h
 2. **P7 waits** for P1b's measured result. If the smoke run meets the ≤ 7 min acceptance and the
    full gate stays a release-only gate, P7's ceiling does not justify its risk and the decision is
    re-read, not re-made.
-3. The runner work item (approved separately) proceeds in parallel as a **measurement** — the
-   host-free control that separates per-test runner cost from fixture cost — not as a platform
-   migration.
+3. The runner work item is **closed on its own measurement, as a negative.** The host-free control
+   (39 facts, 2,655 ms wall against 210 ms of test time) and the trx sum (650.2 s of a 661.1 s
+   process) put the runner's whole overhead at **10.9 s (1.6%)**; the rest of what the first phase
+   line called "outside every fixture" is fixture time in the 38 bodies that write no teardown
+   record. There is no test-host work item to do. The lever that replaced it is the
+   **graceful-exit poll: 144.9 s of the 650 s**, because two-thirds of teardowns are killed and each
+   pays the full 3 s while a clean exit is observed at 0 ms — a 1 s window would save ~92 s, and it
+   needs its own measured run before adoption.

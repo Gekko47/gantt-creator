@@ -393,8 +393,15 @@ exit /b 0
         $codeOnly | Should -Match '\$bodyOnlySumMs \+= \[math\]::Max\(0, \$bodyMs - \$setupMs\)'
         $codeOnly | Should -Match '\$shardElapsedMsTotal \+= '
         $codeOnly | Should -Match 'Phase signal: setup'
-        $codeOnly | Should -Match 'leaving \$residualMs ms outside every fixture'
-        $codeOnly | Should -Match '\$shardElapsedMsTotal - \$fixtureSumMs'
+        # The runner's own time comes from the trx, not from the records: a sum of records
+        # under-counts by every suppressed and PowerPoint body, and calling that difference
+        # "runner overhead" is the mistake this line made on 2026-11-25 (183 s against a trx
+        # that accounted for 650 of 661 s).
+        $codeOnly | Should -Match '\$reportedTestMs = \[long\]0'
+        $codeOnly | Should -Match 'TryParse\('
+        $codeOnly | Should -Match '\$runnerOverheadMs = \[math\]::Max\(0, \$shardElapsedMsTotal - \$reportedTestMs\)'
+        $codeOnly | Should -Match '\$unrecordedFixtureMs = \[math\]::Max\(0, \$reportedTestMs - \$fixtureSumMs\)'
+        $codeOnly | Should -Match 'nowhere|write no teardown record'
     }
 
     It 'fails closed when the test host lists no tests, unless the harness opts out' {
@@ -618,8 +625,12 @@ exit /b 0
             # the fixtures own 1284 ms. The residual is the harness's own wall time, so only
             # its shape is asserted.
             $output | Should -Match 'Phase signal: setup 100 ms, body 1134 ms, teardown 50 ms'
-            $output | Should -Match 'across 1 of 1 record\(s\), so fixtures own 1284 ms'
-            $output | Should -Match 'leaving \d+ ms outside every fixture'
+            $output | Should -Match 'across 1 of 1 record\(s\), so the recorded fixtures own 1284 ms'
+            # The stub's trx carries no durations, so the runner reports 0 ms of test time and
+            # the whole process wall is its overhead -- the arithmetic must still hold.
+            $output | Should -Match 'the runner reported 0 ms of test time across 0 result\(s\)'
+            $output | Should -Match 'its own overhead is \d+ ms'
+            $output | Should -Match 'the remaining 0 ms is test time in bodies that write no teardown record'
         }
 
         It 'runs the smoke subset under its own bound when -Smoke is passed (positive control)' {

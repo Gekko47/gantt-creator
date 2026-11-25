@@ -319,11 +319,7 @@ Required live tests:
 > applies the same reference-count verdict, because it is the only gate that performs 25
 > transfers. The record also carries **setup** and **teardown** beside the body, and the gate
 > prints a **phase signal** reconciling the three against the test processes' own clock: on
-> 2026-11-25 the process ran 701.1 s, the fixtures owned 460.5 s (56.7 setup, 197.5 body,
-> 206.3 teardown of which 148.0 was the exit poll), and 240.6 s was outside every fixture —
-> the runner's start-up, discovery, reporting and per-test turnaround. That line exists so a
-> later increase is attributed to the runner or to the fixtures on the run that shows it,
-> without a probe. The routine set currently discovers **104 methods in 40 classes**, and the
+> 2026-11-25 the recorded fixtures owned 460.5 s of a 701.1 s process, but the first version of that line summed only the records and mislabelled the remainder. The host-free control (39 facts, 2,655 ms wall against 210 ms of test time) and the trx sum (650.2 s of 661.1 s) then showed the runner costs 10.9 s and the other 172.4 s is fixture time in bodies that write no teardown record. The line now prints the recorded fixtures, the runner-reported test time and the process clock, so the arithmetic is checkable without a probe. The routine set currently discovers **104 methods in 40 classes**, and the
 > non-live Office harness (the host-free fixtures and trend evaluators) runs **39** facts in
 > the every-commit gate.
 
