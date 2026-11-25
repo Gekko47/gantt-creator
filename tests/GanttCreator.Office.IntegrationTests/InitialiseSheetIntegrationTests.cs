@@ -24,6 +24,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// caught. The typed-refusal translation itself is gated by
 /// <c>InitialiseSheetCommandTests</c> (AddIn contract, no Office).
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
     {
         private readonly ITestOutputHelper _output = output;

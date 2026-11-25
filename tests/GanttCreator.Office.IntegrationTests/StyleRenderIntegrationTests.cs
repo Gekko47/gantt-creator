@@ -33,6 +33,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// raising without evidence.
 /// </para>
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public class StyleRenderIntegrationTests(ITestOutputHelper output)
 {
     private const double PaddingPt = 12d;

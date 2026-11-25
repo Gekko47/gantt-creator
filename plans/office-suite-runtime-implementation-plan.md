@@ -690,6 +690,30 @@ A code review of this plan against the tree raised nine findings. Closed in code
   the runner. It is no longer an unplaced block; it is a named block with a different owner.
 - **The leak claim is scoped** to the `Application` proxy in `KNOWN-LIMITATIONS` L19.
 
-Still open, with owners: the smoke subset (never adopted — build or strike); the runner overhead the
-phase split now names (a test-host configuration work item, not another fixture change); the
-`ConfigRepair` `IdentityDamage` intermittent (needs a reproduction record).
+### Owner decisions, approved 2026-11-25
+
+All three open decisions are approved. Each keeps the gate its own plan text already stated, so
+"approved" means the work may start, not that its prerequisites are waived.
+
+1. **P1b — the smoke subset is approved, and it is first.** Tag the eight classes named in P1b with
+   `OfficeSmoke` **in addition to** `OfficeIntegration`, add `-Smoke` to `verify-office.ps1` selecting
+   `Category=OfficeSmoke` with a 420 s deadline, and keep the full gate unchanged. Acceptance stands:
+   smoke wall ≤ 7 min on this host, full run unchanged. The tag set is reviewed against the entity
+   guide's renderer-equivalence table before it lands, because a tag that drifts from the risk surface
+   is a false sense of safety rather than a saving.
+2. **P7 — one initialised workbook per class is approved, behind its own prerequisites.** It does not
+   start until the reset protocol and the test-strategy note exist, because ADR-0020/ADR-0055 treat
+   retained workbook state as a first-class hazard; and its acceptance stands: every migrated class's
+   facts pass in **two different orders**. It is sequenced after P1b, one class at a time, with the
+   reorder proof in the same commit as each class. If P1b meets the per-branch target, P7 is not
+   needed and this decision is re-read, not re-made.
+3. **The runner overhead is approved as a work item whose first step is attribution, not a migration.**
+   The phase signal already isolates it (240.6 s of a 701.1 s process, ~2.3 s per test). Step 1 is a
+   control measurement that separates per-test runner cost from per-test fixture cost — the same
+   assembly's host-free facts, whose trx durations are already known to sum to ~1 s — and only then a
+   choice between a test-host/platform change and a runner-configuration change. No product code
+   changes until that measurement names the mechanism.
+
+Still open with owners, outside these three: the `ConfigRepair` `IdentityDamage` intermittent (needs a
+reproduction record before it is touched), and the 25-transfer soak's deliberate exclusion from the
+routine gate.

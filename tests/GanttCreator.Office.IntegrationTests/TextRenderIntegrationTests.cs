@@ -26,6 +26,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// silent host-side re-wrap cannot pass.
 /// </para>
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public class TextRenderIntegrationTests(ITestOutputHelper output)
 {
     private const double ChartPaddingPt = 12d;

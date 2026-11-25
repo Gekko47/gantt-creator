@@ -24,6 +24,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// the test instead of passing on the adapter's own arithmetic.
 /// </para>
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public class RefreshIdempotenceIntegrationTests(ITestOutputHelper output)
 {
     private const double PaddingPt = 12d;

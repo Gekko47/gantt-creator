@@ -36,6 +36,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// Both assert zero staged residue, an intact live chart and restored state.
 /// </para>
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public sealed class StagingLifecycleIntegrationTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;

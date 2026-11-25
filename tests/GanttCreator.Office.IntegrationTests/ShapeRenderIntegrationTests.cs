@@ -29,6 +29,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// instead of passing on the adapter's own arithmetic.
 /// </para>
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public class ShapeRenderIntegrationTests(ITestOutputHelper output)
 {
     private const double ChartPaddingPt = 12d;

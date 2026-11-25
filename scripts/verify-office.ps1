@@ -52,6 +52,11 @@ param(
     # Pester harness, whose fake `dotnet` prints no test names; passing it records a warning instead
     # of a proof, so the loss is visible in the log rather than silent.
     [switch]$AllowUnprovenDiscovery,
+    # Run the smoke subset instead of the full OfficeIntegration set: the same tests, selected by
+    # the `OfficeSmoke` trait they also carry. This is the per-branch run the full gate cannot be;
+    # the full gate stays the release gate. The category variable below is the ONLY difference
+    # between the two runs, which is why every filter site reads it instead of a literal.
+    [switch]$Smoke,
     # 660 rather than 600: the suite completed in 9 m 59 s on 2026-11-09, i.e. one second
     # inside the old default, so the gate was failing on its own deadline rather than on a
     # defect. 660 keeps a real hang bounded and gives the suite room to finish.
@@ -150,6 +155,16 @@ if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Pa
 if (-not (Test-Path -LiteralPath $evidence))  { New-Item -ItemType Directory -Path $evidence  | Out-Null }
 $report = Join-Path $artifacts 'verify-office.txt'
 "" | Set-Content -LiteralPath $report
+
+# One category per run, derived once. Discovery, the single-shard filter and the per-shard
+# conjunction terms all read these variables: a literal at discovery beside a smoke run filter
+# would make the coverage proof report every non-smoke test as missing -- a false failure
+# wearing the proof's own verdict.
+$categoryFilter = if ($Smoke) { 'Category=OfficeSmoke' } else { 'Category=OfficeIntegration' }
+$categoryLabel  = if ($Smoke) { 'OfficeSmoke' } else { 'OfficeIntegration' }
+# The smoke subset's bound is the plan's 420 s; an explicit -DeadlineSeconds still wins, because
+# the diagnostic runs need to widen or shorten the bound deliberately.
+$effectiveDeadlineSeconds = if ($Smoke -and -not $PSBoundParameters.ContainsKey('DeadlineSeconds')) { 420 } else { $DeadlineSeconds }
 
 function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value $s }
 
@@ -374,7 +389,7 @@ function Remove-HarnessOwnedOfficeProcesses {
 Log "verify-office: started $(Get-Date -Format 'o')"
 Log "Solution: $Solution"
 Log "Configuration: $Configuration"
-Log "Deadline: $DeadlineSeconds s"
+Log "Deadline: $effectiveDeadlineSeconds s"
 
 # Record the actual Office build. Per docs/adr/0001 this is the
 # self-hosted runner's Microsoft 365 install.
@@ -439,12 +454,12 @@ Log 'build Release -warnaserror'
 dotnet build $Solution -c $Configuration --no-restore -warnaserror
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Log "test OfficeIntegration in $ShardCount shard(s) (per-shard external watchdog; blame collector omitted per L12)"
+Log "test $categoryLabel in $ShardCount shard(s) (per-shard external watchdog; blame collector omitted per L12)"
 
 # Discover the gate's tests from the test host before running them, so the shard
 # partition below covers every class the trait selects. A class added later is inside
 # a shard by construction; nothing has to remember to add it to a table here.
-$listOutput = & dotnet test $Solution -c $Configuration --no-build --no-restore --filter 'Category=OfficeIntegration' --list-tests 2>&1
+$listOutput = & dotnet test $Solution -c $Configuration --no-build --no-restore --filter $categoryFilter --list-tests 2>&1
 # Anchor the parse on an indented, full test name. A loose "contains the namespace" match
 # also captured the `Test run for ... (.NETCoreApp,Version=v10.0)` banner, which became a
 # fake "class", shifted every modulo assignment and produced a filter the runner rejected
@@ -488,7 +503,7 @@ $watchdogIntervalSeconds = 5
 $dotnetExe = 'dotnet'
 # A floor of 1 s, not 60: the isolated harness drives this script with a deliberately short
 # -DeadlineSeconds, and a fixed floor would make its timeout cases unreachable.
-$perShardDeadlineSeconds = [math]::Max(1, [int]($DeadlineSeconds / $effectiveShardCount))
+$perShardDeadlineSeconds = [math]::Max(1, [int]($effectiveDeadlineSeconds / $effectiveShardCount))
 
 # Discovery itself invokes dotnet, so anything a stub (or a previous run) wrote to the two
 # signal paths before it is not this run's measurement. Reset after discovery, not only
@@ -509,7 +524,7 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
         # Unsharded fallback: the legacy single pass, with the legacy paths and the legacy
         # pre-run trx removal (a stale trx must never be archived as this run's).
         $shardClasses = @()
-        $filterText = 'Category=OfficeIntegration'
+        $filterText = $categoryFilter
         $trxName = 'office.trx'
         $legacyTrxPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
         if (Test-Path -LiteralPath $legacyTrxPath) { Remove-Item -LiteralPath $legacyTrxPath -Force -ErrorAction SilentlyContinue }
@@ -525,7 +540,7 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
             # every class would also pull in tests that share a class with an
             # OfficeIntegration test but carry no category themselves (measured: 117
             # listed against 102 discovered), silently widening what the gate runs.
-            $filterText = 'Category=OfficeIntegration'
+            $filterText = $categoryFilter
         } else {
             # Every term carries its own category predicate, so the expression never needs
             # grouping: VSTest's filter grammar has none (`Category=OfficeIntegration&(A|B|C)`
@@ -538,7 +553,7 @@ for ($shard = 0; $shard -lt $effectiveShardCount; $shard++)
             # `Category=TransferSoak` body. Both directions of that mistake are now verdicts
             # in the coverage check below.
             $filterText = ($shardClasses |
-                ForEach-Object { "Category=OfficeIntegration&FullyQualifiedName~$_" }) -join '|'
+                ForEach-Object { "$categoryFilter&FullyQualifiedName~$_" }) -join '|'
         }
 
         # Remove this shard's trx from a previous run BEFORE starting, so a take-over

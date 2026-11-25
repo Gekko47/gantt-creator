@@ -291,9 +291,36 @@ exit /b 0
         # so the expression needs no grouping (`&` binds tighter than `|`).
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match 'Category=OfficeIntegration&FullyQualifiedName~\$_'
+        $codeOnly | Should -Match '\$categoryFilter&FullyQualifiedName~\$_'
         # The bare form must not survive beside it.
         $codeOnly | Should -Not -Match 'ForEach-Object \{ "FullyQualifiedName~\$_" \}'
+    }
+
+    It 'threads one category filter through discovery and every shard filter' {
+        # -Smoke differs from the full run ONLY by the category. A literal left at discovery
+        # beside a smoke run filter would make the coverage proof report every non-smoke test as
+        # missing -- a false exit 6 wearing the proof's own verdict. So the script derives the
+        # filter once and every site reads it.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\[switch\]\$Smoke'
+        $codeOnly | Should -Match '\$categoryFilter = if \(\$Smoke\)'
+        $codeOnly | Should -Match '--filter \$categoryFilter --list-tests'
+        $codeOnly | Should -Match '\$filterText = \$categoryFilter'
+        $codeOnly | Should -Match '"\$categoryFilter&FullyQualifiedName~'
+        # No filter site may carry the category as its own literal any more.
+        $codeOnly | Should -Not -Match "--filter ''Category=OfficeIntegration''"
+        $codeOnly | Should -Not -Match '\$filterText = ''Category=OfficeIntegration'''
+    }
+
+    It 'gives the smoke run its own 420 s bound unless a deadline is passed explicitly' {
+        # The plan's number, not an inherited 780: the smoke subset is ~4 minutes measured, and
+        # an explicit -DeadlineSeconds must still win because diagnostic runs shorten or widen it.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$effectiveDeadlineSeconds = if \(\$Smoke -and -not \$PSBoundParameters\.ContainsKey\(''DeadlineSeconds''\)\) \{ 420 \}'
+        $codeOnly | Should -Match 'Log "Deadline: \$effectiveDeadlineSeconds s"'
+        $codeOnly | Should -Match '\[int\]\(\$effectiveDeadlineSeconds / \$effectiveShardCount\)'
     }
 
     It 'fails the gate when a shard ran a test that discovery did not list' {
@@ -593,6 +620,25 @@ exit /b 0
             $output | Should -Match 'Phase signal: setup 100 ms, body 1134 ms, teardown 50 ms'
             $output | Should -Match 'across 1 of 1 record\(s\), so fixtures own 1284 ms'
             $output | Should -Match 'leaving \d+ ms outside every fixture'
+        }
+
+        It 'runs the smoke subset under its own bound when -Smoke is passed (positive control)' {
+            # End-to-end: the stub path still exercises the script's own category label and
+            # deadline derivation, which is where a wrong default would show.
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-Smoke'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 0
+            $output | Should -Match 'test OfficeSmoke in 1 shard\(s\)'
+            $output | Should -Match 'Deadline: 420 s'
+            $output | Should -Not -Match 'Deadline: 780 s'
         }
 
         It 'archives the per-run trx before the verdict (positive control)' {

@@ -327,6 +327,19 @@ Required live tests:
 > non-live Office harness (the host-free fixtures and trend evaluators) runs **39** facts in
 > the every-commit gate.
 
+> **The smoke subset (`OfficeSmoke`, 2026-11-25).** Eight classes carry `OfficeSmoke` **in
+> addition to** `OfficeIntegration` — ShapeRender, StyleRender, TextRender, RefreshIdempotence,
+> AutoRefreshTrigger, StagingLifecycle, AddRow and InitialiseSheet: the paths a typical change
+> touches, reviewed against the entity guide's renderer-equivalence table. The trait is
+> **class-level**, so a body added to one of those classes joins the subset without a second
+> edit. `verify-office.ps1 -Smoke` runs `Category=OfficeSmoke` under a **420 s** bound; an
+> explicit `-DeadlineSeconds` still wins. The category is derived once and read by discovery,
+> the single-shard filter and the per-shard conjunction terms, because a literal left at
+> discovery beside a smoke run filter would make the coverage proof report every non-smoke test
+> as missing. The subset discovers **24 cases** (21 methods, one a three-row Theory). The full
+> gate stays the release gate and is unchanged: a smoke pass is a fast signal, never a release
+> verdict.
+
 ## Feature-to-test traceability
 
 Every work item links acceptance criterion IDs to test names. Maintain this high-level map:

@@ -7,6 +7,7 @@ using Excel = Microsoft.Office.Interop.Excel;
 namespace GanttCreator.Office.IntegrationTests;
 
 /// <summary>Live Excel checks for the source event and table-column trigger boundary.</summary>
+[Trait("Category", "OfficeSmoke")]
 public sealed class AutoRefreshTriggerIntegrationTests
 {
     private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();

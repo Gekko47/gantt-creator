@@ -23,6 +23,7 @@ namespace GanttCreator.Office.IntegrationTests;
 /// <c>ColumnVisibilityRoundTripIntegrationTests</c> and <c>ProtectionArmingIntegrationTests</c>.
 /// </para>
 /// </remarks>
+[Trait("Category", "OfficeSmoke")]
 public class AddRowIntegrationTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;
