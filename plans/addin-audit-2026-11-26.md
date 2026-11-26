@@ -244,11 +244,19 @@ Ribbon moves, one commit each:
     — 34 chart, 32 XML, 28 command — and the XML file carries the file-scoped `CA2000` suppression
     the original had. Proof: suite 983, distinct name set identical, and `docs/REPO-MAP.md` plus
     the four historical `STATUS.md` links now name the topic classes instead of the deleted file.
-5. Move `RibbonStateServiceTests` topic by topic: snapshot and modes (~600), gates and activation
-   (~350), capture and invalidation (~300), preferences and dialogs (~600). The three nested stubs
-   (`StubThemeDialogRibbonStateService`, `HostApplicationRibbonStateService`,
-   `FakePanelGridMeasurementPort`) move with the topic that uses them, or into the support type when
-   two topics use one.
+5. Move `RibbonStateServiceTests` topic by topic. The sections are contiguous, so each move is one
+   range; the class drops 1,813 → 1,317 on the first.
+
+   5a. Done. Snapshot and mode — 27 facts, from the catalogue-writer accessors through
+       `A_sheet_activation_refreshes_the_gate_and_restores_the_tab` — in `RibbonStateSnapshotTests`,
+       which carries its own constructor and `Dispose` so the singleton reset stays visible.
+   5b. Remaining: gates (`GetVisible`/`GetEnabled`, the critical-interval pins), ~165 lines.
+   5c. Remaining: activation, capture and invalidation, ~175 lines. `HostApplicationRibbonStateService`
+       travels here.
+   5d. Remaining: plot dates, AUTO toggles and the time scale, ~545 lines.
+   5e. Remaining: presets, margins, theme dialogs, the chart-current flag and the PNG export target,
+       ~350 lines. `FakePanelGridMeasurementPort` travels here, and the theme facts use the shared
+       `StubThemeDialogStateService` rather than carrying a second copy of the same double.
 6. The ribbon leftover needed no rename: it was deleted once its last fact moved, which is the
    equivalent. The same rule still applies to `RibbonStateServiceTests`.
 
