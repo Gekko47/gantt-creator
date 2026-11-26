@@ -255,12 +255,16 @@ Ribbon moves, one commit each:
    5c. Done. Activation, capture and invalidation — 12 facts — in `RibbonStateActivationTests`, which
        took `HostApplicationRibbonStateService` with it; the source's copy became unused and CA1812
        refused it, so it was deleted from the original at the same time. The class is 1,317 → 965 lines.
-   5d. Remaining: plot dates, AUTO toggles and the time scale, ~545 lines.
-   5e. Remaining: presets, margins, theme dialogs, the chart-current flag and the PNG export target,
-       ~350 lines. `FakePanelGridMeasurementPort` travels here, and the theme facts use the shared
-       `StubThemeDialogStateService` rather than carrying a second copy of the same double.
-6. The ribbon leftover needed no rename: it was deleted once its last fact moved, which is the
-   equivalent. The same rule still applies to `RibbonStateServiceTests`.
+   5d. Done. Plot dates, the AUTO toggles and the time scale — 20 facts — in `RibbonStatePlotTests`.
+   5e. Done, in the same commit as 5d. Presets, margins, the theme dialog's five outcomes, the
+       chart-current flag and the PNG export target — 16 facts — in `RibbonStatePreferenceTests`.
+       `FakePanelGridMeasurementPort` travelled with them, and the three theme facts use the shared
+       `StubThemeDialogStateService`, so the second copy of that double is gone. The leftover
+       `RibbonStateServiceTests` held no facts, so it was deleted rather than renamed; the five topic
+       classes now hold all 87 of its facts (27 snapshot, 12 gate, 12 activation, 20 plot,
+       16 preference).
+6. Both leftovers were deleted rather than renamed, once their last fact moved: nothing was left to
+   name.
 
 **Tooling caution.** A name-driven mover was written and abandoned: on its first real run it reported
 a method missing that was present, and the working tree afterwards matched HEAD exactly, so the

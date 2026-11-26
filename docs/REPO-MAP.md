@@ -156,7 +156,10 @@ blank or leading-blank band stays empty while later lanes keep their measured
 rows). The recalc/resize/filter trigger-matrix cells are pinned in
 `tests/GanttCreator.Office.ContractTests/ExcelSheetChangeAnalyzerTests.cs`,
 and the warnings snapshots' workbook-switch clearing in
-`tests/GanttCreator.AddIn.Tests/RibbonStateServiceTests.cs`. The R5.15
+`tests/GanttCreator.AddIn.Tests/RibbonStateSnapshotTests.cs`. Slice 8 split the state-service test
+class by topic, so its facts now live in `RibbonStateSnapshotTests`, `RibbonStateGateTests`,
+`RibbonStateActivationTests`, `RibbonStatePlotTests` and `RibbonStatePreferenceTests`, all in the
+`diagnostics-service` collection. The R5.15
 protection decision is ADR-0051 (`docs/adr/0051-retain-unprotected-worksheet.md`);
 the deferred R5.9 presentation scope is row `R5.9a`.
 
