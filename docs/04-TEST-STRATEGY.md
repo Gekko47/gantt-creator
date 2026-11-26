@@ -290,7 +290,7 @@ Required live tests:
 10. PNG export has exact size, aspect, crop, and density metadata.
 11. Protected sheet, missing PowerPoint, busy clipboard, and unwritable path fail safely.
 12. Twenty-five repeated refresh/copy/transfer cycles do not leave orphaned Office processes or steadily growing owned shapes.
-13. The 25-transfer soak is a separate `TransferSoak` category, runs under the same owned-PID manifest and watchdog, and records process, handle, working-set, shape and residue counters with a measured deadline.
+13. The 25-transfer soak is a separate `TransferSoak` category, runs under the same owned-PID manifest and watchdog, and records process, handle, working-set, shape and residue counters with a measured deadline. It is a **one-off** body: no routine gate selects it, and it is run on demand when the transfer path is edited (owner ruling 2026-11-25).
 
 > **Phase-7 gate split (2026-11-21).** The routine `verify-office.ps1` selects
 > `Category=OfficeIntegration` and keeps its 780 s deadline. The 25-transfer soak is
@@ -299,6 +299,13 @@ Required live tests:
 > soak body that also carries `OfficeIntegration` is a defect because it would enter the
 > routine gate. `PowerPointFixture` writes the same owned-PID manifest as `OfficeFixture`
 > and closes/quits only a host it started.
+>
+> **The soak is on demand, not a standing step (owner ruling 2026-11-25).** It is a
+> one-off test: no routine gate and no release gate selects it, nothing schedules it, and
+> it is called individually — through `verify-transfer-soak.ps1` or by filtering
+> `Category=TransferSoak` — when the transfer path is edited. A change that touches
+> PowerPoint transfer therefore owns running it, and the ruling is recorded here so a
+> later session does not re-open "why the soak never runs in CI" as a gap.
 
 > **What the routine gate's signals measure (2026-11-25).** The **leak gate is the
 > application reference count**: `OfficeFixture` records what
