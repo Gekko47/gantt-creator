@@ -36,13 +36,14 @@ internal static class SetDateLabelCommand
         ArgumentNullException.ThrowIfNull(selection);
         ArgumentNullException.ThrowIfNull(presenter);
 
-        // The ribbon gate may have been stale (selection changed between
-        // render and click), so the selection is re-read here and a
-        // non-single-row selection refuses before the mutator runs.
-        SelectionFacts facts = selection.Identify();
-        if (!facts.IsSingleBodyRow)
+        // The ribbon gate may have been stale, so the selection is re-read and a
+        // non-single-row selection refuses before the mutator runs; the translator
+        // keeps this command's own wording.
+        if (!CommandPreconditions.TryRequireSingleBodyRow(
+                selection,
+                presenter,
+                DateLabelRefusalTranslator.TranslateNotSingleRow))
         {
-            CommandBoundary.SafePresent(presenter, DateLabelRefusalTranslator.TranslateNotSingleRow(facts));
             return;
         }
 

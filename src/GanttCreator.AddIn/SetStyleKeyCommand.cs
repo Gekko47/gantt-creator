@@ -35,14 +35,14 @@ internal static class SetStyleKeyCommand
         ArgumentNullException.ThrowIfNull(selection);
         ArgumentNullException.ThrowIfNull(presenter);
 
-        // Ruling 1 at execution time: the ribbon gate may have been stale
-        // (selection changed between render and click), so the selection is
-        // re-read here and a non-single-row selection refuses before the
-        // mutator runs.
-        SelectionFacts facts = selection.Identify();
-        if (!facts.IsSingleBodyRow)
+        // Ruling 1 at execution time: the ribbon gate may have been stale, so the
+        // selection is re-read and a non-single-row selection refuses before the
+        // mutator runs; the translator keeps this command's own wording.
+        if (!CommandPreconditions.TryRequireSingleBodyRow(
+                selection,
+                presenter,
+                StyleKeyRefusalTranslator.TranslateNotSingleRow))
         {
-            CommandBoundary.SafePresent(presenter, StyleKeyRefusalTranslator.TranslateNotSingleRow(facts));
             return;
         }
 
