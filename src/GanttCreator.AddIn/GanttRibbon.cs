@@ -1032,19 +1032,7 @@ public class GanttRibbon : ExcelRibbon
     internal static bool GetEnabled(IRibbonControl? control, RibbonStateService stateService)
     {
         ArgumentNullException.ThrowIfNull(stateService);
-        // CA1031: the only failure source here is the COM control-ID probe; a
-        // probe failure must fail the getter open, never propagate into Excel's
-        // getter dispatch.
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetEnabled(control?.Id);
-        }
-        catch
-        {
-            return true;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetEnabled(control?.Id), true);
     }
 
     /// <summary>
@@ -1068,18 +1056,7 @@ public class GanttRibbon : ExcelRibbon
     internal static bool GetVisible(IRibbonControl? control, RibbonStateService stateService)
     {
         ArgumentNullException.ThrowIfNull(stateService);
-        // CA1031: the only failure source is the COM control-ID probe; a probe
-        // failure must fail CLOSED so an unknown group is never shown.
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetVisible(control?.Id);
-        }
-        catch
-        {
-            return false;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetVisible(control?.Id), false);
     }
 
     /// <summary>
@@ -1104,18 +1081,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        // CA1031: a probe failure must degrade to empty text rather than
-        // propagating into Excel's getter dispatch.
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetPlotStartDate();
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetPlotStartDate(), string.Empty);
     }
 
     /// <summary>
@@ -1140,16 +1106,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetPlotFinishDate();
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetPlotFinishDate(), string.Empty);
     }
 
     /// <summary>
@@ -1173,16 +1130,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetEnabled(RibbonControlIds.PlotStartDate);
-        }
-        catch
-        {
-            return true;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetEnabled(RibbonControlIds.PlotStartDate), true);
     }
 
     /// <summary>
@@ -1206,16 +1154,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetEnabled(RibbonControlIds.PlotFinishDate);
-        }
-        catch
-        {
-            return true;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetEnabled(RibbonControlIds.PlotFinishDate), true);
     }
 
     /// <summary>
@@ -1270,16 +1209,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.IsPlotFinishAuto();
-        }
-        catch
-        {
-            return true;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.IsPlotFinishAuto(), true);
     }
 
     /// <summary>
@@ -1546,16 +1476,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDescriptionLabelCount();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDescriptionLabelCount(), 0);
     }
 
     /// <summary>
@@ -1585,16 +1506,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDescriptionLabelItemID(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDescriptionLabelItemID(index), string.Empty);
     }
 
     /// <summary>
@@ -1624,16 +1536,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDescriptionLabelItemLabel(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDescriptionLabelItemLabel(index), string.Empty);
     }
 
     /// <summary>
@@ -1659,16 +1562,7 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService stateService)
     {
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetColumnVisibilityLabel(control?.Id);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetColumnVisibilityLabel(control?.Id), string.Empty);
     }
 
     /// <summary>
@@ -1693,16 +1587,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetColumnVisibilityAllLabel();
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetColumnVisibilityAllLabel(), string.Empty);
     }
 
     /// <summary>
@@ -1727,16 +1612,7 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService stateService)
     {
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetColumnVisibilityImage(control?.Id);
-        }
-        catch
-        {
-            return null;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetColumnVisibilityImage(control?.Id), null);
     }
 
     /// <summary>
@@ -1832,16 +1708,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDescriptionLabelSelectedIndex();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDescriptionLabelSelectedIndex(), 0);
     }
 
     /// <summary>
@@ -1866,16 +1733,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDateLabelCount();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDateLabelCount(), 0);
     }
 
     /// <summary>
@@ -1906,16 +1764,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDateLabelItemID(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDateLabelItemID(index), string.Empty);
     }
 
     /// <summary>
@@ -1945,16 +1794,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDateLabelItemLabel(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDateLabelItemLabel(index), string.Empty);
     }
 
     /// <summary>
@@ -1982,16 +1822,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetDateLabelSelectedIndex();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetDateLabelSelectedIndex(), 0);
     }
 
     /// <summary>
@@ -2172,16 +2003,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetCustomStyleCount();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetCustomStyleCount(), 0);
     }
 
     /// <summary>
@@ -2210,16 +2032,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetCustomStyleItemID(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetCustomStyleItemID(index), string.Empty);
     }
 
     /// <summary>
@@ -2249,16 +2062,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetCustomStyleItemLabel(index);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetCustomStyleItemLabel(index), string.Empty);
     }
 
     /// <summary>
@@ -2287,16 +2091,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetCustomStyleSelectedIndex();
-        }
-        catch
-        {
-            return 0;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetCustomStyleSelectedIndex(), 0);
     }
 
     /// <summary>
@@ -2360,16 +2155,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetMarginCm().ToString(CultureInfo.InvariantCulture);
-        }
-        catch
-        {
-            return GanttPlotMargins.DefaultCustomCm.ToString(CultureInfo.InvariantCulture);
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetMarginCm().ToString(CultureInfo.InvariantCulture), GanttPlotMargins.DefaultCustomCm.ToString(CultureInfo.InvariantCulture));
     }
 
     /// <summary>
@@ -2392,16 +2178,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetMargin() == GanttPlotMargin.Custom;
-        }
-        catch
-        {
-            return false;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetMargin() == GanttPlotMargin.Custom, false);
     }
 
     /// <summary>
@@ -2506,16 +2283,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetPlotWidth();
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetPlotWidth(), string.Empty);
     }
 
     /// <summary>
@@ -2538,16 +2306,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.GetPlotHeight();
-        }
-        catch
-        {
-            return string.Empty;
-        }
-#pragma warning restore CA1031
+        return RibbonGetter.Read(stateService, s => s.GetPlotHeight(), string.Empty);
     }
 
     /// <summary>
