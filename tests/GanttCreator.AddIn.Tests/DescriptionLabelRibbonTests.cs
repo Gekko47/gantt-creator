@@ -29,52 +29,6 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         RibbonStateService.Reset();
         GC.SuppressFinalize(this);
     }
-
-    /// <summary>
-    /// Hand-written fake for <see cref="ISelectionIdentifier"/>: returns a fixed
-    /// selection and counts subscription attach/detach so the tests can prove
-    /// only the description-label dropdown is invalidated on a selection change.
-    /// </summary>
-    private sealed class FakeSelectionIdentifier : ISelectionIdentifier
-    {
-        private Action? _handler;
-
-        public SelectionFacts Facts { get; set; } = SelectionFacts.None;
-
-        public int SubscribeCount { get; private set; }
-
-        public int DisposeCount { get; private set; }
-
-        public SelectionFacts Identify() => Facts;
-
-        public IDisposable SubscribeSelectionChanged(Action handler)
-        {
-            ArgumentNullException.ThrowIfNull(handler);
-            SubscribeCount++;
-            _handler = handler;
-            return new Subscription(this);
-        }
-
-        internal void RaiseSelectionChanged() => _handler?.Invoke();
-
-        private sealed class Subscription(FakeSelectionIdentifier owner) : IDisposable
-        {
-            private bool _disposed;
-
-            public void Dispose()
-            {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                _disposed = true;
-                owner.DisposeCount++;
-                owner._handler = null;
-            }
-        }
-    }
-
     /// <summary>
     /// Builds one table body row through the normalised DTO shape, keeping the
     /// raw cell text the projection reads, so a test can pin a blank
@@ -96,49 +50,19 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         null,
         null,
         null);
-
-    /// <summary>
-    /// Minimal <see cref="IExcelApplicationAdapter"/> that reports a live
-    /// workbook, so the shared gate's workbook half is satisfied and the tests
-    /// isolate the label-specific half (single body row).
-    /// </summary>
-    private sealed class FakeApplicationAdapter : IExcelApplicationAdapter
-    {
-        public bool? HasActiveWorkbook() => true;
-
-        public void ShowStatusBar(string message)
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public void ClearStatusBar()
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
-
-        private sealed class Subscription : IDisposable
-        {
-            public void Dispose()
-            {
-            }
-        }
-    }
-
     /// <summary>
     /// Arms the service with a single-selected body row of the given type and
     /// activates it, so the label getters read a resolved context and the
     /// selection subscription is attached exactly as AutoOpen attaches it.
     /// </summary>
     private static RibbonStateService ArmWithRow(
-        FakeSelectionIdentifier selection,
+        TestSelectionIdentifier selection,
         GanttRowDto row,
         GanttStyleRegistry? styles = null,
         IRibbonUI? ribbon = null)
     {
         var service = RibbonStateService.Instance;
-        service.SetApplicationAdapter(new FakeApplicationAdapter());
+        service.SetApplicationAdapter(new TestExcelApplicationAdapter());
         service.SetSelectionIdentifier(selection);
         service.SetRibbon(ribbon);
 
@@ -165,7 +89,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     {
         // Ruling 1 + 6: a header, multi, or absent selection disables the
         // control, so a group of mixed types can never be formatted at once.
-        var selection = new FakeSelectionIdentifier
+        var selection = new TestSelectionIdentifier
         {
             Facts = new SelectionFacts(true, false, null, true, 0),
         };
@@ -177,7 +101,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_is_enabled_for_exactly_one_body_row()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
@@ -186,7 +110,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_offers_the_span_set_plus_default_for_a_span_type()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         // Default (clear) is always offered first, then the catalogue set in
@@ -208,7 +132,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         // type's code-owned default style - so the dropdown offers that
         // default's positions instead of being disabled on a perfectly
         // renderable row.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Custom Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
@@ -227,7 +151,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         // R5.6d: the milestone fallback is the milestone vocabulary, so a
         // Custom Milestone row with no style offers the milestone positions -
         // and no Inside, which a milestone does not have.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Custom Milestone", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
@@ -244,7 +168,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     {
         // The splitter has no Auto in its catalogue set, and the projection
         // must not invent one.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
         // R5.18l: a splitter no longer offers `DataPanelLeft`, so the projected list is
@@ -262,7 +186,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     {
         // Ruling 4: the catalogue set stays None-only. Left/Right are refused
         // by the projection and by the mutator, not silently offered.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row(type, null));
 
         Assert.Equal(2, service.GetDescriptionLabelCount());
@@ -273,7 +197,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_shows_the_ruling_3_wording_not_the_enum_name()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         // Inside reads Centre (R4.7G D6) and None reads None (hide), so the
@@ -286,7 +210,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_labels_the_splitter_positions()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
         // R5.18l removed `DataPanelLeft`, so the list opens on Plot centre.
@@ -298,7 +222,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_labels_the_delineator_corners()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Delineator", null));
 
         Assert.Equal(7, service.GetDescriptionLabelCount());
@@ -312,7 +236,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     {
         // Ruling 5: blank resolves to the style default / Auto cascade (§22),
         // so the dropdown selects the leading Default item.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(0, service.GetDescriptionLabelSelectedIndex());
@@ -321,7 +245,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void A_stored_position_selects_its_own_item()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Right"));
 
         Assert.Equal(3, service.GetDescriptionLabelSelectedIndex());
@@ -330,7 +254,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void An_out_of_range_item_index_returns_an_empty_label()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(string.Empty, service.GetDescriptionLabelItemLabel(99));
@@ -342,7 +266,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     {
         // An empty list is Excel's cue that the dropdown has nothing to show,
         // and it pairs with the disabled gate rather than an empty picker.
-        var selection = new FakeSelectionIdentifier { Facts = SelectionFacts.None };
+        var selection = new TestSelectionIdentifier { Facts = SelectionFacts.None };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(0, service.GetDescriptionLabelCount());
@@ -352,7 +276,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     [Fact]
     public void An_unknown_type_leaves_the_context_unavailable()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Widget", null));
 
         Assert.Equal(0, service.GetDescriptionLabelCount());
@@ -365,7 +289,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         // Collapse clarification: a parent owning hidden children is still
         // exactly one body row, so the control enables and only that row's
         // cell is targeted.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
@@ -386,7 +310,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         // computed at load (disabled, nothing selected) and the user can never
         // unlock a shape. This test previously pinned the incomplete set.
         var ribbon = new Mock<IRibbonUI>();
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null), ribbon: ribbon.Object);
 
         Assert.Equal(1, selection.SubscribeCount);
@@ -425,7 +349,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     public void The_selection_subscription_is_detached_exactly_once_on_reset()
     {
         // R1.6: unload must leave no COM connection behind.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null));
 
         RibbonStateService.Reset();
@@ -439,7 +363,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
         // Excel dispatches these by reflection, so a rename in either layer is
         // a live defect; the routing overloads pin the wiring without the
         // session singleton.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
         var control = new Mock<IRibbonControl>().Object;
 

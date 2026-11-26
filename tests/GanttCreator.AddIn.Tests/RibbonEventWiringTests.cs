@@ -12,20 +12,20 @@ public class RibbonEventWiringTests
     [Fact]
     public void Subscribe_attaches_every_source_and_detach_disposes_each_once()
     {
-        FakeAdapter adapter = new();
-        FakeSelection selection = new();
+        TestExcelApplicationAdapter adapter = new();
+        TestSelectionIdentifier selection = new();
         RibbonEventWiring wiring = new(adapter, selection, () => { }, () => { }, () => { });
 
         wiring.Subscribe();
 
-        Assert.Equal(1, adapter.SubscribeCount);
+        Assert.Equal(1, adapter.WorkbookStateSubscribeCount);
         Assert.Equal(1, adapter.SheetActivationSubscribeCount);
         Assert.Equal(1, selection.SubscribeCount);
 
         wiring.DetachAll();
         wiring.DetachAll();
 
-        Assert.Equal(1, adapter.DisposeCount);
+        Assert.Equal(1, adapter.WorkbookStateDisposeCount);
         Assert.Equal(1, adapter.SheetActivationDisposeCount);
         Assert.Equal(1, selection.DisposeCount);
     }
@@ -33,39 +33,43 @@ public class RibbonEventWiringTests
     [Fact]
     public void Re_subscribing_replaces_the_connection_rather_than_doubling_it()
     {
-        FakeAdapter adapter = new();
-        FakeSelection selection = new();
+        TestExcelApplicationAdapter adapter = new();
+        TestSelectionIdentifier selection = new();
         RibbonEventWiring wiring = new(adapter, selection, () => { }, () => { }, () => { });
 
         wiring.Subscribe();
         wiring.Subscribe();
 
-        Assert.Equal(2, adapter.SubscribeCount);
-        Assert.Equal(1, adapter.DisposeCount);
+        Assert.Equal(2, adapter.WorkbookStateSubscribeCount);
+        Assert.Equal(1, adapter.WorkbookStateDisposeCount);
         Assert.Equal(1, selection.DisposeCount);
 
         wiring.DetachAll();
 
-        Assert.Equal(2, adapter.DisposeCount);
+        Assert.Equal(2, adapter.WorkbookStateDisposeCount);
         Assert.Equal(2, selection.DisposeCount);
     }
 
     [Fact]
     public void A_refused_subscribe_is_inert_and_retried_on_the_next_attach()
     {
-        FakeAdapter adapter = new() { RefuseSubscribes = true };
-        RibbonEventWiring wiring = new(adapter, new FakeSelection(), () => { }, () => { }, () => { });
+        TestExcelApplicationAdapter adapter = new()
+        {
+            RefuseWorkbookStateSubscribe = true,
+            RefuseSheetActivationSubscribe = true,
+        };
+        RibbonEventWiring wiring = new(adapter, new TestSelectionIdentifier(), () => { }, () => { }, () => { });
 
         wiring.Subscribe();
 
-        Assert.Equal(1, adapter.SubscribeCount);
-        Assert.Equal(0, adapter.DisposeCount);
+        Assert.Equal(1, adapter.WorkbookStateSubscribeCount);
+        Assert.Equal(0, adapter.WorkbookStateDisposeCount);
 
         wiring.Subscribe();
 
-        Assert.Equal(2, adapter.SubscribeCount);
+        Assert.Equal(2, adapter.WorkbookStateSubscribeCount);
         wiring.DetachAll();
-        Assert.Equal(0, adapter.DisposeCount);
+        Assert.Equal(0, adapter.WorkbookStateDisposeCount);
     }
 
     [Fact]
@@ -92,73 +96,4 @@ public class RibbonEventWiringTests
             () => _ = new RibbonEventWiring(null, null, () => { }, () => { }, null!));
     }
 
-    private sealed class FakeAdapter : IExcelApplicationAdapter
-    {
-        public bool RefuseSubscribes { get; init; }
-
-        public int SubscribeCount { get; private set; }
-
-        public int DisposeCount { get; private set; }
-
-        public int SheetActivationSubscribeCount { get; private set; }
-
-        public int SheetActivationDisposeCount { get; private set; }
-
-        public bool? HasActiveWorkbook() => true;
-
-        public void ShowStatusBar(string message) => _ = message;
-
-        public void ClearStatusBar()
-        {
-            // Nothing to clear.
-        }
-
-        public IDisposable SubscribeWorkbookStateChanged(Action handler)
-        {
-            SubscribeCount++;
-            return RefuseSubscribes
-                ? throw new InvalidOperationException("the host refused the connection")
-                : new CountingSubscription(() => DisposeCount++);
-        }
-
-        public IDisposable SubscribeSheetActivated(Action handler)
-        {
-            SheetActivationSubscribeCount++;
-            return RefuseSubscribes
-                ? throw new InvalidOperationException("the host refused the connection")
-                : new CountingSubscription(() => SheetActivationDisposeCount++);
-        }
-    }
-
-    private sealed class FakeSelection : ISelectionIdentifier
-    {
-        public int SubscribeCount { get; private set; }
-
-        public int DisposeCount { get; private set; }
-
-        public SelectionFacts Identify() => new(
-            HasSelection: true,
-            IsSingleBodyRow: true,
-            BodyIndex: 1,
-            IsHeaderRow: false,
-            SelectedRowCount: 1);
-
-        public IDisposable SubscribeSelectionChanged(Action handler)
-        {
-            SubscribeCount++;
-            return new CountingSubscription(() => DisposeCount++);
-        }
-    }
-
-    private sealed class CountingSubscription(Action onDispose) : IDisposable
-    {
-        private Action? _onDispose = onDispose;
-
-        public void Dispose()
-        {
-            Action? onDispose = _onDispose;
-            _onDispose = null;
-            onDispose?.Invoke();
-        }
-    }
 }

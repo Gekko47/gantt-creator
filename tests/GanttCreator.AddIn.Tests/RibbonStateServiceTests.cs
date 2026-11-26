@@ -115,7 +115,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // R5.8/R5.11: both snapshots are per-workbook. Carrying them across a
         // switch would show another workbook's warnings and stale badges, which
         // the user can never dismiss.
-        var adapter = new FakeApplicationAdapter { WorkbookFact = false };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = false };
         var service = Arm(adapter);
         service.UpdateWarnings([new SceneWarning(SceneOwnerId.Chart, "PlotRange", "Chart warning.")]);
         service.UpdateCurrentValidationIssues(
@@ -216,122 +216,8 @@ public sealed class RibbonStateServiceTests : IDisposable
             string.Empty,
             RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.Remove, service));
     }
-
-    /// <summary>
-    /// Hand-written fake for <see cref="IExcelApplicationAdapter"/>: counts
-    /// captures and subscriptions so the tests can prove the getters never probe
-    /// and the subscription is attached and detached exactly once.
-    /// </summary>
-    private sealed class FakeApplicationAdapter : IExcelApplicationAdapter
-    {
-        private Action? _handler;
-
-        public int CaptureCount { get; private set; }
-
-        public int SubscribeCount { get; private set; }
-
-        public int DisposeCount { get; private set; }
-
-        public bool? WorkbookFact { get; set; }
-
-        public bool ThrowOnCapture { get; set; }
-
-        public bool ThrowOnSubscribe { get; set; }
-
-        public bool ThrowOnDispose { get; set; }
-
-        public bool? HasActiveWorkbook()
-        {
-            CaptureCount++;
-            return ThrowOnCapture ? throw new InvalidOperationException("capture failed") : WorkbookFact;
-        }
-
-        /// <summary>
-        /// The status-bar messages this fake was asked to show. The warnings
-        /// are ADVISORY and NON-MODAL, so they are asserted through this
-        /// recorder rather than through a dialog.
-        /// </summary>
-        public List<string> StatusBarMessages { get; } = [];
-
-        public void ShowStatusBar(string message) => StatusBarMessages.Add(message);
-
-        public void ClearStatusBar()
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public IDisposable SubscribeWorkbookStateChanged(Action handler)
-        {
-            ArgumentNullException.ThrowIfNull(handler);
-            SubscribeCount++;
-            if (ThrowOnSubscribe)
-            {
-                throw new InvalidOperationException("subscribe failed");
-            }
-
-            _handler = handler;
-            return new Subscription(this);
-        }
-
-        internal void RaiseWorkbookStateChanged() => _handler?.Invoke();
-
-        private Action? _sheetActivatedHandler;
-
-        public int SheetActivateSubscribeCount { get; private set; }
-
-        public int SheetActivateDisposeCount { get; private set; }
-
-        public IDisposable SubscribeSheetActivated(Action handler)
-        {
-            ArgumentNullException.ThrowIfNull(handler);
-            SheetActivateSubscribeCount++;
-            _sheetActivatedHandler = handler;
-            return new SheetActivationSubscription(this);
-        }
-
-        internal void RaiseSheetActivated() => _sheetActivatedHandler?.Invoke();
-
-        private sealed class SheetActivationSubscription(FakeApplicationAdapter owner) : IDisposable
-        {
-            private bool _disposed;
-
-            public void Dispose()
-            {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                _disposed = true;
-                owner.SheetActivateDisposeCount++;
-                owner._sheetActivatedHandler = null;
-            }
-        }
-
-        private sealed class Subscription(FakeApplicationAdapter owner) : IDisposable
-        {
-            private bool _disposed;
-
-            public void Dispose()
-            {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                _disposed = true;
-                owner.DisposeCount++;
-                owner._handler = null;
-                if (owner.ThrowOnDispose)
-                {
-                    throw new InvalidOperationException("dispose failed");
-                }
-            }
-        }
-    }
-
     private static RibbonStateService Arm(
-        FakeApplicationAdapter adapter,
+        TestExcelApplicationAdapter adapter,
         Func<bool?>? logSource = null,
         IRibbonUI? ribbon = null)
     {
@@ -353,7 +239,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     private static string NewRowId(char last = 'a') => "G-" + new string('0', 31) + last;
 
     private static RibbonStateService ArmedWithTableRead(
-        FakeApplicationAdapter adapter,
+        TestExcelApplicationAdapter adapter,
         GanttTableReadOutcome outcome)
     {
         var service = Arm(adapter);
@@ -371,7 +257,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // NoActiveWorkbook used to count as initialised, which would make this
         // snapshot Ready and hide the only button a first-run user has.
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = false },
+            new TestExcelApplicationAdapter { ActiveWorkbook = false },
             GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook));
 
         Assert.True(service.GetVisible(RibbonControlIds.GetStartedGroup));
@@ -387,7 +273,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // lost its table must not be treated as a first run, or Initialise's
         // "use Repair configuration" refusal points at a hidden command.
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Refused(
                 GanttTableReadRefusalReason.TableMissing,
                 configurationPresent: true));
@@ -402,7 +288,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Refresh_reports_ready_when_the_table_is_readable()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([]));
 
         Assert.False(service.GetVisible(RibbonControlIds.GetStartedGroup));
@@ -417,7 +303,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // table AND a present configuration — plus the active-Gantt-sheet fact. The
         // configuration is explicit here because Ready requires it (see the NeedsRepair pin).
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([], configurationPresent: true));
 
         Assert.True(service.GetEnabled(RibbonControlIds.CopyEditable));
@@ -428,7 +314,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Copy_editable_is_disabled_and_hidden_on_a_first_run_workbook()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = false },
+            new TestExcelApplicationAdapter { ActiveWorkbook = false },
             GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook));
 
         Assert.False(service.GetEnabled(RibbonControlIds.CopyEditable));
@@ -443,7 +329,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Send_to_powerpoint_is_enabled_on_a_ready_gantt_sheet()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([], configurationPresent: true));
 
         Assert.True(service.GetEnabled(RibbonControlIds.CopyEditable));
@@ -460,7 +346,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void The_export_group_is_hidden_and_both_buttons_disabled_in_needs_repair()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([], configurationPresent: false));
 
         Assert.False(service.GetVisible(RibbonControlIds.ExportGroup));
@@ -476,7 +362,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void The_export_buttons_are_disabled_on_another_sheet()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok(
                 [],
                 configurationPresent: true,
@@ -493,7 +379,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // R5.9b: a child at the bottom of its run offers Promote and Remove,
         // not Demote, Up or Down. The flags come from RowActionAvailability.
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok(
             [
                 Row(1, "As-Planned Activity"),
@@ -526,7 +412,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // sheet that carries tblGanttData, so every chart command greys while the
         // recovery surface stays available from any sheet.
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([], activeSheetIsGanttSheet: false));
 
         Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
@@ -550,14 +436,14 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Expand_and_collapse_are_disabled_on_a_flat_table_and_enabled_with_a_group()
     {
         var flat = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([Row(1, "As-Planned Activity")]));
 
         Assert.False(flat.GetEnabled(RibbonControlIds.ExpandAllGroups));
         Assert.False(flat.GetEnabled(RibbonControlIds.CollapseAllGroups));
 
         var grouped = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok(
             [
                 Row(1, "As-Planned Activity"),
@@ -574,7 +460,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // Owner ruling D-4: every refresh restores the tab, so a chart refresh
         // cannot leave the user looking at the Table Design tab.
         var ribbon = new Mock<IRibbonUI>();
-        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = true }, ribbon: ribbon.Object);
         var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
 
         // The configuration must be present for the surface to be Ready; a
@@ -598,7 +484,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void The_auto_refresh_toggle_restores_the_add_in_tab()
     {
         var ribbon = new Mock<IRibbonUI>();
-        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = true }, ribbon: ribbon.Object);
         var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = reader.Setup(r => r.Read())
             .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
@@ -618,7 +504,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Refresh_does_not_activate_the_tab_when_another_sheet_is_active()
     {
         var ribbon = new Mock<IRibbonUI>();
-        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = true }, ribbon: ribbon.Object);
         var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = reader.Setup(r => r.Read())
             .Returns(GanttTableReadOutcome.Ok(
@@ -636,7 +522,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Refresh_does_not_activate_the_tab_before_the_surface_is_ready()
     {
         var ribbon = new Mock<IRibbonUI>();
-        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = true }, ribbon: ribbon.Object);
         var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = reader.Setup(r => r.Read())
             .Returns(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
@@ -650,7 +536,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void A_sheet_activation_refreshes_the_gate_and_restores_the_tab()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(adapter, ribbon: ribbon.Object);
         var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
@@ -662,7 +548,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetTableReader(reader.Object);
         service.Refresh();
 
-        Assert.Equal(1, adapter.SheetActivateSubscribeCount);
+        Assert.Equal(1, adapter.SheetActivationSubscribeCount);
         Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
 
         // Entering the Gantt sheet: the next read reports it as the active sheet.
@@ -677,7 +563,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void GetVisible_hides_a_group_it_does_not_know()
     {
-        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true });
+        var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = true });
 
         Assert.False(service.GetVisible("grpUnknown"));
         Assert.False(service.GetVisible(null));
@@ -705,7 +591,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Critical_interval_is_enabled_when_the_table_has_an_eligible_parent()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([Row(1, "As-Planned Activity")]));
 
         Assert.True(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
@@ -718,7 +604,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // no parent, so the item is disabled rather than raising an error after
         // the click. This is the "refuse only when none exists" rule.
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok(
             [
                 Row(1, "As-Planned Milestone"),
@@ -733,7 +619,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Critical_interval_is_disabled_when_the_table_is_empty()
     {
         var service = ArmedWithTableRead(
-            new FakeApplicationAdapter { WorkbookFact = true },
+            new TestExcelApplicationAdapter { ActiveWorkbook = true },
             GanttTableReadOutcome.Ok([]));
 
         Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
@@ -742,10 +628,10 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void GetEnabled_is_deterministic_and_never_probes_the_state_source()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter, () => true);
 
-        var capturesAfterActivate = adapter.CaptureCount;
+        var capturesAfterActivate = adapter.ActiveWorkbookReads;
         var diagnostics = new List<bool>();
         var openLog = new List<bool>();
         for (var i = 0; i < 10; i++)
@@ -756,13 +642,13 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.All(diagnostics, value => Assert.True(value));
         Assert.All(openLog, value => Assert.True(value));
-        Assert.Equal(capturesAfterActivate, adapter.CaptureCount);
+        Assert.Equal(capturesAfterActivate, adapter.ActiveWorkbookReads);
     }
 
     [Fact]
     public void GetEnabled_never_touches_the_ribbon_handle()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(adapter, () => true, ribbon.Object);
         var invalidationsAfterActivate = CountInvalidations(ribbon);
@@ -777,12 +663,12 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void GetEnabled_maps_the_diagnostics_control_to_the_workbook_fact()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter);
 
         Assert.True(service.GetEnabled(RibbonControlIds.Diagnostics));
 
-        adapter.WorkbookFact = false;
+        adapter.ActiveWorkbook = false;
         service.Refresh();
 
         Assert.False(service.GetEnabled(RibbonControlIds.Diagnostics));
@@ -791,7 +677,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void GetEnabled_maps_the_open_log_control_to_the_log_fact()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var logAvailable = true;
         var service = Arm(adapter, () => logAvailable);
 
@@ -809,12 +695,12 @@ public sealed class RibbonStateServiceTests : IDisposable
         // R2.2: the Initialise sheet button is gated on the same workbook fact
         // as Diagnostics — it only makes sense to initialise a workbook that
         // exists. Driven from the cached snapshot, never from a live probe.
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter);
 
         Assert.True(service.GetEnabled(RibbonControlIds.InitialiseSheet));
 
-        adapter.WorkbookFact = false;
+        adapter.ActiveWorkbook = false;
         service.Refresh();
 
         Assert.False(service.GetEnabled(RibbonControlIds.InitialiseSheet));
@@ -836,12 +722,12 @@ public sealed class RibbonStateServiceTests : IDisposable
     {
         // R2.6: Validate reads the visible table, so it is gated on the same
         // workbook fact as Initialise sheet — driven from the cached snapshot.
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter);
 
         Assert.True(service.GetEnabled(RibbonControlIds.ValidateSheet));
 
-        adapter.WorkbookFact = false;
+        adapter.ActiveWorkbook = false;
         service.Refresh();
 
         Assert.False(service.GetEnabled(RibbonControlIds.ValidateSheet));
@@ -850,7 +736,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void GetEnabled_is_enabled_for_unknown_null_and_whitespace_control_ids()
     {
-        var service = Arm(new FakeApplicationAdapter { WorkbookFact = false }, () => false);
+        var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = false }, () => false);
 
         Assert.True(service.GetEnabled("btnNotRegistered"));
         Assert.True(service.GetEnabled(null));
@@ -860,23 +746,23 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void Activate_subscribes_workbook_state_changes_once()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         _ = Arm(adapter);
 
-        Assert.Equal(1, adapter.SubscribeCount);
-        Assert.Equal(0, adapter.DisposeCount);
+        Assert.Equal(1, adapter.WorkbookStateSubscribeCount);
+        Assert.Equal(0, adapter.WorkbookStateDisposeCount);
     }
 
     [Fact]
     public void Activate_twice_replaces_the_subscription_instead_of_double_subscribing()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter);
 
         service.Activate();
 
-        Assert.Equal(2, adapter.SubscribeCount);
-        Assert.Equal(1, adapter.DisposeCount);
+        Assert.Equal(2, adapter.WorkbookStateSubscribeCount);
+        Assert.Equal(1, adapter.WorkbookStateDisposeCount);
     }
 
     [Fact]
@@ -886,17 +772,17 @@ public sealed class RibbonStateServiceTests : IDisposable
         // ExcelDnaUtil.Application unconditionally and replace whatever adapter
         // had been injected. That probe resolves the RUNNING Excel instance, so
         // simply having Excel open on the machine replaced the fake with a real
-        // adapter over the developer's workbook: SubscribeCount read 0, the
+        // adapter over the developer's workbook: WorkbookStateSubscribeCount read 0, the
         // captured facts came from that workbook, and 12 tests went red without
         // any source change. An injected adapter is authoritative.
         var service = new HostApplicationRibbonStateService(new object());
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         service.SetApplicationAdapter(adapter);
 
         service.Activate();
 
         Assert.Same(adapter, service.GetApplicationAdapter());
-        Assert.Equal(1, adapter.SubscribeCount);
+        Assert.Equal(1, adapter.WorkbookStateSubscribeCount);
     }
 
     [Fact]
@@ -917,30 +803,30 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void A_workbook_state_change_captures_once_and_invalidates_once()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = false };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = false };
         var ribbon = new Mock<IRibbonUI>();
         _ = Arm(adapter, ribbon: ribbon.Object);
-        var capturesBefore = adapter.CaptureCount;
+        var capturesBefore = adapter.ActiveWorkbookReads;
         var invalidationsBefore = CountInvalidations(ribbon);
 
         adapter.RaiseWorkbookStateChanged();
 
-        Assert.Equal(capturesBefore + 1, adapter.CaptureCount);
+        Assert.Equal(capturesBefore + 1, adapter.ActiveWorkbookReads);
         Assert.Equal(invalidationsBefore + 1, CountInvalidations(ribbon));
     }
 
     [Fact]
     public void Refresh_captures_once_and_invalidates_once()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(adapter, ribbon: ribbon.Object);
-        var capturesBefore = adapter.CaptureCount;
+        var capturesBefore = adapter.ActiveWorkbookReads;
         var invalidationsBefore = CountInvalidations(ribbon);
 
         service.Refresh();
 
-        Assert.Equal(capturesBefore + 1, adapter.CaptureCount);
+        Assert.Equal(capturesBefore + 1, adapter.ActiveWorkbookReads);
         Assert.Equal(invalidationsBefore + 1, CountInvalidations(ribbon));
     }
 
@@ -949,9 +835,9 @@ public sealed class RibbonStateServiceTests : IDisposable
     {
         // Snapshot stickiness (work item R1.5): a throwing capture must not
         // drive the Ribbon from a transient failure.
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter, () => true);
-        adapter.ThrowOnCapture = true;
+        adapter.ThrowOnHasActiveWorkbook = true;
 
         var exception = Record.Exception(service.Refresh);
 
@@ -963,11 +849,11 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void A_not_determinable_source_keeps_the_previous_value()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         bool? logAvailable = true;
         var service = Arm(adapter, () => logAvailable);
 
-        adapter.WorkbookFact = null;
+        adapter.ActiveWorkbook = null;
         logAvailable = null;
         service.Refresh();
 
@@ -978,12 +864,12 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void Reset_restores_the_initial_snapshot_and_detaches_the_subscription_exactly_once()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         _ = Arm(adapter, () => true);
 
         RibbonStateService.Reset();
 
-        Assert.Equal(1, adapter.DisposeCount);
+        Assert.Equal(1, adapter.WorkbookStateDisposeCount);
         var fresh = RibbonStateService.Instance;
         Assert.False(fresh.GetEnabled(RibbonControlIds.Diagnostics));
         Assert.False(fresh.GetEnabled(RibbonControlIds.OpenLog));
@@ -992,7 +878,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void InvalidateControl_invalidates_the_control_once_for_a_valid_id()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(adapter, ribbon: ribbon.Object);
 
@@ -1006,7 +892,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void InvalidateControl_is_a_no_op_for_null_or_whitespace_ids()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(adapter, ribbon: ribbon.Object);
 
@@ -1022,7 +908,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void InvalidateControl_never_throws_when_the_ribbon_call_fails()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         ribbon
             .Setup(r => r.InvalidateControl(It.IsAny<string>()))
@@ -1816,7 +1702,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void MarkChartRenderCurrent_sets_the_flag_without_an_invalidation()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(adapter, ribbon: ribbon.Object);
         var invalidationsBefore = CountInvalidations(ribbon);
@@ -1836,7 +1722,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void A_workbook_state_change_clears_the_chart_current_flag()
     {
-        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
         var service = Arm(adapter);
         service.MarkChartRenderCurrent();
         Assert.True(service.ChartRenderCurrent);

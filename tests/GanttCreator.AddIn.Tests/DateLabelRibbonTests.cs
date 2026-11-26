@@ -32,52 +32,6 @@ public sealed class DateLabelRibbonTests : IDisposable
         RibbonStateService.Reset();
         GC.SuppressFinalize(this);
     }
-
-    /// <summary>
-    /// Hand-written fake for <see cref="ISelectionIdentifier"/>: returns a fixed
-    /// selection and counts subscription attach/detach so the tests can prove
-    /// only the date-label dropdown is invalidated on a selection change.
-    /// </summary>
-    private sealed class FakeSelectionIdentifier : ISelectionIdentifier
-    {
-        private Action? _handler;
-
-        public SelectionFacts Facts { get; set; } = SelectionFacts.None;
-
-        public int SubscribeCount { get; private set; }
-
-        public int DisposeCount { get; private set; }
-
-        public SelectionFacts Identify() => Facts;
-
-        public IDisposable SubscribeSelectionChanged(Action handler)
-        {
-            ArgumentNullException.ThrowIfNull(handler);
-            SubscribeCount++;
-            _handler = handler;
-            return new Subscription(this);
-        }
-
-        internal void RaiseSelectionChanged() => _handler?.Invoke();
-
-        private sealed class Subscription(FakeSelectionIdentifier owner) : IDisposable
-        {
-            private bool _disposed;
-
-            public void Dispose()
-            {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                _disposed = true;
-                owner.DisposeCount++;
-                owner._handler = null;
-            }
-        }
-    }
-
     /// <summary>
     /// Builds one table body row through the normalised DTO shape, keeping the
     /// raw cell text the projection reads, so a test can pin a blank
@@ -100,49 +54,19 @@ public sealed class DateLabelRibbonTests : IDisposable
         null,
         null,
         dateLabelPosition);
-
-    /// <summary>
-    /// Minimal <see cref="IExcelApplicationAdapter"/> that reports a live
-    /// workbook, so the shared gate's workbook half is satisfied and the tests
-    /// isolate the label-specific half (single body row).
-    /// </summary>
-    private sealed class FakeApplicationAdapter : IExcelApplicationAdapter
-    {
-        public bool? HasActiveWorkbook() => true;
-
-        public void ShowStatusBar(string message)
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public void ClearStatusBar()
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
-
-        private sealed class Subscription : IDisposable
-        {
-            public void Dispose()
-            {
-            }
-        }
-    }
-
     /// <summary>
     /// Arms the service with a single-selected body row of the given type and
     /// activates it, so the date-label getters read a resolved context and the
     /// selection subscription is attached exactly as AutoOpen attaches it.
     /// </summary>
     private static RibbonStateService ArmWithRow(
-        FakeSelectionIdentifier selection,
+        TestSelectionIdentifier selection,
         GanttRowDto row,
         GanttStyleRegistry? styles = null,
         IRibbonUI? ribbon = null)
     {
         var service = RibbonStateService.Instance;
-        service.SetApplicationAdapter(new FakeApplicationAdapter());
+        service.SetApplicationAdapter(new TestExcelApplicationAdapter());
         service.SetSelectionIdentifier(selection);
         service.SetRibbon(ribbon);
 
@@ -169,7 +93,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     {
         // Ruling 1 + 6: a header, multi, or absent selection disables the
         // control, so a group of mixed types can never be formatted at once.
-        var selection = new FakeSelectionIdentifier
+        var selection = new TestSelectionIdentifier
         {
             Facts = new SelectionFacts(true, false, null, true, 0),
         };
@@ -181,7 +105,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_is_enabled_for_exactly_one_body_row()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DateLabel));
@@ -198,7 +122,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // R5.18m (owner ruling 2026-11-13): Both is an explicit choice, and the
         // leading item is named Default because a blank cell now resolves to the
         // type default (None) rather than to "both labels".
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(5, service.GetDateLabelCount());
@@ -223,7 +147,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // date label is positionable (owner ruling 2026-10-14),
         // so it projects the corner set instead — see
         // The_dropdown_offers_the_six_corners_for_a_delineator_row.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Milestone", null));
 
         Assert.Equal(3, service.GetDateLabelCount());
@@ -241,7 +165,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // A dateless type (Splitter, Spacer) names no date-label choice at
         // all: the projection is empty, the context is unavailable, and the
         // dropdown is disabled rather than showing an empty picker.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
         Assert.Equal(0, service.GetDateLabelCount());
@@ -254,7 +178,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // R5.18m (owner ruling 2026-11-13): blank resolves to the type default
         // (None), represented by the leading Default item. A stored Auto is the
         // same choice, so both select index 0.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(0, service.GetDateLabelSelectedIndex());
@@ -265,7 +189,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     {
         // The legacy stored text keeps parsing; it is now the same choice as a
         // blank cell rather than "both labels".
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Auto"));
 
         Assert.Equal(0, service.GetDateLabelSelectedIndex());
@@ -274,7 +198,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void A_stored_both_selects_its_own_item()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Both"));
 
         Assert.Equal(1, service.GetDateLabelSelectedIndex());
@@ -283,7 +207,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void A_stored_start_selects_its_own_item()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Start"));
 
         Assert.Equal(2, service.GetDateLabelSelectedIndex());
@@ -292,7 +216,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void A_stored_finish_selects_its_own_item()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Finish"));
 
         Assert.Equal(3, service.GetDateLabelSelectedIndex());
@@ -303,7 +227,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     {
         // D5 (second owner ruling 2026-10-14): a stored None
         // (no date labels) selects its own item, past Finish.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "None"));
 
         Assert.Equal(4, service.GetDateLabelSelectedIndex());
@@ -319,7 +243,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // Default clear-ID, exactly as in the which-date
         // vocabulary; the wording is the shared label-position
         // authority, never the enum name.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DateLabel));
@@ -347,7 +271,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // The placement vocabulary's leading choice is Auto,
         // exactly as the which-date vocabulary's is, so a
         // blank cell reads as index 0 in either.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), null));
 
         Assert.Equal(0, service.GetDateLabelSelectedIndex());
@@ -359,7 +283,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // A stored corner name selects its own place in the
         // projected set — TopLeft is the first corner past
         // Auto, BottomRight the last before None.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var topLeft = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), "TopLeft"));
         Assert.Equal(1, topLeft.GetDateLabelSelectedIndex());
 
@@ -370,7 +294,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void An_out_of_range_item_index_returns_an_empty_label()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(string.Empty, service.GetDateLabelItemLabel(99));
@@ -382,7 +306,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     {
         // An empty list is Excel's cue that the dropdown has nothing to show,
         // and it pairs with the disabled gate rather than an empty picker.
-        var selection = new FakeSelectionIdentifier { Facts = SelectionFacts.None };
+        var selection = new TestSelectionIdentifier { Facts = SelectionFacts.None };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.Equal(0, service.GetDateLabelCount());
@@ -392,7 +316,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void An_unknown_type_leaves_the_context_unavailable()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Widget", null));
 
         Assert.Equal(0, service.GetDateLabelCount());
@@ -405,7 +329,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // Collapse clarification: a parent owning hidden children is still
         // exactly one body row, so the control enables and only that row's
         // cell is targeted.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DateLabel));
@@ -425,7 +349,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // buttons keep the disabled state Excel computed at load, so a shape can
         // never be unlocked. This test previously pinned the incomplete set.
         var ribbon = new Mock<IRibbonUI>();
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null), ribbon: ribbon.Object);
 
         Assert.Equal(1, selection.SubscribeCount);
@@ -466,7 +390,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // Regression: after a delineator selection, the placement options
         // (corners) were carried forward as stale state. A subsequent span
         // activity selection must show the which-date vocabulary instead.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
 
         // First: select a delineator — populates the placement context.
         Assert.Equal(
@@ -496,7 +420,7 @@ public sealed class DateLabelRibbonTests : IDisposable
     public void The_selection_subscription_is_detached_exactly_once_on_reset()
     {
         // R1.6: unload must leave no COM connection behind.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null));
 
         RibbonStateService.Reset();
@@ -510,7 +434,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         // Excel dispatches these by reflection, so a rename in either layer is
         // a live defect; the routing overloads pin the wiring without the
         // session singleton.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
         var control = new Mock<IRibbonControl>().Object;
 

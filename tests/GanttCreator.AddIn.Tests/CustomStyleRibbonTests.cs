@@ -28,60 +28,6 @@ public sealed class CustomStyleRibbonTests : IDisposable
         RibbonStateService.Reset();
         GC.SuppressFinalize(this);
     }
-
-    /// <summary>
-    /// Hand-written fake for <see cref="ISelectionIdentifier"/>: returns a
-    /// fixed selection (the same shape the description-label tests use).
-    /// </summary>
-    private sealed class FakeSelectionIdentifier : ISelectionIdentifier
-    {
-        public SelectionFacts Facts { get; set; } = SelectionFacts.None;
-
-        public SelectionFacts Identify() => Facts;
-
-        public IDisposable SubscribeSelectionChanged(Action handler)
-        {
-            ArgumentNullException.ThrowIfNull(handler);
-            return new Subscription();
-        }
-
-        private sealed class Subscription : IDisposable
-        {
-            public void Dispose()
-            {
-            }
-        }
-    }
-
-    /// <summary>
-    /// Minimal <see cref="IExcelApplicationAdapter"/> that reports a live
-    /// workbook, so the shared gate's workbook half is satisfied and the
-    /// tests isolate the custom-style-specific half.
-    /// </summary>
-    private sealed class FakeApplicationAdapter : IExcelApplicationAdapter
-    {
-        public bool? HasActiveWorkbook() => true;
-
-        public void ShowStatusBar(string message)
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public void ClearStatusBar()
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
-
-        private sealed class Subscription : IDisposable
-        {
-            public void Dispose()
-            {
-            }
-        }
-    }
-
     /// <summary>
     /// Builds one table body row through the normalised DTO shape; the style
     /// key sits in its normalised position so a test can pin a blank cell, a
@@ -116,7 +62,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     /// customs), and activates it.
     /// </summary>
     private static RibbonStateService ArmWithRow(
-        FakeSelectionIdentifier selection,
+        TestSelectionIdentifier selection,
         GanttRowDto row,
         params string[] customKeys)
     {
@@ -136,7 +82,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
         }
 
         var service = RibbonStateService.Instance;
-        service.SetApplicationAdapter(new FakeApplicationAdapter());
+        service.SetApplicationAdapter(new TestExcelApplicationAdapter());
         service.SetSelectionIdentifier(selection);
         service.SetRibbon(null);
 
@@ -162,7 +108,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_is_disabled_when_the_selection_is_not_one_body_row()
     {
-        var selection = new FakeSelectionIdentifier
+        var selection = new TestSelectionIdentifier
         {
             Facts = new SelectionFacts(true, false, null, true, 0),
         };
@@ -177,7 +123,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_is_enabled_for_a_single_custom_activity_row_with_custom_styles()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
@@ -191,7 +137,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     {
         // R5.6a: Custom Milestone is a style-key type exactly as Custom
         // Activity is, so the assignment control enables for it too.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomMilestone), null),
@@ -206,7 +152,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
         // Positive test for the empty-options gate: only built-ins are
         // registered, so the options are empty and the dropdown greys out
         // rather than presenting an empty list.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null));
@@ -218,7 +164,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_is_disabled_for_a_non_style_type_even_with_custom_styles()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.AsPlannedActivity), null),
@@ -235,7 +181,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_offers_only_user_created_keys_in_catalogue_order()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
@@ -259,7 +205,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_leading_item_is_the_none_clear_item_and_count_includes_it()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
 
         // Count always includes the leading <c>None</c> clear item.
         var withStyles = ArmWithRow(
@@ -292,7 +238,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void Out_of_range_indices_yield_empty_items()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
@@ -306,7 +252,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_selected_index_matches_the_row_custom_key()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "Beta"),
@@ -318,7 +264,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
     [Fact]
     public void The_selected_index_is_zero_for_a_blank_or_builtin_style_key()
     {
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var blank = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
@@ -341,7 +287,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
         // registry at capture time. A style the user creates in the Theme
         // settings dialog is only reachable once the ribbon state has been
         // re-captured, which is what the post-command hook does.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null));
@@ -382,7 +328,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
         // Excel dispatches these by reflection, so a rename in either layer is
         // a live defect; the routing overloads pin the wiring without the
         // session singleton.
-        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var selection = new TestSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),

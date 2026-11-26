@@ -2,6 +2,69 @@ using GanttCreator.Office;
 
 namespace GanttCreator.AddIn.Tests;
 
+/// <summary>A subscription that reports its first disposal and ignores later ones.</summary>
+internal sealed class CountingSubscription(Action onDispose) : IDisposable
+{
+    private Action? _onDispose = onDispose;
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        Action? onDispose = _onDispose;
+        _onDispose = null;
+        onDispose?.Invoke();
+    }
+}
+
+/// <summary>
+/// The shared substitute for <see cref="ISelectionIdentifier"/>.
+/// </summary>
+/// <remarks>
+/// The ribbon test files each grew their own copy to set the reported facts and watch the one
+/// subscription. Those copies differed only in which counters they kept, so this one keeps the
+/// union: the facts, both counters, a refused subscribe, and a way to raise the change.
+/// </remarks>
+internal sealed class TestSelectionIdentifier : ISelectionIdentifier
+{
+    private Action? _handler;
+
+    /// <summary>Gets or sets the facts <see cref="Identify"/> reports.</summary>
+    public SelectionFacts Facts { get; set; } = SelectionFacts.None;
+
+    /// <summary>Gets how many selection subscriptions were made.</summary>
+    public int SubscribeCount { get; private set; }
+
+    /// <summary>Gets how many selection subscriptions were disposed.</summary>
+    public int DisposeCount { get; private set; }
+
+    /// <summary>Gets or sets whether <see cref="SubscribeSelectionChanged"/> throws.</summary>
+    public bool RefuseSubscribe { get; set; }
+
+    /// <inheritdoc />
+    public SelectionFacts Identify() => Facts;
+
+    /// <inheritdoc />
+    public IDisposable SubscribeSelectionChanged(Action handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        SubscribeCount++;
+        if (RefuseSubscribe)
+        {
+            throw new InvalidOperationException("the host refused the connection");
+        }
+
+        _handler = handler;
+        return new CountingSubscription(() =>
+        {
+            _handler = null;
+            DisposeCount++;
+        });
+    }
+
+    /// <summary>Raises one selection change, as Excel would.</summary>
+    public void RaiseSelectionChanged() => _handler?.Invoke();
+}
+
 /// <summary>
 /// The shared substitute for <see cref="IExcelApplicationAdapter"/>.
 /// </summary>
@@ -138,17 +201,4 @@ internal sealed class TestExcelApplicationAdapter : IExcelApplicationAdapter
     /// <summary>Raises one worksheet cell change, as Excel would.</summary>
     /// <param name="address">The qualified address Excel reports.</param>
     public void RaiseSheetChanged(string? address) => _sheetChangedHandler?.Invoke(address);
-
-    /// <summary>A subscription that reports its first disposal and ignores later ones.</summary>
-    private sealed class CountingSubscription(Action onDispose) : IDisposable
-    {
-        private Action? _onDispose = onDispose;
-
-        public void Dispose()
-        {
-            Action? onDispose = _onDispose;
-            _onDispose = null;
-            onDispose?.Invoke();
-        }
-    }
 }

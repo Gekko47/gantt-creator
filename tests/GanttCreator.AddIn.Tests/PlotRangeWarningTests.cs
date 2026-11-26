@@ -169,38 +169,12 @@ public sealed class PlotRangeWarningTests : IDisposable
         // The default warning presenter is the non-modal status bar, NOT the
         // modal dialog. This is what a production Excel session gets when the
         // user types a bad date.
-        var statusBar = new RecordingApplicationAdapter();
+        var statusBar = new TestExcelApplicationAdapter();
         RibbonStateService service = RibbonStateService.Instance;
         service.SetApplicationAdapter(statusBar);
 
         service.SetPlotStartDate("not-a-date");
 
-        Assert.Single(statusBar.Messages);
-    }
-
-    /// <summary>
-    /// An application adapter that records the status-bar messages.
-    /// </summary>
-    private sealed class RecordingApplicationAdapter : IExcelApplicationAdapter
-    {
-        public List<string> Messages { get; } = [];
-
-        public bool? HasActiveWorkbook() => true;
-
-        public void ShowStatusBar(string message) => Messages.Add(message);
-
-        public void ClearStatusBar()
-        {
-            // Intentionally empty: the status bar is not under test here.
-        }
-
-        public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
-
-        private sealed class Subscription : IDisposable
-        {
-            public void Dispose()
-            {
-            }
-        }
+        Assert.Single(statusBar.StatusBarMessages);
     }
 }
