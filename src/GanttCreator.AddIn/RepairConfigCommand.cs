@@ -77,7 +77,7 @@ internal static class RepairConfigCommand
             if (inspection.Refusal is { } recoveryRefusal)
             {
                 Trace(trace, "gantt.repair recovery refused=" + recoveryRefusal);
-                Present(presenter, TranslateRecoveryRefusal(recoveryRefusal));
+                CommandBoundary.SafePresent(presenter, TranslateRecoveryRefusal(recoveryRefusal));
                 return;
             }
 
@@ -91,7 +91,7 @@ internal static class RepairConfigCommand
                 if (!confirmed)
                 {
                     Trace(trace, "gantt.repair cancelled");
-                    Present(presenter, CancelledMessage);
+                    CommandBoundary.SafePresent(presenter, CancelledMessage);
                     return;
                 }
 
@@ -99,7 +99,7 @@ internal static class RepairConfigCommand
                 if (recoveryOutcome.Refusal is { } failedRecovery)
                 {
                     Trace(trace, "gantt.repair recovery refused=" + failedRecovery);
-                    Present(presenter, TranslateRecoveryRefusal(failedRecovery));
+                    CommandBoundary.SafePresent(presenter, TranslateRecoveryRefusal(failedRecovery));
                     return;
                 }
             }
@@ -109,7 +109,7 @@ internal static class RepairConfigCommand
         if (check.Refusal is not null)
         {
             Trace(trace, "gantt.repair check refused=" + check.Refusal.Value);
-            Present(presenter, TranslateRefusal(check.Refusal.Value));
+            CommandBoundary.SafePresent(presenter, TranslateRefusal(check.Refusal.Value));
             return;
         }
 
@@ -117,7 +117,7 @@ internal static class RepairConfigCommand
         if (plan.Findings.Count == 0)
         {
             TraceOutcome(trace, repaired: 0, skipped: 0, refused: 0, quarantined: 0);
-            Present(presenter, BuildNoRepairSummary(inspection, recoveryOutcome));
+            CommandBoundary.SafePresent(presenter, BuildNoRepairSummary(inspection, recoveryOutcome));
             ScheduleRefreshIfChanged(onChanged, recoveryOutcome, repaired: 0);
             return;
         }
@@ -131,7 +131,7 @@ internal static class RepairConfigCommand
                 skipped: 0,
                 refused: plan.RefusedFindings.Count,
                 quarantined: plan.QuarantinedFindings.Count);
-            Present(
+            CommandBoundary.SafePresent(
                 presenter,
                 BuildSummaryWithRecovery(
                     inspection,
@@ -151,7 +151,7 @@ internal static class RepairConfigCommand
         if (outcome.Refusal is not null)
         {
             Trace(trace, "gantt.repair refused=" + outcome.Refusal.Value);
-            Present(presenter, TranslateRefusal(outcome.Refusal.Value));
+            CommandBoundary.SafePresent(presenter, TranslateRefusal(outcome.Refusal.Value));
             ScheduleRefreshIfChanged(onChanged, recoveryOutcome, repaired: 0);
             return;
         }
@@ -162,7 +162,7 @@ internal static class RepairConfigCommand
             outcome.ConfirmationSkippedCount,
             outcome.RefusedCount,
             outcome.QuarantinedCount);
-        Present(
+        CommandBoundary.SafePresent(
             presenter,
             BuildSummaryWithRecovery(
                 inspection,
@@ -354,17 +354,4 @@ internal static class RepairConfigCommand
             _ => "Gantt Creator could not repair configuration. See the Diagnostics dialog.",
         };
 
-    private static void Present(Action<string> presenter, string message)
-    {
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // A dialog failure must not escape into Excel.
-        }
-#pragma warning restore CA1031
-    }
 }

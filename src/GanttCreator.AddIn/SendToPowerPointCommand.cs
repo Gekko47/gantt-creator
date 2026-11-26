@@ -390,7 +390,7 @@ internal static class SendToPowerPointCommand
             transfer.StagedShapeCount,
             preflight.DroppedRowCount,
             presentationCreated);
-        Present(successPresenter, successMessage);
+        CommandBoundary.SafePresent(successPresenter, successMessage);
         return new SendToPowerPointOutcome(
             true,
             transfer.StagedShapeCount,
@@ -776,27 +776,8 @@ internal static class SendToPowerPointCommand
         bool presentationCreated,
         Action<string> presenter)
     {
-        Present(presenter, message);
+        CommandBoundary.SafePresent(presenter, message);
         return new SendToPowerPointOutcome(false, 0, droppedRows, presentationCreated, refusal, message);
     }
 
-    /// <summary>Presents a message, degrading to no dialog when the presenter fails.</summary>
-    /// <param name="presenter">The presenter to invoke.</param>
-    /// <param name="message">The message to show.</param>
-    private static void Present(Action<string> presenter, string message)
-    {
-        // CA1031: a presenter failure is outside command behaviour; it degrades to no dialog.
-        // The transfer has already completed or refused, so escaping would surface an error
-        // for work that was done.
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // Intentionally empty: a dialog failure must not escape into Excel.
-        }
-#pragma warning restore CA1031
-    }
 }

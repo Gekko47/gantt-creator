@@ -60,7 +60,7 @@ internal static class PromoteToParentCommand
         }
 
         // CA1031: presenter failure is outside command behaviour; it degrades to no dialog.
-        Present(presenter, ParentChildRefusalTranslator.TranslatePromote(outcome));
+        CommandBoundary.SafePresent(presenter, ParentChildRefusalTranslator.TranslatePromote(outcome));
     }
 
     /// <summary>
@@ -84,24 +84,4 @@ internal static class PromoteToParentCommand
 #pragma warning restore CA1031
     }
 
-    /// <summary>
-    /// Shows a message, degrading to silence when the host refuses to present it. A
-    /// dialog failure must never turn a completed command into an escaping exception.
-    /// </summary>
-    /// <param name="presenter">The user-safe message presenter.</param>
-    /// <param name="message">The message to present.</param>
-    private static void Present(Action<string> presenter, string message)
-    {
-        // CA1031: presenter failure is outside command behaviour.
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // Intentionally empty: a dialog failure must not escape into Excel.
-        }
-#pragma warning restore CA1031
-    }
 }

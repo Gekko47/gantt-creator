@@ -60,7 +60,7 @@ internal static class AddRowCommand
             // out passing over it silently.
             if (!outcome.PaddingRowReserved)
             {
-                Present(presenter, PaddingRowLostMessage);
+                CommandBoundary.SafePresent(presenter, PaddingRowLostMessage);
             }
 
             // The reserved rows below the body carry the chart's bottom margin and
@@ -70,14 +70,14 @@ internal static class AddRowCommand
             // Refresh to surprise them with (ADR-0008, ADR-0038 D1).
             if (!outcome.ReservedRowsNormalised)
             {
-                Present(presenter, ReservedRowsNotNormalisedMessage);
+                CommandBoundary.SafePresent(presenter, ReservedRowsNotNormalisedMessage);
             }
 
             return;
         }
 
         // CA1031: presenter failure is outside command behaviour; it degrades to no dialog.
-        Present(presenter, TranslateRefusal(outcome.Refusal!.Value));
+        CommandBoundary.SafePresent(presenter, TranslateRefusal(outcome.Refusal!.Value));
     }
 
     /// <summary>The message shown when the append consumed the chart's bottom margin.</summary>
@@ -105,27 +105,6 @@ internal static class AddRowCommand
     internal const string ReservedRowsNotNormalisedMessage =
         "Gantt Creator added the row, but could not set the height of the blank rows below the table, "
         + "so the chart's bottom margin may be the wrong size. Refresh the chart to correct it.";
-
-    /// <summary>
-    /// Shows a message, degrading to silence when the host refuses to present it. A
-    /// dialog failure must never turn a completed insert into an escaping exception.
-    /// </summary>
-    /// <param name="presenter">The user-safe message presenter.</param>
-    /// <param name="message">The message to present.</param>
-    private static void Present(Action<string> presenter, string message)
-    {
-        // CA1031: presenter failure is outside command behaviour.
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // Intentionally empty: a dialog failure must not escape into Excel.
-        }
-#pragma warning restore CA1031
-    }
 
     /// <summary>
     /// Moves the selection onto the inserted row, degrading to no selection change

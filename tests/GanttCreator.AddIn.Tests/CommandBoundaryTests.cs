@@ -168,6 +168,32 @@ public class CommandBoundaryTests
         Assert.Single(written);
     }
 
+    [Fact]
+    public void SafePresent_invokes_presenter_once_with_the_message()
+    {
+        var shown = new List<string>();
+
+        CommandBoundary.SafePresent(shown.Add, "one line");
+
+        Assert.Equal("one line", Assert.Single(shown));
+    }
+
+    [Fact]
+    public void SafePresent_swallows_a_presenter_failure()
+    {
+        var exception = Record.Exception(
+            () => CommandBoundary.SafePresent(
+                _ => throw new InvalidOperationException("dialog broken"),
+                "one line"));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void SafePresent_rejects_null_presenter()
+        => Assert.Throws<ArgumentNullException>(
+            () => CommandBoundary.SafePresent(null!, "one line"));
+
     [Theory]
     [InlineData(FailureCategory.Com, "Excel could not complete")]
     [InlineData(FailureCategory.Permission, "permission")]

@@ -391,7 +391,7 @@ internal static class CopyEditableCommand
 
         int stagedCount = lifecycle.Composition?.StagedPrimitiveIds.Count ?? 0;
         string successMessage = SuccessMessage(stagedCount, preflight.DroppedRowCount);
-        Present(successPresenter, successMessage);
+        CommandBoundary.SafePresent(successPresenter, successMessage);
         return new CopyEditableOutcome(true, stagedCount, preflight.DroppedRowCount, null, successMessage);
     }
 
@@ -708,27 +708,8 @@ internal static class CopyEditableCommand
         int droppedRows,
         Action<string> presenter)
     {
-        Present(presenter, message);
+        CommandBoundary.SafePresent(presenter, message);
         return new CopyEditableOutcome(false, 0, droppedRows, refusal, message);
     }
 
-    /// <summary>Presents a message, degrading to no dialog when the presenter fails.</summary>
-    /// <param name="presenter">The presenter to invoke.</param>
-    /// <param name="message">The message to show.</param>
-    private static void Present(Action<string> presenter, string message)
-    {
-        // CA1031: a presenter failure is outside command behaviour; it degrades to no dialog.
-        // The copy has already completed or refused, so escaping would surface an error for
-        // work that was done.
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // Intentionally empty: a dialog failure must not escape into Excel.
-        }
-#pragma warning restore CA1031
-    }
 }

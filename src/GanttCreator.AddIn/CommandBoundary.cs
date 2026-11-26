@@ -281,6 +281,32 @@ public sealed class CommandBoundary
     }
 
     /// <summary>
+    /// Invokes a user-facing presenter, degrading to no presentation when the host
+    /// refuses it. The single authority for the "a dialog failure must not escape into
+    /// Excel" policy; commands call this instead of carrying their own copy.
+    /// </summary>
+    /// <param name="presenter">The user-safe message presenter.</param>
+    /// <param name="message">The message to present.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="presenter"/> is <see langword="null"/>.</exception>
+    internal static void SafePresent(Action<string> presenter, string message)
+    {
+        ArgumentNullException.ThrowIfNull(presenter);
+
+        // CA1031: a presenter failure is outside command behaviour; the work has
+        // already happened and must not be turned into an escaping exception.
+#pragma warning disable CA1031
+        try
+        {
+            presenter(message);
+        }
+        catch
+        {
+            // Intentionally empty: the dialog degrades to nothing.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Produces the next deterministic operation ID:
     /// <c>GC-&lt;yyyyMMdd-HHmmss-fff&gt;-&lt;NN&gt;</c> in UTC with invariant
     /// culture; <c>NN</c> is a per-instance monotonic counter that makes
