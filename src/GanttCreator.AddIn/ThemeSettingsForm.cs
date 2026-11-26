@@ -2747,6 +2747,28 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void OkButton_Click(object? sender, EventArgs e)
     {
+        if (!TryAcceptColourEdits())
+        {
+            return;
+        }
+
+        ThemeEditRequest request = BuildThemeEditRequest();
+        if (!TryValidateRequest(request))
+        {
+            return;
+        }
+
+        ApplyWriteThenWarn(request);
+    }
+
+    /// <summary>
+    /// Validates every editable colour box and each custom style's permitted-label
+    /// set. A refusal shows the message, focuses the offending control and declines
+    /// the close, so nothing is built and nothing is written.
+    /// </summary>
+    /// <returns>Whether every edit is acceptable.</returns>
+    private bool TryAcceptColourEdits()
+    {
         // Validate all colour text boxes. Surrounding whitespace is trimmed
         // first: the strict rule is exactly seven characters, so a stray
         // space would otherwise be refused where the user meant the colour
@@ -2761,7 +2783,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 _tabControl.SelectedTab = _tabControl.TabPages[0];
                 _ = kvp.Value.Focus();
                 DialogResult = DialogResult.None;
-                return;
+                return false;
             }
         }
 
@@ -2777,7 +2799,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _customStyleEditGroup.Enabled = true;
             _ = _customStyleFillText.Focus();
             DialogResult = DialogResult.None;
-            return;
+            return false;
         }
         if (!string.IsNullOrEmpty(_customStyleStrokeText.Text) && !TryParseStoredColour(_customStyleStrokeText.Text, out _))
         {
@@ -2787,7 +2809,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _customStyleEditGroup.Enabled = true;
             _ = _customStyleStrokeText.Focus();
             DialogResult = DialogResult.None;
-            return;
+            return false;
         }
         if (!string.IsNullOrEmpty(_customStyleTextText.Text) && !TryParseStoredColour(_customStyleTextText.Text, out _))
         {
@@ -2797,7 +2819,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _customStyleEditGroup.Enabled = true;
             _ = _customStyleTextText.Focus();
             DialogResult = DialogResult.None;
-            return;
+            return false;
         }
 
         // Validate the chart-chrome colours. A malformed one is refused with
@@ -2815,7 +2837,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 _tabControl.SelectedTab = _tabControl.TabPages[1];
                 _ = kvp.Value.Focus();
                 DialogResult = DialogResult.None;
-                return;
+                return false;
             }
         }
 
@@ -2834,10 +2856,21 @@ internal sealed partial class ThemeSettingsForm : Form
                 _customStyleEditGroup.Enabled = true;
                 _ = _customAllowedLabelList.Focus();
                 DialogResult = DialogResult.None;
-                return;
+                return false;
             }
         }
 
+        return true;
+    }
+
+    /// <summary>
+    /// Builds the request from the form's current state: the metric values, the
+    /// three style groups, and the custom-style create, update, rename and delete
+    /// edits.
+    /// </summary>
+    /// <returns>The assembled request, before validation.</returns>
+    private ThemeEditRequest BuildThemeEditRequest()
+    {
         Dictionary<string, double> metricEdits = [];
         foreach (KeyValuePair<string, NumericUpDown> kvp in _metricNumericUpDowns)
         {
@@ -2999,20 +3032,40 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        ThemeEditRequest request = new ThemeEditRequest(
+        return new ThemeEditRequest(
             styleEdits,
             metricEdits,
             customStyleEdits,
             null,
             chromeColourEdits);
+    }
 
+    /// <summary>
+    /// Validates the assembled request, showing the first refusal.
+    /// </summary>
+    /// <param name="request">The request to validate.</param>
+    /// <returns>Whether the request may be written.</returns>
+    private bool TryValidateRequest(ThemeEditRequest request)
+    {
         if (!ThemeEditRequest.TryValidate(request, out _, out string? msg))
         {
             _warningLabel.Text = msg ?? "Invalid theme edit.";
             _warningLabel.Visible = true;
             DialogResult = DialogResult.None;
-            return;
+            return false;
         }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the request when the dialog owns the write, surfaces the contrast
+    /// warning without blocking that write, and closes only after the
+    /// acknowledgement that follows a fresh warning.
+    /// </summary>
+    /// <param name="request">The validated request.</param>
+    private void ApplyWriteThenWarn(ThemeEditRequest request)
+    {
 
         // R5.6 D2: the contrast warning is ADVISORY and never blocks the
         // write, but it must be VISIBLE -- the user has to see it, or it is
