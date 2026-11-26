@@ -87,13 +87,53 @@ internal static class PlotRangeProjection
             : GanttPlotMargins.DefaultCustomCm;
 
     /// <summary>
-    /// Reads the stored output size preset, returning null when the key is absent
-    /// or names an unknown preset (R5.2).
+    /// Reads the stored output size preset, returning null only when the key is absent or
+    /// names an unknown preset (R5.2, R8.9).
     /// </summary>
     /// <param name="settings">The settings map just loaded from the workbook.</param>
     /// <returns>The stored preset, or null.</returns>
+    /// <remarks>
+    /// A Custom key always resolves. The width is clamped into the band rather than
+    /// validated, because a refusal here would leave the ribbon showing no preset while the
+    /// workbook still says Custom, and the refresh would refuse with no way to correct it
+    /// from the Size control.
+    /// </remarks>
     internal static SizePreset? ReadPreset(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("SizePreset", out string? text) ? SizePresets.ByKey(text) : null;
+        settings.TryGetValue("SizePreset", out string? text)
+            ? string.Equals(text, SizePresets.CustomKey, StringComparison.Ordinal)
+                ? ReadCustomPreset(settings)
+                : SizePresets.ByKey(text)
+            : null;
+
+    private static SizePreset ReadCustomPreset(IReadOnlyDictionary<string, string> settings) =>
+        SizePresets.Custom(CustomSizeCm.FromClampedWidth(ReadSizeWidthCm(settings)));
+
+    /// <summary>Reads the stored custom width in centimetres (R8.9).</summary>
+    /// <param name="settings">The settings map just loaded from the workbook.</param>
+    /// <returns>The stored width, or the A4-landscape default.</returns>
+    internal static double ReadSizeWidthCm(IReadOnlyDictionary<string, string> settings) =>
+        ReadFinite(settings, "SizeWidthCm", CustomSizeCm.DefaultWidthCm);
+
+    /// <summary>Reads the stored live-height mirror in centimetres (R8.9).</summary>
+    /// <param name="settings">The settings map just loaded from the workbook.</param>
+    /// <returns>The stored mirror, or zero when absent. Zero means "not measured yet".</returns>
+    /// <remarks>
+    /// This is the mirror the ribbon writes back after measuring the plot, never an input.
+    /// It exists so a reopened workbook can show the last known height before the first
+    /// measurement of the session.
+    /// </remarks>
+    internal static double ReadSizeHeightCm(IReadOnlyDictionary<string, string> settings) =>
+        ReadFinite(settings, "SizeHeightCm", 0);
+
+    private static double ReadFinite(
+        IReadOnlyDictionary<string, string> settings,
+        string key,
+        double fallback) =>
+        settings.TryGetValue(key, out string? raw)
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            && double.IsFinite(parsed)
+            ? parsed
+            : fallback;
 
     /// <summary>
     /// Normalises one stored explicit plot date for display and state: a

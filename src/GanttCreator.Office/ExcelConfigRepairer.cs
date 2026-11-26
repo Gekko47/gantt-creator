@@ -95,14 +95,36 @@ public class ExcelConfigRepairer(
         }
 
         int repaired = 0;
-        bool catalogueRepair = plan.Findings.Any(finding =>
-            finding.Kind
-                is ConfigIntegrityFindingKind.CatalogueTableMissing
-                    or ConfigIntegrityFindingKind.CatalogueTableCorrupt
-                    or ConfigIntegrityFindingKind.CatalogueHashMismatch
-                    or ConfigIntegrityFindingKind.SchemaVersionOlder
-                    or ConfigIntegrityFindingKind.UserStyleQuarantined
-        );
+
+        // ADR-0073: a one-step settings-only bump is repaired narrowly, so the
+        // full catalogue rewrite is skipped even though the hash also mismatches.
+        // Any other catalogue finding means the damage is not provably additive,
+        // so the structural path below owns it.
+        bool additiveRepair = plan.Findings.Any(
+                finding => finding.Kind == ConfigIntegrityFindingKind.SchemaVersionOlderAdditive)
+            && plan.Findings.All(
+                finding => finding.Kind is ConfigIntegrityFindingKind.SchemaVersionOlderAdditive
+                    or ConfigIntegrityFindingKind.CatalogueHashMismatch);
+        if (additiveRepair)
+        {
+            ConfigWriteOutcome additiveOutcome = _catalogueWriter.UpgradeAdditiveSchema();
+            if (!additiveOutcome.Succeeded)
+            {
+                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused);
+            }
+
+            repaired++;
+        }
+
+        bool catalogueRepair = !additiveRepair
+            && plan.Findings.Any(finding =>
+                finding.Kind
+                    is ConfigIntegrityFindingKind.CatalogueTableMissing
+                        or ConfigIntegrityFindingKind.CatalogueTableCorrupt
+                        or ConfigIntegrityFindingKind.CatalogueHashMismatch
+                        or ConfigIntegrityFindingKind.SchemaVersionOlder
+                        or ConfigIntegrityFindingKind.UserStyleQuarantined
+            );
         if (catalogueRepair)
         {
             ConfigWriteOutcome catalogueOutcome = _catalogueWriter.Write();

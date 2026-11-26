@@ -131,6 +131,9 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     /// <summary>The setting key naming the size preset.</summary>
     private const string _sizePresetKey = "SizePreset";
 
+    /// <summary>The setting key naming the custom width in centimetres (R8.9).</summary>
+    private const string _sizeWidthCmKey = "SizeWidthCm";
+
     /// <summary>
     /// The approved event-date display format setting key (ADR-0016).
     /// </summary>
@@ -456,7 +459,11 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         // the page, leaving the margin as breathing room on that side without opening a
         // gap between the table and the plot. The margin never touches the measured text
         // panel, so it cannot resize a user column (R4.7H D3).
-        double marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
+        // R8.9 / ADR-0072: while Custom is active the page presets and the margin
+        // maths are ignored; the typed width is the whole width budget.
+        double marginPt = SizePresets.IsCustom(preset)
+            ? 0
+            : GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
         double widthChromePt = marginPt * 2;
 
         // The single production call to the plot authority. PlotGeometryResolver owns
@@ -998,6 +1005,12 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         message = null;
 
         string key = ReadString(settings, _sizePresetKey) ?? SizePresets.Default.Key;
+
+        if (string.Equals(key, SizePresets.CustomKey, StringComparison.Ordinal))
+        {
+            return TryResolveCustomPreset(settings, out preset, out refusal, out message);
+        }
+
         preset = SizePresets.ByKey(key);
         if (preset is not null)
         {
@@ -1015,6 +1028,65 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             + string.Join(", ", SizePresets.All.Select(static p => p.Key))
             + ".";
         return false;
+    }
+
+    /// <summary>
+    /// Resolves the runtime custom preset from the stored width.
+    /// </summary>
+    /// <param name="settings">The workbook's effective settings.</param>
+    /// <param name="preset">The custom preset on success; otherwise null.</param>
+    /// <param name="refusal">The typed refusal on failure; otherwise null.</param>
+    /// <param name="message">The actionable failure text; otherwise null.</param>
+    /// <returns><see langword="true"/> when a valid custom preset was built.</returns>
+    /// <remarks>
+    /// <b>Width only (R8.9).</b> The custom height was withdrawn because the live height is
+    /// the measured rows; <c>SizeHeightCm</c> is a mirror the ribbon maintains, never an
+    /// input here. Reading it would let a reserved row refuse a perfectly good width, which
+    /// is the defect this method must not reintroduce.
+    /// </remarks>
+    private static bool TryResolveCustomPreset(
+        IReadOnlyDictionary<string, string> settings,
+        out SizePreset? preset,
+        out SceneBuildRequestRefusal? refusal,
+        out string? message)
+    {
+        preset = null;
+        refusal = null;
+        message = null;
+
+        if (!TryReadCm(settings, _sizeWidthCmKey, out double widthCm))
+        {
+            refusal = SceneBuildRequestRefusal.InvalidCustomSize;
+            message =
+                "The custom width needs 'SizeWidthCm' as centimetres between "
+                + CustomSizeCm.MinimumCm.ToString(CultureInfo.InvariantCulture)
+                + " and "
+                + CustomSizeCm.MaximumCm.ToString(CultureInfo.InvariantCulture)
+                + ".";
+            return false;
+        }
+
+        // A stored value that is merely out of band is clamped, not refused: refusing would
+        // collapse the mode and leave the ribbon disagreeing with the workbook.
+        preset = SizePresets.Custom(CustomSizeCm.FromClampedWidth(widthCm));
+        return true;
+    }
+
+    /// <summary>Reads one finite centimetre value, or fails.</summary>
+    private static bool TryReadCm(
+        IReadOnlyDictionary<string, string> settings,
+        string key,
+        out double value)
+    {
+        if (!settings.TryGetValue(key, out string? raw)
+            || !double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            || !double.IsFinite(value))
+        {
+            value = 0;
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryParseScale(

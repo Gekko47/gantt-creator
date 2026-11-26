@@ -552,4 +552,5 @@ public sealed class ExportBoundsResolverTests
         Assert.False(outcome.Succeeded);
         Assert.Null(outcome.Scene);
     }
+
 }

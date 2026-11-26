@@ -59,6 +59,12 @@ public enum ConfigIntegrityFindingKind
     /// A shape named like one the add-in creates cannot be proved owned by its tag.
     /// </summary>
     OwnedShapeWithoutValidTag = 17,
+
+    /// <summary>
+    /// The workbook schema is one version older and the only change is appended
+    /// settings keys, so it can be repaired in place (ADR-0073).
+    /// </summary>
+    SchemaVersionOlderAdditive = 18,
 }
 
 /// <summary>The safe-repair classification for one integrity finding.</summary>
@@ -80,17 +86,16 @@ public enum ConfigRepairClassification
 /// </summary>
 /// <remarks>
 /// <para>
-/// A version mismatch is the one integrity finding that is <em>reported and never
-/// converted</em>: there is no migration, so the message has to tell the analyst
-/// what to do rather than imply that something will be fixed. A generic
+/// A structural mismatch is <em>reported</em>: the message has to tell the analyst
+/// what to do rather than imply that something will be fixed silently. A generic
 /// "catalogue mismatch" string is not actionable — it does not say which version
-/// the workbook carries, which the add-in expects, or that re-initialising is the
-/// remedy.
+/// the workbook carries, which the add-in expects, or which action repairs it.
 /// </para>
 /// <para>
-/// The remedy is version-agnostic on purpose: a workbook from any earlier version
-/// lacks this schema, so every one of them needs Initialise. Naming the numbers
-/// keeps the message honest about what actually drifted.
+/// The remedy is the reachable command: <b>Repair</b>. Initialise is not available
+/// in the current flow, so naming it would send the user to a dead end. An additive
+/// one-step settings bump is repaired automatically before this message is built
+/// (ADR-0073); this text is for the structural case that still needs confirmation.
 /// </para>
 /// </remarks>
 public static class SchemaVersionMismatchMessage
@@ -116,7 +121,7 @@ public static class SchemaVersionMismatchMessage
         // a rendered message must not vary with the analyst's locale digits.
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"This workbook uses Gantt schema version {workbookVersion}, but this version of Gantt Creator requires version {expectedVersion}. There is no automatic upgrade: run Initialise Gantt Sheet on a copy of this workbook to create a current one, then enter your schedule again.");
+            $"This workbook uses Gantt schema version {workbookVersion}, but this version of Gantt Creator requires version {expectedVersion}. Run Repair on the Gantt Creator tab to upgrade it in place; Repair asks for confirmation before it rewrites anything.");
     }
 }
 
@@ -192,6 +197,7 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
             ConfigIntegrityFindingKind.CatalogueHashMismatch
             or ConfigIntegrityFindingKind.PlotAnchorDisagreement
             or ConfigIntegrityFindingKind.TypeOptionsMissing => ConfigRepairClassification.AutoRepair,
+            ConfigIntegrityFindingKind.SchemaVersionOlderAdditive => ConfigRepairClassification.AutoRepair,
             ConfigIntegrityFindingKind.SchemaVersionOlder or ConfigIntegrityFindingKind.IdentityDamage =>
                 ConfigRepairClassification.ConfirmRequired,
             ConfigIntegrityFindingKind.CatalogueTableMissing when finding.TableName == GanttCatalogues.StylesTableName =>

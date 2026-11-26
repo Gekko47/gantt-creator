@@ -117,6 +117,119 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
+    /// R8.9 / ADR-0072: the typed custom width is the whole width budget, and the
+    /// margin maths is ignored even when a custom margin is stored.
+    /// </summary>
+    [Fact]
+    public void A_custom_size_is_the_width_budget_and_ignores_the_margin()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        var settings = new Dictionary<string, string>
+        {
+            ["SizePreset"] = SizePresets.CustomKey,
+            ["SizeWidthCm"] = "42",
+            ["SizeHeightCm"] = "29.7",
+            ["Margin"] = nameof(GanttPlotMargin.Custom),
+            ["MarginCm"] = "5",
+        };
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            settings,
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        double expectedWidth =
+            (42.0 * 10.0 * SizePresets.PointsPerMillimetre)
+            - outcome.Request!.Grid!.PanelRightPt
+            - GanttSheetLayout.LivePlotOriginInsetPt
+            - GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        Assert.Equal(expectedWidth, outcome.Request.PlotBounds!.Value.Width, 6);
+    }
+
+    /// <summary>
+    /// R8.9: the custom width alone resolves the mode. The withdrawn height was previously a
+    /// second required key, so a reserved row could refuse a perfectly good width.
+    /// </summary>
+    [Fact]
+    public void A_custom_request_resolves_from_the_width_alone()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        var settings = new Dictionary<string, string>
+        {
+            ["SizePreset"] = SizePresets.CustomKey,
+            ["SizeWidthCm"] = "42",
+        };
+
+        SceneBuildRequestOutcome outcome = factory.CreateExport(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            settings,
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.True(SizePresets.IsCustom(outcome.Request!.Preset));
+        Assert.Equal(
+            42.0 * 10.0 * SizePresets.PointsPerMillimetre,
+            outcome.Request.Preset!.WidthPt,
+            6);
+    }
+
+    /// <summary>
+    /// R8.9: a stored width outside the band is clamped, not refused, so a hand-edited
+    /// workbook keeps a working Custom chart instead of collapsing the mode.
+    /// </summary>
+    [Fact]
+    public void An_out_of_band_custom_width_is_clamped_rather_than_refused()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        var settings = new Dictionary<string, string>
+        {
+            ["SizePreset"] = SizePresets.CustomKey,
+            ["SizeWidthCm"] = "500",
+        };
+
+        SceneBuildRequestOutcome outcome = factory.CreateExport(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            settings,
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(
+            CustomSizeCm.MaximumCm * 10.0 * SizePresets.PointsPerMillimetre,
+            outcome.Request!.Preset!.WidthPt,
+            6);
+    }
+
+    /// <summary>
+    /// R8.9: a Custom key without usable centimetres is refused, never defaulted.
+    /// </summary>
+    [Fact]
+    public void An_invalid_custom_size_is_refused()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        var settings = new Dictionary<string, string>
+        {
+            ["SizePreset"] = SizePresets.CustomKey,
+        };
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            settings,
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>());
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SceneBuildRequestRefusal.InvalidCustomSize, outcome.Refusal);
+    }
+
+    /// <summary>
     /// The anchored live request places each lane on its own measured row, so a row's
     /// bar moves with the MEASURED heights rather than with the fixed lane metric.
     /// </summary>

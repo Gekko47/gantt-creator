@@ -24,9 +24,11 @@ public sealed class SchemaVersionMismatchMessageTests
         Assert.Contains("3", message, StringComparison.Ordinal);
         Assert.Contains("5", message, StringComparison.Ordinal);
 
-        // Actionable, not a generic integrity string: it must name the remedy.
-        Assert.Contains("no automatic upgrade", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Initialise Gantt Sheet", message, StringComparison.Ordinal);
+        // Actionable, not a generic integrity string: it must name the reachable
+        // remedy. Initialise is not available in the current flow, so naming it
+        // would send the user to a dead end (ADR-0073).
+        Assert.Contains("Repair", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Initialise", message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

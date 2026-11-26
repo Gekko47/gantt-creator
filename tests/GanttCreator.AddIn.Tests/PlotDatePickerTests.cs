@@ -262,8 +262,15 @@ public sealed class PlotDatePickerTests
             written!.Keys.OrderBy(key => key, StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// A layout commit writes the layout group and no plot-range key. R8.9 adds
+    /// the custom width/height settings to that group: the whole group is
+    /// rewritten on any layout edit, exactly as <c>Margin</c> and
+    /// <c>SizePreset</c> already were, so a preset/custom round trip keeps the
+    /// typed centimetres.
+    /// </summary>
     [Fact]
-    public void A_layout_commit_writes_only_the_five_layout_keys()
+    public void A_layout_commit_writes_the_layout_group_and_no_plot_range_keys()
     {
         PickService service = new();
         var writer = new Mock<IConfigCatalogueWriter>();
@@ -277,7 +284,15 @@ public sealed class PlotDatePickerTests
 
         Assert.NotNull(written);
         Assert.Equal(
-            ["Margin", "MarginCm", "PeriodLabelFormat", "SizePreset", "TimeScale"],
+            [
+                "Margin",
+                "MarginCm",
+                "PeriodLabelFormat",
+                "SizeHeightCm",
+                "SizePreset",
+                "SizeWidthCm",
+                "TimeScale",
+            ],
             written!.Keys.OrderBy(key => key, StringComparer.Ordinal));
     }
 

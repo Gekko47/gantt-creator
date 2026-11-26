@@ -454,6 +454,103 @@ public class ExcelConfigCatalogueWriter(
         return ConfigWriteOutcome.Ok();
     }
 
+    /// <inheritdoc />
+    public ConfigWriteOutcome UpgradeAdditiveSchema()
+    {
+        Application? application = _application;
+        if (application is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
+        }
+
+        // Read-only phase: the existing settings are the values the append must
+        // preserve, and the workbook ID is what keeps the repaired file the same
+        // file. Only these two tables are read or written.
+        if (!TryReadKeyValues(config, GanttCatalogues.SettingsTableName, out Dictionary<string, string> settings)
+            || !TryReadKeyValues(config, GanttCatalogues.ConfigTableName, out Dictionary<string, string> configValues))
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        string? workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
+
+        // Idempotent: a workbook already at the current version writes nothing.
+        // The caller plans this repair only for an older version, but a re-run
+        // must not rewrite two tables to say what they already say.
+        if (int.TryParse(
+                configValues.GetValueOrDefault(GanttCatalogues.ConfigSchemaVersionKey),
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int storedVersion)
+            && storedVersion >= GanttSchemaVersion.CurrentSchemaVersion)
+        {
+            return ConfigWriteOutcome.Ok();
+        }
+
+        List<TableSnapshot> snapshots = CaptureTables(
+            config,
+            GanttCatalogues.SettingsTableName,
+            GanttCatalogues.ConfigTableName);
+        Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
+        bool original = _application!.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                GanttCatalogues.SettingsHeaders,
+                BuildSettingRows(settings),
+                written);
+
+            // Version and hash last and together: a workbook is never stamped 29
+            // while its settings table is missing the rows that version expects.
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.ConfigAnchor,
+                GanttCatalogues.ConfigTableName,
+                GanttCatalogues.ConfigHeaders,
+                BuildConfigRows(workbookId),
+                written);
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            RollBack(config, snapshots, written);
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+
+        return ConfigWriteOutcome.Ok();
+    }
+
     /// <summary>
     /// Writes the five contract tables in order, stopping at the first
     /// failure, and records each table's extent as it is written.
@@ -514,6 +611,33 @@ public class ExcelConfigCatalogueWriter(
     {
         List<TableSnapshot> snapshots = new List<TableSnapshot>(_contractTableNames.Length);
         foreach (string tableName in _contractTableNames)
+        {
+            ListObject? table = FindTable(config, tableName);
+            snapshots.Add(
+                table is null
+                    ? new TableSnapshot(AnchorFor(tableName), tableName, false, [], [])
+                    : new TableSnapshot(
+                        AnchorFor(tableName),
+                        tableName,
+                        true,
+                        [.. ReadHeaders(table)],
+                        ReadBodyRows(table)));
+        }
+
+        return snapshots;
+    }
+
+    /// <summary>
+    /// Captures the named tables' prior state, read-only, before the first
+    /// mutation. Used by the additive repair, which writes only two tables.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <param name="tableNames">The contract table names to capture, in write order.</param>
+    /// <returns>One snapshot per table.</returns>
+    private List<TableSnapshot> CaptureTables(Worksheet config, params string[] tableNames)
+    {
+        List<TableSnapshot> snapshots = new(tableNames.Length);
+        foreach (string tableName in tableNames)
         {
             ListObject? table = FindTable(config, tableName);
             snapshots.Add(

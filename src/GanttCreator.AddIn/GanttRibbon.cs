@@ -2184,7 +2184,26 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        return RibbonGetter.Read(stateService, s => s.GetMargin() == GanttPlotMargin.Custom, false);
+        return RibbonGetter.Read(
+            stateService,
+            s => !s.IsCustomSize() && s.GetMargin() == GanttPlotMargin.Custom,
+            false);
+    }
+
+    /// <summary>
+    /// The margin dropdown's enable gate. Disabled while the size is Custom, where
+    /// a page margin has no meaning (R8.9, ADR-0072). Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>False while the size is Custom.</returns>
+    public bool GetMarginEnabled(IRibbonControl control) => GetMarginEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>Runs <see cref="GetMarginEnabled(IRibbonControl)"/> against an injected state service.</summary>
+    internal static bool GetMarginEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        return RibbonGetter.Read(stateService, s => !s.IsCustomSize(), false);
     }
 
     /// <summary>
@@ -2223,7 +2242,7 @@ public class GanttRibbon : ExcelRibbon
     /// permanently disabled edit box. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <returns><c>W 1024.00 pt</c>, or <c>W</c> while the width is unknown.</returns>
+    /// <returns><c>W 29.70 cm</c>, or <c>W</c> while the width is unknown.</returns>
     public string GetPlotWidthLabel(IRibbonControl control) =>
         GetPlotWidthLabel(control, RibbonStateService.Instance);
 
@@ -2236,14 +2255,14 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="stateService">The state service answering from its snapshot.</param>
     /// <returns>The formatted width readout.</returns>
     internal static string GetPlotWidthLabel(IRibbonControl? control, RibbonStateService stateService) =>
-        FormatDimension("W", GetPlotWidth(control, stateService));
+        FormatDimension("W", GetPageWidthCm(control, stateService), "cm");
 
     /// <summary>
     /// The plot height readout (R5.16a), the parallel of
     /// <see cref="GetPlotWidthLabel(IRibbonControl)"/>. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <returns><c>H 768.00 pt</c>, or <c>H</c> while the height is unknown.</returns>
+    /// <returns><c>H 24.00 cm</c>, or <c>H</c> while the height is unknown.</returns>
     public string GetPlotHeightLabel(IRibbonControl control) =>
         GetPlotHeightLabel(control, RibbonStateService.Instance);
 
@@ -2256,17 +2275,34 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="stateService">The state service answering from its snapshot.</param>
     /// <returns>The formatted height readout.</returns>
     internal static string GetPlotHeightLabel(IRibbonControl? control, RibbonStateService stateService) =>
-        FormatDimension("H", GetPlotHeight(control, stateService));
+        FormatDimension("H", GetPageHeightCm(control, stateService), "cm");
 
     /// <summary>
     /// Formats one plot dimension readout. An unknown dimension renders the bare
     /// prefix rather than a misleading zero.
     /// </summary>
     /// <param name="prefix">The dimension letter.</param>
-    /// <param name="value">The formatted points value, or empty when unknown.</param>
+    /// <param name="value">The formatted value, or empty when unknown.</param>
+    /// <param name="unit">The unit suffix, for example <c>cm</c>.</param>
     /// <returns>The readout text.</returns>
-    private static string FormatDimension(string prefix, string value) =>
-        string.IsNullOrWhiteSpace(value) ? prefix : prefix + " " + value + " pt";
+    private static string FormatDimension(string prefix, string value, string unit) =>
+        string.IsNullOrWhiteSpace(value) ? prefix : prefix + " " + value + " " + unit;
+
+    /// <summary>Reads the live composition width in centimetres for the readout.</summary>
+    internal static string GetPageWidthCm(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        return RibbonGetter.Read(stateService, s => s.GetPageWidthCm(), string.Empty);
+    }
+
+    /// <summary>Reads the measured live plot height in centimetres for the readout.</summary>
+    internal static string GetPageHeightCm(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        return RibbonGetter.Read(stateService, s => s.GetPageHeightCm(), string.Empty);
+    }
 
     /// <summary>
     /// Returns the current plot width in points. The ribbon edit box
@@ -2337,6 +2373,51 @@ public class GanttRibbon : ExcelRibbon
         OnSizeChange(control, selectedId, RibbonStateService.Instance);
     }
 
+    /// <summary>The custom-size width getter (R8.9). Never throws.</summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The stored width in centimetres, formatted invariantly.</returns>
+    public string GetSizeWidthCm(IRibbonControl control) => GetSizeWidthCm(control, RibbonStateService.Instance);
+
+    /// <summary>Runs <see cref="GetSizeWidthCm(IRibbonControl)"/> against an injected state service.</summary>
+    internal static string GetSizeWidthCm(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        return RibbonGetter.Read(
+            stateService,
+            s => s.GetSizeWidthCm().ToString(CultureInfo.InvariantCulture),
+            CustomSizeCm.DefaultWidthCm.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>The custom-width enable gate (Custom size only). Never throws.</summary>
+    public bool GetSizeWidthCmEnabled(IRibbonControl control) =>
+        GetSizeWidthCmEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>Runs <see cref="GetSizeWidthCmEnabled(IRibbonControl)"/> against an injected state service.</summary>
+    internal static bool GetSizeWidthCmEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        return RibbonGetter.Read(stateService, s => s.IsCustomSize(), false);
+    }
+
+    /// <summary>Handles a committed custom width. Never throws.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="text">The edited text Excel passes on commit.</param>
+    public void OnSizeWidthCmChange(IRibbonControl control, string text) =>
+        OnSizeWidthCmChange(control, text, RibbonStateService.Instance);
+
+    /// <summary>Runs <see cref="OnSizeWidthCmChange(IRibbonControl, string)"/> against an injected state service.</summary>
+    internal static void OnSizeWidthCmChange(IRibbonControl? control, string? text, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double cm))
+        {
+            stateService.SetSizeWidthCm(cm);
+        }
+    }
+
     /// <summary>
     /// Runs the Size handler against an injected state service. Internal so
     /// contract tests can verify the routing without the session singleton.
@@ -2352,9 +2433,15 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        // An unknown item id is refused — never defaulted to a preset — so a
-        // mistyped or renamed item cannot silently render the chart on the
-        // wrong paper.
+        // Custom is a mode, not a catalogue preset: it is resolved from the stored
+        // width. Every other id is a fixed preset and an unknown id is refused,
+        // never defaulted.
+        if (string.Equals(selectedId, SizePresets.CustomKey, StringComparison.Ordinal))
+        {
+            stateService.SetCustomSizeMode();
+            return;
+        }
+
         SizePreset? preset = SizePresets.ByKey(selectedId);
         if (preset is not null)
         {
@@ -2519,7 +2606,8 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        int lastIndex = SizePresets.All.Count - 1;
+        int customIndex = SizePresets.All.Count;
+        int lastIndex = customIndex - 1;
         if (lastIndex < 0)
         {
             // No catalogue at all: the dropdown has no items, so there is
@@ -2539,11 +2627,16 @@ public class GanttRibbon : ExcelRibbon
                 return 0;
             }
 
+            if (SizePresets.IsCustom(current))
+            {
+                return customIndex;
+            }
+
             for (int index = 0; index < SizePresets.All.Count; index++)
             {
                 if (string.Equals(SizePresets.All[index].Key, current.Key, StringComparison.Ordinal))
                 {
-                    return Math.Min(index, lastIndex);
+                    return Math.Min(index, customIndex);
                 }
             }
 

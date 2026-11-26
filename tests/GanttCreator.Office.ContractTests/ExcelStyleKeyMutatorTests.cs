@@ -158,6 +158,8 @@ public class ExcelStyleKeyMutatorTests
 
     private sealed class StubCatalogueReader(Func<ConfigReadOutcome> read) : IConfigCatalogueReader
     {
+        public ConfigSchemaObservation? ObserveSchema() => null;
+
         private readonly Func<ConfigReadOutcome> _read = read;
 
         public ConfigReadOutcome Read() => _read();

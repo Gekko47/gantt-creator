@@ -49,6 +49,15 @@ public enum ConfigReadRefusalReason
 }
 
 /// <summary>
+/// The unvalidated schema facts an additive-repair decision needs (ADR-0073).
+/// </summary>
+/// <param name="StoredVersion">The version stored on <c>tblGanttConfig</c>.</param>
+/// <param name="SettingsKeys">The stored <c>tblGanttSettings</c> keys, in body order.</param>
+public sealed record ConfigSchemaObservation(
+    int StoredVersion,
+    IReadOnlyList<string> SettingsKeys);
+
+/// <summary>
 /// The typed outcome of one catalogue-read attempt: the workbook ID and the
 /// effective settings, or the refusal reason. On a refusal nothing was
 /// mutated.
@@ -130,4 +139,16 @@ public interface IConfigCatalogueReader
     /// refusal reason. On a refusal nothing was mutated.
     /// </returns>
     ConfigReadOutcome Read();
+
+    /// <summary>
+    /// Reads the stored schema version and settings keys without validating the
+    /// catalogue, so the integrity checker can decide whether an older schema is
+    /// an additive settings-only bump (ADR-0073). Read-only.
+    /// </summary>
+    /// <returns>
+    /// The observation, or <see langword="null"/> when a table the decision needs
+    /// is missing, header-damaged, or has a changed types/metrics row count. A
+    /// null keeps the checker on the confirmation-required structural path.
+    /// </returns>
+    ConfigSchemaObservation? ObserveSchema();
 }

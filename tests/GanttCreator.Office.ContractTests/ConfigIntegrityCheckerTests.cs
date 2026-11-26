@@ -97,4 +97,50 @@ public sealed class ConfigIntegrityCheckerTests
             ],
             outcome.Findings.Select(finding => finding.Kind));
     }
+
+    /// <summary>
+    /// ADR-0073: when the catalogue read refuses a row count but the stored version
+    /// and settings keys are a one-step prefix, the checker reports an automatic
+    /// additive upgrade rather than a generic hash mismatch.
+    /// </summary>
+    [Fact]
+    public void Check_reports_an_additive_schema_upgrade_before_the_generic_mismatch()
+    {
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        var sheets = new Mock<Excel.Sheets>();
+        var config = new Mock<Excel.Worksheet>();
+        var configObjects = new Mock<Excel.ListObjects>();
+        var reader = new Mock<IConfigCatalogueReader>();
+        var tableReader = new Mock<IGanttTableReader>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
+        _ = sheets.SetupGet(s => s.Count).Returns(1);
+        _ = sheets.SetupGet(s => s[1]).Returns(config.Object);
+        _ = config.SetupGet(s => s.Name).Returns(GanttWorkbookContract.ConfigSheetName);
+        _ = config.SetupGet(s => s.Visible).Returns(Excel.XlSheetVisibility.xlSheetVeryHidden);
+        _ = config.SetupGet(s => s.ListObjects).Returns(configObjects.Object);
+        _ = configObjects.SetupGet(o => o.Count).Returns(0);
+        _ = reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Refused(ConfigReadRefusalReason.RowCountMismatch));
+
+        string[] prefix =
+        [
+            .. GanttCatalogues.Settings
+                .Select(setting => setting.Key)
+                .Take(GanttCatalogues.Settings.Count - 2),
+        ];
+        _ = reader.Setup(r => r.ObserveSchema()).Returns(
+            new ConfigSchemaObservation(GanttSchemaVersion.CurrentSchemaVersion - 1, prefix));
+        _ = tableReader.Setup(r => r.Read()).Returns(
+            GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
+
+        ConfigIntegrityCheckOutcome outcome = new ExcelConfigIntegrityChecker(
+            application.Object,
+            reader.Object,
+            tableReader.Object).Check();
+
+        ConfigIntegrityFinding finding = Assert.Single(outcome.Findings);
+        Assert.Equal(ConfigIntegrityFindingKind.SchemaVersionOlderAdditive, finding.Kind);
+        Assert.Equal(ConfigRepairClassification.AutoRepair, ConfigIntegrityPlan.Classify(finding));
+    }
 }

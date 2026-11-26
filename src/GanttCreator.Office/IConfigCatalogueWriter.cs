@@ -109,6 +109,16 @@ public interface IConfigCatalogueWriter
     ConfigWriteOutcome WriteSettings(IReadOnlyDictionary<string, string> settings);
 
     /// <summary>
+    /// Applies the additive one-step settings upgrade (ADR-0073): appends the
+    /// missing approved settings rows with their defaults, preserves every
+    /// present value, and rewrites the schema version and catalogue hash. Only
+    /// <c>tblGanttSettings</c> and <c>tblGanttConfig</c> are written, so
+    /// <c>tblGanttMetrics</c> and <c>tblGanttStyles</c> keep the user's edits.
+    /// </summary>
+    /// <returns>The typed outcome. On a refusal nothing was mutated.</returns>
+    ConfigWriteOutcome UpgradeAdditiveSchema();
+
+    /// <summary>
     /// Applies a validated R5.6 theme edit: built-in style rows plus the
     /// editable metric tokens. User-authored style rows are preserved; other
     /// tables are untouched. The request must already pass

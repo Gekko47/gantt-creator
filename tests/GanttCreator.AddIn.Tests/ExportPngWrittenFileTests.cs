@@ -142,6 +142,8 @@ public sealed class ExportPngWrittenFileTests
 
     private sealed class StubConfigReader : IConfigCatalogueReader
     {
+        public ConfigSchemaObservation? ObserveSchema() => null;
+
         public ConfigReadOutcome Read() => ConfigReadOutcome.Ok(
             "wb-id",
             new Dictionary<string, string>(),

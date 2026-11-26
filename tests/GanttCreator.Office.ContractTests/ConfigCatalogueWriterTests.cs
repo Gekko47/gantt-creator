@@ -463,6 +463,65 @@ public class ConfigCatalogueWriterTests
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
     }
 
+    /// <summary>
+    /// ADR-0073: the narrow repair appends the missing settings rows, keeps the
+    /// user's metric edit and styles, and moves the version and hash. A second run
+    /// is a no-op.
+    /// </summary>
+    [Fact]
+    public void UpgradeAdditiveSchema_preserves_metrics_and_appends_the_settings_rows()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        // Simulate a version-28 workbook: remove the two v29 keys and stamp 28.
+        List<object?[]> settings = fake.Tables[3].Body;
+        settings.RemoveAll(row =>
+            CellText(row.ElementAtOrDefault(0)) is "SizeWidthCm" or "SizeHeightCm");
+        object?[] configVersion = fake.Tables[4].Body.First(
+            row => CellText(row.ElementAtOrDefault(0)) == GanttCatalogues.ConfigSchemaVersionKey);
+        configVersion[1] = (GanttSchemaVersion.CurrentSchemaVersion - 1)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        string metricsBefore = Snapshot(fake.Tables[2].Body);
+        string stylesBefore = Snapshot(fake.Tables[1].Body);
+        string workbookId = CellText(
+            fake.Tables[4].Body.First(
+                row => CellText(row.ElementAtOrDefault(0)) == GanttCatalogues.ConfigWorkbookIdKey)[1]);
+
+        ExcelConfigCatalogueWriter writer = ConfigGraph.BuildWriter(fake);
+        ConfigWriteOutcome outcome = writer.UpgradeAdditiveSchema();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(GanttCatalogues.Settings.Count, fake.Tables[3].Body.Count);
+        Assert.Equal(metricsBefore, Snapshot(fake.Tables[2].Body));
+        Assert.Equal(stylesBefore, Snapshot(fake.Tables[1].Body));
+        Assert.Equal(
+            GanttSchemaVersion.CurrentSchemaVersion.ToString(
+                System.Globalization.CultureInfo.InvariantCulture),
+            CellText(fake.Tables[4].Body.First(
+                row => CellText(row.ElementAtOrDefault(0)) == GanttCatalogues.ConfigSchemaVersionKey)[1]));
+        Assert.Equal(
+            workbookId,
+            CellText(fake.Tables[4].Body.First(
+                row => CellText(row.ElementAtOrDefault(0)) == GanttCatalogues.ConfigWorkbookIdKey)[1]));
+
+        // Idempotent: a second run reports success and changes no table body.
+        string afterFirst = SnapshotAll(fake);
+        Assert.Equal(ConfigWriteOutcome.Ok(), writer.UpgradeAdditiveSchema());
+        Assert.Equal(afterFirst, SnapshotAll(fake));
+    }
+
+    private static string Snapshot(IEnumerable<object?[]> rows) =>
+        string.Join(
+            "\n",
+            rows.Select(row => string.Join("|", row.Select(CellText))));
+
+    private static string SnapshotAll(ConfigSheetFake fake) =>
+        string.Join(
+            "\n--\n",
+            fake.Tables.Select(table => Snapshot(table.Body)));
+
     [Fact]
     public void Write_repairs_a_legacy_blank_title_and_adds_the_new_period_format()
     {

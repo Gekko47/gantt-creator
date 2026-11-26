@@ -360,15 +360,16 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_30_approved_keys()
+    public void Settings_contains_exactly_the_32_approved_keys()
     {
         // R5.6a added the six chart-chrome colour keys (schema version 20),
         // taking 19 to 25. ADR-0055 added ProtectGanttSheet (schema version
         // 22), taking 25 to 26. R5.18h added HiddenColumns (schema version 24),
         // taking 26 to 27. R5.20 added AutoRefreshEnabled (schema version 25),
         // taking 27 to 28. R8.8 added PngExportTarget and LastPngExportFolder
-        // (schema version 28), taking 28 to 30.
-        Assert.Equal(30, GanttCatalogues.Settings.Count);
+        // (schema version 28), taking 28 to 30. R8.9 added SizeWidthCm and
+        // SizeHeightCm (schema version 29), taking 30 to 32.
+        Assert.Equal(32, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -407,6 +408,8 @@ public class GanttConfigCatalogueTests
         "AutoRefreshEnabled",
         "PngExportTarget",
         "LastPngExportFolder",
+        "SizeWidthCm",
+        "SizeHeightCm",
     ];
 
     [Fact]
@@ -990,12 +993,13 @@ public class GanttConfigCatalogueTests
     /// catalogue VALUE rather than a schema shape, and it is recorded here
     /// because the guard exists to make exactly this kind of change visible. A
     /// workbook written before it reports <c>CatalogueHashMismatch</c>, which
-    /// the Repair command auto-classifies; the full remedy is Initialise
-    /// (ADR-0029 D6, no migration).
+    /// the Repair command auto-classifies. A one-step settings-only bump repairs
+    /// in place (ADR-0073); structural damage still needs the confirmation-required
+    /// catalogue rewrite.
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "173ad65cba2a3bf2579fb9c42ee773661380369ef7a4dacfe763883299dc2f7e";
+        "079097b47976c18fe6f7ee1aa6499e3df66b7c9782baa48080269d06cd2fe6b9";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

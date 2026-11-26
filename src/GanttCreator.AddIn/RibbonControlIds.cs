@@ -281,6 +281,9 @@ internal static class RibbonControlIds
     /// <summary>The plot time-scale dropdown (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotTimeScale = "ddnPlotTimeScale";
 
+    /// <summary>The custom-width edit box (R8.9).</summary>
+    internal const string SizeWidthCm = "edtSizeWidthCm";
+
     /// <summary>The plot margin combobox (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string Margin = "ddnMargin";
 

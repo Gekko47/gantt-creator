@@ -639,6 +639,8 @@ public sealed class ExportPngCommandTests
         IReadOnlyDictionary<string, string> settings,
         ConfigReadRefusalReason? refusal = null) : IConfigCatalogueReader
     {
+        public ConfigSchemaObservation? ObserveSchema() => null;
+
         public ConfigReadOutcome Read() => refusal is { } reason
             ? ConfigReadOutcome.Refused(reason)
             : ConfigReadOutcome.Ok(

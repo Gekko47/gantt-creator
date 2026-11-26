@@ -602,6 +602,8 @@ internal sealed class RefreshFakes
 
     private sealed class FakeConfigReader(RefreshFakes owner) : IConfigCatalogueReader
     {
+        public ConfigSchemaObservation? ObserveSchema() => null;
+
         public ConfigReadOutcome Read()
         {
             owner.Steps.Add("Config");

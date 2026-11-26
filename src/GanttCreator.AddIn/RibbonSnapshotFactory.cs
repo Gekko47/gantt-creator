@@ -146,7 +146,10 @@ internal static class RibbonSnapshotFactory
                 RowActions: rowActionContext.Actions,
                 ActiveCellInBodyRow: rowActionContext.ActiveCellInBodyRow,
                 HasGroups: groupsPresent,
-                ActiveSheetIsGanttSheet: activeSheetIsGantt));
+                ActiveSheetIsGanttSheet: activeSheetIsGantt,
+                IsCustomSize: previous.IsCustomSize,
+                SizeWidthCm: previous.SizeWidthCm,
+                SizeHeightCm: previous.SizeHeightCm));
         }
         catch (Exception exception)
         {

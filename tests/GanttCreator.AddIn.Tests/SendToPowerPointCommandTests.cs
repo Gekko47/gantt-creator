@@ -583,6 +583,8 @@ public class SendToPowerPointCommandTests
 
         private sealed class FakeConfigReader(Harness harness) : IConfigCatalogueReader
         {
+            public ConfigSchemaObservation? ObserveSchema() => null;
+
             public ConfigReadOutcome Read()
             {
                 harness.Order.Add("config");

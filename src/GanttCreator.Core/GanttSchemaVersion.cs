@@ -284,6 +284,16 @@ public static class GanttSchemaVersion
     /// catalogue hash no longer matches and it reports a mismatch; the remedy
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Version 29 is R8.9's custom export canvas.</b> <c>tblGanttSettings</c>
+    /// gains <c>SizeWidthCm</c> and <c>SizeHeightCm</c>, appended after the existing
+    /// keys so a version-28 workbook's key list is an exact prefix. That prefix is
+    /// what lets <c>AdditiveSchemaUpgrade</c> prove the change is a one-step,
+    /// settings-only append and repair it in place (ADR-0073): the two rows are
+    /// added with their defaults, every present value is preserved, and the version
+    /// and catalogue hash are rewritten. No column, type, style or metric changes,
+    /// and the user does not run Initialise.
+    /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 28;
+    public const int CurrentSchemaVersion = 29;
 }

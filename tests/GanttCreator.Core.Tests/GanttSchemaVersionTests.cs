@@ -98,7 +98,11 @@ public class GanttSchemaVersionTests
         // (R8.8), so the PNG export target and the remembered folder survive
         // reopening the workbook. The config anchor moves from A100 to A102 to keep
         // the blank row. No migration (ADR-0029 D6); Repair is the remedy.
-        Assert.Equal(28, GanttSchemaVersion.CurrentSchemaVersion);
+        // 29 adds `SizeWidthCm` and `SizeHeightCm` (R8.9), appended after the
+        // existing keys so a version-28 workbook's list is an exact prefix. That
+        // prefix is what lets the additive repair upgrade it in place (ADR-0073)
+        // without Initialise and without rewriting tblGanttMetrics.
+        Assert.Equal(29, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

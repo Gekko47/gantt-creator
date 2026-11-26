@@ -119,6 +119,79 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         return ConfigReadOutcome.Ok(workbookId!, settings!, styles!, metrics);
     }
 
+    /// <inheritdoc />
+    public ConfigSchemaObservation? ObserveSchema()
+    {
+        Application? application = _application;
+        if (application is null)
+        {
+            return null;
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return null;
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return null;
+        }
+
+        // A header fault or a changed types/metrics shape is not a settings-only
+        // bump. Returning null keeps the checker on the structural repair path
+        // rather than letting an additive rewrite mask another table's damage.
+        if (ReadTable(config, GanttCatalogues.TypesTableName, GanttCatalogues.TypesHeaders, out List<object?[]> typeRows) is not null
+            || ReadTable(config, GanttCatalogues.StylesTableName, GanttCatalogues.StylesHeaders, out _) is not null
+            || ReadTable(config, GanttCatalogues.MetricsTableName, GanttCatalogues.MetricsHeaders, out List<object?[]> metricRows) is not null
+            || ReadTable(config, GanttCatalogues.SettingsTableName, GanttCatalogues.SettingsHeaders, out List<object?[]> settingRows) is not null
+            || ReadTable(config, GanttCatalogues.ConfigTableName, GanttCatalogues.ConfigHeaders, out List<object?[]> configRows) is not null)
+        {
+            return null;
+        }
+
+        if (typeRows.Count != GanttCatalogues.TypeRows.Count
+            || metricRows.Count != GanttCatalogues.Metrics.Count)
+        {
+            return null;
+        }
+
+        int? storedVersion = null;
+        foreach (object?[] row in configRows)
+        {
+            if (string.Equals(
+                    ToText(row.ElementAtOrDefault(0)),
+                    GanttCatalogues.ConfigSchemaVersionKey,
+                    StringComparison.Ordinal)
+                && int.TryParse(
+                    ToText(row.ElementAtOrDefault(1)),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out int parsed)
+                && parsed > 0)
+            {
+                storedVersion = parsed;
+                break;
+            }
+        }
+
+        if (storedVersion is null)
+        {
+            return null;
+        }
+
+        string[] keys =
+        [
+            .. settingRows
+                .Select(row => ToText(row.ElementAtOrDefault(0)))
+                .Where(key => key.Length > 0),
+        ];
+        return new ConfigSchemaObservation(storedVersion.Value, keys);
+    }
+
     /// <summary>
     /// Finds <c>_GanttCreatorConfig</c> by exact name. Chart sheets are
     /// skipped via the worksheet cast.

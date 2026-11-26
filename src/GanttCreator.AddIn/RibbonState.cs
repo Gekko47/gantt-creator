@@ -163,6 +163,13 @@ internal enum RibbonMode
 /// fail-open direction, matching <see cref="IsEnabled(string?)"/> — and the
 /// state service always supplies the measured fact.
 /// </param>
+/// <param name="IsCustomSize">True when the stored size key is <c>Custom</c> (R8.9).</param>
+/// <param name="SizeWidthCm">The stored custom width in centimetres (R8.9).</param>
+/// <param name="SizeHeightCm">
+/// The measured live plot height in centimetres, mirrored into the stored row (R8.9).
+/// It is never an input: the measurement is the authority and this value is a cache for
+/// the next activation. Zero means no measurement has been taken yet.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -199,7 +206,10 @@ internal sealed record RibbonState(
     RowActionAvailability RowActions = default,
     bool ActiveCellInBodyRow = false,
     bool HasGroups = false,
-    bool ActiveSheetIsGanttSheet = true)
+    bool ActiveSheetIsGanttSheet = true,
+    bool IsCustomSize = false,
+    double SizeWidthCm = CustomSizeCm.DefaultWidthCm,
+    double SizeHeightCm = 0)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every

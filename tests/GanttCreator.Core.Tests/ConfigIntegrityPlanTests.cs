@@ -9,6 +9,7 @@ public sealed class ConfigIntegrityPlanTests
     [InlineData(ConfigIntegrityFindingKind.CatalogueHashMismatch, ConfigRepairClassification.AutoRepair)]
     [InlineData(ConfigIntegrityFindingKind.PlotAnchorDisagreement, ConfigRepairClassification.AutoRepair)]
     [InlineData(ConfigIntegrityFindingKind.TypeOptionsMissing, ConfigRepairClassification.AutoRepair)]
+    [InlineData(ConfigIntegrityFindingKind.SchemaVersionOlderAdditive, ConfigRepairClassification.AutoRepair)]
     [InlineData(ConfigIntegrityFindingKind.SchemaVersionOlder, ConfigRepairClassification.ConfirmRequired)]
     [InlineData(ConfigIntegrityFindingKind.IdentityDamage, ConfigRepairClassification.ConfirmRequired)]
     [InlineData(ConfigIntegrityFindingKind.SchemaVersionNewer, ConfigRepairClassification.Refuse)]

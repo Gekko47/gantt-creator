@@ -215,8 +215,45 @@ public class ExcelConfigIntegrityChecker(
         return ConfigIntegrityCheckOutcome.Ok([.. ConfigIntegrityPlan.Build(findings).Findings]);
     }
 
-    private static void AddCatalogueFinding(List<ConfigIntegrityFinding> findings, ConfigReadRefusalReason refusal)
+    private void AddCatalogueFinding(List<ConfigIntegrityFinding> findings, ConfigReadRefusalReason refusal)
     {
+        // ADR-0073: a schema bump surfaces as a row-count or hash refusal. Ask
+        // the reader for the stored version and settings keys, and only then
+        // decide whether the change is a provable settings-only append. Anything
+        // else keeps the existing structural mapping below.
+        if (refusal is ConfigReadRefusalReason.RowCountMismatch or ConfigReadRefusalReason.CatalogueHashMismatch)
+        {
+            ConfigSchemaObservation? observation = _catalogueReader.ObserveSchema();
+            if (observation is not null)
+            {
+                if (observation.StoredVersion > GanttSchemaVersion.CurrentSchemaVersion)
+                {
+                    findings.Add(new ConfigIntegrityFinding(
+                        ConfigIntegrityFindingKind.SchemaVersionNewer,
+                        $"The workbook schema is version {observation.StoredVersion}; this add-in requires {GanttSchemaVersion.CurrentSchemaVersion}."));
+                    return;
+                }
+
+                if (observation.StoredVersion < GanttSchemaVersion.CurrentSchemaVersion)
+                {
+                    AdditiveSchemaUpgradeOutcome upgrade = AdditiveSchemaUpgrade.TryPlan(
+                        observation.StoredVersion,
+                        observation.SettingsKeys,
+                        GanttSchemaVersion.CurrentSchemaVersion,
+                        [.. GanttCatalogues.Settings.Select(setting => setting.Key)]);
+                    findings.Add(
+                        upgrade.Succeeded
+                            ? new ConfigIntegrityFinding(
+                                ConfigIntegrityFindingKind.SchemaVersionOlderAdditive,
+                                $"Schema version {observation.StoredVersion} can be upgraded in place by adding {upgrade.Plan!.MissingKeys.Count} settings row(s).")
+                            : new ConfigIntegrityFinding(
+                                ConfigIntegrityFindingKind.SchemaVersionOlder,
+                                $"Schema version {observation.StoredVersion} needs the confirmation-required repair: {upgrade.Refusal}."));
+                    return;
+                }
+            }
+        }
+
         ConfigIntegrityFindingKind kind = refusal switch
         {
             ConfigReadRefusalReason.NoActiveWorkbook => ConfigIntegrityFindingKind.Unknown,

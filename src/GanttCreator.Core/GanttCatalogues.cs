@@ -71,11 +71,12 @@ public static class GanttCatalogues
     /// it to 27 keys reaching row 97, so it moved once more to A99; R5.20's
     /// <c>AutoRefreshEnabled</c> key took it to 28 keys reaching row 98, so it
     /// moved again to A100. R8.8's two PNG-export settings took it to 30 keys
-    /// reaching row 100, so it moved once more to A102. The blank-row invariant
-    /// test ties every anchor to the catalogue sizes, so future growth fails
+    /// reaching row 100, so it moved once more to A102. R8.9's two custom-size
+    /// settings took it to 32 keys reaching row 102, so it moved to A104. The
+    /// blank-row invariant test ties every anchor to the catalogue sizes, so future growth fails
     /// there first.
     /// </summary>
-    public const string ConfigAnchor = "A102";
+    public const string ConfigAnchor = "A104";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";
@@ -442,6 +443,14 @@ public static class GanttCatalogues
         // no existing directory.
         new(GanttPngExport.TargetSettingKey, GanttPngExport.ClipboardValue),
         new(GanttPngExport.FolderSettingKey, string.Empty),
+
+        // Schema version 29 (R8.9). The custom export canvas carries its two
+        // centimetre dimensions. They are appended at the end so a version-28
+        // workbook's key list is an exact prefix, which is what lets the additive
+        // repair (ADR-0073) prove that only settings rows were added. Defaults are
+        // A4 landscape so switching to Custom starts from a familiar page.
+        new("SizeWidthCm", "29.7"),
+        new("SizeHeightCm", "21.0"),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

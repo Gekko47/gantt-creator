@@ -185,22 +185,28 @@
                the current preset. Item ids are the durable SizePreset keys. -->
           <box id="boxSizePreset" boxStyle="horizontal">
             <labelControl id="lblSize" label="Size"/>
-            <dropDown id="ddnSize" keytip="SZ" screentip="Output size" supertip="Chooses the page or slide size the chart is generated for. The current size is shown." getSelectedItemIndex="GetSize" getEnabled="GetEnabled" onAction="OnSizeChange">
+            <dropDown id="ddnSize" keytip="SZ" screentip="Output size" supertip="Chooses the page or slide size the chart is generated for, or Custom to type the width in centimetres. The current size is shown." getSelectedItemIndex="GetSize" getEnabled="GetEnabled" onAction="OnSizeChange">
               <item id="A4Portrait" label="A4 (portrait)"/>
               <item id="A4Landscape" label="A4 (landscape)"/>
               <item id="Presentation16x9" label="Presentation 16:9"/>
               <item id="Presentation4x3" label="Presentation 4:3"/>
+              <item id="Custom" label="Custom"/>
             </dropDown>
+          </box>
+          <box id="boxCustomSize" boxStyle="horizontal">
+            <labelControl id="lblSizeWidth" label="W"/>
+            <editBox id="edtSizeWidthCm" keytip="SW" screentip="Custom width in centimetres" supertip="The chart width in centimetres. Applies when the size is Custom. The data table keeps its column widths and the plot takes the rest; page presets and margins are ignored." getText="GetSizeWidthCm" getEnabled="GetSizeWidthCmEnabled" onChange="OnSizeWidthCmChange" sizeString="00.00"/>
+            <labelControl id="lblSizeWidthUnit" label="cm"/>
           </box>
           <box id="boxMargin" boxStyle="horizontal">
             <labelControl id="lblMargin" label="Margin"/>
-            <dropDown id="ddnMargin" keytip="M" screentip="Page margin" supertip="Chooses the chart page margin. Custom uses the centimetre value beside it." getSelectedItemIndex="GetMargin" getEnabled="GetEnabled" onAction="OnMarginChange">
+            <dropDown id="ddnMargin" keytip="M" screentip="Page margin" supertip="Chooses the chart page margin. Custom uses the centimetre value beside it. Disabled while the size is Custom, because a custom size ignores page margins." getSelectedItemIndex="GetMargin" getEnabled="GetMarginEnabled" onAction="OnMarginChange">
               <item id="Narrow" label="Narrow (0.635 cm)"/>
               <item id="Normal" label="Normal (1.78 cm)"/>
               <item id="Wide" label="Wide (2.54 cm)"/>
               <item id="Custom" label="Custom"/>
             </dropDown>
-            <editBox id="edtMarginCm" keytip="MC" screentip="Custom margin in centimetres" supertip="The custom page margin in centimetres. It applies when the margin choice is Custom." getText="GetMarginCm" getEnabled="GetMarginCmEnabled" onChange="OnMarginCmChange" sizeString="0.00"/>
+            <editBox id="edtMarginCm" keytip="MC" screentip="Custom margin in centimetres" supertip="The custom page margin in centimetres. It applies when the margin choice is Custom and is disabled while the size is Custom." getText="GetMarginCm" getEnabled="GetMarginCmEnabled" onChange="OnMarginCmChange" sizeString="0.00"/>
             <labelControl id="lblMarginUnit" label="cm"/>
           </box>
           <box id="boxPlotDimensions" boxStyle="horizontal">

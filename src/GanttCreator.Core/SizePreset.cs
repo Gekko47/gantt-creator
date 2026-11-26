@@ -97,6 +97,42 @@ public static class SizePresets
     public static IReadOnlyList<SizePreset> All { get; } =
         Array.AsReadOnly([A4Portrait, A4Landscape, Presentation16x9, Presentation4x3]);
 
+    /// <summary>The durable settings key for a user-entered custom size (R8.9).</summary>
+    public const string CustomKey = "Custom";
+
+    /// <summary>
+    /// Builds the runtime custom preset from the user's centimetres.
+    /// </summary>
+    /// <param name="size">The validated custom size.</param>
+    /// <returns>The preset the plot geometry consumes.</returns>
+    /// <remarks>
+    /// The custom preset is <b>not</b> added to <see cref="All"/> and
+    /// <see cref="ByKey"/> stays fixed-only. That keeps the ribbon's four preset
+    /// rows and the catalogue's exact preset set unchanged; the request factory
+    /// resolves the <see cref="CustomKey"/> from the workbook's centimetres.
+    /// </remarks>
+    public static SizePreset Custom(CustomSizeCm size)
+    {
+        ArgumentNullException.ThrowIfNull(size);
+
+        // R8.9: Custom is width-only, so the preset's height is not a page dimension and
+        // nothing consumes it (the factory is told not to bound vertically). It is the
+        // width on both axes rather than a stored centimetre, so no stale height can ever
+        // be mistaken for a second authority.
+        return new SizePreset(
+            CustomKey,
+            "Custom",
+            size.WidthPt,
+            size.WidthPt,
+            SizeOrientation.Landscape);
+    }
+
+    /// <summary>Gets whether the preset is the runtime custom preset.</summary>
+    /// <param name="preset">The preset, or null.</param>
+    /// <returns><see langword="true"/> when the key is <see cref="CustomKey"/>.</returns>
+    public static bool IsCustom(SizePreset? preset) =>
+        string.Equals(preset?.Key, CustomKey, StringComparison.Ordinal);
+
     /// <summary>
     /// The default preset when a workbook names none.
     /// </summary>

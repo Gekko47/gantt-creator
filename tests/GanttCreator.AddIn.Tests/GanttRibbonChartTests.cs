@@ -152,7 +152,7 @@ public sealed class GanttRibbonChartTests
         Assert.Equal("GetSize", sizeDropdown.Attribute("getSelectedItemIndex")?.Value);
         Assert.Equal("OnSizeChange", sizeDropdown.Attribute("onAction")?.Value);
         Assert.Equal(
-            ["A4Portrait", "A4Landscape", "Presentation16x9", "Presentation4x3"],
+            ["A4Portrait", "A4Landscape", "Presentation16x9", "Presentation4x3", "Custom"],
             sizeDropdown.Descendants(ns + "item").Select(element => element.Attribute("id")?.Value));
         Assert.DoesNotContain(
             group.Descendants(ns + "button"),
@@ -162,7 +162,7 @@ public sealed class GanttRibbonChartTests
             .Single(element => element.Attribute("id")?.Value == "ddnMargin");
         Assert.Equal("GetMargin", marginDropdown.Attribute("getSelectedItemIndex")?.Value);
         Assert.Null(marginDropdown.Attribute("getSelectedIndex"));
-        Assert.Equal("GetEnabled", marginDropdown.Attribute("getEnabled")?.Value);
+        Assert.Equal("GetMarginEnabled", marginDropdown.Attribute("getEnabled")?.Value);
         Assert.Equal("OnMarginChange", marginDropdown.Attribute("onAction")?.Value);
         var marginLabels = marginDropdown.Descendants(ns + "item")
             .Select(element => element.Attribute("label")?.Value)
@@ -176,6 +176,22 @@ public sealed class GanttRibbonChartTests
         Assert.Equal("GetMarginCm", marginCmBox.Attribute("getText")?.Value);
         Assert.Equal("GetMarginCmEnabled", marginCmBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnMarginCmChange", marginCmBox.Attribute("onChange")?.Value);
+
+        XElement sizeWidthBox = group.Descendants(ns + "editBox")
+            .Single(element => element.Attribute("id")?.Value == RibbonControlIds.SizeWidthCm);
+        Assert.Equal("GetSizeWidthCm", sizeWidthBox.Attribute("getText")?.Value);
+        Assert.Equal("GetSizeWidthCmEnabled", sizeWidthBox.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnSizeWidthCmChange", sizeWidthBox.Attribute("onChange")?.Value);
+
+        // R8.9 is width-only: the withdrawn height box and the custom readout must not
+        // reappear. Pinning their absence is what makes a re-introduction a test failure
+        // rather than a silent extra control.
+        Assert.DoesNotContain(
+            group.Descendants(ns + "editBox"),
+            element => (string?)element.Attribute("id") == "edtSizeHeightCm");
+        Assert.DoesNotContain(
+            group.Descendants(ns + "labelControl"),
+            element => (string?)element.Attribute("id") == "lblCustomSize");
     }
 
     /// <summary>
@@ -390,6 +406,71 @@ public sealed class GanttRibbonChartTests
         Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
     }
 
+    /// <summary>R8.9: selecting Custom enters the custom size mode.</summary>
+    [Fact]
+    public void OnSizeChange_custom_enters_custom_mode()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnSizeChange(null, SizePresets.CustomKey, service);
+
+        Assert.True(service.IsCustomSize());
+        Assert.True(SizePresets.IsCustom(service.GetPreset()));
+    }
+
+    /// <summary>R8.9: the Custom item is the fifth dropdown row.</summary>
+    [Fact]
+    public void GetSize_reports_the_custom_item_in_custom_mode()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetCustomSizeMode();
+
+        Assert.Equal(SizePresets.All.Count, GanttRibbon.GetSize(null, service));
+    }
+
+    /// <summary>R8.9: the width box is enabled only in Custom mode.</summary>
+    [Fact]
+    public void Custom_mode_enables_the_width_box()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        Assert.False(GanttRibbon.GetSizeWidthCmEnabled(null, service));
+
+        service.SetCustomSizeMode();
+
+        Assert.True(GanttRibbon.GetSizeWidthCmEnabled(null, service));
+    }
+
+    /// <summary>R8.9: a typed width is clamped to the approved band.</summary>
+    [Fact]
+    public void OnSizeWidthCmChange_clamps_to_the_band()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetCustomSizeMode();
+
+        GanttRibbon.OnSizeWidthCmChange(null, "500", service);
+
+        Assert.Equal(CustomSizeCm.MaximumCm, service.GetSizeWidthCm());
+    }
+
+    /// <summary>R8.9: a custom size disables both margin controls.</summary>
+    [Fact]
+    public void Custom_mode_disables_the_margin_gates()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetPreset(SizePresets.A4Portrait);
+        Assert.True(GanttRibbon.GetMarginEnabled(null, service));
+
+        service.SetCustomSizeMode();
+
+        Assert.False(GanttRibbon.GetMarginEnabled(null, service));
+        Assert.False(GanttRibbon.GetMarginCmEnabled(null, service));
+    }
+
     /// <summary>
     /// The preset pressed-state getter marks the active preset:
     /// the control whose id names the stored preset reports
@@ -434,10 +515,10 @@ public sealed class GanttRibbonChartTests
     }
 
     /// <summary>
-    /// The dropdown's items <em>are</em> the catalogue, in order. An item added
-    /// to one without the other would let <c>GetSize</c> name an index the
-    /// dropdown cannot resolve — the same "invalid value" the host reported for
-    /// a negative index.
+    /// The dropdown's items <em>are</em> the fixed catalogue in order, followed by
+    /// the single runtime Custom item. An item added to one without the other would
+    /// let <c>GetSize</c> name an index the dropdown cannot resolve — the same
+    /// "invalid value" the host reported for a negative index.
     /// </summary>
     [Fact]
     public void The_size_dropdown_items_are_the_size_preset_catalogue_in_order()
@@ -452,7 +533,7 @@ public sealed class GanttRibbonChartTests
                 .Select(item => (string?)item.Attribute("id") ?? string.Empty),
         ];
 
-        Assert.Equal(SizePresets.All.Select(preset => preset.Key), itemIds);
+        Assert.Equal([.. SizePresets.All.Select(preset => preset.Key), SizePresets.CustomKey], itemIds);
     }
 
     /// <summary>

@@ -192,6 +192,36 @@ public sealed class ConfigRepairerTests
     }
 
     /// <summary>
+    /// ADR-0073: a one-step settings-only bump uses the narrow writer, not the
+    /// full catalogue rewrite, so metric edits survive.
+    /// </summary>
+    [Fact]
+    public void Repair_uses_the_narrow_writer_for_an_additive_schema_upgrade()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.UpgradeAdditiveSchema()).Returns(ConfigWriteOutcome.Ok());
+
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build(
+        [
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.SchemaVersionOlderAdditive, "additive"),
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.CatalogueHashMismatch, "hash"),
+        ]);
+
+        ConfigRepairOutcome outcome = new ExcelConfigRepairer(
+            null,
+            writer.Object,
+            null,
+            guard.Object).Repair(plan, confirmRequiredChanges: false);
+
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(1, outcome.RepairedCount);
+        writer.Verify(w => w.UpgradeAdditiveSchema(), Times.Once);
+        writer.Verify(w => w.Write(), Times.Never);
+    }
+
+    /// <summary>
     /// An unattributed catalogue fault is repairable, because refusing it made Fix a no-op.
     /// </summary>
     /// <remarks>

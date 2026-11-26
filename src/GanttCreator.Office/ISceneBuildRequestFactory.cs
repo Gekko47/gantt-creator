@@ -48,6 +48,12 @@ public enum SceneBuildRequestRefusal
 
     /// <summary>The configured events carry no renderable date range.</summary>
     NoPlotRange = 7,
+
+    /// <summary>
+    /// The configured custom size is missing, unparsable, or outside the approved
+    /// centimetre band (R8.9, ADR-0072).
+    /// </summary>
+    InvalidCustomSize = 8,
 }
 
 /// <summary>

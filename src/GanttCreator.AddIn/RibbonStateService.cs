@@ -1018,7 +1018,7 @@ internal class RibbonStateService
     /// <param name="margin">The selected margin preset, or null when the combobox reported none.</param>
     internal void SetMargin(GanttPlotMargin? margin)
     {
-        if (margin is not GanttPlotMargin selected)
+        if (margin is not GanttPlotMargin selected || _state.IsCustomSize)
         {
             return;
         }
@@ -1031,7 +1031,7 @@ internal class RibbonStateService
         // shape as SetPreset, so the displayed figure and the
         // rendered plot cannot drift â€” R5.2 D4).
         _state = _state with { Margin = selected, MarginCm = customCm };
-        _state = _state with { PlotWidthPt = MeasurePlotWidth() };
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
 
         _ = TryPersistPlotLayout();
 
@@ -1048,6 +1048,11 @@ internal class RibbonStateService
     /// <param name="customCm">The custom margin, in centimetres.</param>
     internal void SetMarginCm(double customCm)
     {
+        if (_state.IsCustomSize)
+        {
+            return;
+        }
+
         double clamped = Math.Clamp(customCm, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.MaximumCustomCm);
         if (!double.IsFinite(clamped))
         {
@@ -1057,7 +1062,7 @@ internal class RibbonStateService
         _state = _state with { MarginCm = clamped };
         // Re-measure after the commit (see SetMargin) so the width
         // display tracks the new margin rather than the previous one.
-        _state = _state with { PlotWidthPt = MeasurePlotWidth() };
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
 
         _ = TryPersistPlotLayout();
 
@@ -1084,13 +1089,88 @@ internal class RibbonStateService
         // against the OLD snapshot, so measuring inside the same expression
         // would read the previous (possibly null) preset and leave the width
         // display one click behind. The height comes straight from the preset.
-        _state = _state with { Preset = preset };
-        _state = _state with { PlotWidthPt = MeasurePlotWidth(), PlotHeightPt = preset.HeightPt };
+        _state = _state with { Preset = preset, IsCustomSize = SizePresets.IsCustom(preset) };
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
 
         _ = TryPersistPlotLayout();
 
         Invalidate();
     }
+
+    /// <summary>
+    /// Switches the size to Custom, adopting the width the user is looking at (R8.9).
+    /// </summary>
+    /// <remarks>
+    /// The prefill is the <b>current composition width</b> — the active preset's width, or
+    /// the stored Custom width when Custom is already in force — so a 16:9 user lands on the
+    /// width they just saw rather than on a fixed default. A preset width always leaves a
+    /// readable plot (it renders today), so the prefill needs no workable-minimum clamp.
+    /// </remarks>
+    internal void SetCustomSizeMode()
+    {
+        double widthCm = _state.IsCustomSize
+            ? CustomSizeCm.ClampWidth(_state.SizeWidthCm)
+            : CurrentCompositionWidthCm();
+
+        _state = _state with
+        {
+            IsCustomSize = true,
+            SizeWidthCm = widthCm,
+            Preset = SizePresets.Custom(CustomSizeCm.FromClampedWidth(widthCm)),
+        };
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
+
+        _ = TryPersistPlotLayout();
+
+        Invalidate();
+    }
+
+    /// <summary>The composition width currently on screen, in centimetres.</summary>
+    private double CurrentCompositionWidthCm() =>
+        _state.Preset is { } preset
+            ? preset.WidthPt / (10.0 * SizePresets.PointsPerMillimetre)
+            : CustomSizeCm.DefaultWidthCm;
+
+    /// <summary>
+    /// Commits a custom width in centimetres, clamped to the band and to the smallest
+    /// width that leaves a readable plot (R8.9).
+    /// </summary>
+    /// <param name="widthCm">The width the user typed.</param>
+    /// <remarks>
+    /// One host measurement serves three jobs: the workable minimum, the new plot width
+    /// (computed from the measured panel, not re-measured) and the height mirror. A width
+    /// that cannot leave a readable plot is corrected here rather than surfacing as the
+    /// factory's shortfall refusal on the next refresh.
+    /// </remarks>
+    internal void SetSizeWidthCm(double widthCm)
+    {
+        PlotMeasurement measurement = MeasurePlot(_hiddenColumns);
+        double minimumCm = measurement.Measured
+            ? measurement.WorkableMinimumWidthPt / (10.0 * SizePresets.PointsPerMillimetre)
+            : CustomSizeCm.MinimumCm;
+        double clamped = Math.Max(
+            CustomSizeCm.ClampWidth(widthCm),
+            Math.Max(CustomSizeCm.MinimumCm, minimumCm));
+
+        SizePreset preset = SizePresets.Custom(CustomSizeCm.FromClampedWidth(clamped));
+        _state = WithMeasurement(_state with { SizeWidthCm = clamped, Preset = preset }, measurement);
+        _state = WithPlotWidth(
+            _state,
+            measurement.Measured
+                ? PlotGeometryResolver.MeasurePlotWidth(
+                    preset,
+                    measurement.PanelRightPt,
+                    measurement.LeftChromePt,
+                    measurement.RightChromePt)
+                : null);
+
+        _ = TryPersistPlotLayout();
+        Invalidate();
+    }
+
+    /// <summary>Applies a width the caller computed from a measurement.</summary>
+    private static RibbonState WithPlotWidth(RibbonState state, double? widthPt) =>
+        widthPt is { } width ? state with { PlotWidthPt = width } : state;
 
     /// <summary>
     /// Gets the date the start edit box displays for the ribbon
@@ -1162,6 +1242,39 @@ internal class RibbonStateService
     /// <returns>The stored preset, or null when the workbook names none.</returns>
     internal virtual SizePreset? GetPreset() => _state.Preset;
 
+    /// <summary>Gets whether the stored size is Custom (R8.9).</summary>
+    internal virtual bool IsCustomSize() => _state.IsCustomSize;
+
+    /// <summary>Gets the stored custom width in centimetres (R8.9).</summary>
+    internal virtual double GetSizeWidthCm() => _state.SizeWidthCm;
+
+    /// <summary>
+    /// Gets the measured live plot height in centimetres — the <c>SizeHeightCm</c> mirror
+    /// (R8.9 D11). It is a read of the measurement's cache, never an input.
+    /// </summary>
+    internal virtual double GetLiveHeightCm() => _state.SizeHeightCm;
+
+    /// <summary>Gets the composition width in points, for the readout.</summary>
+    internal virtual double? GetPageWidthPt() => _state.Preset?.WidthPt;
+
+    /// <summary>Gets the measured live plot height in points, for the readout.</summary>
+    internal virtual double? GetPageHeightPt() => _state.PlotHeightPt;
+
+    /// <summary>Gets the live composition width in centimetres, for the readout.</summary>
+    internal virtual string GetPageWidthCm() => FormatPageCm(_state.Preset?.WidthPt);
+
+    /// <summary>Gets the measured live plot height in centimetres, for the readout.</summary>
+    /// <remarks>
+    /// The height is a measurement (R8.9 D11), never a stored page dimension, so a preset
+    /// shows the height its rows actually produce. Empty until a measurement exists.
+    /// </remarks>
+    internal virtual string GetPageHeightCm() => FormatPageCm(_state.PlotHeightPt);
+
+    private static string FormatPageCm(double? pt) =>
+        pt is { } value
+            ? (value / (10.0 * SizePresets.PointsPerMillimetre)).ToString("F2", CultureInfo.InvariantCulture)
+            : string.Empty;
+
     /// <summary>
     /// Gets the plot width the resolver would derive, for the ribbon's
     /// read-only Width display (R5.2). A pure snapshot read.
@@ -1177,35 +1290,59 @@ internal class RibbonStateService
     internal virtual string GetPlotHeight() => _state.PlotHeightPt?.ToString("F2", CultureInfo.InvariantCulture) ?? string.Empty;
 
     /// <summary>
-    /// Recomputes the plot width the resolver would derive from the current
-    /// preset and a live panel measurement, so a preset change is reflected in
-    /// the read-only display without a Refresh. Uses the SAME subtraction
-    /// <see cref="PlotGeometryResolver.MeasurePlotWidth"/> performs, read once
-    /// through that authority so the displayed figure and the rendered plot
-    /// cannot drift. Returns null when no preset is known or the measurement
-    /// refuses, which the display renders as empty rather than a guess.
+    /// One panel measurement's facts: the plot width it produces, the measured row-driven
+    /// plot height, and the measured inputs a width change needs to recompute both.
     /// </summary>
-    /// <returns>The plot width in points, or null.</returns>
-    private double? MeasurePlotWidth() => MeasurePlotWidth(_hiddenColumns);
+    /// <param name="WidthPt">The plot width in points, or null when no measurement is possible.</param>
+    /// <param name="HeightPt">The measured live plot height in points, or null when none.</param>
+    /// <param name="PanelRightPt">The measured table right edge, in points.</param>
+    /// <param name="LeftChromePt">The left chrome the width subtraction uses, in points.</param>
+    /// <param name="RightChromePt">The right chrome (margin and outer padding), in points.</param>
+    /// <remarks>
+    /// The height is the live plot's own height, which is exactly what the owner ruled the
+    /// stored <c>SizeHeightCm</c> must mirror: "read live from the plot". It is not a page
+    /// dimension and not an export canvas.
+    /// </remarks>
+    private readonly record struct PlotMeasurement(
+        double? WidthPt,
+        double? HeightPt,
+        double PanelRightPt,
+        double LeftChromePt,
+        double RightChromePt)
+    {
+        /// <summary>Gets whether a panel measurement actually succeeded.</summary>
+        public bool Measured => PanelRightPt > 0;
+
+        /// <summary>
+        /// Gets the smallest composition width that still leaves a readable plot, in points.
+        /// </summary>
+        public double WorkableMinimumWidthPt =>
+            PanelRightPt + LeftChromePt + RightChromePt + PlotGeometryResolver.MinimumPlotWidthPt;
+    }
 
     /// <summary>
-    /// Measures the plot width for a candidate hidden set, so a toggle can state the width
-    /// it is about to produce without waiting for the next state refresh.
+    /// Measures the panel once and derives the plot width, the live plot height and the
+    /// inputs a width change needs to recompute both without a second host call.
     /// </summary>
     /// <param name="hidden">The hidden set the measurement must honour.</param>
-    /// <returns>The plot width in points, or null.</returns>
-    private double? MeasurePlotWidth(IReadOnlySet<string> hidden)
+    /// <returns>The measurement; <see cref="PlotMeasurement.Measured"/> is false when none.</returns>
+    /// <remarks>
+    /// The width uses the SAME subtraction <see cref="PlotGeometryResolver.MeasurePlotWidth"/>
+    /// performs, read through that authority so the displayed figure and the rendered plot
+    /// cannot drift. The height is the measured body height the resolver's live plot uses.
+    /// </remarks>
+    private PlotMeasurement MeasurePlot(IReadOnlySet<string> hidden)
     {
         SizePreset? preset = _state.Preset;
         if (preset is null)
         {
-            return null;
+            return default;
         }
 
         IPanelGridMeasurementPort? port = _panelGridMeasurementPort;
         if (port is null)
         {
-            return null;
+            return default;
         }
 
 #pragma warning disable CA1031
@@ -1214,29 +1351,60 @@ internal class RibbonStateService
             PanelGridOutcome outcome = port.Measure(MeasuredColumns(hidden));
             if (!outcome.Succeeded || outcome.Grid is null)
             {
-                return null;
+                return default;
             }
 
             PanelCellGrid grid = outcome.Grid;
-            double marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
+            double marginPt = _state.IsCustomSize
+                ? 0
+                : GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
             // Same chrome split the Refresh pipeline uses: the plot starts the measured
             // inset inside the anchor column (GanttSheetLayout.LivePlotOriginInsetPt, so
             // its shapes anchor in a visible column), so the R5.2 margin (twice) plus the
             // frame's outer padding rides on the right. Reading the SAME three numbers the
             // factory passes is what keeps the displayed width the width that is rendered.
             double chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
-            return PlotGeometryResolver.MeasurePlotWidth(
-                preset,
+            double leftChrome = GanttSheetLayout.LivePlotOriginInsetPt;
+            double rightChrome = (marginPt * 2) + chrome;
+            return new PlotMeasurement(
+                PlotGeometryResolver.MeasurePlotWidth(
+                    preset,
+                    grid.PanelRightPt,
+                    leftChromePt: leftChrome,
+                    rightChromePt: rightChrome),
+                grid.TotalRowHeightPt > 0 ? grid.TotalRowHeightPt : null,
                 grid.PanelRightPt,
-                leftChromePt: GanttSheetLayout.LivePlotOriginInsetPt,
-                rightChromePt: (marginPt * 2) + chrome);
+                leftChrome,
+                rightChrome);
         }
         catch
         {
-            return null;
+            return default;
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>
+    /// Applies one measurement to the snapshot, keeping previously known values when this
+    /// measurement produced none.
+    /// </summary>
+    /// <param name="state">The snapshot to update.</param>
+    /// <param name="measurement">The measurement to apply.</param>
+    /// <returns>The updated snapshot.</returns>
+    /// <remarks>
+    /// A refusal (no writer, no host, a transient COM failure) reports no height and no
+    /// width. Overwriting with null would blank a good readout and forget the height mirror,
+    /// so the merge keeps the last known value instead.
+    /// </remarks>
+    private static RibbonState WithMeasurement(RibbonState state, PlotMeasurement measurement) =>
+        state with
+        {
+            PlotWidthPt = measurement.WidthPt ?? state.PlotWidthPt,
+            PlotHeightPt = measurement.HeightPt ?? state.PlotHeightPt,
+            SizeHeightCm = measurement.HeightPt is { } heightPt && heightPt > 0
+                ? heightPt / (10.0 * SizePresets.PointsPerMillimetre)
+                : state.SizeHeightCm,
+        };
 
     /// <summary>
     /// The display names of the visible table columns, in panel order, for one hidden set.
@@ -1366,6 +1534,8 @@ internal class RibbonStateService
             ["Margin"] = _state.Margin.ToString(),
             ["MarginCm"] = _state.MarginCm.ToString("R", CultureInfo.InvariantCulture),
             ["SizePreset"] = _state.Preset?.Key ?? SizePresets.Default.Key,
+            ["SizeWidthCm"] = _state.SizeWidthCm.ToString("R", CultureInfo.InvariantCulture),
+            ["SizeHeightCm"] = _state.SizeHeightCm.ToString("R", CultureInfo.InvariantCulture),
         });
 
     /// <summary>
@@ -1659,6 +1829,8 @@ internal class RibbonStateService
                 SizePreset? preset = PlotRangeProjection.ReadPreset(settings);
                 GanttPeriodLabelFormat periodLabelFormat =
                     PlotRangeProjection.ReadPeriodLabelFormat(settings, timeScale);
+                double sizeWidthCm = PlotRangeProjection.ReadSizeWidthCm(settings);
+                double sizeHeightCm = PlotRangeProjection.ReadSizeHeightCm(settings);
 
                 // The dropdown's ticks and the width display must read the SAME hidden set.
                 // This was below the assignment, so PlotWidthPt was measured from the previous
@@ -1676,9 +1848,14 @@ internal class RibbonStateService
                     Margin = margin,
                     MarginCm = marginCm,
                     Preset = preset,
-                    PlotWidthPt = MeasurePlotWidth(),
-                    PlotHeightPt = preset?.HeightPt,
+                    IsCustomSize = SizePresets.IsCustom(preset),
+                    SizeWidthCm = sizeWidthCm,
+                    SizeHeightCm = sizeHeightCm,
                 };
+                // D10/D11: one measurement keeps the live width and height readouts current
+                // for presets too — a wider table shrinks the plot inside the same page —
+                // and refreshes the SizeHeightCm mirror.
+                _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
 
                 RefreshEffectivePlotDates(settings);
 
@@ -1859,6 +2036,11 @@ internal class RibbonStateService
             HasGroups: hasGroups);
 
         _state = CaptureSnapshot(_state, facts);
+
+        // Re-measure on every refresh so the plot width and height displays are the live
+        // numbers whatever the size mode is (R8.9 D10). A refusal keeps the previous value.
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
+
         Invalidate();
 
         // Owner ruling D-4: every chart refresh restores the add-in tab, so a
@@ -1881,6 +2063,7 @@ internal class RibbonStateService
             _state = CaptureSnapshot(
                 _state,
                 new SnapshotProbeFacts(SheetInitialised: _state.SheetInitialised));
+            _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
             Invalidate();
         }
         catch
@@ -2469,7 +2652,7 @@ internal class RibbonStateService
         }
 
         _hiddenColumns = new HashSet<string>(next, StringComparer.Ordinal);
-        _state = _state with { PlotWidthPt = MeasurePlotWidth(_hiddenColumns) };
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
 
         // A split button caches its primary and its menu rows separately: invalidate all
         // three surfaces together or the label/tick can keep saying the previous state.

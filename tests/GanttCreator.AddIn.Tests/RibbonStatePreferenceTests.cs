@@ -83,9 +83,122 @@ public sealed class RibbonStatePreferenceTests : IDisposable
         Assert.Equal(
             expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
             service.GetPlotWidth());
+
+        // R8.9 D11: the height display is the measured live plot height, not the preset's
+        // page height. The fixture body is one 12pt row, so that is what it must read.
         Assert.Equal(
-            SizePresets.A4Portrait.HeightPt.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            12.0.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
             service.GetPlotHeight());
+    }
+
+    /// <summary>R8.9: Custom mode builds the preset and freezes the margin.</summary>
+    [Fact]
+    public void Custom_mode_builds_the_preset_and_freezes_the_margin()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetMargin(GanttPlotMargin.Wide);
+
+        service.SetCustomSizeMode();
+
+        Assert.True(service.IsCustomSize());
+        Assert.True(SizePresets.IsCustom(service.GetPreset()));
+        Assert.Equal(CustomSizeCm.DefaultWidthCm, service.GetSizeWidthCm());
+
+        service.SetMargin(GanttPlotMargin.Narrow);
+        Assert.Equal(GanttPlotMargin.Wide, service.GetMargin());
+
+        service.SetMarginCm(3.0);
+        Assert.Equal(GanttPlotMargins.DefaultCustomCm, service.GetMarginCm());
+    }
+
+    /// <summary>R8.9: the custom width clamps to the approved band.</summary>
+    [Fact]
+    public void A_custom_width_clamps_to_the_band()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetCustomSizeMode();
+
+        service.SetSizeWidthCm(500);
+
+        Assert.Equal(CustomSizeCm.MaximumCm, service.GetSizeWidthCm());
+    }
+
+    /// <summary>R8.9 D5: selecting Custom adopts the width already on screen.</summary>
+    [Fact]
+    public void Selecting_custom_prefills_from_the_current_preset_width()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetPreset(SizePresets.Presentation16x9);
+
+        service.SetCustomSizeMode();
+
+        Assert.Equal(
+            SizePresets.Presentation16x9.WidthPt / (10.0 * SizePresets.PointsPerMillimetre),
+            service.GetSizeWidthCm(),
+            3);
+    }
+
+    /// <summary>
+    /// R8.9 D10/D11: one panel measurement fills the height mirror and the height readout
+    /// with the live plot height. There is no height input to compare against.
+    /// </summary>
+    [Fact]
+    public void A_panel_measurement_fills_the_height_mirror_and_the_readout()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        var grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Task", 300.0)],
+            [200.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        service.SetPanelGridMeasurementPort(new FakePanelGridMeasurementPort(grid));
+
+        service.SetCustomSizeMode();
+
+        Assert.Equal(
+            200.0 / (10.0 * SizePresets.PointsPerMillimetre),
+            service.GetLiveHeightCm(),
+            3);
+        Assert.Equal(
+            (200.0 / (10.0 * SizePresets.PointsPerMillimetre)).ToString(
+                "F2",
+                System.Globalization.CultureInfo.InvariantCulture),
+            service.GetPageHeightCm());
+    }
+
+    /// <summary>
+    /// R8.9 D2: a width that cannot leave a readable plot is raised to the workable minimum,
+    /// computed from the measured table plus the chrome plus the resolver's minimum, so the
+    /// next refresh resolves instead of refusing.
+    /// </summary>
+    [Fact]
+    public void A_narrow_custom_width_is_raised_to_the_workable_minimum()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        var grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Task", 300.0)],
+            [12.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        service.SetPanelGridMeasurementPort(new FakePanelGridMeasurementPort(grid));
+        service.SetCustomSizeMode();
+
+        service.SetSizeWidthCm(1);
+
+        double expectedPt =
+            grid.PanelRightPt
+            + GanttSheetLayout.LivePlotOriginInsetPt
+            + GanttCatalogues.MetricDefault("ChartOuterPaddingPt")
+            + PlotGeometryResolver.MinimumPlotWidthPt;
+        Assert.Equal(
+            expectedPt / (10.0 * SizePresets.PointsPerMillimetre),
+            service.GetSizeWidthCm(),
+            3);
     }
 
     /// <summary>

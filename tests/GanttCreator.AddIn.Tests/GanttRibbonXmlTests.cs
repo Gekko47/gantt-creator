@@ -451,6 +451,11 @@ public sealed class GanttRibbonXmlTests
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
+                // R8.9: the custom width box is gated on the same workbook +
+                // initialised fact plus Custom mode itself, so it joins the pinned
+                // set in document order before the margin box. The height box was
+                // withdrawn with the width-only ruling.
+                RibbonControlIds.SizeWidthCm,
                 RibbonControlIds.MarginCm,
             ],
             gatedIds);
