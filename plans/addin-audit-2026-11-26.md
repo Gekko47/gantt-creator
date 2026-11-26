@@ -189,10 +189,13 @@ Finding 7 closed with slice 4: AddIn merged coverage went 74.17 → 78.82 % line
 
 ### Slice 8 — split the two oversized test classes (finding 8)
 
-**Goal.** [`GanttRibbonTests.cs`](../tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs) (2,625 lines,
-~94 facts) and [`RibbonStateServiceTests.cs`](../tests/GanttCreator.AddIn.Tests/RibbonStateServiceTests.cs)
-(1,979 lines, ~95 facts) become four topic classes each, in the same xUnit collection. No test method
-changes, no assertion changes, no production change.
+**Goal.** `GanttRibbonTests.cs` (2,625 lines, ~94 facts) and
+[`RibbonStateServiceTests.cs`](../tests/GanttCreator.AddIn.Tests/RibbonStateServiceTests.cs)
+(1,979 lines, ~95 facts) become topic classes each, in the same xUnit collection. No test method
+changes, no assertion changes, no production change. The ribbon half is finished: the file is now
+[`GanttRibbonXmlTests.cs`](../tests/GanttCreator.AddIn.Tests/GanttRibbonXmlTests.cs),
+[`GanttRibbonChartTests.cs`](../tests/GanttCreator.AddIn.Tests/GanttRibbonChartTests.cs) and
+[`GanttRibbonCommandTests.cs`](../tests/GanttCreator.AddIn.Tests/GanttRibbonCommandTests.cs).
 
 **The constraint that shapes the plan.** `RibbonTestCollectionGuardTests` reads every top-level
 `*.cs` and fails a file that names `RibbonStateService`, `GanttRibbon.`, `DiagnosticsService.Instance`
@@ -234,13 +237,20 @@ Ribbon moves, one commit each:
     neither can reach the other's private nested copy. Proof: suite 983, the distinct `--list-tests`
     name set identical to the pre-split baseline apart from that baseline's own `csproj`/`dll`
     artefacts, and the attribute arithmetic holds — HEAD's 60 facts = 44 left + 16 moved.
-4c. Remaining: XML contracts (~700 lines), then the getters and surface (~350).
+4c. Done. XML and surface contracts — 32 facts — in `GanttRibbonXmlTests`; the remaining 12
+    routing and getter facts (`OnDiagnosticsClick`, `OnRepairConfigClick`, `ResolveCommandName`,
+    `OnLoad`, `GetEnabled`, `GetVisible` fail-closed) joined `GanttRibbonCommandTests`, so
+    `GanttRibbonTests.cs` is deleted rather than renamed. The three topic classes hold all 94 facts
+    — 34 chart, 32 XML, 28 command — and the XML file carries the file-scoped `CA2000` suppression
+    the original had. Proof: suite 983, distinct name set identical, and `docs/REPO-MAP.md` plus
+    the four historical `STATUS.md` links now name the topic classes instead of the deleted file.
 5. Move `RibbonStateServiceTests` topic by topic: snapshot and modes (~600), gates and activation
    (~350), capture and invalidation (~300), preferences and dialogs (~600). The three nested stubs
    (`StubThemeDialogRibbonStateService`, `HostApplicationRibbonStateService`,
    `FakePanelGridMeasurementPort`) move with the topic that uses them, or into the support type when
    two topics use one.
-6. Rename the leftover file only after its last move, in its own commit.
+6. The ribbon leftover needed no rename: it was deleted once its last fact moved, which is the
+   equivalent. The same rule still applies to `RibbonStateServiceTests`.
 
 **Tooling caution.** A name-driven mover was written and abandoned: on its first real run it reported
 a method missing that was present, and the working tree afterwards matched HEAD exactly, so the

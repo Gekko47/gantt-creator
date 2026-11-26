@@ -142,10 +142,12 @@ handled by `GanttRibbon.OnPlotStartCalendarClick`/`OnPlotFinishCalendarClick`. T
 `TryPersistPlotRange` (four keys) and `TryPersistPlotLayout` (five keys) through
 `TryWriteSettings`. Tests: `tests/GanttCreator.AddIn.Tests/PlotDatePickerTests.cs`,
 `tests/GanttCreator.Office.ContractTests/GanttRefreshOutcomePlotRangeTests.cs`, plus the pins in
-`tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs`.
+`tests/GanttCreator.AddIn.Tests/GanttRibbonXmlTests.cs` and
+`tests/GanttCreator.AddIn.Tests/GanttRibbonChartTests.cs` (the ribbon test class was split by topic
+in slice 8: XML contracts, chart and plot, command routing).
 
 R5.9's presentation delta is pinned in
-`tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs` (keytip presence and
+`tests/GanttCreator.AddIn.Tests/GanttRibbonXmlTests.cs` (keytip presence and
 uniqueness, label coverage, offline-only help text). R5.11's alignment
 guarantee is pinned by `tests/GanttCreator.Core.Tests/GanttRowValidatorTests.cs`
 (a blank row is skipped, produces no event, and later rows keep their numbers)
