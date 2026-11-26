@@ -678,6 +678,9 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>The id, or null when it cannot be read.</returns>
     private static string? TryReadControlId(IRibbonControl? control)
     {
+        // CA1031: this reads Excel's own COM ribbon object, not the state service, so
+        // RibbonGetter does not apply; a probe failure degrades to an absent id and
+        // each caller then uses its fallback command name.
 #pragma warning disable CA1031
         try
         {
@@ -1175,19 +1178,9 @@ public class GanttRibbon : ExcelRibbon
     internal static bool GetPlotStartAuto(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
-        ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return stateService.IsPlotStartAuto();
-        }
-        catch
-        {
-            // Fail open: a checked AUTO box matches the initial automatic
-            // state, so a probe failure shows the safe default.
-            return true;
-        }
-#pragma warning restore CA1031
+        // Fail open: a checked AUTO box matches the initial automatic state, so a
+        // probe failure shows the safe default.
+        return RibbonGetter.Read(stateService, service => service.IsPlotStartAuto(), true);
     }
 
     /// <summary>
@@ -1335,6 +1328,9 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: the read composes two snapshot values through a private projection,
+        // so the safe value is that projection's own default row rather than a
+        // constant; the guard stays next to that reasoning.
 #pragma warning disable CA1031
         try
         {
@@ -1637,6 +1633,9 @@ public class GanttRibbon : ExcelRibbon
         RibbonStateService stateService)
     {
         ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: this is a mutating command, not a getter — the state service reports
+        // its own refusals through the status bar — so the boundary degrades to no
+        // change rather than to a value.
 #pragma warning disable CA1031
         try
         {
@@ -1671,6 +1670,9 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: this is a mutating command, not a getter — the state service reports
+        // its own refusals through the status bar — so the boundary degrades to no
+        // change rather than to a value.
 #pragma warning disable CA1031
         try
         {
@@ -1858,6 +1860,9 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: this is a mutating command, not a getter — the state service applies
+        // the setting through its own ports and presents its own refusals — so the
+        // boundary degrades to no change rather than to a value.
 #pragma warning disable CA1031
         try
         {
@@ -1890,17 +1895,12 @@ public class GanttRibbon : ExcelRibbon
     internal static int GetMargin(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
-        ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
-        {
-            return (int)stateService.GetMargin();
-        }
-        catch
-        {
-            return (int)GanttPlotMargins.Default;
-        }
-#pragma warning restore CA1031
+        // The dropdown can only report an index its items contain, so a probe
+        // failure falls back to the default margin preset.
+        return RibbonGetter.Read(
+            stateService,
+            service => (int)service.GetMargin(),
+            (int)GanttPlotMargins.Default);
     }
 
     /// <summary>
@@ -1968,6 +1968,9 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: this is a mutating command, not a getter — the state service applies
+        // the setting through its own ports and presents its own refusals — so the
+        // boundary degrades to no change rather than to a value.
 #pragma warning disable CA1031
         try
         {
@@ -2122,6 +2125,9 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: this is a mutating command, not a getter — the state service applies
+        // the setting through its own ports and presents its own refusals — so the
+        // boundary degrades to no change rather than to a value.
 #pragma warning disable CA1031
         try
         {
@@ -2521,6 +2527,9 @@ public class GanttRibbon : ExcelRibbon
             return 0;
         }
 
+        // CA1031: the read is a multi-statement index search with an early return,
+        // not one state-service read, so RibbonGetter.Read cannot express it; a probe
+        // failure degrades to index zero, which the dropdown's items always contain.
 #pragma warning disable CA1031
         try
         {
