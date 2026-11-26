@@ -210,22 +210,22 @@ internal sealed record RibbonState(
     /// because there is no preset to measure against yet.
     /// </summary>
     internal static RibbonState Initial { get; } = new(
-        false,
-        false,
-        false,
-        true,
-        true,
-        string.Empty,
-        string.Empty,
-        string.Empty,
-        string.Empty,
-        GanttTimeScale.Month,
-        GanttPlotMargin.Normal,
-        GanttPlotMargins.DefaultCustomCm,
-        null,
-        null,
-        null,
-        GanttPeriodLabelFormat.MMM);
+        HasActiveWorkbook: false,
+        LogAvailable: false,
+        SheetInitialised: false,
+        PlotStartAuto: true,
+        PlotFinishAuto: true,
+        PlotStartDate: string.Empty,
+        PlotFinishDate: string.Empty,
+        EffectivePlotStartDate: string.Empty,
+        EffectivePlotFinishDate: string.Empty,
+        TimeScale: GanttTimeScale.Month,
+        Margin: GanttPlotMargin.Normal,
+        MarginCm: GanttPlotMargins.DefaultCustomCm,
+        Preset: null,
+        PlotWidthPt: null,
+        PlotHeightPt: null,
+        PeriodLabelFormat: GanttPeriodLabelFormat.MMM);
 
     /// <summary>
     /// Gets whether the control with <paramref name="controlId"/> is enabled
