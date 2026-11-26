@@ -24,6 +24,24 @@ internal sealed record SnapshotSources(
     CommandBoundary CommandBoundary);
 
 /// <summary>
+/// The workbook facts one capture is built from. Every member is nullable: null
+/// means not determinable, and the published value stands (snapshot stickiness).
+/// </summary>
+/// <param name="SheetInitialised">Whether the Gantt table is readable, or null when not determinable.</param>
+/// <param name="ConfigurationPresent">Whether the configuration worksheet exists, or null when not determinable.</param>
+/// <param name="GanttSheetPresent">Whether a standard-labelled Gantt sheet exists, or null when not determinable.</param>
+/// <param name="CriticalIntervalParentAvailable">Whether a row can own a Critical Interval, or null when not determinable.</param>
+/// <param name="ActiveSheetIsGanttSheet">Whether the active sheet carries the table, or null when not determinable.</param>
+/// <param name="HasGroups">Whether any row names a parent, or null when not determinable.</param>
+internal readonly record struct SnapshotProbeFacts(
+    bool? SheetInitialised,
+    bool? ConfigurationPresent = null,
+    bool? GanttSheetPresent = null,
+    bool? CriticalIntervalParentAvailable = null,
+    bool? ActiveSheetIsGanttSheet = null,
+    bool? HasGroups = null);
+
+/// <summary>
 /// Builds one <see cref="RibbonState"/> snapshot from the published snapshot and
 /// the freshly probed facts.
 /// </summary>
@@ -40,22 +58,12 @@ internal static class RibbonSnapshotFactory
     /// </summary>
     /// <param name="sources">The live inputs to read.</param>
     /// <param name="previous">The snapshot currently published.</param>
-    /// <param name="sheetInitialised">Whether the Gantt table is readable, or null when not determinable.</param>
-    /// <param name="configurationPresent">Whether the configuration worksheet exists, or null when not determinable.</param>
-    /// <param name="ganttSheetPresent">Whether a standard-labelled Gantt sheet exists, or null when not determinable.</param>
-    /// <param name="criticalIntervalParentAvailable">Whether a row can own a Critical Interval, or null when not determinable.</param>
-    /// <param name="activeSheetIsGanttSheet">Whether the active sheet carries the table, or null when not determinable.</param>
-    /// <param name="hasGroups">Whether any row names a parent, or null when not determinable.</param>
+    /// <param name="facts">The freshly probed workbook facts; null means not determinable.</param>
     /// <returns>The snapshot to publish.</returns>
     internal static RibbonState Capture(
         SnapshotSources sources,
         RibbonState previous,
-        bool? sheetInitialised,
-        bool? configurationPresent = null,
-        bool? ganttSheetPresent = null,
-        bool? criticalIntervalParentAvailable = null,
-        bool? activeSheetIsGanttSheet = null,
-        bool? hasGroups = null)
+        SnapshotProbeFacts facts)
     {
         ArgumentNullException.ThrowIfNull(sources);
         ArgumentNullException.ThrowIfNull(previous);
@@ -73,18 +81,18 @@ internal static class RibbonSnapshotFactory
             // is built. Each fact falls back to the published value so a
             // transient failure cannot flip the visible surface.
             bool workbookPresent = hasActiveWorkbook ?? previous.HasActiveWorkbook;
-            bool initialised = sheetInitialised ?? previous.SheetInitialised;
-            bool configPresent = configurationPresent ?? previous.ConfigurationPresent;
-            bool ganttPresent = ganttSheetPresent ?? previous.GanttSheetPresent;
+            bool initialised = facts.SheetInitialised ?? previous.SheetInitialised;
+            bool configPresent = facts.ConfigurationPresent ?? previous.ConfigurationPresent;
+            bool ganttPresent = facts.GanttSheetPresent ?? previous.GanttSheetPresent;
             bool criticalAvailable =
-                criticalIntervalParentAvailable ?? previous.CriticalIntervalParentAvailable;
+                facts.CriticalIntervalParentAvailable ?? previous.CriticalIntervalParentAvailable;
 
             // R5.16b: both new facts are sticky like every other captured fact:
             // an unreadable table keeps the published value instead of greying
             // or un-greying the whole surface mid-session.
             bool activeSheetIsGantt =
-                activeSheetIsGanttSheet ?? previous.ActiveSheetIsGanttSheet;
-            bool groupsPresent = hasGroups ?? previous.HasGroups;
+                facts.ActiveSheetIsGanttSheet ?? previous.ActiveSheetIsGanttSheet;
+            bool groupsPresent = facts.HasGroups ?? previous.HasGroups;
             RibbonMode mode = ResolveMode(
                 workbookPresent,
                 initialised,

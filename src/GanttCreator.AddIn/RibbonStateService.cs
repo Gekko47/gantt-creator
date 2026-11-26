@@ -1942,14 +1942,15 @@ internal class RibbonStateService
 #pragma warning restore CA1031
         }
 
-        _state = CaptureSnapshot(
-            _state,
-            sheetInitialised,
-            configurationPresent,
-            ganttSheetPresent,
-            criticalIntervalParentAvailable,
-            activeSheetIsGanttSheet,
-            hasGroups);
+        SnapshotProbeFacts facts = new(
+            SheetInitialised: sheetInitialised,
+            ConfigurationPresent: configurationPresent,
+            GanttSheetPresent: ganttSheetPresent,
+            CriticalIntervalParentAvailable: criticalIntervalParentAvailable,
+            ActiveSheetIsGanttSheet: activeSheetIsGanttSheet,
+            HasGroups: hasGroups);
+
+        _state = CaptureSnapshot(_state, facts);
         Invalidate();
 
         // Owner ruling D-4: every chart refresh restores the add-in tab, so a
@@ -1969,7 +1970,9 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            _state = CaptureSnapshot(_state, _state.SheetInitialised);
+            _state = CaptureSnapshot(
+                _state,
+                new SnapshotProbeFacts(SheetInitialised: _state.SheetInitialised));
             Invalidate();
         }
         catch
@@ -2845,14 +2848,7 @@ internal class RibbonStateService
         }
     }
 
-    private RibbonState CaptureSnapshot(
-        RibbonState previous,
-        bool? sheetInitialised,
-        bool? configurationPresent = null,
-        bool? ganttSheetPresent = null,
-        bool? criticalIntervalParentAvailable = null,
-        bool? activeSheetIsGanttSheet = null,
-        bool? hasGroups = null)
+    private RibbonState CaptureSnapshot(RibbonState previous, SnapshotProbeFacts facts)
     {
         SnapshotSources sources = new(
             ApplicationAdapter: _applicationAdapter,
@@ -2863,15 +2859,7 @@ internal class RibbonStateService
             LastTableRows: _lastTableRows,
             CommandBoundary: _commandBoundary);
 
-        return RibbonSnapshotFactory.Capture(
-            sources,
-            previous,
-            sheetInitialised,
-            configurationPresent,
-            ganttSheetPresent,
-            criticalIntervalParentAvailable,
-            activeSheetIsGanttSheet,
-            hasGroups);
+        return RibbonSnapshotFactory.Capture(sources, previous, facts);
     }
 
     /// <summary>
@@ -2927,7 +2915,9 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            _state = CaptureSnapshot(_state, _state.SheetInitialised);
+            _state = CaptureSnapshot(
+                _state,
+                new SnapshotProbeFacts(SheetInitialised: _state.SheetInitialised));
             InvalidateControl(RibbonControlIds.DescriptionLabel);
             InvalidateControl(RibbonControlIds.DateLabel);
             InvalidateControl(RibbonControlIds.CustomStyle);
