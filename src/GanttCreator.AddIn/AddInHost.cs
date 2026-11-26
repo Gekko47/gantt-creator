@@ -181,10 +181,13 @@ public sealed class AddInHost(
             RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031
-        catch
+        catch (Exception exception)
 #pragma warning restore CA1031
         {
-            // Intentionally empty: state-service arming degrades silently.
+            // Armed nothing: every gated command will stay disabled. Record it
+            // once, so a dead ribbon has evidence instead of silence.
+            CommandBoundary.Instance.WriteTechnicalRecord(
+                $"gantt.addin arm failed type={exception.GetType().FullName}");
         }
 
         // ExcelDnaUtil.Application may be null during AutoOpen (before Excel-DNA

@@ -104,6 +104,34 @@ public class AddInHostTests
     }
 
     [Fact]
+    public void AutoOpen_records_one_technical_record_when_arming_the_ribbon_state_fails()
+    {
+        // The arming block is the only wiring for every gate port. A silent
+        // failure there leaves a dead add-in with no evidence to act on.
+        var log = new CapturingLog();
+        var host = new AddInHost(
+            () => TestIdentity,
+            () => log,
+            () => throw new InvalidOperationException("adapter unavailable"));
+
+        try
+        {
+            Exception? thrown = Record.Exception(host.AutoOpen);
+
+            Assert.Null(thrown);
+            Assert.Contains(
+                log.Records,
+                record => record.Contains("gantt.addin arm failed", StringComparison.Ordinal));
+        }
+        finally
+        {
+            RibbonStateService.Reset();
+            CommandBoundary.Reset();
+            DiagnosticsService.Reset();
+        }
+    }
+
+    [Fact]
     public void AutoClose_writes_exactly_one_close_record_and_disposes_the_log()
     {
         var log = new CapturingLog();
