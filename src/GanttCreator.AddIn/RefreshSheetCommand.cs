@@ -203,6 +203,7 @@ internal static class RefreshSheetCommand
         }
 
         FinishRefresh(
+            RibbonStateService.Instance,
             outcome,
             commandStarted,
             refreshCompleted,
@@ -250,6 +251,7 @@ internal static class RefreshSheetCommand
         }
 
         FinishRefresh(
+            RibbonStateService.Instance,
             outcome,
             commandStarted,
             refreshCompleted,
@@ -265,6 +267,10 @@ internal static class RefreshSheetCommand
     /// the three trace records. The two paths differ only in the presenter, the
     /// AUTO date repaint, and whether the selection-gated controls are re-asked.
     /// </summary>
+    /// <param name="stateService">
+    /// The ribbon state that receives the outcome. Passed rather than read from the singleton so a
+    /// test can assert the effects of the postlude without an Excel host.
+    /// </param>
     /// <param name="outcome">The pipeline outcome being presented.</param>
     /// <param name="commandStarted">The timestamp taken at the command's first line.</param>
     /// <param name="refreshCompleted">The timestamp taken when the pipeline returned.</param>
@@ -272,7 +278,9 @@ internal static class RefreshSheetCommand
     /// <param name="automatic">Whether this was a scheduled pass rather than a click.</param>
     /// <param name="updateEffectivePlotDates">Whether the AUTO date row is repainted from the outcome.</param>
     /// <param name="invalidateSelectionGates">Whether the selection-gated controls are re-asked.</param>
-    private static void FinishRefresh(
+    /// <exception cref="ArgumentNullException"><paramref name="stateService"/> is <see langword="null"/>.</exception>
+    internal static void FinishRefresh(
+        RibbonStateService stateService,
         GanttRefreshOutcome outcome,
         long commandStarted,
         long refreshCompleted,
@@ -281,23 +289,25 @@ internal static class RefreshSheetCommand
         bool updateEffectivePlotDates,
         bool invalidateSelectionGates)
     {
+        ArgumentNullException.ThrowIfNull(stateService);
+
         long ribbonStarted = Stopwatch.GetTimestamp();
-        RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
+        stateService.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service so the warnings panel can
         // surface them. Row-level validation issues are reported through row/cell fill
         // colours; scene-level warnings surface here.
         if (outcome.Succeeded)
         {
-            RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
-            RibbonStateService.Instance.MarkChartRenderCurrent();
+            stateService.UpdateWarnings(outcome.Warnings);
+            stateService.MarkChartRenderCurrent();
 
             // R5.1a: an AUTO end's displayed date comes from the range the chart just
             // used. Reading it off the outcome costs two comparisons and only invalidates
             // the boxes whose text actually moved.
             if (updateEffectivePlotDates)
             {
-                RibbonStateService.Instance.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
+                stateService.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
             }
 
             RibbonStateService.ClearStatusBar();
@@ -306,13 +316,13 @@ internal static class RefreshSheetCommand
             // re-evaluates against the post-refresh sheet state.
             if (invalidateSelectionGates)
             {
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DescriptionLabel);
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DateLabel);
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.CustomStyle);
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveUp);
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
-                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
+                stateService.InvalidateControl(RibbonControlIds.DescriptionLabel);
+                stateService.InvalidateControl(RibbonControlIds.DateLabel);
+                stateService.InvalidateControl(RibbonControlIds.CustomStyle);
+                stateService.InvalidateControl(RibbonControlIds.MoveUp);
+                stateService.InvalidateControl(RibbonControlIds.MoveDown);
+                stateService.InvalidateControl(RibbonControlIds.PromoteToParent);
+                stateService.InvalidateControl(RibbonControlIds.DemoteToChild);
             }
         }
         else
@@ -327,7 +337,7 @@ internal static class RefreshSheetCommand
         // selection restore is itself a Range.Select()). It runs on a refused refresh
         // too, and is a no-op unless the surface is Ready on the Gantt sheet.
         long tabsStarted = Stopwatch.GetTimestamp();
-        RibbonStateService.Instance.ActivateGanttTab();
+        stateService.ActivateGanttTab();
 
         TracePostSteps(refreshCompleted, ribbonStarted, tabsStarted);
         TracePostPass(refreshCompleted);

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Office;
 using Moq;
@@ -214,35 +216,101 @@ public class RefreshSheetCommandTests
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// Both refresh paths mark the chart current after a completed pass (R8.8). The
-    /// marker lives in the postlude both paths share, so the pin asserts the stronger
-    /// fact: each entry point reaches <c>FinishRefresh</c>, and that postlude publishes
-    /// the marker beside the warnings, exactly once.
+    /// A completed pass marks the chart current for Export PNG, clears the status bar and
+    /// re-asks the selection gates (R8.8).
+    /// </summary>
+    /// <remarks>
+    /// This replaces a source-text fact that grepped the postlude for
+    /// <c>MarkChartRenderCurrent</c>. That pin proved the strings existed, not that the pass ran:
+    /// the postlude body had no coverage at all. These facts execute it.
+    /// </remarks>
+    [Fact]
+    public void A_completed_pass_marks_the_chart_current_and_clears_the_status_bar()
+    {
+        var adapter = new TestExcelApplicationAdapter();
+        var ribbon = new Mock<IRibbonUI>();
+        RibbonStateService service = FreshService(adapter, ribbon);
+        long started = Stopwatch.GetTimestamp();
+
+        try
+        {
+            RefreshSheetCommand.FinishRefresh(
+                service,
+                Success(),
+                started,
+                Stopwatch.GetTimestamp(),
+                _ => { },
+                automatic: true,
+                updateEffectivePlotDates: true,
+                invalidateSelectionGates: true);
+
+            Assert.True(service.ChartRenderCurrent);
+            Assert.Equal(1, adapter.ClearStatusBarCount);
+            Assert.Equal(7, InvalidationCount(ribbon));
+        }
+        finally
+        {
+            RibbonStateService.Reset();
+        }
+    }
+
+    /// <summary>
+    /// A refused pass presents the orchestrator's own sentence exactly once and leaves the chart
+    /// not current, so Export PNG keeps refusing until a pass succeeds.
     /// </summary>
     [Fact]
-    public void Both_refresh_paths_mark_the_chart_current_after_a_completed_pass()
+    public void A_refused_pass_presents_once_and_leaves_the_chart_not_current()
     {
-        string source = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "src", "GanttCreator.AddIn", "RefreshSheetCommand.cs"));
+        var adapter = new TestExcelApplicationAdapter();
+        var ribbon = new Mock<IRibbonUI>();
+        RibbonStateService service = FreshService(adapter, ribbon);
+        var presented = new List<string>();
+        long started = Stopwatch.GetTimestamp();
 
-        int manual = source.IndexOf("internal static void RunForExcel()", StringComparison.Ordinal);
-        int automatic = source.IndexOf("internal static void RunSilentForExcel()", StringComparison.Ordinal);
-        int shared = source.IndexOf("private static void FinishRefresh(", StringComparison.Ordinal);
-        Assert.True(manual > 0, "The explicit refresh entry point must exist.");
-        Assert.True(automatic > manual, "The automatic refresh entry point must exist.");
-        Assert.True(shared > automatic, "The shared postlude must exist.");
+        try
+        {
+            RefreshSheetCommand.FinishRefresh(
+                service,
+                Refused(GanttRefreshRefusal.BlockingValidationErrors),
+                started,
+                Stopwatch.GetTimestamp(),
+                presented.Add,
+                automatic: true,
+                updateEffectivePlotDates: true,
+                invalidateSelectionGates: true);
 
-        string manualBody = source[manual..automatic];
-        string automaticBody = source[automatic..shared];
-        Assert.Contains("FinishRefresh(", manualBody, StringComparison.Ordinal);
-        Assert.Contains("FinishRefresh(", automaticBody, StringComparison.Ordinal);
-
-        int marked = source.IndexOf("MarkChartRenderCurrent", shared, StringComparison.Ordinal);
-        Assert.True(marked > shared, "The shared postlude must mark the chart current.");
-        Assert.Equal(
-            -1,
-            source.IndexOf("MarkChartRenderCurrent", marked + 1, StringComparison.Ordinal));
+            Assert.False(service.ChartRenderCurrent);
+            Assert.Equal("the chart could not be refreshed", Assert.Single(presented));
+            Assert.Equal(0, adapter.ClearStatusBarCount);
+            Assert.Equal(0, InvalidationCount(ribbon));
+        }
+        finally
+        {
+            RibbonStateService.Reset();
+        }
     }
+
+    /// <summary>Creates a fresh session service over the supplied substitutes.</summary>
+    /// <param name="adapter">The Excel application substitute.</param>
+    /// <param name="ribbon">The ribbon substitute.</param>
+    /// <returns>The service the postlude writes to.</returns>
+    private static RibbonStateService FreshService(
+        TestExcelApplicationAdapter adapter,
+        Mock<IRibbonUI> ribbon)
+    {
+        RibbonStateService.Reset();
+        RibbonStateService service = RibbonStateService.Instance;
+        service.SetApplicationAdapter(adapter);
+        service.SetRibbon(ribbon.Object);
+        return service;
+    }
+
+    /// <summary>Counts the selection-gate invalidations the postlude requested.</summary>
+    /// <param name="ribbon">The ribbon substitute.</param>
+    /// <returns>The number of <see cref="IRibbonUI.InvalidateControl"/> calls.</returns>
+    private static int InvalidationCount(Mock<IRibbonUI> ribbon) =>
+        ribbon.Invocations.Count(invocation =>
+            invocation.Method.Name == nameof(IRibbonUI.InvalidateControl));
 
     private static string FindRepositoryRoot()
     {
