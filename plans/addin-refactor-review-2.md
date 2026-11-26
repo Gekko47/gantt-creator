@@ -74,27 +74,48 @@ failure path ships with a test that fires it.
 
 Fix: two facts — the safe value is returned when the read throws, and the null guards hold.
 
-### Finding 3 — the service still carries the scheduling cohort (P2, nice-to-have, own change)
+### Finding 3 — the service still carries the scheduling cohort (P2, resolved 2026-11-26)
 
 Activation, the three subscriptions, the scheduler lifetime, teardown, the theme and chart-title
 dialogs, the PNG preferences, the warnings panel, the status bar and the `GetEnabled` truth table
 remain. The file is still the edit point for six unrelated features.
 
-Fix: the plan's D5 as its own change, guarded by `AddInHostTests` plus the Office gate. Do not fold
-it into a bug fix.
+What landed: `RibbonEventWiring` owns the four Excel connections and the coalescing scheduler —
+attach, replace, detach once, and a refused subscribe degrades to an inert connection instead of
+failing the load. The handlers stay on the service, because each transitions state the service
+owns, so `Activate` and `Teardown` delegate to one wiring object and nothing else moved. The
+service is 3,251 → 3,054 lines with 19 → 12 local `CA1031` guards, five new facts pin the seam in
+`RibbonEventWiringTests`, and no existing test changed.
 
-### Findings 4–8 (P3, payback on next touch)
+Still open: the theme and chart-title dialogs, the PNG preferences, the warnings panel, the status
+bar and the `GetEnabled` truth table remain on the service. Each owns its own state, so each is a
+separate seam and a separate work item.
 
-- Selection gate copied four times: `SetDescriptionLabelCommand`, `SetStyleKeyCommand`, and the two
-  date-label commands.
-- Dependency ladder copied twice: `CopyEditableCommand`, `SendToPowerPointCommand`; one `Require`
-  helper with the refusal factory removes a 40-line copy.
-- `BuildThemeEditRequest` is still one method with four diffing loops; plan E1 needs
-  `CustomStyleState` and `EntityStyleColours` promoted before a separate type can exist.
-- Ten getter guards remain (for example `GetPlotStartAuto:1175`, `GetTimeScale:1334`,
-  `GetMargin:1890`); each should state why the single-read helper does not fit.
-- Static session state in `RefreshSheetCommand` (protection window, shape cache, arming) is not
-  reset by `AutoClose`; low harm today because the Excel application outlives the add-in.
+`verify-office.ps1` was **Not run** — the plan makes the live host gate this slice's acceptance and
+that gate needs the human machine.
+
+### Findings 4–8 — all resolved or assessed 2026-11-26
+
+- Selection gate copied four times → `CommandPreconditions.TryRequireSingleBodyRow`, with each
+  command keeping its own translator and five facts pinning the shared half.
+- Dependency ladder copied twice → **assessed and deliberately not implemented.** The two ladders
+  differ in `Refuse` arity (four arguments versus five, because the PowerPoint outcome carries
+  `presentationCreated`) and every step names a distinct refusal enum member, so a shared `Require`
+  needs either an `out` chain per step (four lines either way) or a bool parameter that couples the
+  two commands. It would hide the ladder without shortening it; the explicit ladder is the more
+  greppable form and its duplication is a compile-time reminder when a request member is added.
+- `BuildThemeEditRequest` is still one method with four diffing loops → **done.** `CustomStyleState`
+  and `EntityStyleColours` were already `internal` at file scope, so the four diffs are now named
+  private steps on the form, and the custom-style half is renames, deletes, then creates/updates in
+  the writer's order. A dead local was removed.
+- Ten getter guards remain → **done.** `GetPlotStartAuto` and `GetMargin` convert to
+  `RibbonGetter.Read`; the other eight state why the single-read helper does not fit (a COM read of
+  Excel's own control, a mutating command, a two-value projection, or a multi-statement search).
+  `GanttRibbon` holds 8 `CA1031` guards against 41 before the work.
+- Static session state in `RefreshSheetCommand` is not reset by `AutoClose` → **done.**
+  `ResetSessionState` drops the window (and its port over the session's application object) and
+  invalidates the delta cache and arming memory as teardown step 2, with a fact that arms the
+  shared state and asserts the teardown clears it.
 
 ---
 
