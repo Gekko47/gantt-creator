@@ -80,7 +80,7 @@ internal static class ValidateSheetCommand
         GanttTableReadOutcome read = reader.Read();
         if (!read.Succeeded)
         {
-            SafePresent(presenter, TranslateReadRefusal(read.Refusal!.Value));
+            CommandBoundary.SafePresent(presenter, TranslateReadRefusal(read.Refusal!.Value));
             return;
         }
 
@@ -90,7 +90,7 @@ internal static class ValidateSheetCommand
             ConfigReadOutcome catalogue = catalogueReader.Read();
             if (!catalogue.Succeeded)
             {
-                SafePresent(presenter, TranslateCatalogueRefusal(catalogue.Refusal!.Value));
+                CommandBoundary.SafePresent(presenter, TranslateCatalogueRefusal(catalogue.Refusal!.Value));
                 return;
             }
 
@@ -101,32 +101,11 @@ internal static class ValidateSheetCommand
         GanttValidationReportOutcome report = reporter.Report(validation.Issues);
         if (!report.Succeeded)
         {
-            SafePresent(presenter, TranslateReportRefusal(report.Refusal!.Value));
+            CommandBoundary.SafePresent(presenter, TranslateReportRefusal(report.Refusal!.Value));
             return;
         }
 
-        SafePresent(presenter, SummaryMessage(validation.Issues, report.NotesWritten));
-    }
-
-    /// <summary>
-    /// Invokes the presenter inside the command's CA1031 boundary. A dialog
-    /// failure degrades to no dialog rather than propagating into the Ribbon
-    /// callback; the underlying validation/report work is unaffected.
-    /// </summary>
-    /// <param name="presenter">The presenter delegate.</param>
-    /// <param name="message">The message to present.</param>
-    private static void SafePresent(Action<string> presenter, string message)
-    {
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // Intentionally empty: a dialog failure degrades to no dialog.
-        }
-#pragma warning restore CA1031
+        CommandBoundary.SafePresent(presenter, SummaryMessage(validation.Issues, report.NotesWritten));
     }
 
     /// <summary>
