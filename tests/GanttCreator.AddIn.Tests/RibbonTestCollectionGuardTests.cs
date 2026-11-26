@@ -35,6 +35,18 @@ public class RibbonTestCollectionGuardTests
         "CommandBoundary.Instance",
     ];
 
+    /// <summary>Source markers that mean the file can run a test.</summary>
+    /// <remarks>
+    /// Only a file that declares a test can interleave a record into another test's log, so a
+    /// shared fixture or an abstract base is out of scope however many singletons it names. The
+    /// two markers are the attributes xUnit needs; a file carrying neither cannot run.
+    /// </remarks>
+    private static readonly string[] TestMarkers =
+    [
+        "[Fact",
+        "[Theory",
+    ];
+
     /// <summary>The collection every such file must join.</summary>
     private const string CollectionName = "diagnostics-service";
 
@@ -65,19 +77,23 @@ public class RibbonTestCollectionGuardTests
 
     /// <summary>
     /// The positive control: the classifier must fire on a hazard and stay silent on a compliant
-    /// file and on an unrelated one, or the tripwire above could pass for the wrong reason.
+    /// file, a shared fixture and an unrelated one, or the tripwire above could pass for the wrong
+    /// reason.
     /// </summary>
     [Fact]
     public void The_classifier_flags_a_hazard_and_clears_a_compliant_file()
     {
         const string hazard =
-            "public class X { void M() { GanttRibbon.OnPlotStartAutoClick(null!, false, service); } }";
+            "[Fact] public class X { void M() { GanttRibbon.OnPlotStartAutoClick(null!, false, service); } }";
         const string compliant =
-            "[Collection(\"diagnostics-service\")] public class X { void M() { new RibbonStateService(); } }";
-        const string unrelated = "public class X { void M() { _ = 1 + 1; } }";
+            "[Collection(\"diagnostics-service\")] [Fact] public class X { void M() { new RibbonStateService(); } }";
+        const string sharedFixture =
+            "internal abstract class X { protected static RibbonStateService Arm() => new(); }";
+        const string unrelated = "[Fact] public class X { void M() { _ = 1 + 1; } }";
 
-        Assert.True(Violates(hazard), "a parallel class driving a ribbon callback must be flagged");
+        Assert.True(Violates(hazard), "a parallel test class driving a ribbon callback must be flagged");
         Assert.False(Violates(compliant), "a member of the collection must not be flagged");
+        Assert.False(Violates(sharedFixture), "a file that cannot run a test must not be flagged");
         Assert.False(Violates(unrelated), "an unrelated test file must not be flagged");
     }
 
@@ -85,8 +101,15 @@ public class RibbonTestCollectionGuardTests
     /// <param name="source">The file's text.</param>
     /// <returns><see langword="true"/> when it is a hazard outside the collection.</returns>
     private static bool Violates(string source) =>
-        ReachesSingletons(source)
+        DeclaresTests(source)
+        && ReachesSingletons(source)
         && !source.Contains(CollectionName, StringComparison.Ordinal);
+
+    /// <summary>Whether the source declares at least one test.</summary>
+    /// <param name="source">The file's text.</param>
+    /// <returns><see langword="true"/> when the file can run a test.</returns>
+    private static bool DeclaresTests(string source) =>
+        TestMarkers.Any(marker => source.Contains(marker, StringComparison.Ordinal));
 
     /// <summary>Whether the source touches any diagnostics singleton or ribbon callback surface.</summary>
     /// <param name="source">The file's text.</param>
