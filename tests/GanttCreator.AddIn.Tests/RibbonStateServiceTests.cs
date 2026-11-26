@@ -71,6 +71,45 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void A_settings_write_with_no_injected_writer_records_that_it_was_skipped()
+    {
+        // A half-armed session must be diagnosable: the in-memory state is
+        // accepted, but nothing is persisted and nothing is scheduled.
+        using var log = new CapturingLog();
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log);
+        var service = new RibbonStateService();
+        service.SetCommandBoundary(boundary);
+
+        service.SetTimeScale(GanttTimeScale.Quarter);
+
+        Assert.Contains(
+            log.Records,
+            record => record.Contains("gantt.settings persist skipped=no-writer", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_throwing_snapshot_source_keeps_the_previous_state_and_records_the_failure()
+    {
+        // Sticky snapshots are the policy; silence is not. The record is the
+        // only evidence a future snapshot defect leaves behind.
+        using var log = new CapturingLog();
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log);
+        var service = new RibbonStateService();
+        service.SetCommandBoundary(boundary);
+        service.SetLogAvailabilitySource(() => throw new InvalidOperationException("probe"));
+        bool openLogBefore = service.GetEnabled(RibbonControlIds.OpenLog);
+
+        service.Refresh();
+
+        Assert.Contains(
+            log.Records,
+            record => record.Contains("gantt.ribbon snapshot kept-previous", StringComparison.Ordinal));
+        Assert.Equal(openLogBefore, service.GetEnabled(RibbonControlIds.OpenLog));
+    }
+
+    [Fact]
     public void A_workbook_switch_clears_the_last_rendered_warnings_and_current_issues()
     {
         // R5.8/R5.11: both snapshots are per-workbook. Carrying them across a
