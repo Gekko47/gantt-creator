@@ -436,7 +436,13 @@ internal static class CopyEditableCommand
     /// <summary>Translates a table-read refusal into one actionable line.</summary>
     /// <param name="refusal">The reader's typed reason.</param>
     /// <returns>The user-facing sentence.</returns>
-    private static string TranslateRead(GanttTableReadRefusalReason refusal) => refusal switch
+    /// <remarks>
+    /// The trailing arm covers undefined enum values, which a cast can always produce; a member
+    /// added to <see cref="GanttTableReadRefusalReason"/> would land there silently, so a test
+    /// asserts that every defined member has its own sentence and that Send to PowerPoint words
+    /// it identically apart from its own voice.
+    /// </remarks>
+    internal static string TranslateRead(GanttTableReadRefusalReason refusal) => refusal switch
     {
         GanttTableReadRefusalReason.NoActiveWorkbook =>
             "Gantt Creator needs an open workbook. Open a workbook, then copy again.",
@@ -452,7 +458,13 @@ internal static class CopyEditableCommand
     /// <summary>Translates a configuration-read refusal into one actionable line.</summary>
     /// <param name="refusal">The reader's typed reason.</param>
     /// <returns>The user-facing sentence.</returns>
-    private static string TranslateConfig(ConfigReadRefusalReason refusal) => refusal switch
+    /// <remarks>
+    /// The trailing arm covers undefined enum values only; a member added to
+    /// <see cref="ConfigReadRefusalReason"/> would land there silently, so a test asserts that
+    /// every defined member has its own sentence and that Send to PowerPoint words it identically
+    /// apart from its own voice.
+    /// </remarks>
+    internal static string TranslateConfig(ConfigReadRefusalReason refusal) => refusal switch
     {
         ConfigReadRefusalReason.NoActiveWorkbook =>
             "Gantt Creator needs an open workbook. Open a workbook, then copy again.",
@@ -476,7 +488,13 @@ internal static class CopyEditableCommand
     /// <summary>Translates a panel-grid refusal into one actionable line.</summary>
     /// <param name="refusal">The measurement port's typed reason.</param>
     /// <returns>The user-facing sentence.</returns>
-    private static string TranslateMeasurement(PanelGridRefusalReason refusal) => refusal switch
+    /// <remarks>
+    /// The trailing arm covers undefined enum values only; a member added to
+    /// <see cref="PanelGridRefusalReason"/> would land there silently, so a test asserts that
+    /// every defined member has its own sentence and that Send to PowerPoint words it identically
+    /// apart from its own voice.
+    /// </remarks>
+    internal static string TranslateMeasurement(PanelGridRefusalReason refusal) => refusal switch
     {
         PanelGridRefusalReason.NoActiveWorkbook =>
             "Gantt Creator needs an open workbook. Open a workbook, then copy again.",
@@ -486,7 +504,7 @@ internal static class CopyEditableCommand
             "The worksheet is protected, so the columns could not be measured. Unlock the sheet or run Refresh chart, then copy again.",
         PanelGridRefusalReason.InvalidMeasurement =>
             "The worksheet columns could not be measured. Run Refresh chart to re-measure them, then copy again.",
-        _ => "The worksheet columns could not be measured. Run Refresh chart to re-measure them, then copy again.",
+        _ => ConstructionMessage,
     };
 
     /// <summary>Translates an export-bounds refusal into one actionable line.</summary>
