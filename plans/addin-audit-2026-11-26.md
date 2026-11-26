@@ -13,6 +13,45 @@ Evidence base: measured line counts, merged Cobertura coverage from the six repo
 
 ---
 
+## Implementation record (2026-11-26)
+
+All nine findings were implemented in seven commits, each green before the next:
+
+| Finding | Commit | Outcome |
+|---|---|---|
+| 6 — `SafePresent` copy | `6daee742` | deleted; four sites call the shared boundary |
+| 2 — duplicated export wording | `6c4cecf2` | parity guard added; Send's four merged catalogue sentences made specific again |
+| 1 — postlude never executed | `761546e1` | `FinishRefresh` takes the service; two effect facts replace the source-text pin |
+| 4 — theme request projection | `ca3aa9eb` | `ThemeEditRequestFactory` with four facts; service 3,054 → 2,955 lines |
+| 5 — unconstructed dialogs | `efff18f9` | four surface facts across the three dialogs |
+| 9 — TODO pin | `ee92d0f2` | deleted; R5.10 stays tracked by the roadmap and the XML note |
+| 3 — seven fakes | `c7c3260d` | one shared adapter and one shared selection double; 567 lines removed |
+| 7 — coverage under target | (follows) | AddIn merged **78.82% line / 71.67% branch**, now over both targets |
+| 8 — test class size | deferred | a split is a next-touch change, not a mechanical one |
+
+Three corrections to the findings above, found while implementing:
+
+1. **Finding 2's premise was too broad.** The read, config and measurement translators really were
+   the same skeleton with a different voice. The bounds and shape-write translators are not: they
+   differ in grammar ("create the copy" versus "prepare the transfer"), so templating them would
+   hide the sentences rather than share them. Only the first three are guarded by the parity test.
+2. **Finding 4's "test-only second write" was wrong.** `ShowThemeSettingsDialog_returns_true_when_theme_written_successfully`
+   drives that path, so it is supported behaviour and stays. Only the projection moved.
+3. **The CS8509 route for new enum members does not work.** A switch expression over a public enum
+   must also cover values no member defines, so the default arm cannot be removed. The guard is a
+   test instead: no defined member may fall through to that arm.
+
+Deferred, with the reason: `AddInHostTests.RecordingAdapter` stays hand-written. Its purpose is an
+interleaved `subscribe`/`detach` log read against another object's log in the teardown-order
+contract; folding that into the shared double would couple the double to one test's log.
+
+Verification at branch head: AddIn Debug **983/983**, Release **974/974**, Core 2302, Office
+Contract 1767, Office Integration 39, Architecture 142, Raster 127, Release build with
+`-warnaserror` **0 warnings**, `verify.ps1` **PASS in 285.5 s**. `verify-office.ps1` **Not run** —
+human Excel host; findings 1 and 4 touch live-host paths.
+
+---
+
 ## Should fix
 
 ### 1. The refresh postlude never runs in a test — its only guard is a text search (P2)
