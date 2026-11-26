@@ -27,7 +27,7 @@ All nine findings were implemented in seven commits, each green before the next:
 | 9 — TODO pin | `ee92d0f2` | deleted; R5.10 stays tracked by the roadmap and the XML note |
 | 3 — seven fakes | `c7c3260d` | one shared adapter and one shared selection double; 567 lines removed |
 | 7 — coverage under target | (follows) | AddIn merged **78.82% line / 71.67% branch**, now over both targets |
-| 8 — test class size | planned | Slice 8 below: four topic classes each, with a name-set proof |
+| 8 — test class size | `b416b109`, `df601c79`, `8025b362` | eight topic classes; both oversized files deleted; 94 + 87 facts accounted for |
 
 Three corrections to the findings above, found while implementing:
 
@@ -45,10 +45,21 @@ Deferred, with the reason: `AddInHostTests.RecordingAdapter` stays hand-written.
 interleaved `subscribe`/`detach` log read against another object's log in the teardown-order
 contract; folding that into the shared double would couple the double to one test's log.
 
-Verification at branch head: AddIn Debug **983/983**, Release **974/974**, Core 2302, Office
-Contract 1767, Office Integration 39, Architecture 142, Raster 127, Release build with
-`-warnaserror` **0 warnings**, `verify.ps1` **PASS in 285.5 s**. `verify-office.ps1` **Not run** —
-human Excel host; findings 1 and 4 touch live-host paths.
+Verification at branch head: AddIn Debug **989/989**, Core 2302, Office Contract 1767, Office
+Integration 39, Architecture 142, Raster 127, Release build with `-warnaserror` **0 warnings**,
+`verify-quick.ps1` **PASS in 287.0 s**, `verify.ps1` **PASS in 309.5 s** with AddIn merged coverage
+**78.82 / 71.67**. `verify-office.ps1` **Not run** — human Excel host; findings 1 and 4 touch
+live-host paths.
+
+One follow-up after the table closed, from the coverage report the gate leaves behind: the AddIn's
+weakest unit-testable file is the command boundary's dialog half. `CommandErrorDialog`'s page
+builders were never called (`CreatePage` 0%, `Confirm` 0%), so the caption, heading, icon, button
+set and the ADR-0042 opt-out text had no test at all. `CommandErrorDialogTests` now pins them
+through the page seams, and records two WinForms behaviours that cost three red runs to find: a page
+**clones** the shared `TaskDialogButton` instances into its own collection (so identity assertions
+fail and the text is the stable fact), and `TaskDialogPage.Verification` materialises a control whose
+`Text` is **null** until a caller sets it (so "no opt-out offered" is a null text, not an absent
+object).
 
 ---
 
@@ -211,7 +222,9 @@ refinement to the guard: it considers only files that declare a test class, with
 control for the support case. The invariant is unchanged — a file that never runs a test cannot
 interleave a record into another test's log.
 
-**Status 2026-11-26: steps 1–3 and two of the four ribbon moves have landed.**
+**Status 2026-11-26: complete.** Both oversized files are deleted, their 181 facts (94 ribbon,
+87 state service) live in eight topic classes, and every move proved itself with the suite total
+and the `--list-tests` name set.
 
 1. Done (`9661f9e6`). `RibbonTestSupport` holds the ribbon instance, the callback vocabulary, the two
    XML validators, the invalidation reader, the callback resolver and the plot-bounds row builder.
