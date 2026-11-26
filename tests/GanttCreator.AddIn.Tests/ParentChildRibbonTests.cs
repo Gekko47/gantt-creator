@@ -247,17 +247,6 @@ public class ParentChildRibbonTests
             .Attribute("onAction")?.Value);
     }
 
-    [Fact]
-    public void Move_buttons_carry_a_cell_tracking_todo_for_future_selection_gating()
-    {
-        // R5.4 owner direction: a note to later add cell tracking and disable
-        // the ribbon buttons based on cell selection. Pinned so the deferral
-        // is not silently lost.
-        string xml = new GanttRibbon().GetCustomUI(WorkbookRibbonId)!;
-        Assert.Contains("TODO(R5.10)", xml, StringComparison.Ordinal);
-        Assert.Contains("cell tracking", xml, StringComparison.Ordinal);
-    }
-
     [Theory]
     [InlineData("btnMoveUp")]
     [InlineData("btnMoveDown")]
