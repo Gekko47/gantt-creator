@@ -234,3 +234,21 @@ internal static class RibbonTestSupport
     /// <returns>The next row identity.</returns>
     private static string PlotBoundsId() => "G-" + (++_nextPlotBoundsId).ToString("x32", CultureInfo.InvariantCulture);
 }
+
+/// <summary>
+/// A <see cref="RibbonStateService"/> that answers the theme dialog with a fixed result instead of
+/// running a blocking WinForms message loop, which would hang forever without a user to click OK
+/// or Cancel.
+/// </summary>
+/// <remarks>
+/// Shared because the theme-click routing facts and the state-service theme facts both need one
+/// without being able to reach the other's private double.
+/// </remarks>
+internal sealed class StubThemeDialogStateService(DialogResult dialogResult) : RibbonStateService
+{
+    protected override DialogResult ShowThemeSettingsDialog(ThemeSettingsForm dialog)
+    {
+        dialog.SetValidatedRequestForTesting(new ThemeEditRequest([], new Dictionary<string, double>()));
+        return dialogResult;
+    }
+}

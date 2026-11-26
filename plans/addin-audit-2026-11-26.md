@@ -208,7 +208,7 @@ refinement to the guard: it considers only files that declare a test class, with
 control for the support case. The invariant is unchanged — a file that never runs a test cannot
 interleave a record into another test's log.
 
-**Status 2026-11-26: steps 1–3 landed, the topic moves remain.**
+**Status 2026-11-26: steps 1–3 and two of the four ribbon moves have landed.**
 
 1. Done (`9661f9e6`). `RibbonTestSupport` holds the ribbon instance, the callback vocabulary, the two
    XML validators, the invalidation reader, the callback resolver and the plot-bounds row builder.
@@ -221,12 +221,20 @@ interleave a record into another test's log.
    the analyzers' public-surface rules (CA1062, CA1816, CA1001) into a test fixture. Each class keeps
    its own constructor and `Dispose` instead, so the singleton reset stays visible where it applies.
 
-Remaining, one commit each:
+Ribbon moves, one commit each:
 
-4. Move `GanttRibbonTests` topic by topic: chart and plot controls (~1,000 lines, the run from
-   `Chart_group_declares_start_finish_and_scale_rows` through
-   `GetPlotStartDate_throws_for_a_null_state_service`), XML contracts (~700), command routing (~550),
-   leaving getters and surface (~350).
+4a. Done (`e0ce22f0`). Chart and plot controls — 34 facts from
+    `Chart_group_declares_start_finish_and_scale_rows` through
+    `GetPlotStartDate_throws_for_a_null_state_service` — in `GanttRibbonChartTests`; the class is
+    2,448 → 1,592 lines and the new file is 840.
+4b. Done. Command routing — 16 facts: the four callbacks that cross `CommandBoundary`, the two
+    theme-dialog clicks, the null-dependency refusals — in `GanttRibbonCommandTests`; the class is
+    1,592 → 1,210 lines. The theme-dialog double became `StubThemeDialogStateService` in
+    `RibbonTestSupport`, because the routing facts and the state-service topic both need it and
+    neither can reach the other's private nested copy. Proof: suite 983, the distinct `--list-tests`
+    name set identical to the pre-split baseline apart from that baseline's own `csproj`/`dll`
+    artefacts, and the attribute arithmetic holds — HEAD's 60 facts = 44 left + 16 moved.
+4c. Remaining: XML contracts (~700 lines), then the getters and surface (~350).
 5. Move `RibbonStateServiceTests` topic by topic: snapshot and modes (~600), gates and activation
    (~350), capture and invalidation (~300), preferences and dialogs (~600). The three nested stubs
    (`StubThemeDialogRibbonStateService`, `HostApplicationRibbonStateService`,
@@ -249,7 +257,7 @@ catches a broken move; only the name-set diff catches a dropped fact.
 - A lost fact in a move is the whole risk; only the name-set diff sees it.
 - A new class that forgets the `Reset()` lifecycle leaks the singleton between tests; the shared
   base is what prevents it.
-- `s_nextPlotBoundsId` is the only mutable static and is safe only while every class stays in the
+- `_nextPlotBoundsId` is the only mutable static and is safe only while every class stays in the
   serialised collection.
 - It pays back in navigation and merge-conflict surface, not correctness; if these two files are
   rarely edited, schedule it for when they are next touched rather than immediately.
