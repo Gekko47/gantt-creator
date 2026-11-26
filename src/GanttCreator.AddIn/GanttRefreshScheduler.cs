@@ -1,4 +1,3 @@
-#pragma warning disable IDE0048, IDE0047 // Timer constructor expression: analyzer rules conflict on parentheses in this file.
 using System.Diagnostics;
 using System.Globalization;
 using GanttCreator.Office;
@@ -359,8 +358,16 @@ internal sealed class GanttRefreshScheduler : IDisposable
             return;
         }
 
+        // A local function keeps the callback shape unambiguous, so the two
+        // parenthesis style rules never disagree about this expression.
+        void HandleDebounceElapsed(object? state)
+        {
+            _ = state;
+            OnTimerElapsed(generation);
+        }
+
         _timer = new System.Threading.Timer(
-            _ => OnTimerElapsed(generation),
+            HandleDebounceElapsed,
             null,
             debounceMilliseconds,
             Timeout.Infinite);
