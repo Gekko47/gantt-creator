@@ -208,19 +208,36 @@ refinement to the guard: it considers only files that declare a test class, with
 control for the support case. The invariant is unchanged — a file that never runs a test cannot
 interleave a record into another test's log.
 
-**Steps, one commit each.**
+**Status 2026-11-26: steps 1–3 landed, the topic moves remain.**
 
-1. Extract helpers only. `RibbonTestSupport` (static) takes `GroupsMissingVisibleCallback`,
-   `ButtonsMissingVisibleLabel`, `RibbonInvalidatedIds`, `PlotBoundsRow`, `ValidateCallbacks`,
-   `CallbackResolves`, `Ribbon` and the constants. `abstract RibbonStateTestBase : IDisposable` takes
-   the ctor, `Dispose`, `Arm`, `ArmedWithTableRead`, `Row`, `NewRowId`, `CountInvalidations` and the
-   shared stubs. The base declares no `[Fact]`, so nothing is discovered twice. Suite count unchanged.
-2. Refine the guard and extend its positive control.
-3. Move `GanttRibbonTests` topic by topic: XML contracts (~700 lines), command routing (~550), plot
-   dates and layout (~1,000, splittable again into dates versus layout), getters and surface (~350).
-4. Move `RibbonStateServiceTests` topic by topic: snapshot and modes (~650), gates and activation
-   (~350), capture and invalidation (~300), preferences and dialogs (~700).
-5. Rename the leftover file only after its last move, in its own commit.
+1. Done (`9661f9e6`). `RibbonTestSupport` holds the ribbon instance, the callback vocabulary, the two
+   XML validators, the invalidation reader, the callback resolver and the plot-bounds row builder.
+   `using static` keeps every call site unchanged; the class is 2,625 → 2,448 lines.
+2. Done (`c1d73122`). The tripwire now applies only to a file that declares a fact or a theory, with
+   a new shared-fixture control beside the hazard and compliant cases.
+3. Done (`ae6fae42`). `RibbonStateTestSupport` takes `Arm`, `ArmedWithTableRead`,
+   `CountInvalidations`, `NewRowId` and `Row`; the class is 1,866 → 1,813 lines. **An abstract base
+   was tried and rejected**: it forced the derived test class and the base to `public`, which dragged
+   the analyzers' public-surface rules (CA1062, CA1816, CA1001) into a test fixture. Each class keeps
+   its own constructor and `Dispose` instead, so the singleton reset stays visible where it applies.
+
+Remaining, one commit each:
+
+4. Move `GanttRibbonTests` topic by topic: chart and plot controls (~1,000 lines, the run from
+   `Chart_group_declares_start_finish_and_scale_rows` through
+   `GetPlotStartDate_throws_for_a_null_state_service`), XML contracts (~700), command routing (~550),
+   leaving getters and surface (~350).
+5. Move `RibbonStateServiceTests` topic by topic: snapshot and modes (~600), gates and activation
+   (~350), capture and invalidation (~300), preferences and dialogs (~600). The three nested stubs
+   (`StubThemeDialogRibbonStateService`, `HostApplicationRibbonStateService`,
+   `FakePanelGridMeasurementPort`) move with the topic that uses them, or into the support type when
+   two topics use one.
+6. Rename the leftover file only after its last move, in its own commit.
+
+**Tooling caution.** A name-driven mover was written and abandoned: on its first real run it reported
+a method missing that was present, and the working tree afterwards matched HEAD exactly, so the
+mechanism is not understood well enough to trust. Move by hand, or write a mover that asserts the
+before and after name sets itself — do not script a 4,600-line move on an unverified parser.
 
 **Proof after every move.** `dotnet test --list-tests`, reduced to the sorted simple method names,
 must be identical before and after (fully-qualified names change with the class). The suite totals
