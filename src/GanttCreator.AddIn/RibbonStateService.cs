@@ -55,17 +55,17 @@ internal class RibbonStateService
     /// </summary>
     private CommandBoundary _commandBoundary = CommandBoundary.Instance;
     private Func<bool?>? _logAvailabilitySource;
-    private IDisposable? _workbookStateSubscription;
-    private GanttRefreshScheduler? _refreshScheduler;
 
-    /// <summary>The sheet-activation subscription (R5.16b), detached exactly once.</summary>
-    private IDisposable? _sheetActivationSubscription;
+    /// <summary>
+    /// This session's Excel event connections and coalescing refresh scheduler, or null before
+    /// <see cref="Activate"/> creates it. The handlers stay on this service because they
+    /// transition state it owns; the lifetime (attach, replace, detach once) is
+    /// <see cref="RibbonEventWiring"/>.
+    /// </summary>
+    private RibbonEventWiring? _eventWiring;
 
     /// <summary>The standalone selection identifier (R5.5 ruling 6), or null when not wired.</summary>
     private ISelectionIdentifier? _selectionIdentifier;
-
-    /// <summary>The selection-change subscription, detached exactly once.</summary>
-    private IDisposable? _selectionSubscription;
 
     private IConfigCatalogueWriter? _catalogueWriter;
     private IConfigCatalogueReader? _catalogueReader;
@@ -398,7 +398,7 @@ internal class RibbonStateService
     /// already committed, so there is no user burst left to absorb and the full cell
     /// window was 300ms of dead time between the click and the plot.
     /// </remarks>
-    internal void ScheduleAutomaticRefresh() => _refreshScheduler?.ScheduleCommandRefresh();
+    internal void ScheduleAutomaticRefresh() => _eventWiring?.ScheduleCommandRefresh();
 
     /// <summary>
     /// Injects the log-availability source that supplies the second state fact.
@@ -1868,9 +1868,16 @@ internal class RibbonStateService
             }
         }
 
-        SubscribeToWorkbookStateChanges();
-        SubscribeToSheetChanges();
-        SubscribeToSelectionChanges();
+        // One wiring object per activation: it owns this session's four connections and the
+        // scheduler, and replaces any previous set so a second load cannot double-subscribe.
+        _eventWiring?.DetachAll();
+        _eventWiring = new RibbonEventWiring(
+            _applicationAdapter,
+            _selectionIdentifier,
+            OnSelectionChanged,
+            OnSheetActivated,
+            OnWorkbookStateChanged);
+        _eventWiring.Subscribe();
         LoadPlotSettingsFromWorkbook();
 
         // Deliberately NO outline-symbol repair here. Activate runs on every add-in load,
@@ -2443,7 +2450,7 @@ internal class RibbonStateService
 
         if (!enabled)
         {
-            _refreshScheduler?.CancelPendingRefresh();
+            _eventWiring?.CancelPendingRefresh();
         }
 
         Dictionary<string, string> values = new(StringComparer.Ordinal)
@@ -2863,34 +2870,6 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Attaches the selection-change handler, replacing any previous
-    /// subscription so a re-activation cannot double-subscribe.
-    /// </summary>
-    private void SubscribeToSelectionChanges()
-    {
-        DisposeSelectionSubscription();
-
-        ISelectionIdentifier? identifier = _selectionIdentifier;
-        if (identifier is null)
-        {
-            return;
-        }
-
-        // CA1031: activation runs inside the never-throwing AutoOpen; a failure
-        // to subscribe degrades to command-driven invalidation only.
-#pragma warning disable CA1031
-        try
-        {
-            _selectionSubscription = identifier.SubscribeSelectionChanged(OnSelectionChanged);
-        }
-        catch
-        {
-            _selectionSubscription = null;
-        }
-#pragma warning restore CA1031
-    }
-
-    /// <summary>
     /// Handles one selection change: re-captures the snapshot and invalidates
     /// the description-label, date-label, and custom-style dropdowns and the two
     /// shape-lock buttons. Only those five controls are invalidated, so moving
@@ -2945,118 +2924,6 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Detaches the selection-change subscription exactly once. Never throws.
-    /// </summary>
-    private void DisposeSelectionSubscription()
-    {
-        IDisposable? subscription = _selectionSubscription;
-        _selectionSubscription = null;
-        if (subscription is null)
-        {
-            return;
-        }
-
-        // CA1031: teardown must never throw into Excel; a failed detach
-        // degrades to a retained event connection.
-#pragma warning disable CA1031
-        try
-        {
-            subscription.Dispose();
-        }
-        catch
-        {
-            // Intentionally empty: see the teardown rationale above.
-        }
-#pragma warning restore CA1031
-    }
-
-    /// <summary>
-    /// Attaches the workbook-state change handler, replacing any previous
-    /// subscription so a re-activation cannot double-subscribe.
-    /// </summary>
-    private void SubscribeToWorkbookStateChanges()
-    {
-        DisposeWorkbookStateSubscription();
-
-        IExcelApplicationAdapter? adapter = _applicationAdapter;
-        if (adapter is null)
-        {
-            return;
-        }
-
-        // CA1031: activation runs inside the never-throwing AutoOpen; a failure
-        // to subscribe degrades to command-driven invalidation only.
-#pragma warning disable CA1031
-        try
-        {
-            _workbookStateSubscription = adapter.SubscribeWorkbookStateChanged(OnWorkbookStateChanged);
-        }
-        catch
-        {
-            _workbookStateSubscription = null;
-        }
-#pragma warning restore CA1031
-    }
-
-    private void SubscribeToSheetChanges()
-    {
-        DisposeRefreshScheduler();
-        DisposeSheetActivationSubscription();
-        IExcelApplicationAdapter? adapter = _applicationAdapter;
-        if (adapter is null)
-        {
-            return;
-        }
-
-#pragma warning disable CA1031
-        try
-        {
-            object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
-            GanttRefreshScheduler scheduler = new(adapter, new ExcelSheetChangeAnalyzer(application));
-            scheduler.Activate();
-            _refreshScheduler = scheduler;
-        }
-        catch
-        {
-            _refreshScheduler = null;
-        }
-
-        // R5.16b (ADR-0058): entering the Gantt sheet re-reads the workbook so
-        // the active-sheet gate is current, then restores the add-in tab. A
-        // failure to subscribe degrades to command-driven refresh only.
-        try
-        {
-            _sheetActivationSubscription = adapter.SubscribeSheetActivated(OnSheetActivated);
-        }
-        catch
-        {
-            _sheetActivationSubscription = null;
-        }
-#pragma warning restore CA1031
-    }
-
-    private void DisposeRefreshScheduler()
-    {
-        GanttRefreshScheduler? scheduler = _refreshScheduler;
-        _refreshScheduler = null;
-        if (scheduler is null)
-        {
-            return;
-        }
-
-#pragma warning disable CA1031
-        try
-        {
-            scheduler.Dispose();
-        }
-        catch
-        {
-            // AutoClose must not surface a teardown failure into Excel.
-        }
-#pragma warning restore CA1031
-    }
-
-    /// <summary>
     /// Handles one sheet activation (R5.16b, ADR-0058). A sheet change is not a
     /// chart-affecting edit, so nothing is rendered here; the workbook is
     /// re-read so the active-sheet gate reflects the sheet the user just
@@ -3065,34 +2932,8 @@ internal class RibbonStateService
     /// </summary>
     private void OnSheetActivated()
     {
-        _refreshScheduler?.CancelPendingRefresh();
+        _eventWiring?.CancelPendingRefresh();
         Refresh();
-    }
-
-    /// <summary>
-    /// Detaches the sheet-activation subscription exactly once. Never throws.
-    /// </summary>
-    private void DisposeSheetActivationSubscription()
-    {
-        IDisposable? subscription = _sheetActivationSubscription;
-        _sheetActivationSubscription = null;
-        if (subscription is null)
-        {
-            return;
-        }
-
-        // CA1031: teardown must never throw into Excel; a failed detach
-        // degrades to a retained event connection.
-#pragma warning disable CA1031
-        try
-        {
-            subscription.Dispose();
-        }
-        catch
-        {
-            // Intentionally empty: see the teardown rationale above.
-        }
-#pragma warning restore CA1031
     }
 
     /// <summary>
@@ -3121,7 +2962,7 @@ internal class RibbonStateService
     /// </summary>
     private void OnWorkbookStateChanged()
     {
-        _refreshScheduler?.CancelPendingRefresh();
+        _eventWiring?.CancelPendingRefresh();
         RefreshSheetCommand.ResetDeltaCache();
 
         // R5.20: the switch belongs to the workbook, so the next settings read adopts this
@@ -3148,32 +2989,6 @@ internal class RibbonStateService
         _currentValidationIssues = [];
         _lastSuccessfulRenderAtUtc = null;
         Refresh();
-    }
-
-    /// <summary>
-    /// Detaches the workbook-state subscription exactly once. Never throws.
-    /// </summary>
-    private void DisposeWorkbookStateSubscription()
-    {
-        IDisposable? subscription = _workbookStateSubscription;
-        _workbookStateSubscription = null;
-        if (subscription is null)
-        {
-            return;
-        }
-
-        // CA1031: teardown must never throw into Excel; a failed detach
-        // degrades to a retained event connection.
-#pragma warning disable CA1031
-        try
-        {
-            subscription.Dispose();
-        }
-        catch
-        {
-            // Intentionally empty: see the teardown rationale above.
-        }
-#pragma warning restore CA1031
     }
 
     /// <summary>
@@ -3209,10 +3024,8 @@ internal class RibbonStateService
     /// </summary>
     private void Teardown()
     {
-        DisposeRefreshScheduler();
-        DisposeSheetActivationSubscription();
-        DisposeSelectionSubscription();
-        DisposeWorkbookStateSubscription();
+        _eventWiring?.DetachAll();
+        _eventWiring = null;
         _ribbon = null;
         _applicationAdapter = null;
         _logAvailabilitySource = null;
