@@ -479,4 +479,84 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+
+    /// <summary>
+    /// P7's prerequisite, measured on the host: one workbook cannot be reset to the state a second
+    /// <c>Initialise</c> needs, so a test class cannot share one workbook across its bodies.
+    /// </summary>
+    /// <remarks>
+    /// The reset a per-class workbook would need is: drop the data table, drop the VeryHidden
+    /// configuration sheet, then <c>Initialise</c> again in the same workbook. Each step is
+    /// attempted and its outcome printed, because the answer decides whether P7 is reachable for
+    /// ANY class rather than how many seconds it would save. The class remarks on
+    /// <c>AddRowIntegrationTests</c> record this refusal from an earlier session (R5.16); this fact
+    /// turns that recollection into a gate-visible measurement. If a future Excel build makes the
+    /// reset legal the assertion fails with the reset lines above it, and the per-class workbook
+    /// spike can proceed on a measurement instead of a memory.
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task A_second_initialise_in_one_workbook_is_refused_so_a_class_cannot_share_it()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+
+            var reset = new List<string>();
+            foreach (string step in ResetSteps(workbook))
+            {
+                reset.Add(step);
+            }
+
+            _output.WriteLine($"Reset probe: {string.Join("; ", reset)}.");
+
+            WorkbookInitialiseOutcome second = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            _output.WriteLine(
+                $"Reset probe: second Initialise Succeeded={second.Succeeded} path={second.Path} refusal={second.Refusal}.");
+
+            Assert.False(
+                second.Succeeded,
+                $"A second Initialise in one workbook SUCCEEDED after [{string.Join("; ", reset)}], so a "
+                + "per-class workbook IS reachable and P7's spike should proceed on that measurement.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    private static IEnumerable<string> ResetSteps(Excel.Workbook workbook)
+    {
+        yield return Attempt(
+            "table",
+            () =>
+            {
+                Excel.Worksheet sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+                Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+                table.Delete();
+            });
+        yield return Attempt(
+            "config sheet",
+            () =>
+            {
+                Excel.Worksheet config = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.ConfigSheetName];
+                config.Delete();
+            });
+    }
+
+    private static string Attempt(string what, Action step)
+    {
+        try
+        {
+            step();
+            return $"{what} deleted";
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            return $"{what} delete REFUSED 0x{ex.HResult:X8}";
+        }
+    }
 }

@@ -806,6 +806,31 @@ Honest limits: the launch figure is measured on this host, the poll and kill fig
 from teardown records rather than from a P7 run, and delta 11 — a pack loaded across a class's
 successive bodies — has no measurement at all.
 
+### P7/F3 — the spike was measured first, and it is not reachable on this host (2026-11-26)
+
+The owner chose F3: spike `AddRow` alone behind a reset API and decide on the measurement. The
+measurement came first, because the class's own bodies assert the pristine post-`Initialise` state —
+`Assert.Equal(0, table.ListRows.Count)` and `Assert.Null(table.DataBodyRange)` — so a shared workbook
+needs a reset that recreates exactly that state. Measured on the host in
+[`InitialiseSheetIntegrationTests`](../tests/GanttCreator.Office.IntegrationTests/InitialiseSheetIntegrationTests.cs):
+
+| Reset step, in order | Outcome |
+|---|---|
+| delete the data table | succeeded |
+| delete the VeryHidden `_GanttCreatorConfig` sheet | **REFUSED, `0x800A03EC`** |
+| second `Initialise` in the same workbook | **Refused / `ConfigSheetExists`** |
+
+The reset is therefore not reachable, and that is not an `AddRow` property: **every body of every
+workbook class starts from a fresh `Initialise`**, so the blocker applies to all 22 of them. `AddRow`
+was measured before anything was touched — 7 bodies, 7 workbooks, **43.9 s and 39.8 s** wall on this
+host — and there is nothing for a spike to compare against, because a per-class workbook cannot
+produce the state its bodies assert.
+
+**F3 therefore resolves to F2, on a measurement rather than on arithmetic.** P7 is withdrawn with its
+ceiling (~65–85 s, ~10 % of a run) and this blocker recorded, and the new fact is the tripwire: if a
+future Excel build allows the VeryHidden sheet to be deleted, it fails with the reset lines above it
+and names the spike as the next step. No test body was restructured and no product code changed.
+
 ### Review close-out (2026-11-25)
 
 A code review of this plan against the tree raised nine findings. Closed in code the same day:
