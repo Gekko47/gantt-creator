@@ -27,7 +27,7 @@ All nine findings were implemented in seven commits, each green before the next:
 | 9 — TODO pin | `ee92d0f2` | deleted; R5.10 stays tracked by the roadmap and the XML note |
 | 3 — seven fakes | `c7c3260d` | one shared adapter and one shared selection double; 567 lines removed |
 | 7 — coverage under target | (follows) | AddIn merged **78.82% line / 71.67% branch**, now over both targets |
-| 8 — test class size | deferred | a split is a next-touch change, not a mechanical one |
+| 8 — test class size | planned | Slice 8 below: four topic classes each, with a name-set proof |
 
 Three corrections to the findings above, found while implementing:
 
@@ -184,8 +184,58 @@ Order is risk-first: pure deletions first, then the seam work, then the behaviou
 | 6 | Dialog accept facts (finding 5) | `ChartTitleForm.cs` (no change), `PlotDatePickerForm.cs`, `WarningsPanelForm.cs`, tests | one accept and one cancel fact each |
 | 7 | TODO pin (finding 9) | `ParentChildRibbonTests.cs` | the XML comment is asserted as owed work without failing a completed change |
 
-Findings 7 and 8 are tracking notes, not code changes: coverage follows from slice 4, and the
-test-class split is deliberately deferred to the next touch of those files.
+Finding 7 closed with slice 4: AddIn merged coverage went 74.17 → 78.82 % line and
+68.63 → 71.67 % branch, over both targets. Finding 8 is Slice 8.
+
+### Slice 8 — split the two oversized test classes (finding 8)
+
+**Goal.** [`GanttRibbonTests.cs`](../tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs) (2,625 lines,
+~94 facts) and [`RibbonStateServiceTests.cs`](../tests/GanttCreator.AddIn.Tests/RibbonStateServiceTests.cs)
+(1,979 lines, ~95 facts) become four topic classes each, in the same xUnit collection. No test method
+changes, no assertion changes, no production change.
+
+**The constraint that shapes the plan.** `RibbonTestCollectionGuardTests` reads every top-level
+`*.cs` and fails a file that names `RibbonStateService`, `GanttRibbon.`, `DiagnosticsService.Instance`
+or `CommandBoundary.Instance` without the literal `diagnostics-service` in that same file. It does
+not distinguish a test class from a support type, so:
+
+- `partial` parts cannot work — a part that names the singleton trips the rule, and a duplicate
+  `[Collection]` on one type is wrong;
+- a helper file that builds a `RibbonStateService` trips it too.
+
+**Decision.** Separate topic classes, each carrying `[Collection("diagnostics-service")]`, plus one
+refinement to the guard: it considers only files that declare a test class, with a new positive
+control for the support case. The invariant is unchanged — a file that never runs a test cannot
+interleave a record into another test's log.
+
+**Steps, one commit each.**
+
+1. Extract helpers only. `RibbonTestSupport` (static) takes `GroupsMissingVisibleCallback`,
+   `ButtonsMissingVisibleLabel`, `RibbonInvalidatedIds`, `PlotBoundsRow`, `ValidateCallbacks`,
+   `CallbackResolves`, `Ribbon` and the constants. `abstract RibbonStateTestBase : IDisposable` takes
+   the ctor, `Dispose`, `Arm`, `ArmedWithTableRead`, `Row`, `NewRowId`, `CountInvalidations` and the
+   shared stubs. The base declares no `[Fact]`, so nothing is discovered twice. Suite count unchanged.
+2. Refine the guard and extend its positive control.
+3. Move `GanttRibbonTests` topic by topic: XML contracts (~700 lines), command routing (~550), plot
+   dates and layout (~1,000, splittable again into dates versus layout), getters and surface (~350).
+4. Move `RibbonStateServiceTests` topic by topic: snapshot and modes (~650), gates and activation
+   (~350), capture and invalidation (~300), preferences and dialogs (~700).
+5. Rename the leftover file only after its last move, in its own commit.
+
+**Proof after every move.** `dotnet test --list-tests`, reduced to the sorted simple method names,
+must be identical before and after (fully-qualified names change with the class). The suite totals
+must hold at 983 Debug / 974 Release, and the collection guard must stay green. A compile error
+catches a broken move; only the name-set diff catches a dropped fact.
+
+**Risks.**
+
+- A lost fact in a move is the whole risk; only the name-set diff sees it.
+- A new class that forgets the `Reset()` lifecycle leaks the singleton between tests; the shared
+  base is what prevents it.
+- `s_nextPlotBoundsId` is the only mutable static and is safe only while every class stays in the
+  serialised collection.
+- It pays back in navigation and merge-conflict surface, not correctness; if these two files are
+  rarely edited, schedule it for when they are next touched rather than immediately.
 
 Per-slice rules: one commit each; `dotnet build` with analyzers; the named suites; Debug and
 Release; `verify-quick.ps1`; `verify.ps1` branch-final; `verify-office.ps1` Not run with the
