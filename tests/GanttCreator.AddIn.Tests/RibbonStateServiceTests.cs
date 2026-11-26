@@ -5,6 +5,7 @@ using GanttCreator.Office;
 using GanttCreator.Raster;
 using Moq;
 using System.Windows.Forms;
+using static GanttCreator.AddIn.Tests.RibbonStateTestSupport;
 
 namespace GanttCreator.AddIn.Tests;
 /// <summary>
@@ -216,40 +217,6 @@ public sealed class RibbonStateServiceTests : IDisposable
             string.Empty,
             RibbonStateService.AddEntityPrimaryLabel(RibbonControlIds.Remove, service));
     }
-    private static RibbonStateService Arm(
-        TestExcelApplicationAdapter adapter,
-        Func<bool?>? logSource = null,
-        IRibbonUI? ribbon = null)
-    {
-        var service = RibbonStateService.Instance;
-        service.SetApplicationAdapter(adapter);
-        service.SetLogAvailabilitySource(logSource);
-        service.SetRibbon(ribbon);
-        service.Activate();
-        return service;
-    }
-
-    private static int CountInvalidations(Mock<IRibbonUI> ribbon)
-        => ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate));
-
-    /// <summary>
-    /// A well-formed <see cref="GanttRowId"/> for seeded table rows:
-    /// <c>G-</c> plus 32 lowercase hex characters.
-    /// </summary>
-    private static string NewRowId(char last = 'a') => "G-" + new string('0', 31) + last;
-
-    private static RibbonStateService ArmedWithTableRead(
-        TestExcelApplicationAdapter adapter,
-        GanttTableReadOutcome outcome)
-    {
-        var service = Arm(adapter);
-        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
-        _ = reader.Setup(r => r.Read()).Returns(outcome);
-        service.SetTableReader(reader.Object);
-        service.Refresh();
-        return service;
-    }
-
     [Fact]
     public void Refresh_reports_first_run_when_no_workbook_is_active()
     {
@@ -568,25 +535,6 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.False(service.GetVisible("grpUnknown"));
         Assert.False(service.GetVisible(null));
     }
-
-    private static GanttRowDto Row(int rowNumber, string type, string? parentId = null) =>
-        new(
-            rowNumber,
-            NewRowId((char)('a' + rowNumber)),
-            null,
-            0,
-            type,
-            null,
-            null,
-            null,
-            parentId,
-            null,
-            null,
-            null,
-            null,
-            true,
-            null);
-
     [Fact]
     public void Critical_interval_is_enabled_when_the_table_has_an_eligible_parent()
     {
