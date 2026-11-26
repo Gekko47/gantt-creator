@@ -250,9 +250,11 @@ Ribbon moves, one commit each:
    5a. Done. Snapshot and mode — 27 facts, from the catalogue-writer accessors through
        `A_sheet_activation_refreshes_the_gate_and_restores_the_tab` — in `RibbonStateSnapshotTests`,
        which carries its own constructor and `Dispose` so the singleton reset stays visible.
-   5b. Remaining: gates (`GetVisible`/`GetEnabled`, the critical-interval pins), ~165 lines.
-   5c. Remaining: activation, capture and invalidation, ~175 lines. `HostApplicationRibbonStateService`
-       travels here.
+   5b. Done, in the same commit as 5c. Gates — 12 facts: `GetVisible` for an unknown group, the three
+       critical-interval pins, and the seven `GetEnabled` facts — in `RibbonStateGateTests`.
+   5c. Done. Activation, capture and invalidation — 12 facts — in `RibbonStateActivationTests`, which
+       took `HostApplicationRibbonStateService` with it; the source's copy became unused and CA1812
+       refused it, so it was deleted from the original at the same time. The class is 1,317 → 965 lines.
    5d. Remaining: plot dates, AUTO toggles and the time scale, ~545 lines.
    5e. Remaining: presets, margins, theme dialogs, the chart-current flag and the PNG export target,
        ~350 lines. `FakePanelGridMeasurementPort` travels here, and the theme facts use the shared
