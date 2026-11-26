@@ -95,4 +95,33 @@ public class RibbonValueContractTests
         Assert.False(GanttRibbon.GetPlotStartAuto(null, service));
         Assert.True(GanttRibbon.GetPlotFinishAuto(null, service));
     }
+
+    /// <summary>
+    /// The getter boundary returns the caller's own safe value when the read
+    /// throws. This is the arm that keeps a COM probe failure out of Excel's
+    /// getter dispatch, so it is driven directly rather than inferred.
+    /// </summary>
+    [Fact]
+    public void The_getter_boundary_returns_the_getters_safe_value_when_the_read_throws()
+    {
+        bool value = RibbonGetter.Read(
+            ArmedService(),
+            _ => throw new InvalidOperationException("probe"),
+            onFailure: false);
+
+        Assert.False(value);
+    }
+
+    /// <summary>
+    /// A missing service or read is a programming error, not a getter failure:
+    /// the boundary refuses it rather than reporting the safe value.
+    /// </summary>
+    [Fact]
+    public void The_getter_boundary_rejects_a_null_service_and_a_null_read()
+    {
+        _ = Assert.Throws<ArgumentNullException>(
+            () => RibbonGetter.Read(null!, _ => true, false));
+        _ = Assert.Throws<ArgumentNullException>(
+            () => RibbonGetter.Read(ArmedService(), null!, false));
+    }
 }
