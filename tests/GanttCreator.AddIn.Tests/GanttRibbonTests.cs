@@ -8,6 +8,7 @@ using GanttCreator.Core;
 using GanttCreator.Core.Logging;
 using GanttCreator.Office;
 using Moq;
+using static GanttCreator.AddIn.Tests.RibbonTestSupport;
 
 // CA2000: test fixtures are deliberately not disposed — the code under test
 // (GanttRibbon) does not own disposable resources, and these are plain strings
@@ -28,45 +29,6 @@ namespace GanttCreator.AddIn.Tests;
 [Collection("diagnostics-service")]
 public class GanttRibbonTests
 {
-    private const string WorkbookRibbonId = "Microsoft.Excel.Workbook";
-
-    private static readonly GanttRibbon Ribbon = new();
-
-    // The set of RibbonX attribute names that dispatch to a callback method on
-    // the ribbon class. Any of these appearing in the document must resolve to a
-    // public method with a compatible signature (the callback contract).
-    private static readonly HashSet<string> CallbackAttributeNames =
-    [
-        "onLoad",
-        "onAction",
-        "onChange",
-        "getPressed",
-        "getEnabled",
-        "getVisible",
-        "getImage",
-        "getLabel",
-        "getSize",
-        "getScreentip",
-        "getSupertip",
-        "getDescription",
-        "getKeyTip",
-        "getText",
-        "getContent",
-        "getShowLabel",
-        "getShowImage",
-        "getSelectedItemIndex",
-
-        // R5.5: the dynamic dropDown item callbacks. Excel calls getItemCount
-        // first, then getItemID/getItemLabel for each index, then
-        // getSelectedItemIndex — all four must resolve to a public method.
-        "getItemCount",
-        "getItemID",
-        "getItemLabel",
-    ];
-
-    private const string NamespaceCustomUI2010 =
-        "http://schemas.microsoft.com/office/2009/07/customui";
-
     [Fact]
     public void GanttRibbon_is_public_ComVisible_ExcelRibbon_derived_and_has_parameterless_ctor()
     {
@@ -97,23 +59,6 @@ public class GanttRibbonTests
         Assert.NotEmpty(xml);
         Assert.Contains("customUI", xml, StringComparison.Ordinal);
     }
-
-    /// <summary>
-    /// Groups that do not declare the <c>getVisible</c> callback (R5.16). Kept
-    /// as a validator so a future group cannot be added without visibility.
-    /// </summary>
-    private static IReadOnlyList<string> GroupsMissingVisibleCallback(string xml)
-    {
-        XDocument doc = XDocument.Parse(xml);
-        XNamespace ns = doc.Root!.Name.Namespace;
-        return
-        [
-            .. doc.Descendants(ns + "group")
-                .Where(group => (string?)group.Attribute("getVisible") != "GetVisible")
-                .Select(group => (string?)group.Attribute("id") ?? string.Empty),
-        ];
-    }
-
     [Fact]
     public void Every_ribbon_group_declares_the_visible_callback()
     {
@@ -1076,23 +1021,6 @@ public class GanttRibbonTests
                 $"Dropdown {id} has neither a label nor a companion labelControl.");
         }
     }
-
-    /// <summary>
-    /// Buttons that carry neither a static label nor a projected one (R5.16).
-    /// </summary>
-    private static IReadOnlyList<string> ButtonsMissingVisibleLabel(string xml)
-    {
-        XDocument doc = XDocument.Parse(xml);
-        XNamespace ns = NamespaceCustomUI2010;
-        return
-        [
-            .. doc.Descendants(ns + "button")
-                .Where(button => string.IsNullOrWhiteSpace(button.Attribute("label")?.Value)
-                    && string.IsNullOrWhiteSpace(button.Attribute("getLabel")?.Value))
-                .Select(button => (string?)button.Attribute("id") ?? string.Empty),
-        ];
-    }
-
     [Fact]
     public void The_visible_label_validator_flags_a_button_with_neither_label_nor_getLabel()
     {
@@ -1968,17 +1896,6 @@ public class GanttRibbonTests
             0,
             ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate)));
     }
-
-    /// <summary>The control ids the service invalidated, in call order.</summary>
-    /// <param name="ribbon">The mocked ribbon handle.</param>
-    /// <returns>The invalidated ids.</returns>
-    private static List<string> RibbonInvalidatedIds(Mock<IRibbonUI> ribbon) =>
-    [
-        .. ribbon.Invocations
-            .Where(invocation => invocation.Method.Name == nameof(IRibbonUI.InvalidateControl))
-            .Select(invocation => (string)invocation.Arguments[0]!),
-    ];
-
     /// <summary>
     /// Positive for the true-bounds display: with both ends AUTO and event
     /// data present, the boxes show the month-snapped chart bounds Refresh
@@ -2014,28 +1931,6 @@ public class GanttRibbonTests
         Assert.Equal("01-Mar-26", service.GetPlotStartDate());
         Assert.Equal("30-Apr-26", service.GetPlotFinishDate());
     }
-
-    private static int s_nextPlotBoundsId;
-
-    private static string PlotBoundsId() => "G-" + (++s_nextPlotBoundsId).ToString("x32", CultureInfo.InvariantCulture);
-
-    private static GanttRowDto PlotBoundsRow(int row, string start, string finish) =>
-        new(
-            row,
-            PlotBoundsId(),
-            PlotBoundsId(),
-            null,
-            "As-Planned Activity",
-            $"Row {row}",
-            DateOnly.ParseExact(start, "dd/MM/yyyy", CultureInfo.InvariantCulture),
-            DateOnly.ParseExact(finish, "dd/MM/yyyy", CultureInfo.InvariantCulture),
-            null,
-            null,
-            null,
-            null,
-            null,
-            true,
-            null);
 
     [Fact]
     public void OnPlotFinishDateChange_forwards_the_edited_text_to_the_service()
@@ -2348,117 +2243,6 @@ public class GanttRibbonTests
             Record.Exception(() => GanttRibbon.OnValidateSheetClick(
                 null, new CommandBoundary(presenter: _ => { }), null!)));
     }
-
-    /// <summary>
-    /// Parses the RibbonX <paramref name="xml"/> and returns the callback method
-    /// names (the values of known callback attributes) that do not resolve to a
-    /// public instance method on <paramref name="ribbonType"/> with a compatible
-    /// signature: zero parameters, one parameter of type
-    /// <see cref="IRibbonControl"/> or <see cref="IRibbonUI"/>, the two
-    /// parameters <see cref="IRibbonControl"/> plus <see cref="string"/> that
-    /// the editBox <c>onChange</c> callback passes, the two parameters
-    /// <see cref="IRibbonControl"/> plus <see cref="bool"/> that the checkBox
-    /// <c>onAction</c> callback passes (fix plan ruling 2), or the three
-    /// parameters <see cref="IRibbonControl"/> plus <see cref="string"/> plus
-    /// <see cref="int"/> that the dropDown <c>onAction</c> callback passes.
-    /// </summary>
-    /// <param name="xml">The RibbonX document to validate.</param>
-    /// <param name="ribbonType">The ribbon class type.</param>
-    /// <returns>The set of unresolved callback method names, if any.</returns>
-    private static List<string> ValidateCallbacks(
-        string xml, Type ribbonType)
-    {
-        XDocument doc = XDocument.Parse(xml);
-        List<string> unresolved = [];
-
-        foreach (XElement element in doc.Descendants())
-        {
-            foreach (XAttribute attribute in element.Attributes())
-            {
-                if (!CallbackAttributeNames.Contains(attribute.Name.LocalName))
-                {
-                    continue;
-                }
-
-                string methodName = attribute.Value;
-                if (!CallbackResolves(ribbonType, methodName))
-                {
-                    unresolved.Add(methodName);
-                }
-            }
-        }
-
-        return unresolved;
-    }
-
-    private static bool CallbackResolves(Type ribbonType, string methodName)
-    {
-        System.Reflection.MethodInfo? method = ribbonType.GetMethod(
-            methodName,
-            BindingFlags.Instance | BindingFlags.Public);
-
-        if (method is null)
-        {
-            return false;
-        }
-
-        System.Reflection.ParameterInfo[] parameters = method.GetParameters();
-        if (parameters.Length == 0)
-        {
-            return true;
-        }
-
-        if (parameters.Length == 1)
-        {
-            Type paramType = parameters[0].ParameterType;
-            return paramType == typeof(IRibbonControl)
-                || paramType == typeof(IRibbonUI);
-        }
-
-        if (parameters.Length == 2)
-        {
-            // The RibbonX editBox onChange callback passes the control plus the
-            // edited text: public void OnChange(IRibbonControl, string).
-            if (parameters[0].ParameterType == typeof(IRibbonControl)
-                && parameters[1].ParameterType == typeof(string))
-            {
-                return true;
-            }
-
-            // The RibbonX dynamic dropDown item callbacks (R5.5) pass the
-            // control plus the zero-based item index:
-            // public string GetItemID(IRibbonControl, int) and
-            // public string GetItemLabel(IRibbonControl, int). Excel
-            // dispatches both by reflection, so a missing int parameter
-            // throws at dropdown-population time.
-            if (parameters[0].ParameterType == typeof(IRibbonControl)
-                && parameters[1].ParameterType == typeof(int))
-            {
-                return true;
-            }
-
-            // The RibbonX checkBox onAction callback passes the control plus
-            // the pressed state: public void OnClick(IRibbonControl, bool).
-            return parameters[0].ParameterType == typeof(IRibbonControl)
-                && parameters[1].ParameterType == typeof(bool);
-        }
-
-        if (parameters.Length == 3)
-        {
-            // The RibbonX dropDown onAction callback passes the control, the
-            // selected item id, and the selected index:
-            // public void OnChange(IRibbonControl, string, int). Excel
-            // dispatches all three by reflection, so a two-parameter handler
-            // throws TargetParameterCountException at click time (live defect,
-            // found in Excel 2026-10-10).
-            return parameters[0].ParameterType == typeof(IRibbonControl)
-                && parameters[1].ParameterType == typeof(string)
-                && parameters[2].ParameterType == typeof(int);
-        }
-
-        return false;
-    }
-
     [Fact]
     public void OnThemeSettingsClick_throws_for_null_state_service()
     {
