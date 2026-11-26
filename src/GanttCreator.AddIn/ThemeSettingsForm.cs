@@ -2869,7 +2869,29 @@ internal sealed partial class ThemeSettingsForm : Form
     /// edits.
     /// </summary>
     /// <returns>The assembled request, before validation.</returns>
+    /// <remarks>
+    /// Each group is built by its own step, so a reader can check one diffing rule without
+    /// holding the other three in their head. The steps read the form's own collections, so
+    /// they stay on the form rather than moving to a type that would only receive six
+    /// collections back.
+    /// </remarks>
     private ThemeEditRequest BuildThemeEditRequest()
+    {
+        // The pending colours for the style on screen are captured first, so an edit the
+        // user made just before pressing OK is not lost.
+        CaptureSelectedEntityColours();
+
+        return new ThemeEditRequest(
+            BuildStyleEdits(),
+            BuildMetricEdits(),
+            BuildCustomStyleEdits(),
+            null,
+            BuildChromeColourEdits());
+    }
+
+    /// <summary>Collects every metric the dialog is editing, keyed by its setting token.</summary>
+    /// <returns>The metric edits.</returns>
+    private Dictionary<string, double> BuildMetricEdits()
     {
         Dictionary<string, double> metricEdits = [];
         foreach (KeyValuePair<string, NumericUpDown> kvp in _metricNumericUpDowns)
@@ -2877,11 +2899,13 @@ internal sealed partial class ThemeSettingsForm : Form
             metricEdits[kvp.Key] = (double)kvp.Value.Value;
         }
 
-        // Build request
-        // The pending colours for the style on screen are captured first, so
-        // an edit the user made just before pressing OK is not lost.
-        CaptureSelectedEntityColours();
+        return metricEdits;
+    }
 
+    /// <summary>Collects the built-in style colours the user changed.</summary>
+    /// <returns>The style edits; a style with no colour pending is omitted.</returns>
+    private List<ThemeStyleEdit> BuildStyleEdits()
+    {
         List<ThemeStyleEdit> styleEdits = [];
         foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
         {
@@ -2908,14 +2932,29 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        List<CustomStyleEdit> customStyleEdits = [];
-        HashSet<string> originalKeys = new HashSet<string>(_originalCustomDefs.Select(d => d.StyleKey), StringComparer.Ordinal);
+        return styleEdits;
+    }
 
-        // Renames FIRST, so a renamed style is not ALSO reported as a delete
-        // of its old key plus a create of its new one. The rename carries the
-        // style's properties, so the create that would follow it is
-        // suppressed for the new key.
-        HashSet<string> renamedToKeys = new HashSet<string>(StringComparer.Ordinal);
+    /// <summary>Collects the rename, delete, create and update edits for the custom styles.</summary>
+    /// <returns>The custom-style edits, in the order the writer expects them.</returns>
+    private List<CustomStyleEdit> BuildCustomStyleEdits()
+    {
+        // Renames FIRST, so a renamed style is not ALSO reported as a delete of its old key
+        // plus a create of its new one. The rename carries the style's properties, so the
+        // create that would follow it is suppressed for the new key.
+        List<CustomStyleEdit> renames = BuildCustomStyleRenames(out HashSet<string> renamedToKeys);
+        List<CustomStyleEdit> deletes = BuildCustomStyleDeletes();
+        List<CustomStyleEdit> createsAndUpdates = BuildCustomStyleCreatesAndUpdates(renamedToKeys);
+        return [.. renames, .. deletes, .. createsAndUpdates];
+    }
+
+    /// <summary>Collects one rename edit per pending rename that still has a style.</summary>
+    /// <param name="renamedToKeys">Receives the new keys, so a rename is not also a create.</param>
+    /// <returns>The rename edits.</returns>
+    private List<CustomStyleEdit> BuildCustomStyleRenames(out HashSet<string> renamedToKeys)
+    {
+        List<CustomStyleEdit> renames = [];
+        renamedToKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (KeyValuePair<string, string> rename in _pendingRenames)
         {
             if (!_customStyleEdits.TryGetValue(rename.Key, out CustomStyleState? state))
@@ -2925,7 +2964,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 continue;
             }
 
-            customStyleEdits.Add(new CustomStyleEdit(
+            renames.Add(new CustomStyleEdit(
                 CustomStyleOperation.Rename,
                 rename.Key,
                 NewStyleKey: rename.Value,
@@ -2943,22 +2982,41 @@ internal sealed partial class ThemeSettingsForm : Form
             _ = renamedToKeys.Add(rename.Value);
         }
 
-        // Deletes: original custom styles no longer in _customStyleEdits, and
-        // not being renamed. A renamed style's OLD key still exists in the
-        // workbook -- under its new name -- so deleting it would remove it.
+        return renames;
+    }
+
+    /// <summary>Collects one delete edit per original custom style that is gone and not renamed.</summary>
+    /// <returns>The delete edits.</returns>
+    /// <remarks>
+    /// A renamed style's OLD key still exists in the workbook -- under its new name -- so
+    /// deleting it would remove the style the rename just produced.
+    /// </remarks>
+    private List<CustomStyleEdit> BuildCustomStyleDeletes()
+    {
+        List<CustomStyleEdit> deletes = [];
         foreach (CustomStyleDef original in _originalCustomDefs)
         {
             if (!_customStyleEdits.ContainsKey(original.StyleKey)
                 && !_pendingRenames.ContainsKey(original.StyleKey))
             {
-                customStyleEdits.Add(new CustomStyleEdit(CustomStyleOperation.Delete, original.StyleKey));
+                deletes.Add(new CustomStyleEdit(CustomStyleOperation.Delete, original.StyleKey));
             }
         }
 
-        // Creates and updates: current custom styles. A style that is being
-        // RENAMED is not also created or updated: the Rename operation
-        // already carries its properties, and a second edit for the same
-        // style would be a duplicate key in the request.
+        return deletes;
+    }
+
+    /// <summary>Collects a create for a new key and an update for a changed existing one.</summary>
+    /// <param name="renamedToKeys">The new keys a rename already carries.</param>
+    /// <returns>The create and update edits.</returns>
+    /// <remarks>
+    /// A style that is being RENAMED is not also created or updated: the Rename operation
+    /// already carries its properties, and a second edit for the same style would be a
+    /// duplicate key in the request.
+    /// </remarks>
+    private List<CustomStyleEdit> BuildCustomStyleCreatesAndUpdates(HashSet<string> renamedToKeys)
+    {
+        List<CustomStyleEdit> edits = [];
         foreach (KeyValuePair<string, CustomStyleState> kvp in _customStyleEdits)
         {
             string key = kvp.Key;
@@ -2971,7 +3029,7 @@ internal sealed partial class ThemeSettingsForm : Form
             CustomStyleDef? original = _originalCustomDefs.FirstOrDefault(d => d.StyleKey == key);
             if (original is null)
             {
-                customStyleEdits.Add(new CustomStyleEdit(
+                edits.Add(new CustomStyleEdit(
                     CustomStyleOperation.Create,
                     key,
                     DisplayName: key,
@@ -3002,7 +3060,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 // unchanged, so it can never collide with another key
                 // (R5.6a D1). A Rename with identical old/new key would
                 // falsely fail the request's duplicate-key check.
-                customStyleEdits.Add(new CustomStyleEdit(
+                edits.Add(new CustomStyleEdit(
                     CustomStyleOperation.Update,
                     key,
                     DisplayName: key,
@@ -3019,9 +3077,17 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        // The chart-chrome colours the user set. A colour left at the
-        // catalogue default is still carried: the setting's stored value is
-        // the workbook's own, and the writer preserves it either way.
+        return edits;
+    }
+
+    /// <summary>Collects the chart-chrome colours the user set.</summary>
+    /// <returns>The chrome-colour edits.</returns>
+    /// <remarks>
+    /// A colour left at the catalogue default is still carried: the setting's stored value is
+    /// the workbook's own, and the writer preserves it either way.
+    /// </remarks>
+    private Dictionary<string, string> BuildChromeColourEdits()
+    {
         Dictionary<string, string> chromeColourEdits = [];
         foreach (KeyValuePair<string, TextBox> kvp in _chromeColourTextBoxes)
         {
@@ -3032,12 +3098,7 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        return new ThemeEditRequest(
-            styleEdits,
-            metricEdits,
-            customStyleEdits,
-            null,
-            chromeColourEdits);
+        return chromeColourEdits;
     }
 
     /// <summary>
