@@ -103,12 +103,35 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
 
             Excel.Worksheet gantt = FindSheet(workbook, GanttWorkbookContract.GanttSheetLabel);
             Excel.ListObject table = gantt.ListObjects[GanttTableSchema.TableName];
-            Excel.ListRow first = table.ListRows.Add();
-            Excel.ListRow second = table.ListRows.Add();
-            WriteActivityRow(first, table, ValidId('1'), "First user row");
-            WriteActivityRow(second, table, ValidId('1'), "Second user row");
-            string firstDescription = ReadCell(first, table, "Description");
-            string secondDescription = ReadCell(second, table, "Description");
+
+            // Rows and columns are addressed INDEPENDENTLY of the objects that created them.
+            // Rows: `ListRow.Range` on the row a `ListRows.Add()` returns is not a stable address —
+            // measured live 2026-11-25, the row returned by the FIRST of two consecutive appends
+            // read worksheet row 4 while its own append landed on row 5, so this fixture wrote the
+            // PRE-EXISTING blank body row and left its row empty. Columns: the table starts at
+            // worksheet column B (R5.18k), so a table column index is NOT a worksheet column index —
+            // measured live 2026-11-26, writing `sheet.Cells[row, tableColumnIndex]` shifted every
+            // field one column left, which silently moved the duplicate out of `Id` and made the
+            // integrity checker report no identity damage at all. Both offsets are computed from the
+            // table's own range, and both are pinned by the controls below.
+            int firstRow = AppendBodyRow(table);
+            int secondRow = AppendBodyRow(table);
+
+            Assert.Equal(firstRow + 1, secondRow);
+
+            WriteActivityRow(gantt, firstRow, table, ValidId('1'), "First user row");
+            WriteActivityRow(gantt, secondRow, table, ValidId('1'), "Second user row");
+
+            // Positive controls that this fixture addressed the cells it meant to: the two ids are
+            // the duplicate it planted, and the neighbouring `LaneId` still holds ITS value. The
+            // second is what a one-column offset breaks first, which is why it is asserted.
+            Assert.Equal(ValidId('1'), ReadCell(gantt, firstRow, table, "Id"), StringComparer.Ordinal);
+            Assert.Equal(ValidId('1'), ReadCell(gantt, secondRow, table, "Id"), StringComparer.Ordinal);
+            Assert.Equal(ValidId('a'), ReadCell(gantt, firstRow, table, "LaneId"), StringComparer.Ordinal);
+            Assert.Equal(ValidId('a'), ReadCell(gantt, secondRow, table, "LaneId"), StringComparer.Ordinal);
+
+            string firstDescription = ReadCell(gantt, firstRow, table, "Description");
+            string secondDescription = ReadCell(gantt, secondRow, table, "Description");
             int sheetCountBefore = workbook.Sheets.Count;
 
             ConfigIntegrityCheckOutcome check = new ExcelConfigIntegrityChecker(fixture.Excel).Check();
@@ -133,17 +156,17 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
             // asserted below is a different quantity and is unaffected by this.
             _ = Assert.Single(plan.ConfirmRequiredFindings);
             Assert.Equal(1, declined.ConfirmationSkippedCount);
-            Assert.Equal(ValidId('1'), ReadCell(second, table, "Id"), StringComparer.Ordinal);
+            Assert.Equal(ValidId('1'), ReadCell(gantt, secondRow, table, "Id"), StringComparer.Ordinal);
 
             ConfigRepairOutcome repaired = new ExcelConfigRepairer(fixture.Excel).Repair(plan, true);
             Assert.Null(repaired.Refusal);
-            string repairedFirst = ReadCell(first, table, "Id");
-            string repairedSecond = ReadCell(second, table, "Id");
+            string repairedFirst = ReadCell(gantt, firstRow, table, "Id");
+            string repairedSecond = ReadCell(gantt, secondRow, table, "Id");
             Assert.Equal(ValidId('1'), repairedFirst, StringComparer.Ordinal);
             Assert.True(GanttRowId.TryParse(repairedSecond, out _));
             Assert.NotEqual(repairedFirst, repairedSecond, StringComparer.Ordinal);
-            Assert.Equal(firstDescription, ReadCell(first, table, "Description"), StringComparer.Ordinal);
-            Assert.Equal(secondDescription, ReadCell(second, table, "Description"), StringComparer.Ordinal);
+            Assert.Equal(firstDescription, ReadCell(gantt, firstRow, table, "Description"), StringComparer.Ordinal);
+            Assert.Equal(secondDescription, ReadCell(gantt, secondRow, table, "Description"), StringComparer.Ordinal);
             Assert.Equal(sheetCountBefore, workbook.Sheets.Count);
             Assert.Equal(1, CountVisibleWorksheets(workbook));
             Assert.Equal(1, CountVeryHiddenWorksheets(workbook));
@@ -154,10 +177,60 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>Appends one body row and returns the worksheet row number it landed on.</summary>
+    /// <param name="table">The live Gantt table.</param>
+    /// <returns>The one-based worksheet row of the appended row.</returns>
+    /// <remarks>
+    /// The row is derived from the table's own range BEFORE the append — the first row below the
+    /// table — because the <c>ListRow</c> proxy that <c>ListRows.Add()</c> returns is not a
+    /// trustworthy address: it read one row high for the first of two consecutive appends on the
+    /// live host (2026-11-25), which silently moved this fixture's writes onto the pre-existing
+    /// blank body row. The returned proxy is discarded deliberately; the caller needs the row, not
+    /// the object.
+    /// </remarks>
+    private static int AppendBodyRow(Excel.ListObject table)
+    {
+        Excel.Range tableRange = table.Range;
+        int topRow = tableRange.Row;
+        Excel.Range rows = tableRange.Rows;
+        int rowCount = rows.Count;
+        _ = table.ListRows.Add();
+        return topRow + rowCount;
+    }
+
+    /// <summary>
+    /// Resolves one cell by WORKSHEET row and TABLE column name, translating the table column
+    /// index into a worksheet column.
+    /// </summary>
+    /// <param name="sheet">The worksheet that owns the table.</param>
+    /// <param name="table">The live Gantt table.</param>
+    /// <param name="rowNumber">The one-based worksheet row.</param>
+    /// <param name="columnName">The schema column name.</param>
+    /// <returns>The addressed cell.</returns>
+    /// <remarks>
+    /// The translation is the point: since R5.18k the table starts at worksheet column B, so
+    /// <c>ListColumns[name].Index</c> is a TABLE index and using it as a worksheet column index
+    /// shifts every read and write one column left. That defect moved this fixture's duplicate out
+    /// of <c>Id</c> on 2026-11-26 and made the integrity checker report no identity damage, which
+    /// looked like a repairer fault.
+    /// </remarks>
+    private static Excel.Range CellAt(
+        Excel.Worksheet sheet,
+        Excel.ListObject table,
+        int rowNumber,
+        string columnName)
+    {
+        Excel.Range tableRange = table.Range;
+        int firstTableColumn = tableRange.Column;
+        int worksheetColumn = firstTableColumn + ColumnIndex(table, columnName) - 1;
+        return sheet.Cells[rowNumber, worksheetColumn];
+    }
+
     /// <summary>
     /// Writes one valid activity row into the live table, addressed by COLUMN NAME.
     /// </summary>
-    /// <param name="row">The list row to write.</param>
+    /// <param name="sheet">The worksheet that owns the table.</param>
+    /// <param name="rowNumber">The worksheet row captured when the row was appended.</param>
     /// <param name="table">The table the row belongs to, used to resolve each header's index.</param>
     /// <param name="id">The row identity to write (deliberately duplicated by the fixture).</param>
     /// <param name="description">The description text.</param>
@@ -171,33 +244,41 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
     /// The schema is the authority for order, so the name is the only stable address.
     /// </remarks>
     private static void WriteActivityRow(
-        Excel.ListRow row,
+        Excel.Worksheet sheet,
+        int rowNumber,
         Excel.ListObject table,
         string id,
         string description)
     {
-        WriteCell(row, table, "Id", id);
-        WriteCell(row, table, "LaneId", ValidId('a'));
-        WriteCell(row, table, "StackIndex", 0);
-        WriteCell(row, table, "Type", "As-Planned Activity");
-        WriteCell(row, table, "Description", description);
-        WriteCell(row, table, "Start", new DateTime(2026, 9, 1).ToOADate());
-        WriteCell(row, table, "Finish", new DateTime(2026, 9, 2).ToOADate());
-        WriteCell(row, table, "Visible", true);
+        WriteCell(sheet, rowNumber, table, "Id", id);
+        WriteCell(sheet, rowNumber, table, "LaneId", ValidId('a'));
+        WriteCell(sheet, rowNumber, table, "StackIndex", 0);
+        WriteCell(sheet, rowNumber, table, "Type", "As-Planned Activity");
+        WriteCell(sheet, rowNumber, table, "Description", description);
+        WriteCell(sheet, rowNumber, table, "Start", new DateTime(2026, 9, 1).ToOADate());
+        WriteCell(sheet, rowNumber, table, "Finish", new DateTime(2026, 9, 2).ToOADate());
+        WriteCell(sheet, rowNumber, table, "Visible", true);
     }
 
-    private static void WriteCell(Excel.ListRow row, Excel.ListObject table, string columnName, object value)
+    private static void WriteCell(
+        Excel.Worksheet sheet,
+        int rowNumber,
+        Excel.ListObject table,
+        string columnName,
+        object value)
     {
-        Excel.Range range = row.Range;
-        range.Cells[1, ColumnIndex(table, columnName)].Value2 = value;
+        Excel.Range cell = CellAt(sheet, table, rowNumber, columnName);
+        cell.Value2 = value;
     }
 
-    private static string ReadCell(Excel.ListRow row, Excel.ListObject table, string columnName)
+    private static string ReadCell(
+        Excel.Worksheet sheet,
+        int rowNumber,
+        Excel.ListObject table,
+        string columnName)
     {
-        Excel.Range range = row.Range;
-        return Convert.ToString(
-            range.Cells[1, ColumnIndex(table, columnName)].Value2,
-            CultureInfo.InvariantCulture) ?? string.Empty;
+        Excel.Range cell = CellAt(sheet, table, rowNumber, columnName);
+        return Convert.ToString(cell.Value2, CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
     /// <summary>Resolves a table column's one-based index from its header name.</summary>
