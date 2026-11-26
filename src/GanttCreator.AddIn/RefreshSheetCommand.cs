@@ -91,6 +91,29 @@ internal static class RefreshSheetCommand
     internal static void ResetProtectionArming() => _protectionArming.Invalidate();
 
     /// <summary>
+    /// Forgets the session's protection window, shape-delta cache and arming memory at teardown.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Called by <see cref="AddInHost.AutoClose"/>. The window owns a protection port built over the
+    /// Excel application object that was live when it was created, and the arming and delta cache
+    /// describe one session's worksheet; none of it is valid after the add-in unloads, and the next
+    /// load rebuilds each on first use. Leaving them would let a reloaded add-in write through a
+    /// stale COM adapter and believe a sheet is armed that it has never protected.
+    /// </para>
+    /// <para>
+    /// A window cannot be open here: teardown runs when Excel unloads the add-in, never inside a
+    /// command scope, so dropping the reference cannot leave the sheet released.
+    /// </para>
+    /// </remarks>
+    internal static void ResetSessionState()
+    {
+        _protectionWindow = null;
+        _shapeDeltaCache.Invalidate();
+        _protectionArming.Invalidate();
+    }
+
+    /// <summary>
     /// Re-applies the outline-symbol option on a sheet that is already protected, so the native
     /// <c>+</c>/<c>-</c> controls work as soon as a saved workbook is reopened.
     /// </summary>

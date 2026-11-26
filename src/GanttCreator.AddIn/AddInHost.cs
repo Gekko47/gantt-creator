@@ -229,9 +229,10 @@ public sealed class AddInHost(
     /// <summary>
     /// Excel-DNA entry point invoked when the XLL unloads. Tears down in one
     /// deterministic order (work item R1.6): the owned COM event connection
-    /// is detached first, then one close record is written, then every
-    /// session singleton drops its log reference, and the log is disposed
-    /// last. Failures degrade instead of propagating into Excel.
+    /// is detached first, then the session-scoped protection and delta state
+    /// is forgotten, then one close record is written, then every session
+    /// singleton drops its log reference, and the log is disposed last.
+    /// Failures degrade instead of propagating into Excel.
     /// </summary>
     public void AutoClose()
     {
@@ -258,7 +259,21 @@ public sealed class AddInHost(
             // justification comment above.
         }
 
-        // Step 2: exactly one close record carrying this load's session
+        // Step 2: forget the session-scoped protection window, delta cache and
+        // arming memory, so a reloaded add-in cannot reuse a window built over
+        // this load's Excel application object. Guarded separately because a
+        // failure means only that the next load rebuilds them, which is safe.
+        try
+        {
+            RefreshSheetCommand.ResetSessionState();
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
+
+        // Step 3: exactly one close record carrying this load's session
         // token. A write failure degrades to a missing close record and must
         // not skip the log-reference drops below.
         try
@@ -274,7 +289,7 @@ public sealed class AddInHost(
             // justification comment above.
         }
 
-        // Step 3: drop the command boundary's log reference BEFORE the log is
+        // Step 4: drop the command boundary's log reference BEFORE the log is
         // disposed, so it cannot hold (or write through) a disposed log. The
         // reset only clears references under a lock.
         try
@@ -287,9 +302,9 @@ public sealed class AddInHost(
             // justification comment above.
         }
 
-        // Step 4: drop the diagnostics service's log reference, guarded
-        // separately from step 3 so a boundary-reset failure cannot leave the
-        // diagnostics singleton holding the log that step 5 is about to
+        // Step 5: drop the diagnostics service's log reference, guarded
+        // separately from step 4 so a boundary-reset failure cannot leave the
+        // diagnostics singleton holding the log that step 6 is about to
         // dispose.
         try
         {
@@ -301,7 +316,7 @@ public sealed class AddInHost(
             // justification comment above.
         }
 
-        // Step 5: the log is disposed last, when no other component holds it.
+        // Step 6: the log is disposed last, when no other component holds it.
         // Disposal exceptions are suppressed so AutoClose never propagates
         // into Excel.
         try

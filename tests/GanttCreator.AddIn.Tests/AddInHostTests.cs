@@ -237,6 +237,24 @@ public class AddInHostTests
     }
 
     [Fact]
+    public void AutoClose_forgets_the_session_protection_state()
+    {
+        // Finding 8: the protection window, delta cache and arming memory in
+        // RefreshSheetCommand describe one Excel session, and the window holds a
+        // port built over the application object that was live when it was made.
+        // A reloaded add-in must not inherit any of it.
+        var log = new CapturingLog();
+        var host = Host(() => log);
+        host.AutoOpen();
+        ProtectionArmingState.Shared.MarkArmed();
+        Assert.True(ProtectionArmingState.Shared.IsArmed);
+
+        host.AutoClose();
+
+        Assert.False(ProtectionArmingState.Shared.IsArmed);
+    }
+
+    [Fact]
     public void AutoClose_resets_diagnostics_singleton_after_disposing_the_log()
     {
         var log = new CapturingLog();
