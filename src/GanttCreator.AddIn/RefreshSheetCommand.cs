@@ -179,37 +179,14 @@ internal static class RefreshSheetCommand
             refreshCompleted = Stopwatch.GetTimestamp();
         }
 
-        long ribbonStarted = Stopwatch.GetTimestamp();
-        RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
-
-        // Store scene warnings in the Ribbon state service so the warnings
-        // panel can surface them. Row-level validation issues are reported
-        // through row/cell fill colours; scene-level warnings surface here.
-        if (outcome.Succeeded)
-        {
-            RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
-            RibbonStateService.Instance.MarkChartRenderCurrent();
-            RibbonStateService.ClearStatusBar();
-        }
-        else
-        {
-            Present(CommandErrorDialog.Show, outcome.Message ?? "The chart could not be refreshed.");
-        }
-
-        // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on the Table
-        // Design tab — and it must run AFTER the protection window closed, because that
-        // window's selection restore is itself a Range.Select(), and a Select inside
-        // tblGanttData is what activates the Table Design tab. Restoring the tab first let
-        // the window's own restore undo it (reported 2026-11-14: pressing a Columns row
-        // pulled the user off the add-in tab). It runs on a refused refresh too: the user
-        // is still on this sheet. The call is guarded by Ready + the Gantt sheet being
-        // active, so it is a no-op everywhere else.
-        long tabsStarted = Stopwatch.GetTimestamp();
-        RibbonStateService.Instance.ActivateGanttTab();
-
-        TracePostSteps(refreshCompleted, ribbonStarted, tabsStarted);
-        TracePostPass(refreshCompleted);
-        TraceCommand(commandStarted, automatic: false);
+        FinishRefresh(
+            outcome,
+            commandStarted,
+            refreshCompleted,
+            CommandErrorDialog.Show,
+            automatic: false,
+            updateEffectivePlotDates: false,
+            invalidateSelectionGates: false);
     }
 
     /// <summary>
@@ -249,50 +226,89 @@ internal static class RefreshSheetCommand
             refreshCompleted = Stopwatch.GetTimestamp();
         }
 
+        FinishRefresh(
+            outcome,
+            commandStarted,
+            refreshCompleted,
+            RibbonStatusBar.Warn,
+            automatic: true,
+            updateEffectivePlotDates: true,
+            invalidateSelectionGates: true);
+    }
+
+    /// <summary>
+    /// Runs the post-pipeline sequence both refresh paths share: the ribbon-state
+    /// writes, the one presentation of a non-success outcome, the tab restore, and
+    /// the three trace records. The two paths differ only in the presenter, the
+    /// AUTO date repaint, and whether the selection-gated controls are re-asked.
+    /// </summary>
+    /// <param name="outcome">The pipeline outcome being presented.</param>
+    /// <param name="commandStarted">The timestamp taken at the command's first line.</param>
+    /// <param name="refreshCompleted">The timestamp taken when the pipeline returned.</param>
+    /// <param name="failurePresenter">The channel a non-success outcome is presented on.</param>
+    /// <param name="automatic">Whether this was a scheduled pass rather than a click.</param>
+    /// <param name="updateEffectivePlotDates">Whether the AUTO date row is repainted from the outcome.</param>
+    /// <param name="invalidateSelectionGates">Whether the selection-gated controls are re-asked.</param>
+    private static void FinishRefresh(
+        GanttRefreshOutcome outcome,
+        long commandStarted,
+        long refreshCompleted,
+        Action<string> failurePresenter,
+        bool automatic,
+        bool updateEffectivePlotDates,
+        bool invalidateSelectionGates)
+    {
         long ribbonStarted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
-        // Store scene warnings in the Ribbon state service — same as RunForExcel.
+        // Store scene warnings in the Ribbon state service so the warnings panel can
+        // surface them. Row-level validation issues are reported through row/cell fill
+        // colours; scene-level warnings surface here.
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
             RibbonStateService.Instance.MarkChartRenderCurrent();
 
-            // R5.1a: an AUTO end's displayed date comes from the range the chart
-            // just used. Reading it off the outcome costs two comparisons and only
-            // invalidates the boxes whose text actually moved; the expensive
-            // alternative, a full RibbonStateService.Refresh() after every
-            // automatic pass, was rejected.
-            RibbonStateService.Instance.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
+            // R5.1a: an AUTO end's displayed date comes from the range the chart just
+            // used. Reading it off the outcome costs two comparisons and only invalidates
+            // the boxes whose text actually moved.
+            if (updateEffectivePlotDates)
+            {
+                RibbonStateService.Instance.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
+            }
+
             RibbonStateService.ClearStatusBar();
-            // Invalidate only the selection-dependent controls so their enabled
-            // state re-evaluates against the post-refresh sheet state. Mirrors
-            // NotifyRibbonStateChanged() on the manual refresh path, but scoped
-            // to the controls that read SelectionBoundaryContext instead of
-            // re-reading every table row and re-querying every ribbon getter.
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DescriptionLabel);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DateLabel);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.CustomStyle);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveUp);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
+
+            // Invalidate only the selection-dependent controls so their enabled state
+            // re-evaluates against the post-refresh sheet state.
+            if (invalidateSelectionGates)
+            {
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DescriptionLabel);
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DateLabel);
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.CustomStyle);
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveUp);
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
+                RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
+            }
         }
         else
         {
-            Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
+            CommandBoundary.SafePresent(
+                failurePresenter,
+                outcome.Message ?? "The chart could not be refreshed.");
         }
 
-        // Owner ruling D-4 (ADR-0058): same tab restore as the manual path, and for the
-        // same ordering reason — the protection window has closed, so its selection
-        // restore (a Range.Select() inside the table) has already happened and cannot
-        // re-activate the Table Design tab afterwards.
+        // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on the Table
+        // Design tab, so the tab restore runs after the protection window closed (its
+        // selection restore is itself a Range.Select()). It runs on a refused refresh
+        // too, and is a no-op unless the surface is Ready on the Gantt sheet.
         long tabsStarted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.ActivateGanttTab();
 
         TracePostSteps(refreshCompleted, ribbonStarted, tabsStarted);
         TracePostPass(refreshCompleted);
-        TraceCommand(commandStarted, automatic: true);
+        TraceCommand(commandStarted, automatic);
     }
 
     /// <summary>
@@ -329,7 +345,7 @@ internal static class RefreshSheetCommand
             return;
         }
 
-        Present(presenter, outcome.Message ?? "The chart could not be refreshed.");
+        CommandBoundary.SafePresent(presenter, outcome.Message ?? "The chart could not be refreshed.");
     }
 
     /// <summary>
@@ -365,28 +381,6 @@ internal static class RefreshSheetCommand
         CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
             CultureInfo.InvariantCulture,
             $"gantt.refresh post-steps ms=state={Stopwatch.GetElapsedTime(since, ribbonStarted).TotalMilliseconds:0.#} tabs={Stopwatch.GetElapsedTime(ribbonStarted, tabsStarted).TotalMilliseconds:0.#}"));
-
-    /// <summary>
-    /// Shows the message, degrading to no dialog if the host refuses one.
-    /// </summary>
-    /// <param name="presenter">The user-facing presenter.</param>
-    /// <param name="message">The message to show.</param>
-    private static void Present(Action<string> presenter, string message)
-    {
-        // CA1031: a presenter failure is outside command behaviour; it degrades to no
-        // dialog. The refresh has already happened, so escaping would surface an error
-        // for work that was done.
-#pragma warning disable CA1031
-        try
-        {
-            presenter(message);
-        }
-        catch
-        {
-            // Intentionally empty: a dialog failure must not escape into Excel.
-        }
-#pragma warning restore CA1031
-    }
 
     // CA2000: the scope is handed to the orchestrator, which OWNS it and disposes it
     // in a `using` on every path (R4.8A D8). The analyzer cannot see ownership

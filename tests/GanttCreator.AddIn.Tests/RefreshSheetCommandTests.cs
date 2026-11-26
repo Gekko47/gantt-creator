@@ -214,9 +214,10 @@ public class RefreshSheetCommandTests
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// Both refresh paths mark the chart current after a completed pass (R8.8): the
-    /// marker sits inside each success branch beside the warnings publish, so a refused
-    /// pass records nothing and the Export PNG command runs its own refresh when false.
+    /// Both refresh paths mark the chart current after a completed pass (R8.8). The
+    /// marker lives in the postlude both paths share, so the pin asserts the stronger
+    /// fact: each entry point reaches <c>FinishRefresh</c>, and that postlude publishes
+    /// the marker beside the warnings, exactly once.
     /// </summary>
     [Fact]
     public void Both_refresh_paths_mark_the_chart_current_after_a_completed_pass()
@@ -224,11 +225,23 @@ public class RefreshSheetCommandTests
         string source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "GanttCreator.AddIn", "RefreshSheetCommand.cs"));
 
-        int first = source.IndexOf("MarkChartRenderCurrent", StringComparison.Ordinal);
-        Assert.True(first > 0, "The explicit refresh path must mark the chart current.");
-        Assert.True(
-            source.IndexOf("MarkChartRenderCurrent", first + 1, StringComparison.Ordinal) > first,
-            "The automatic refresh path must mark the chart current too.");
+        int manual = source.IndexOf("internal static void RunForExcel()", StringComparison.Ordinal);
+        int automatic = source.IndexOf("internal static void RunSilentForExcel()", StringComparison.Ordinal);
+        int shared = source.IndexOf("private static void FinishRefresh(", StringComparison.Ordinal);
+        Assert.True(manual > 0, "The explicit refresh entry point must exist.");
+        Assert.True(automatic > manual, "The automatic refresh entry point must exist.");
+        Assert.True(shared > automatic, "The shared postlude must exist.");
+
+        string manualBody = source[manual..automatic];
+        string automaticBody = source[automatic..shared];
+        Assert.Contains("FinishRefresh(", manualBody, StringComparison.Ordinal);
+        Assert.Contains("FinishRefresh(", automaticBody, StringComparison.Ordinal);
+
+        int marked = source.IndexOf("MarkChartRenderCurrent", shared, StringComparison.Ordinal);
+        Assert.True(marked > shared, "The shared postlude must mark the chart current.");
+        Assert.Equal(
+            -1,
+            source.IndexOf("MarkChartRenderCurrent", marked + 1, StringComparison.Ordinal));
     }
 
     private static string FindRepositoryRoot()
