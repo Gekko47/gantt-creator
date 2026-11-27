@@ -222,6 +222,40 @@ public sealed class ConfigRepairerTests
     }
 
     /// <summary>
+    /// An additive upgrade that finds the workbook already current reports zero repairs.
+    /// </summary>
+    /// <remarks>
+    /// The narrow upgrade is idempotent, so it succeeds without writing when the version has
+    /// already moved on between the check and the repair. Counting that success told the user
+    /// "1 repaired" for a no-op (owner report 2026-11-27), which is the same class of
+    /// misleading sentence as the repair loop itself.
+    /// </remarks>
+    [Fact]
+    public void Repair_counts_no_repair_for_an_additive_upgrade_that_wrote_nothing()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.UpgradeAdditiveSchema()).Returns(ConfigWriteOutcome.OkWithoutChanges());
+
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build(
+        [
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.SchemaVersionOlderAdditive, "additive"),
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.CatalogueHashMismatch, "hash"),
+        ]);
+
+        ConfigRepairOutcome outcome = new ExcelConfigRepairer(
+            null,
+            writer.Object,
+            null,
+            guard.Object).Repair(plan, confirmRequiredChanges: false);
+
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(0, outcome.RepairedCount);
+        writer.Verify(w => w.Write(), Times.Never);
+    }
+
+    /// <summary>
     /// An unattributed catalogue fault is repairable, because refusing it made Fix a no-op.
     /// </summary>
     /// <remarks>

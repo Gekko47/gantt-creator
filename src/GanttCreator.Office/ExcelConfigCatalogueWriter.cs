@@ -496,9 +496,10 @@ public class ExcelConfigCatalogueWriter(
 
         string? workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
 
-        // Idempotent: a workbook already at the current version writes nothing.
-        // The caller plans this repair only for an older version, but a re-run
-        // must not rewrite two tables to say what they already say.
+        // Idempotent: a workbook already at the current version writes nothing. The
+        // caller plans this repair only for an older version, but a re-run must not
+        // rewrite two tables to say what they already say - and it must not report
+        // itself as a repair, so the outcome says it changed nothing.
         if (int.TryParse(
                 configValues.GetValueOrDefault(GanttCatalogues.ConfigSchemaVersionKey),
                 NumberStyles.Integer,
@@ -506,7 +507,7 @@ public class ExcelConfigCatalogueWriter(
                 out int storedVersion)
             && storedVersion >= GanttSchemaVersion.CurrentSchemaVersion)
         {
-            return ConfigWriteOutcome.Ok();
+            return ConfigWriteOutcome.OkWithoutChanges();
         }
 
         List<TableSnapshot> snapshots = CaptureTables(

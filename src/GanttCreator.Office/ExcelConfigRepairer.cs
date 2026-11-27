@@ -113,7 +113,13 @@ public class ExcelConfigRepairer(
                 return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused);
             }
 
-            repaired++;
+            // The upgrade is idempotent, so a workbook that was already at the current version
+            // succeeds having written nothing. Counting that would tell the user a repair
+            // happened when none did (owner report 2026-11-27).
+            if (additiveOutcome.Changed)
+            {
+                repaired++;
+            }
         }
 
         bool catalogueRepair = !additiveRepair

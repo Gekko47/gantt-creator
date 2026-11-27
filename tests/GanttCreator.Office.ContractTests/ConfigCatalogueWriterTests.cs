@@ -506,9 +506,13 @@ public class ConfigCatalogueWriterTests
             CellText(fake.Tables[4].Body.First(
                 row => CellText(row.ElementAtOrDefault(0)) == GanttCatalogues.ConfigWorkbookIdKey)[1]));
 
-        // Idempotent: a second run reports success and changes no table body.
+        // Idempotent: a second run reports success, says it changed nothing, and changes no
+        // table body. The Changed flag is what stops Fix reporting a repair it did not make.
         string afterFirst = SnapshotAll(fake);
-        Assert.Equal(ConfigWriteOutcome.Ok(), writer.UpgradeAdditiveSchema());
+        ConfigWriteOutcome second = writer.UpgradeAdditiveSchema();
+        Assert.Equal(ConfigWriteOutcome.OkWithoutChanges(), second);
+        Assert.True(second.Succeeded);
+        Assert.False(second.Changed);
         Assert.Equal(afterFirst, SnapshotAll(fake));
     }
 

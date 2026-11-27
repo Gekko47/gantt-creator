@@ -55,10 +55,28 @@ public sealed record ConfigWriteOutcome(
     ConfigWriteRefusalReason? Refusal)
 {
     /// <summary>
-    /// Creates a success outcome.
+    /// Whether the call actually wrote anything.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IConfigCatalogueWriter.UpgradeAdditiveSchema"/> is idempotent: a workbook already at the current
+    /// version is a success that writes nothing. Without this flag the repairer counted that
+    /// success as "1 repaired" and told the user a change had been made when none had —
+    /// owner report 2026-11-27, where the sentence overstated a no-op.
+    /// </remarks>
+    public bool Changed { get; init; } = Succeeded;
+
+    /// <summary>
+    /// Creates a success outcome that wrote something.
     /// </summary>
     /// <returns>The success outcome.</returns>
     public static ConfigWriteOutcome Ok() => new(true, null);
+
+    /// <summary>
+    /// Creates a success outcome for a call that was already at the requested state, so it
+    /// wrote nothing.
+    /// </summary>
+    /// <returns>The success outcome with <see cref="Changed"/> clear.</returns>
+    public static ConfigWriteOutcome OkWithoutChanges() => new(true, null) { Changed = false };
 
     /// <summary>
     /// Creates a refusal outcome. Nothing was mutated.
