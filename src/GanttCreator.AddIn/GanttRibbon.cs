@@ -2434,9 +2434,10 @@ public class GanttRibbon : ExcelRibbon
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
         // Custom is a mode, not a catalogue preset: it is resolved from the stored
-        // width. Every other id is a fixed preset and an unknown id is refused,
-        // never defaulted.
-        if (string.Equals(selectedId, SizePresets.CustomKey, StringComparison.Ordinal))
+        // width. Its item id is SizeCustom, not the durable Custom key, because RibbonX
+        // ids are global and the margin dropdown already owns "Custom". Every other id
+        // is a fixed preset and an unknown id is refused, never defaulted.
+        if (string.Equals(selectedId, RibbonControlIds.SizeCustomItem, StringComparison.Ordinal))
         {
             stateService.SetCustomSizeMode();
             return;

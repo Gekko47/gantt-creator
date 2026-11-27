@@ -461,6 +461,37 @@ public sealed class GanttRibbonXmlTests
             gatedIds);
     }
 
+    /// <summary>
+    /// No control or item id appears twice in the tab.
+    /// </summary>
+    /// <remarks>
+    /// RibbonX ids are **global across the custom UI**, not scoped to their container, so
+    /// two dropdowns may not both offer an item with the same id. The 2026-11-27 live
+    /// load failed with "Custom UI Runtime Error ... The ID 'Custom' is duplicated" for
+    /// exactly that reason: the Size dropdown's Custom item reused the margin dropdown's
+    /// existing id. Every other ribbon pin checks an expected id, so only a global
+    /// uniqueness check catches a collision between two lists.
+    /// </remarks>
+    [Fact]
+    public void Ribbon_ids_are_unique_across_the_whole_tab()
+    {
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        string[] duplicates =
+        [
+            .. doc.Descendants()
+                .Where(element => element.Name.Namespace == ns)
+                .Select(element => (string?)element.Attribute("id"))
+                .Where(id => !string.IsNullOrEmpty(id))
+                .GroupBy(id => id!, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key),
+        ];
+
+        Assert.Empty(duplicates);
+    }
+
     [Fact]
     public void Plot_dimension_displays_are_read_only_labels()
     {

@@ -145,14 +145,14 @@ public sealed class GanttRibbonChartTests
             group.Descendants(ns + "editBox"),
             element => element.Attribute("id")?.Value is "edtPlotWidth" or "edtPlotHeight");
 
-        // The four preset buttons are one dropdown whose item ids are the
-        // durable SizePreset keys.
+        // The four preset rows carry the durable SizePreset keys; the Custom row cannot,
+        // because RibbonX ids are global and the margin dropdown already owns "Custom".
         XElement sizeDropdown = group.Descendants(ns + "dropDown")
             .Single(element => element.Attribute("id")?.Value == RibbonControlIds.SizeDropdown);
         Assert.Equal("GetSize", sizeDropdown.Attribute("getSelectedItemIndex")?.Value);
         Assert.Equal("OnSizeChange", sizeDropdown.Attribute("onAction")?.Value);
         Assert.Equal(
-            ["A4Portrait", "A4Landscape", "Presentation16x9", "Presentation4x3", "Custom"],
+            ["A4Portrait", "A4Landscape", "Presentation16x9", "Presentation4x3", RibbonControlIds.SizeCustomItem],
             sizeDropdown.Descendants(ns + "item").Select(element => element.Attribute("id")?.Value));
         Assert.DoesNotContain(
             group.Descendants(ns + "button"),
@@ -413,7 +413,7 @@ public sealed class GanttRibbonChartTests
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
 
-        GanttRibbon.OnSizeChange(null, SizePresets.CustomKey, service);
+        GanttRibbon.OnSizeChange(null, RibbonControlIds.SizeCustomItem, service);
 
         Assert.True(service.IsCustomSize());
         Assert.True(SizePresets.IsCustom(service.GetPreset()));
@@ -533,7 +533,7 @@ public sealed class GanttRibbonChartTests
                 .Select(item => (string?)item.Attribute("id") ?? string.Empty),
         ];
 
-        Assert.Equal([.. SizePresets.All.Select(preset => preset.Key), SizePresets.CustomKey], itemIds);
+        Assert.Equal([.. SizePresets.All.Select(preset => preset.Key), RibbonControlIds.SizeCustomItem], itemIds);
     }
 
     /// <summary>

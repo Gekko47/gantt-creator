@@ -281,6 +281,17 @@ internal static class RibbonControlIds
     /// <summary>The plot time-scale dropdown (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotTimeScale = "ddnPlotTimeScale";
 
+    /// <summary>
+    /// The Custom item inside the Size dropdown (R8.9).
+    /// </summary>
+    /// <remarks>
+    /// <b>Not the settings value.</b> RibbonX ids are global across the tab, so this item
+    /// cannot use <c>Custom</c>: the margin dropdown already owns that id and the host
+    /// rejects the whole custom UI with "The ID 'Custom' is duplicated". The durable
+    /// workbook value stays <c>SizePreset = Custom</c>, which this id only selects.
+    /// </remarks>
+    internal const string SizeCustomItem = "SizeCustom";
+
     /// <summary>The custom-width edit box (R8.9).</summary>
     internal const string SizeWidthCm = "edtSizeWidthCm";
 

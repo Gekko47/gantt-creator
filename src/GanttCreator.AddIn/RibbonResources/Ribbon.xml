@@ -181,16 +181,21 @@
           </box>
         </group>
         <group id="grpPlotSize" label="Size" getVisible="GetVisible">
-          <!-- R5.16a: the four preset buttons are one dropdown that also shows
-               the current preset. Item ids are the durable SizePreset keys. -->
+          <!-- R5.16a: the four preset rows are one dropdown that also shows the
+               current preset, and their item ids are the durable SizePreset keys.
+               The Custom row is the exception, because ids are global. -->
           <box id="boxSizePreset" boxStyle="horizontal">
             <labelControl id="lblSize" label="Size"/>
+            <!-- RibbonX ids are global across the tab, never the settings value: the
+                 margin dropdown already owns "Custom", and the host refuses the whole
+                 custom UI when two items share an id. The durable SizePreset key stays
+                 "Custom" in the workbook; only this item's id is SizeCustom. -->
             <dropDown id="ddnSize" keytip="SZ" screentip="Output size" supertip="Chooses the page or slide size the chart is generated for, or Custom to type the width in centimetres. The current size is shown." getSelectedItemIndex="GetSize" getEnabled="GetEnabled" onAction="OnSizeChange">
               <item id="A4Portrait" label="A4 (portrait)"/>
               <item id="A4Landscape" label="A4 (landscape)"/>
               <item id="Presentation16x9" label="Presentation 16:9"/>
               <item id="Presentation4x3" label="Presentation 4:3"/>
-              <item id="Custom" label="Custom"/>
+              <item id="SizeCustom" label="Custom"/>
             </dropDown>
           </box>
           <box id="boxCustomSize" boxStyle="horizontal">

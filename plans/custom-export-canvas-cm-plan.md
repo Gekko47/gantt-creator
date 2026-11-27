@@ -187,8 +187,11 @@ the limit, which replaces the withdrawn pixel-budget clamp.
 
 ### AddIn — keep
 
-- `ddnSize` gains `<item id="Custom" label="Custom"/>` as index 4. `GetSize` returns
-  `SizePresets.All.Count` for Custom and clamps the preset loop to that index.
+- `ddnSize` gains `<item id="SizeCustom" label="Custom"/>` as index 4. RibbonX ids are
+  global, so the item cannot be `Custom`: the margin dropdown already owns that id and the
+  host refuses the tab with "The ID 'Custom' is duplicated" (live, 2026-11-27). The durable
+  settings value stays `SizePreset = Custom`. `GetSize` returns `SizePresets.All.Count` for
+  Custom and clamps the preset loop to that index.
 - `OnSizeChange` special-cases Custom and cannot go through `ByKey`, which returns null.
 - `edtSizeWidthCm` with a `cm` unit label: `GetSizeWidthCm`, `GetSizeWidthCmEnabled`,
   `OnSizeWidthCmChange`.
