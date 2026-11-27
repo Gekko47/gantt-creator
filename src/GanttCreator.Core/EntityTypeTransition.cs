@@ -86,6 +86,13 @@ public static class EntityTypeTransition
     public const string SiblingOrderColumn = "SiblingOrder";
 
     /// <summary>
+    /// The reason recorded when a style key that resolves but cannot render the new type is
+    /// replaced by the type default (R5.23). The writer logs the replaced key with this
+    /// reason, so a silently rewritten cell leaves a trace.
+    /// </summary>
+    public const string StyleNotUsableReason = "style-not-usable";
+
+    /// <summary>
     /// Computes the cells a row must change to be valid for <paramref name="newType"/>.
     /// </summary>
     /// <param name="row">The row's raw type-dependent cell text.</param>
@@ -164,7 +171,7 @@ public static class EntityTypeTransition
         changes.Add(new TypeTransitionChange(
             StyleKeyColumn,
             fallback,
-            current is null ? "style-default" : "style-not-usable"));
+            current is null ? "style-default" : StyleNotUsableReason));
         return fallback;
     }
 

@@ -233,6 +233,50 @@ public sealed class EntityTypeTransitionTests
         Assert.True(EntityTypeCatalog.IsStyleKeyUsable(GanttEntityType.AsPlannedActivity, "NeutralStyle", registry));
     }
 
+    [Fact]
+    public void A_custom_activity_healed_to_a_delineator_offers_only_corner_label_positions()
+    {
+        // The reported symptom, end to end within Core: the healed row's style resolves
+        // to the delineator's corner set, so the ribbon cannot offer a span position and
+        // the scene's corner builder has a position it can place.
+        GanttStyleRegistry registry = PresetRegistry();
+        TypeTransitionRow seed = new(
+            StyleKey: "CustomActivity",
+            LabelPosition: GanttLabelPosition.Left.ToString(),
+            DateLabelPosition: GanttDateLabelPosition.Auto.ToString(),
+            FillColour: "#FFFFFF",
+            StrokeColour: "#000000",
+            ParentId: null,
+            LaneId: null,
+            StackIndex: null,
+            SiblingOrder: null);
+
+        TypeTransitionRow healed = Healed(
+            seed,
+            EntityTypeTransition.Apply(
+                seed, GanttEntityType.Delineator, GanttEntityType.CustomActivity, registry));
+
+        IReadOnlyList<GanttLabelPosition> options = EntityTypeCatalog.GetAllowedLabelPositions(
+            GanttEntityType.Delineator, healed.StyleKey, registry);
+
+        Assert.NotEmpty(options);
+        Assert.DoesNotContain(GanttLabelPosition.Left, options);
+        foreach (GanttLabelPosition option in options)
+        {
+            Assert.True(
+                option is GanttLabelPosition.Auto
+                    or GanttLabelPosition.None
+                    or GanttLabelPosition.TopLeft
+                    or GanttLabelPosition.TopRight
+                    or GanttLabelPosition.BottomLeft
+                    or GanttLabelPosition.BottomRight,
+                $"A delineator offered '{option}', which is not a corner.");
+        }
+
+        Assert.Null(healed.LabelPosition);
+        Assert.Null(healed.DateLabelPosition);
+    }
+
     private static GanttStyleRegistry RegistryWithNeutralStyle()
     {
         List<GanttStyleDefinition> definitions = PresetDefinitions();

@@ -411,6 +411,48 @@ public sealed class GanttRefreshSchedulerTests
     }
 
     /// <summary>
+    /// R5.23: a Type burst still heals when no projection is wired. The guard that skips a
+    /// suspended burst exists for the projection; the heal is not a projection.
+    /// </summary>
+    [Fact]
+    public void A_type_change_heals_when_no_projection_is_wired()
+    {
+        var autoRefresh = new AutoRefreshPreferences { AutoRefreshEnabled = false };
+        int healed = 0;
+        ConcurrentQueue<ExcelAction> macros = new();
+        Mock<IExcelApplicationAdapter> adapter = new();
+        Action<string?>? onChanged = null;
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+        _ = analyzer.Setup(a => a.IsTypeColumnChange(It.IsAny<string?>())).Returns(true);
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            macros.Enqueue,
+            () => { },
+            preferences: null,
+            autoRefresh,
+            trace: null,
+            stateRefresh: null,
+            typeHeal: () => healed++);
+        scheduler.Activate();
+
+        Assert.NotNull(onChanged);
+        onChanged!("\"book|Sheet\"!C5");
+        Assert.True(
+            SpinWait.SpinUntil(() => !macros.IsEmpty, TimeSpan.FromSeconds(5)),
+            "The Type burst queued nothing.");
+        Assert.True(macros.TryDequeue(out ExcelAction? macro));
+        macro!();
+
+        Assert.Equal(1, healed);
+    }
+
+    /// <summary>
     /// R5.20: the production constructor must hand the process-wide switch to the pipeline, or the
     /// ribbon's toggle writes a value the scheduler never reads and every other test still passes.
     /// </summary>

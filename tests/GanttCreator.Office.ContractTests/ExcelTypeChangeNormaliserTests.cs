@@ -356,6 +356,73 @@ public sealed class ExcelTypeChangeNormaliserTests
         Assert.Empty(fixture.Writes);
     }
 
+    /// <summary>
+    /// R5.23: the adapter forwards the workbook's named styles, so a style from another
+    /// family is replaced by the type default on the write path.
+    /// </summary>
+    /// <remarks>
+    /// The Core matrix proves the rule; this fact proves the adapter gives the rule its
+    /// catalogue. Without the forwarding the rule would only ever see <c>styles: null</c>
+    /// and would keep the foreign key, and every Core test would still pass.
+    /// </remarks>
+    [Fact]
+    public void A_span_family_style_is_replaced_for_a_delineator_through_the_styles_argument()
+    {
+        EntityTypeDefinition delineator = Definition(GanttEntityType.Delineator);
+        Assert.True(delineator.RequiresStyleKey);
+
+        Fixture fixture = new(_allColumns);
+        fixture.Row(("Type", delineator.DisplayName), ("StyleKey", _spanStyleKey));
+
+        GanttTypeChangeNormaliseOutcome outcome = fixture.Normalise(styles: RegistryWithSpanStyle());
+
+        Assert.Equal(1, outcome.CellsWritten);
+        Assert.Equal(delineator.DefaultStyleKey, fixture.WriteTo(1, "StyleKey"));
+    }
+
+    /// <summary>
+    /// R5.23: with no catalogue the adapter keeps the user's key, because it cannot tell a
+    /// foreign style from a deleted one. Pinned so the trade-off stays deliberate.
+    /// </summary>
+    [Fact]
+    public void Without_a_registry_the_style_key_is_left_for_the_validator()
+    {
+        EntityTypeDefinition delineator = Definition(GanttEntityType.Delineator);
+        Fixture fixture = new(_allColumns);
+        fixture.Row(("Type", delineator.DisplayName), ("StyleKey", _spanStyleKey));
+
+        _ = fixture.Normalise();
+
+        Assert.Null(fixture.WriteTo(1, "StyleKey"));
+    }
+
+    /// <summary>
+    /// R5.23: the change-path overload resolves the row's previous type from its engine
+    /// <c>Id</c>, and that answer drives the vocabulary-boundary reset.
+    /// </summary>
+    [Fact]
+    public void The_old_type_resolver_receives_the_row_id_and_clears_the_shared_token()
+    {
+        EntityTypeDefinition delineator = Definition(GanttEntityType.Delineator);
+        string rowId = "G-" + new string('0', 31) + "a";
+        Fixture fixture = new([.. _allColumns, "Id"]);
+        fixture.Row(
+            ("Id", rowId),
+            ("Type", delineator.DisplayName),
+            ("StyleKey", delineator.DefaultStyleKey),
+            ("DateLabelPosition", GanttDateLabelPosition.None.ToString()));
+
+        string? asked = null;
+        _ = fixture.Normalise(oldTypeOf: id =>
+        {
+            asked = id.Value;
+            return GanttEntityType.AsPlannedActivity;
+        });
+
+        Assert.Equal(rowId, asked);
+        Assert.Equal(string.Empty, fixture.WriteTo(1, "DateLabelPosition"));
+    }
+
     private static EntityTypeDefinition Definition(GanttEntityType type)
     {
         EntityTypeDefinition? definition = EntityTypeCatalog.GetDefinition(type);
@@ -371,6 +438,30 @@ public sealed class ExcelTypeChangeNormaliserTests
 
     private static bool UsesLane(EntityTypeDefinition definition) =>
         definition.Kind is EntityKind.Span or EntityKind.Milestone;
+
+    /// <summary>The foreign key these facts use: a span-family style.</summary>
+    private const string _spanStyleKey = "SpanStyle";
+
+    /// <summary>
+    /// A registry whose only named style offers side positions, so it is usable by a span or
+    /// milestone and not by a delineator (R5.23 R5).
+    /// </summary>
+    /// <returns>The registry.</returns>
+    private static GanttStyleRegistry RegistryWithSpanStyle() =>
+        new(
+        [
+            new GanttStyleDefinition(
+                _spanStyleKey,
+                new HashSet<GanttLabelPosition>(
+                [
+                    GanttLabelPosition.Auto,
+                    GanttLabelPosition.Left,
+                    GanttLabelPosition.Right,
+                    GanttLabelPosition.Inside,
+                    GanttLabelPosition.None,
+                ]),
+                EntityColourCapability.Fill),
+        ]);
 
     private static GanttEntityType FirstType(Func<EntityTypeDefinition, bool> predicate) =>
         Enum.GetValues<GanttEntityType>()
@@ -503,12 +594,17 @@ public sealed class ExcelTypeChangeNormaliserTests
 
         /// <summary>Runs the normaliser.</summary>
         /// <param name="applicationPresent">Whether the host supplied an application.</param>
+        /// <param name="styles">The named styles to hand the rule set, or null for none.</param>
+        /// <param name="oldTypeOf">The change-path old-type resolver, or null for a sweep.</param>
         /// <returns>The outcome.</returns>
-        public GanttTypeChangeNormaliseOutcome Normalise(bool applicationPresent = true) =>
+        public GanttTypeChangeNormaliseOutcome Normalise(
+            bool applicationPresent = true,
+            GanttStyleRegistry? styles = null,
+            Func<GanttRowId, GanttEntityType?>? oldTypeOf = null) =>
             new TestableNormaliser(
                 applicationPresent ? Application.Object : null,
                 Guard.Object,
-                this).Normalise();
+                this).Normalise(styles, oldTypeOf);
 
         /// <summary>The value written to a one-based cell, or <see langword="null"/> when untouched.</summary>
         /// <param name="row">The one-based row.</param>

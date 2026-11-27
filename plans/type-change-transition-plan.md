@@ -67,7 +67,7 @@ all read the same healed row. The 17×17 ordered matrix is a test, not a hope.
 | Column | Rule |
 | --- | --- |
 | `Type` | The edit itself. `EntityTypeCatalog.TryParse` decides the new definition; unknown/blank skips the row. |
-| `StyleKey` | If the new type **requires** a key: keep only when `IsStyleKeyUsable` passes (resolves, and `Intersect(newDef.AllowedLabelPositions, style.AllowedLabelPositions)` contains a position other than `Auto`/`None`); otherwise write `newDef.DefaultStyleKey`. If the new type does **not** require one: leave the cell untouched — `StyleKeyWritePlanner` already rewrites it to the type default on every pass, and doing it here would duplicate that rule and break the pinned "all values legal" fact. |
+| `StyleKey` | If the new type **requires** a key: keep only when `IsStyleKeyUsable` passes (resolves, and the style's family matches the type's); otherwise write `newDef.DefaultStyleKey`, with one `gantt.types style replaced old=… new=…` record, because step 5b runs before validation and the validator can no longer report the key. If the new type does **not** require one: leave the cell untouched — `StyleKeyWritePlanner` already rewrites it to the type default on every pass, and doing it here would duplicate that rule and break the pinned "all values legal" fact. |
 | `LabelPosition` | Clear unless it parses and `EntityTypeCatalog.IsLabelPositionAllowed(newType, position, finalStyleKey, styles)`. Uses the key AFTER the style rule, so the answer matches the validator and the ribbon. |
 | `DateLabelPosition` | (a) New type has neither vocabulary (`GetAllowedDateLabelPositions` and `GetAllowedDateLabelPlacements` both empty): clear. (b) Old type known and its vocabulary family differs from the new one: clear (R3). (c) Otherwise clear unless the token parses in the new type's own vocabulary and is allowed. |
 | `FillColour` | Clear unless the new type's `ColourCapability` has `Fill`. |
@@ -140,8 +140,11 @@ public static class EntityTypeTransition
    - read the style registry, call the Core transition for every row, and apply the
      changes **per row after the whole row is computed**, so a mid-row failure cannot
      leave half a row healed;
-   - `RibbonStateService.Instance.RefreshAfterTableChange()` and one technical record
-     `gantt.types heal rows=<n> cells=<k>`;
+   - one technical record `gantt.types heal cached=<n> cells=<k>`. The caller republishes:
+     the scheduler runs the render or the projection straight after the heal, and that
+     action owns the ribbon snapshot, so a Type burst still costs one capture. (The first
+     draft had the command call `RefreshAfterTableChange` itself; the review moved it out
+     to avoid a second capture in the render path.)
    - never throws; silent apart from the status bar.
 3. **Change detection.** `ISheetChangeAnalyzer` gains
    `bool IsTypeColumnChange(string? changedAddress)`, implemented by the same
@@ -185,13 +188,18 @@ public static class EntityTypeTransition
    corner→span, which-date→delineator, `None`/`Auto` boundary, lane retention, finish
    retention, unparseable left alone, dateless type clears the date label).
 3. **Adapter** — the existing `ExcelTypeChangeNormaliserTests` keep their seams; add the
-   Delineator lane-retention fact and the styles-parameter wiring fact.
+   Delineator lane-retention fact, the styles-argument fact (a span key is replaced only
+   when the registry is passed), the null-registry fact (the key is kept) and the
+   old-type-resolver fact (the resolver sees the row's `Id` and its answer clears a shared
+   date-label token).
 4. **Scheduler** — a Type burst calls `typeHeal` then the projection when suspended, and
    `typeHeal` then the render when allowed; one heal per burst; a non-Type burst never
    heals.
 5. **Ribbon** — the out-of-set token reads as Default/Auto for the three captures.
-6. **Contract** — `Custom Activity → Delineator` end to end: healed row offers the four
-   corners, and the scene's delineator label position is resolved from the healed row.
+6. **Contract** — `Custom Activity → Delineator` end to end. Core asserts the healed row's
+   option set contains only corners (`A_custom_activity_healed_to_a_delineator_offers_only_corner_label_positions`);
+   the scene's resolved label position is part of the owed Office host gate, which is the
+   only place the live row, the ribbon and the renderer meet.
 
 ## Docs
 
@@ -208,6 +216,11 @@ public static class EntityTypeTransition
 
 ## Risks and deferred
 
+- **A key the registry cannot judge is kept.** `IsStyleKeyUsable` answers `true` with a
+  null registry, so a Type edit during a failed configuration read keeps the user's key and
+  only the label clears apply. The alternative — treating "unavailable" as "foreign" —
+  would destroy a user-authored style on an unrelated failure. The write path therefore
+  only rewrites a key it can positively judge; the validator reports an unknown one.
 - **Old type is knowledge, not data.** The change-path heal reads it from
   `RibbonStateService`'s cached pre-edit rows. A row that has never been projected (a
   brand-new insert, or a workbook opened mid-session) has no old type, so only the

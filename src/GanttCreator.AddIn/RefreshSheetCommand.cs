@@ -492,10 +492,12 @@ internal static class RefreshSheetCommand
                 // note left behind when a row is corrected.
                 new ExcelRowWarningHighlighter(application),
 
-                // R5.1: heal type-dependent engine-hidden columns on Type change so
+                // R5.1/R5.23: heal type-dependent engine-hidden columns on Type change so
                 // switching entity type does not leave stale values the validator
-                // rejects. Runs after identity repair and before validation.
-                new ExcelTypeChangeNormaliser(application),
+                // rejects. Runs after identity repair and before validation, so the one
+                // line a replaced style key emits is the only report validation can no
+                // longer give.
+                new ExcelTypeChangeNormaliser(application, trace: trace),
                 ShapeDeltaCache: _shapeDeltaCache,
                 UseDeltaCache: useDeltaCache,
                 Trace: trace,

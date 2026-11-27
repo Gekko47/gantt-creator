@@ -21,12 +21,22 @@ namespace GanttCreator.Office;
 /// idempotent rules. The change-path heal supplies the old type from the cached pre-edit
 /// rows; a valid stored value is never rewritten by an ordinary Refresh.
 /// </para>
+/// <para>
+/// <b>A replaced style leaves a trace.</b> Step 5b runs before validation, so the
+/// validator cannot report a key this writer has already replaced. The writer therefore
+/// logs one <c>gantt.types style replaced old=... new=...</c> line for that write
+/// (finding 2 of the R5.23 review); no other cell it writes needs one.
+/// </para>
 /// </remarks>
-public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtectionGuard? protectionGuard = null)
+public class ExcelTypeChangeNormaliser(
+    object? application,
+    IWorksheetProtectionGuard? protectionGuard = null,
+    Action<string>? trace = null)
     : ITypeChangeNormaliser
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+    private readonly Action<string>? _trace = trace;
 
     /// <summary>
     /// Normalises with the caller's pre-edit types, which the change-path heal supplies
@@ -124,6 +134,14 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
                     continue;
                 }
 
+                if (string.Equals(
+                        change.Reason,
+                        EntityTypeTransition.StyleNotUsableReason,
+                        StringComparison.Ordinal))
+                {
+                    TraceStyleReplacement(row, columnIndexes, change.NewValue);
+                }
+
                 GetCell(body, excelRow, column + 1).Value2 = change.NewValue;
                 written++;
             }
@@ -201,6 +219,19 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
         Excel.Range cells = body.Cells;
         return cells[row, column];
     }
+
+    /// <summary>
+    /// Records a style key the transition replaced because it cannot render the row's type.
+    /// </summary>
+    /// <param name="row">The row's <c>Value2</c> values, read before the write.</param>
+    /// <param name="map">The column-name map.</param>
+    /// <param name="newValue">The default key written in its place.</param>
+    private void TraceStyleReplacement(object?[] row, Dictionary<string, int> map, string newValue) =>
+        _trace?.Invoke(
+            "gantt.types style replaced old="
+            + (TextAt(row, map, EntityTypeTransition.StyleKeyColumn) ?? string.Empty)
+            + " new="
+            + newValue);
 
     internal virtual Excel.Range? GetTableBody(Excel.ListObject table) => table.DataBodyRange;
 

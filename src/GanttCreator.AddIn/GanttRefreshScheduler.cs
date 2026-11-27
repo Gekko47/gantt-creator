@@ -433,10 +433,12 @@ internal sealed class GanttRefreshScheduler : IDisposable
         // between the debounce and this callback. That suspends the RENDER only. The ribbon is a
         // projection of the table and is never suspended, so the burst still reaches it.
         bool suspended = IsSuspended;
-        if (suspended && _stateRefresh is null)
+        if (suspended && _stateRefresh is null && !touchesType)
         {
             // Nothing tracks the projection in this composition (a harness, or a host that never
-            // wired the state service), so a suspended burst keeps the old no-op behaviour.
+            // wired the state service), so a suspended burst keeps the old no-op behaviour. A
+            // Type burst is not a projection, though: its heal below is still owed, and tying it
+            // to the projection's presence would silently drop it.
             return;
         }
 

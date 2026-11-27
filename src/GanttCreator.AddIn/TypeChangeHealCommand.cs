@@ -25,6 +25,12 @@ namespace GanttCreator.AddIn;
 /// or the projection straight after it, and that action owns the ribbon republish, so a
 /// Type burst still costs one capture.
 /// </para>
+/// <para>
+/// <b>The release window is opened even though only cells are written.</b>
+/// <see cref="ExcelTypeChangeNormaliser"/> refuses a protected target before it writes, so
+/// without the window an edit that reached a protected sheet would never heal. The window
+/// is the same nested scope the refresh uses, so it releases once and re-protects once.
+/// </para>
 /// </remarks>
 internal static class TypeChangeHealCommand
 {
@@ -64,7 +70,9 @@ internal static class TypeChangeHealCommand
             scope.SuppressAlerts();
             scope.SuppressStatusBar();
 
-            outcome = new ExcelTypeChangeNormaliser(application).Normalise(
+            outcome = new ExcelTypeChangeNormaliser(
+                application,
+                trace: CommandBoundary.Instance.WriteTechnicalRecord).Normalise(
                 config.Succeeded ? config.Styles : null,
                 id => oldTypes.TryGetValue(id, out GanttEntityType type) ? type : null);
 
@@ -73,9 +81,12 @@ internal static class TypeChangeHealCommand
                     System.Globalization.CultureInfo.InvariantCulture,
                     $"gantt.types heal cached={oldTypes.Count} cells={outcome.CellsWritten}"));
         }
-        catch
+        catch (Exception ex)
         {
-            CommandBoundary.Instance.WriteTechnicalRecord("gantt.types heal refused");
+            // The reason, not just the fact: a protected target, a failed config read and a
+            // defect in the transition are indistinguishable from "refused" alone.
+            CommandBoundary.Instance.WriteTechnicalRecord(
+                "gantt.types heal refused type=" + ex.GetType().Name + " message=" + ex.Message);
         }
 #pragma warning restore CA1031
     }
