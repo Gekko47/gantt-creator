@@ -302,12 +302,11 @@ internal static class RibbonControlIds
     internal const string MarginCm = "edtMarginCm";
 
     /// <summary>
-    /// The plot width readout (R5.16a). A <c>labelControl</c>, never an input:
-    /// the old permanently-disabled edit box read as a broken field.
+    /// The plot height readout (R5.16a). A <c>labelControl</c>, never an input: the
+    /// old permanently-disabled edit box read as a broken field. The width has no
+    /// readout of its own since 2026-11-27: <see cref="SizeWidthCm"/>'s box stands in
+    /// its place in the same row.
     /// </summary>
-    internal const string PlotWidth = "lblPlotWidth";
-
-    /// <summary>The plot height readout (R5.16a), the parallel of <see cref="PlotWidth"/>.</summary>
     internal const string PlotHeight = "lblPlotHeight";
 
     /// <summary>

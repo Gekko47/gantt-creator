@@ -514,4 +514,34 @@ public sealed class RibbonStatePreferenceTests : IDisposable
         Assert.Equal(temp, service.ResolvePngExportInitialFolder());
         PngExportPreferences.Shared.Folder = string.Empty;
     }
+
+    /// <summary>
+    /// The width box shows the live width under a preset and the stored width in Custom.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-27: the box replaced the W readout, so under a preset it has to
+    /// report that preset's composition width - the figure the readout used to show - and in
+    /// Custom it reports the width being edited. A stored default of 29.7 cm and a 16:9 width
+    /// of 33.87 cm cannot be confused, so the fact would fail if the box kept answering the
+    /// stored value.
+    /// </remarks>
+    [Fact]
+    public void The_width_box_shows_the_live_width_under_a_preset_and_the_stored_width_in_custom()
+    {
+        var service = new RibbonStateService();
+        service.SetPreset(SizePresets.Presentation16x9);
+        double live = SizePresets.Presentation16x9.WidthPt / (10.0 * SizePresets.PointsPerMillimetre);
+
+        Assert.Equal(live, service.GetSizeWidthCm(), 3);
+        Assert.NotEqual(CustomSizeCm.DefaultWidthCm, service.GetSizeWidthCm(), 3);
+
+        // Selecting Custom adopts the width the user was looking at, so the box's text does
+        // not jump when the field becomes editable.
+        service.SetCustomSizeMode();
+        Assert.Equal(live, service.GetSizeWidthCm(), 3);
+
+        // ... and from then on it is the stored width, which is what an edit changes.
+        service.SetSizeWidthCm(50.0);
+        Assert.Equal(50.0, service.GetSizeWidthCm(), 3);
+    }
 }

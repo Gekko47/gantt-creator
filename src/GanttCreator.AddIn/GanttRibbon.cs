@@ -2237,30 +2237,13 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// The plot width readout (R5.16a). The control is a
-    /// <c>labelControl</c>, so this is a <c>getLabel</c> callback rather than a
-    /// permanently disabled edit box. Never throws.
+    /// The plot height readout (R5.16a). Never throws.
     /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <returns><c>W 29.70 cm</c>, or <c>W</c> while the width is unknown.</returns>
-    public string GetPlotWidthLabel(IRibbonControl control) =>
-        GetPlotWidthLabel(control, RibbonStateService.Instance);
-
-    /// <summary>
-    /// Runs <see cref="GetPlotWidthLabel(IRibbonControl)"/> against an injected
-    /// state service. Internal so contract tests can verify the routing without
-    /// the session singleton. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The formatted width readout.</returns>
-    internal static string GetPlotWidthLabel(IRibbonControl? control, RibbonStateService stateService) =>
-        FormatDimension("W", GetPageWidthCm(control, stateService), "cm");
-
-    /// <summary>
-    /// The plot height readout (R5.16a), the parallel of
-    /// <see cref="GetPlotWidthLabel(IRibbonControl)"/>. Never throws.
-    /// </summary>
+    /// <remarks>
+    /// The width has no readout of its own since 2026-11-27 (owner ruling): the
+    /// <c>edtSizeWidthCm</c> box stands in its place in the same row, showing the preset's
+    /// live width while it is disabled and the stored width while it is editable.
+    /// </remarks>
     /// <param name="control">The ribbon control Excel is asking about.</param>
     /// <returns><c>H 24.00 cm</c>, or <c>H</c> while the height is unknown.</returns>
     public string GetPlotHeightLabel(IRibbonControl control) =>
@@ -2383,10 +2366,12 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
+        // Two decimals, matching the sizeString and the readout this box replaced: with a
+        // preset the figure is a derived width (29.7), and 29.70 reads as a measurement.
         return RibbonGetter.Read(
             stateService,
-            s => s.GetSizeWidthCm().ToString(CultureInfo.InvariantCulture),
-            CustomSizeCm.DefaultWidthCm.ToString(CultureInfo.InvariantCulture));
+            s => s.GetSizeWidthCm().ToString("0.00", CultureInfo.InvariantCulture),
+            CustomSizeCm.DefaultWidthCm.ToString("0.00", CultureInfo.InvariantCulture));
     }
 
     /// <summary>The custom-width enable gate (Custom size only). Never throws.</summary>

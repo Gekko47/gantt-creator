@@ -242,8 +242,8 @@ the limit, which replaces the withdrawn pixel-budget clamp.
 Size
   Size      [ A4 landscape (custom) v ]   SZ
   Margin    [ Normal v ]  [ 1.78 ] cm     (disabled while Custom)
-  Live      W 29.70 cm   H 24.00 cm       (measured, read-only)
-  Width     [ 29.70 ] cm                  SW
+  Measure   W [ 29.70 ] cm   H 24.00 cm   (W: preset's live width, or the stored width
+                                           in Custom; H: measured, read-only)
 ```
 
 One width box, not a pair, and every number is centimetres — the ribbon shows no points at

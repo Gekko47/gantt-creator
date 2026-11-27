@@ -51,7 +51,8 @@ public class RibbonValueContractTests
         Assert.NotNull(GanttRibbon.GetPlotStartDate(null, service));
         Assert.NotNull(GanttRibbon.GetPlotFinishDate(null, service));
         Assert.NotNull(GanttRibbon.GetMarginCm(null, service));
-        Assert.NotNull(GanttRibbon.GetPlotWidthLabel(null, service));
+        // Owner ruling 2026-11-27: the width box replaced the width readout label.
+        Assert.NotNull(GanttRibbon.GetSizeWidthCm(null, service));
         Assert.NotNull(GanttRibbon.GetPlotHeightLabel(null, service));
     }
 

@@ -132,10 +132,17 @@ public sealed class GanttRibbonChartTests
             .Single(element => element.Attribute("id")?.Value == "grpPlotSize");
         Assert.Equal("Size", group.Attribute("label")?.Value);
 
-        // R5.16a: the width/height readouts are labels, not disabled edit boxes.
-        XElement widthLabel = group.Descendants(ns + "labelControl")
-            .Single(element => element.Attribute("id")?.Value == "lblPlotWidth");
-        Assert.Equal("GetPlotWidthLabel", widthLabel.Attribute("getLabel")?.Value);
+        // Owner ruling 2026-11-27: the width label is gone and the width box stands in its
+        // place in the same row, so a preset shows its live width in a disabled field that
+        // becomes editable for Custom. The height stays a read-only label.
+        XElement widthBox = group.Descendants(ns + "editBox")
+            .Single(element => element.Attribute("id")?.Value == RibbonControlIds.SizeWidthCm);
+        Assert.Equal("GetSizeWidthCm", widthBox.Attribute("getText")?.Value);
+        Assert.Equal("GetSizeWidthCmEnabled", widthBox.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnSizeWidthCmChange", widthBox.Attribute("onChange")?.Value);
+        Assert.DoesNotContain(
+            group.Descendants(ns + "labelControl"),
+            element => element.Attribute("id")?.Value == "lblPlotWidth");
 
         XElement heightLabel = group.Descendants(ns + "labelControl")
             .Single(element => element.Attribute("id")?.Value == "lblPlotHeight");

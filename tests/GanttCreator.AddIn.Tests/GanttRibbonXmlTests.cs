@@ -494,29 +494,37 @@ public sealed class GanttRibbonXmlTests
         Assert.Empty(duplicates);
     }
 
+    /// <summary>
+    /// The measure row is the width box plus the height label (owner ruling 2026-11-27).
+    /// </summary>
+    /// <remarks>
+    /// R5.16a put two read-only labels here. The width label is gone: its box now stands in
+    /// the same row, showing the preset's live width while disabled and the stored width
+    /// while it is editable, which is the same row the owner asked for. The height stays a
+    /// label because it is always an output.
+    /// </remarks>
     [Fact]
-    public void Plot_dimension_displays_are_read_only_labels()
+    public void Plot_measure_row_is_the_width_box_and_the_height_label()
     {
-        // R5.16a: the width/height readouts are labelControls, not disabled
-        // edit boxes. A label has no input affordance at all, which is what
-        // "read-only output" actually means on a ribbon; the old disabled
-        // boxes read as broken fields.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
         Assert.Equal(
-            ["GetPlotWidthLabel", "GetPlotHeightLabel"],
+            ["GetPlotHeightLabel"],
             doc.Descendants(ns + "labelControl")
                 .Select(element => element.Attribute("getLabel")?.Value)
-                .Where(value => value is "GetPlotWidthLabel" or "GetPlotHeightLabel"));
+                .Where(value => value == "GetPlotHeightLabel"));
+        Assert.DoesNotContain(
+            doc.Descendants(ns + "labelControl"),
+            element => element.Attribute("id")?.Value == "lblPlotWidth");
         Assert.DoesNotContain(
             doc.Descendants(ns + "editBox"),
             element => element.Attribute("id")?.Value is "edtPlotWidth" or "edtPlotHeight");
 
         var service = new RibbonStateService();
-        Assert.Equal("W", GanttRibbon.GetPlotWidthLabel(null, service));
         Assert.Equal("H", GanttRibbon.GetPlotHeightLabel(null, service));
+        Assert.NotNull(GanttRibbon.GetSizeWidthCm(null, service));
     }
 
     [Fact]

@@ -1245,8 +1245,16 @@ internal class RibbonStateService
     /// <summary>Gets whether the stored size is Custom (R8.9).</summary>
     internal virtual bool IsCustomSize() => _state.IsCustomSize;
 
-    /// <summary>Gets the stored custom width in centimetres (R8.9).</summary>
-    internal virtual double GetSizeWidthCm() => _state.SizeWidthCm;
+    /// <summary>Gets the width the size box shows, in centimetres (R8.9).</summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-27: the box replaced the width readout, so a preset must show
+    /// that preset's live width - the figure the readout used to show - and the box is
+    /// disabled then, so nothing reads the text back. In Custom the box shows the stored
+    /// width being edited, which the setter has already clamped and reconciled with the
+    /// measured panel.
+    /// </remarks>
+    internal virtual double GetSizeWidthCm() =>
+        _state.IsCustomSize ? _state.SizeWidthCm : CurrentCompositionWidthCm();
 
     /// <summary>
     /// Gets the measured live plot height in centimetres — the <c>SizeHeightCm</c> mirror
@@ -2664,7 +2672,9 @@ internal class RibbonStateService
             InvalidateControl(RibbonControlIds.ColumnItemPrefix + GanttColumnVisibility.RibbonItemId(name));
         }
 
-        InvalidateControl(RibbonControlIds.PlotWidth);
+        // The width has no readout label since 2026-11-27: the width box carries it, and
+        // hiding a column changes the measured width that box reports.
+        InvalidateControl(RibbonControlIds.SizeWidthCm);
 
         // The settings write moves Excel's selection and activates Table Design. A refresh
         // restores the Gantt tab, but with the automatic refresh off no refresh follows, so
