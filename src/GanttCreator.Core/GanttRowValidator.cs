@@ -498,6 +498,20 @@ public static class GanttRowValidator
                     $"StyleKey '{styleKey}' is not in the configured style catalogue; the built-in default is used until the style is chosen again."
                 );
             }
+            else if (definition is { RequiresStyleKey: true }
+                && !EntityTypeCatalog.IsStyleKeyUsable(definition.Type, styleKey, styleRegistry))
+            {
+                // R5.23: a style from another family resolves but cannot render this type
+                // (a span style on a Delineator offers no corner). Warning, not blocking,
+                // because StyleKeyWritePlanner heals the cell to the type default on the
+                // same pass; the message is the evidence that the heal was needed.
+                add(
+                    "StyleKey",
+                    GanttValidationCodes.StyleKeyNotAllowedForType,
+                    GanttValidationSeverity.Warning,
+                    $"StyleKey '{styleKey}' cannot render {definition.DisplayName}; the built-in default is used until a suitable style is chosen."
+                );
+            }
         }
 
         return (styleKey, styleDefinition);

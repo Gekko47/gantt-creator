@@ -324,3 +324,10 @@ Live Office checks are separate: `pwsh ./scripts/verify-office.ps1` when require
 R5.19 (16 November 2026) adds one commit gate and one generator inside `verify-quick.ps1`: [`check-ribbon-glyphs.ps1`](../scripts/check-ribbon-glyphs.ps1) verifies that every control declares `getImage`, that the ribbon and the generated [`RibbonGlyphCatalog.g.cs`](../src/GanttCreator.AddIn/RibbonGlyphCatalog.g.cs) agree, and that each glyph exists in both palettes at its declared size with an approved stroke colour; [`gen-ribbon-glyphs.ps1`](../scripts/gen-ribbon-glyphs.ps1) is the generator that must be rerun, not edited, when a glyph changes. `check-ribbon-icons.ps1` stays wired but now reports that no `imageMso` id remains on this tab.
 Update this map in the same change as mapped responsibilities, entry points, test locations or commands; inspect working-tree edits before relying on it.
 [Implementation plan](work-items/REPO-MAP-navigation.md). No persistent symbol cache or automatic freshness checker is installed.
+
+## R5.23 additions (2026-11-27)
+
+- `EntityTypeTransition` (Core) is the single Type-change rule set; `EntityTypeCatalog.IsStyleKeyUsable` is its shared style predicate.
+- `TypeChangeHealCommand` (AddIn) is the change-path entry point, invoked by `GanttRefreshScheduler` before its one render or projection action.
+- `ISheetChangeAnalyzer.IsTypeColumnChange` identifies a Type-column burst.
+- Tests: `EntityTypeTransitionTests` (Core 17x17 matrix), `RibbonStateRepublishTests`, the scheduler and style-planner facts.

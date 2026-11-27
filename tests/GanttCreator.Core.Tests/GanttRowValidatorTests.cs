@@ -1332,6 +1332,38 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void A_resolvable_style_from_another_family_is_a_warning()
+    {
+        // R5.23: the key resolves, but it offers only corners, which a span cannot
+        // render. Warning, not blocking: StyleKeyWritePlanner heals the cell to the
+        // type default on the same pass.
+        var style = new GanttStyleDefinition(
+            "DelineatorStyle",
+            new HashSet<GanttLabelPosition>
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.TopLeft,
+                GanttLabelPosition.TopRight,
+                GanttLabelPosition.None,
+            },
+            EntityColourCapability.Stroke);
+        var registry = new GanttStyleRegistry([style]);
+        GanttRowDto row = ValidSpan(
+            typeText: "Custom Activity",
+            styleKey: "DelineatorStyle",
+            labelPositionText: "TopLeft");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row], registry);
+
+        Assert.True(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            i => i.Field == "StyleKey"
+                && i.Code == GanttValidationCodes.StyleKeyNotAllowedForType
+                && i.Severity == GanttValidationSeverity.Warning);
+    }
+
+    [Fact]
     public void Custom_activity_uses_style_label_and_colour_capabilities()
     {
         var style = new GanttStyleDefinition(

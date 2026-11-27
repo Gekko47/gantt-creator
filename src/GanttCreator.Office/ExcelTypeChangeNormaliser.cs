@@ -4,19 +4,43 @@ using Excel = Microsoft.Office.Interop.Excel;
 namespace GanttCreator.Office;
 
 /// <summary>
-/// Excel adapter for <see cref="ITypeChangeNormaliser"/>. Reads the visible
-/// Gantt table, corrects type-dependent engine-hidden columns so a <c>Type</c>
-/// change does not leave stale values the validator would reject, and writes
-/// the corrections back.
+/// Excel adapter for <see cref="ITypeChangeNormaliser"/>. Reads the visible Gantt table,
+/// asks <see cref="EntityTypeTransition"/> what each row's type requires, and writes the
+/// corrections back (R5.23).
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>The rules are not here.</b> Every decision about a type-dependent cell lives in
+/// <see cref="EntityTypeTransition"/>, which uses the same catalogue and style
+/// projections as the validator and the ribbon. This class is the writer: one column
+/// walk, one body read, one write per changed cell.
+/// </para>
+/// <para>
+/// <b>No old type.</b> The every-pass sweep sees only the row's current <c>Type</c>, so
+/// it calls the transition with <c>oldType: null</c> and therefore applies only the
+/// idempotent rules. The change-path heal supplies the old type from the cached pre-edit
+/// rows; a valid stored value is never rewritten by an ordinary Refresh.
+/// </para>
+/// </remarks>
 public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtectionGuard? protectionGuard = null)
     : ITypeChangeNormaliser
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
-    /// <inheritdoc />
-    public GanttTypeChangeNormaliseOutcome Normalise()
+    /// <summary>
+    /// Normalises with the caller's pre-edit types, which the change-path heal supplies
+    /// from the cached rows (R5.23).
+    /// </summary>
+    /// <param name="styles">The workbook's named styles, or null when unavailable.</param>
+    /// <param name="oldTypeOf">
+    /// Resolves a row's previous Type by its engine Id, or null for the every-pass sweep,
+    /// which cannot know it.
+    /// </param>
+    /// <returns>The write outcome.</returns>
+    public GanttTypeChangeNormaliseOutcome Normalise(
+        GanttStyleRegistry? styles,
+        Func<GanttRowId, GanttEntityType?>? oldTypeOf)
     {
         Excel.Application? application = _application;
         Excel.Workbook? workbook = application?.ActiveWorkbook;
@@ -46,16 +70,6 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
         // ExcelColumnPresentationRestorer; this was the third instance.
         Dictionary<string, int> columnIndexes = BuildColumnIndexMap(table);
         int typeIndex = IndexOf(columnIndexes, "Type");
-        int styleKeyIndex = IndexOf(columnIndexes, "StyleKey");
-        int labelPositionIndex = IndexOf(columnIndexes, "LabelPosition");
-        int dateLabelPositionIndex = IndexOf(columnIndexes, "DateLabelPosition");
-        int fillColourIndex = IndexOf(columnIndexes, "FillColour");
-        int strokeColourIndex = IndexOf(columnIndexes, "StrokeColour");
-        int parentIdIndex = IndexOf(columnIndexes, "ParentId");
-        int laneIdIndex = IndexOf(columnIndexes, "LaneId");
-        int stackIndexIndex = IndexOf(columnIndexes, "StackIndex");
-        int siblingOrderIndex = IndexOf(columnIndexes, "SiblingOrder");
-
         if (typeIndex < 0)
         {
             return GanttTypeChangeNormaliseOutcome.Ok(0);
@@ -70,175 +84,73 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
             object?[] row = rows[rowIndex];
             string? typeText = ToText(row.ElementAtOrDefault(typeIndex))?.Trim();
             if (string.IsNullOrEmpty(typeText) ||
-                !GanttEntityCatalog.TryParse(typeText, out GanttEntityType type))
+                !EntityTypeCatalog.TryParse(typeText, out GanttEntityType type))
             {
                 continue;
             }
 
-            EntityTypeDefinition? definition = GanttEntityCatalog.GetDefinition(type);
-            if (definition is null)
+            TypeTransitionRow input = new(
+                StyleKey: TextAt(row, columnIndexes, "StyleKey"),
+                LabelPosition: TextAt(row, columnIndexes, "LabelPosition"),
+                DateLabelPosition: TextAt(row, columnIndexes, "DateLabelPosition"),
+                FillColour: TextAt(row, columnIndexes, "FillColour"),
+                StrokeColour: TextAt(row, columnIndexes, "StrokeColour"),
+                ParentId: TextAt(row, columnIndexes, "ParentId"),
+                LaneId: TextAt(row, columnIndexes, "LaneId"),
+                StackIndex: TextAt(row, columnIndexes, "StackIndex"),
+                SiblingOrder: TextAt(row, columnIndexes, "SiblingOrder"));
+
+            GanttEntityType? oldType = null;
+            if (oldTypeOf is not null
+                && GanttRowId.TryParse(TextAt(row, columnIndexes, "Id"), out GanttRowId? rowId)
+                && rowId is not null)
+            {
+                oldType = oldTypeOf(rowId);
+            }
+
+            IReadOnlyList<TypeTransitionChange> changes =
+                EntityTypeTransition.Apply(input, type, oldType, styles);
+            if (changes.Count == 0)
             {
                 continue;
             }
 
             int excelRow = rowIndex + 1;
+            foreach (TypeTransitionChange change in changes)
+            {
+                int column = IndexOf(columnIndexes, change.Column);
+                if (column < 0)
+                {
+                    continue;
+                }
 
-            NormaliseStyleKey(body, excelRow, row, definition, styleKeyIndex, ref written);
-            NormaliseLabelPosition(body, excelRow, row, definition, labelPositionIndex, ref written);
-            NormaliseDateLabelPosition(body, excelRow, row, type, dateLabelPositionIndex, ref written);
-            NormaliseFillColour(body, excelRow, row, definition, fillColourIndex, ref written);
-            NormaliseStrokeColour(body, excelRow, row, definition, strokeColourIndex, ref written);
-            NormaliseParentId(body, excelRow, row, type, parentIdIndex, ref written);
-            NormaliseLaneFields(body, excelRow, row, definition, laneIdIndex, stackIndexIndex, ref written);
-            NormaliseSiblingOrder(body, excelRow, row, type, siblingOrderIndex, ref written);
+                GetCell(body, excelRow, column + 1).Value2 = change.NewValue;
+                written++;
+            }
         }
 
         return GanttTypeChangeNormaliseOutcome.Ok(written);
     }
 
-    private void NormaliseStyleKey(Excel.Range body, int excelRow, object?[] row,
-        EntityTypeDefinition definition, int styleKeyIndex, ref int written)
+    /// <summary>Normalises with no style catalogue and no old type.</summary>
+    /// <returns>The write outcome.</returns>
+    public GanttTypeChangeNormaliseOutcome Normalise() => Normalise(null, null);
+
+    /// <inheritdoc />
+    public GanttTypeChangeNormaliseOutcome Normalise(GanttStyleRegistry? styles) =>
+        Normalise(styles, null);
+
+    /// <summary>
+    /// Returns one cell's text by schema column name, or null when the table lacks it.
+    /// </summary>
+    /// <param name="row">The row's <c>Value2</c> values.</param>
+    /// <param name="map">The column-name map.</param>
+    /// <param name="name">The schema column name.</param>
+    /// <returns>The cell text, or null when the column is absent or the cell is blank.</returns>
+    private static string? TextAt(object?[] row, Dictionary<string, int> map, string name)
     {
-        if (!definition.RequiresStyleKey || styleKeyIndex < 0)
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(styleKeyIndex))?.Trim() ?? string.Empty;
-        if (current.Length == 0 && definition.DefaultStyleKey.Length > 0)
-        {
-            GetCell(body, excelRow, styleKeyIndex + 1).Value2 = definition.DefaultStyleKey;
-            written++;
-        }
-    }
-
-    private void NormaliseLabelPosition(Excel.Range body, int excelRow, object?[] row,
-        EntityTypeDefinition definition, int labelPositionIndex, ref int written)
-    {
-        if (labelPositionIndex < 0)
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(labelPositionIndex))?.Trim() ?? string.Empty;
-        if (current.Length > 0 &&
-            GanttLabelCatalog.TryParse(current, out GanttLabelPosition position) &&
-            !definition.AllowedLabelPositions.Contains(position))
-        {
-            GetCell(body, excelRow, labelPositionIndex + 1).Value2 = string.Empty;
-            written++;
-        }
-    }
-
-    private void NormaliseDateLabelPosition(Excel.Range body, int excelRow, object?[] row,
-        GanttEntityType type, int dateLabelPositionIndex, ref int written)
-    {
-        if (dateLabelPositionIndex < 0)
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(dateLabelPositionIndex))?.Trim() ?? string.Empty;
-        if (current.Length > 0 &&
-            GanttDateLabelCatalog.TryParse(current, out GanttDateLabelPosition position) &&
-            !GanttEntityCatalog.IsDateLabelPositionAllowed(type, position))
-        {
-            GetCell(body, excelRow, dateLabelPositionIndex + 1).Value2 = string.Empty;
-            written++;
-        }
-    }
-
-    private void NormaliseFillColour(Excel.Range body, int excelRow, object?[] row,
-        EntityTypeDefinition definition, int fillColourIndex, ref int written)
-    {
-        if (fillColourIndex < 0 ||
-            (definition.ColourCapability & EntityColourCapability.Fill) != 0)
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(fillColourIndex))?.Trim() ?? string.Empty;
-        if (current.Length > 0)
-        {
-            GetCell(body, excelRow, fillColourIndex + 1).Value2 = string.Empty;
-            written++;
-        }
-    }
-
-    private void NormaliseStrokeColour(Excel.Range body, int excelRow, object?[] row,
-        EntityTypeDefinition definition, int strokeColourIndex, ref int written)
-    {
-        if (strokeColourIndex < 0 ||
-            (definition.ColourCapability & EntityColourCapability.Stroke) != 0)
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(strokeColourIndex))?.Trim() ?? string.Empty;
-        if (current.Length > 0)
-        {
-            GetCell(body, excelRow, strokeColourIndex + 1).Value2 = string.Empty;
-            written++;
-        }
-    }
-
-    private void NormaliseParentId(Excel.Range body, int excelRow, object?[] row,
-        GanttEntityType type, int parentIdIndex, ref int written)
-    {
-        if (parentIdIndex < 0 || EntityHierarchyCatalog.MayBeChild(type))
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(parentIdIndex))?.Trim() ?? string.Empty;
-        if (current.Length > 0)
-        {
-            GetCell(body, excelRow, parentIdIndex + 1).Value2 = string.Empty;
-            written++;
-        }
-    }
-
-    private void NormaliseLaneFields(Excel.Range body, int excelRow, object?[] row,
-        EntityTypeDefinition definition,
-        int laneIdIndex, int stackIndexIndex, ref int written)
-    {
-        bool usesLane = definition.Kind is EntityKind.Span or EntityKind.Milestone;
-
-        if (laneIdIndex >= 0 && !usesLane)
-        {
-            string current = ToText(row.ElementAtOrDefault(laneIdIndex))?.Trim() ?? string.Empty;
-            if (current.Length > 0)
-            {
-                GetCell(body, excelRow, laneIdIndex + 1).Value2 = string.Empty;
-                written++;
-            }
-        }
-
-        if (stackIndexIndex >= 0 && !usesLane)
-        {
-            string current = ToText(row.ElementAtOrDefault(stackIndexIndex))?.Trim() ?? string.Empty;
-            if (current.Length > 0)
-            {
-                GetCell(body, excelRow, stackIndexIndex + 1).Value2 = string.Empty;
-                written++;
-            }
-        }
-    }
-
-    private void NormaliseSiblingOrder(Excel.Range body, int excelRow, object?[] row,
-        GanttEntityType type, int siblingOrderIndex, ref int written)
-    {
-        if (siblingOrderIndex < 0 || EntityHierarchyCatalog.MayBeChild(type))
-        {
-            return;
-        }
-
-        string current = ToText(row.ElementAtOrDefault(siblingOrderIndex))?.Trim() ?? string.Empty;
-        if (current.Length > 0)
-        {
-            GetCell(body, excelRow, siblingOrderIndex + 1).Value2 = string.Empty;
-            written++;
-        }
+        int index = IndexOf(map, name);
+        return index < 0 ? null : ToText(row.ElementAtOrDefault(index));
     }
 
     /// <summary>
@@ -331,53 +243,4 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
     internal virtual Excel.ListObject GetTableAt(Excel.ListObjects objects, int index) => objects[index];
 
     internal virtual Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => columns[index];
-}
-
-/// <summary>Catalog access for type metadata used by the normaliser.</summary>
-internal static class GanttEntityCatalog
-{
-    public static bool TryParse(string? displayName, out GanttEntityType type) =>
-        EntityTypeCatalog.TryParse(displayName, out type);
-
-    public static EntityTypeDefinition? GetDefinition(GanttEntityType type) =>
-        EntityTypeCatalog.GetDefinition(type);
-
-    public static bool IsDateLabelPositionAllowed(GanttEntityType type, GanttDateLabelPosition position) =>
-        EntityTypeCatalog.IsDateLabelPositionAllowed(type, position);
-}
-
-/// <summary>Label position parsing for the normaliser.</summary>
-internal static class GanttLabelCatalog
-{
-    public static bool TryParse(string? text, out GanttLabelPosition position)
-    {
-        position = default;
-        if (!string.IsNullOrWhiteSpace(text) &&
-            Enum.TryParse(text.Trim(), out GanttLabelPosition parsed) &&
-            Enum.IsDefined(parsed))
-        {
-            position = parsed;
-            return true;
-        }
-
-        return false;
-    }
-}
-
-/// <summary>Date label position parsing for the normaliser.</summary>
-internal static class GanttDateLabelCatalog
-{
-    public static bool TryParse(string? text, out GanttDateLabelPosition position)
-    {
-        position = default;
-        if (!string.IsNullOrWhiteSpace(text) &&
-            Enum.TryParse(text.Trim(), out GanttDateLabelPosition parsed) &&
-            Enum.IsDefined(parsed))
-        {
-            position = parsed;
-            return true;
-        }
-
-        return false;
-    }
 }

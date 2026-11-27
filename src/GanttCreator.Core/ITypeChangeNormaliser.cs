@@ -18,6 +18,12 @@ public sealed record GanttTypeChangeNormaliseOutcome(int CellsWritten)
 /// </summary>
 public interface ITypeChangeNormaliser
 {
-    /// <summary>Normalises engine-hidden columns for every row and returns how many cells were written.</summary>
-    GanttTypeChangeNormaliseOutcome Normalise();
+    /// <summary>
+    /// Normalises engine-hidden columns for every row and returns how many cells were written.
+    /// </summary>
+    /// <param name="styles">
+    /// The workbook's named styles, or null when the caller has no catalogue. The pass
+    /// supplies what it already read, so no second configuration read is spent.
+    /// </param>
+    GanttTypeChangeNormaliseOutcome Normalise(GanttStyleRegistry? styles);
 }

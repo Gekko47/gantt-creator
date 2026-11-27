@@ -213,4 +213,33 @@ public sealed class StyleKeyWritePlannerTests
         Assert.Empty(plan.Writes);
         Assert.Equal(0, plan.WriteCount);
     }
+
+    [Fact]
+    public void A_resolvable_style_from_another_family_is_healed_to_the_type_default()
+    {
+        // R5.23: the key resolves, so the old rule left it alone. It permits only
+        // corners, which a span builder cannot place, so the key is unusable and the
+        // planner heals the cell to the type's code-owned default.
+        GanttStyleRegistry registry = new(
+        [
+            new GanttStyleDefinition(
+                "DelineatorStyle",
+                new HashSet<GanttLabelPosition>
+                {
+                    GanttLabelPosition.Auto,
+                    GanttLabelPosition.TopLeft,
+                    GanttLabelPosition.TopRight,
+                    GanttLabelPosition.None,
+                },
+                EntityColourCapability.Stroke),
+        ]);
+
+        StyleKeyWritePlan plan = StyleKeyWritePlanner.Plan(
+            [Event(4, GanttEntityType.CustomActivity, "DelineatorStyle")],
+            registry);
+
+        StyleKeyWrite write = Assert.Single(plan.Writes);
+        Assert.Equal(4, write.RowNumber);
+        Assert.Equal("CustomActivity", write.NewStyleKey);
+    }
 }

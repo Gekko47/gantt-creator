@@ -28,4 +28,17 @@ public interface ISheetChangeAnalyzer
     /// <see langword="false"/> otherwise.
     /// </returns>
     bool ShouldAutoRefresh(string? changedAddress);
+
+    /// <summary>
+    /// Gets whether a change at <paramref name="changedAddress"/> is a <c>Type</c> cell
+    /// change (R5.23).
+    /// </summary>
+    /// <param name="changedAddress">
+    /// The Excel-style address of the changed range, or <see langword="null"/>.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when the changed range intersects the table body's
+    /// <c>Type</c> column.
+    /// </returns>
+    bool IsTypeColumnChange(string? changedAddress);
 }

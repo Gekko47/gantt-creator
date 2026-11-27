@@ -122,7 +122,8 @@ public static class StyleKeyWritePlanner
                 }
 
                 string? chosen = @event.StyleKey;
-                if (string.IsNullOrEmpty(chosen) || styleRegistry.TryGet(chosen, out _))
+                if (string.IsNullOrEmpty(chosen)
+                    || EntityTypeCatalog.IsStyleKeyUsable(@event.Type, chosen, styleRegistry))
                 {
                     continue;
                 }

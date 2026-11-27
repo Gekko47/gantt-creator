@@ -129,6 +129,76 @@ public sealed class RibbonStateRepublishTests : IDisposable
         Assert.Equal(GanttDateFormatting.FormatDdMMMyy(finish), service.GetPlotFinishDate());
     }
 
+    /// <summary>
+    /// A stored label token the new type does not offer reads as Default instead of an
+    /// out-of-list selection (R5.23).
+    /// </summary>
+    [Fact]
+    public void A_label_token_outside_the_offered_set_reads_as_default()
+    {
+        RibbonStateService service = ArmWithLabels(
+            "As-Planned Activity", labelPosition: "TopLeft", dateLabelPosition: null);
+
+        Assert.True(service.GetDescriptionLabelCount() > 0);
+        Assert.Equal(0, service.GetDescriptionLabelSelectedIndex());
+    }
+
+    /// <summary>
+    /// The same rule for the date-label vocabulary: a span's <c>Both</c> on a milestone
+    /// reads as Default.
+    /// </summary>
+    [Fact]
+    public void A_date_label_choice_outside_the_offered_set_reads_as_default()
+    {
+        RibbonStateService service = ArmWithLabels(
+            "As-Planned Milestone", labelPosition: null, dateLabelPosition: "Both");
+
+        Assert.True(service.GetDateLabelCount() > 0);
+        Assert.Equal(0, service.GetDateLabelSelectedIndex());
+    }
+
+    private static RibbonStateService ArmWithLabels(
+        string type,
+        string? labelPosition,
+        string? dateLabelPosition)
+    {
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.Setup(item => item.Read()).Returns(
+            GanttTableReadOutcome.Ok([RowWithLabels(type, labelPosition, dateLabelPosition)]));
+
+        RibbonStateService service = RibbonStateService.Instance;
+        service.SetApplicationAdapter(new TestExcelApplicationAdapter { ActiveWorkbook = true });
+        service.SetSelectionIdentifier(new TestSelectionIdentifier
+        {
+            Facts = new SelectionFacts(true, true, 1, false, 1),
+        });
+        service.SetTableReader(reader.Object);
+        service.Refresh();
+        return service;
+    }
+
+    private static GanttRowDto RowWithLabels(
+        string type,
+        string? labelPosition,
+        string? dateLabelPosition) =>
+        new(
+            1,
+            NewRowId('a'),
+            null,
+            0,
+            type,
+            null,
+            null,
+            null,
+            null,
+            null,
+            labelPosition,
+            null,
+            null,
+            true,
+            null,
+            dateLabelPosition);
+
     /// <summary>Arms the service with one table reader over the supplied substitute.</summary>
     /// <param name="reader">The table reader.</param>
     /// <returns>The armed session service.</returns>

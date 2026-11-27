@@ -29,8 +29,70 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
     private readonly Application? _application = application as Application;
 
     /// <inheritdoc />
-    public bool ShouldAutoRefresh(string? changedAddress)
+    public bool ShouldAutoRefresh(string? changedAddress) =>
+        TryMapChangedColumns(
+            changedAddress,
+            out int[] columnMap,
+            out int bodyFirstColumn,
+            out int firstColumn,
+            out int lastColumn)
+        && HasChartAffectingColumn(
+            GanttTableSchema.Default.Columns, columnMap, bodyFirstColumn, firstColumn, lastColumn);
+
+    /// <inheritdoc />
+    public bool IsTypeColumnChange(string? changedAddress)
     {
+        if (!TryMapChangedColumns(
+                changedAddress,
+                out int[] columnMap,
+                out int bodyFirstColumn,
+                out int firstColumn,
+                out int lastColumn))
+        {
+            return false;
+        }
+
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        if (columnMap.Length != schema.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < schema.Count; index++)
+        {
+            if (schema[index].Name.Equals("Type", StringComparison.OrdinalIgnoreCase))
+            {
+                int localColumn = columnMap[index];
+                return localColumn > 0
+                    && IsColumnIncluded(bodyFirstColumn + localColumn - 1, firstColumn, lastColumn);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Maps a changed address to the table's changed columns, or returns false when the
+    /// change is not in the active workbook's <c>tblGanttData</c> body.
+    /// </summary>
+    /// <param name="changedAddress">The Excel-style address of the changed range.</param>
+    /// <param name="columnMap">The table's schema column map, or null on a refusal.</param>
+    /// <param name="bodyFirstColumn">The body's first worksheet column.</param>
+    /// <param name="firstColumn">The changed range's first worksheet column.</param>
+    /// <param name="lastColumn">The changed range's last worksheet column.</param>
+    /// <returns>True when the address resolves to a change intersecting the body.</returns>
+    private bool TryMapChangedColumns(
+        string? changedAddress,
+        out int[] columnMap,
+        out int bodyFirstColumn,
+        out int firstColumn,
+        out int lastColumn)
+    {
+        columnMap = [];
+        bodyFirstColumn = 0;
+        firstColumn = 0;
+        lastColumn = 0;
+
         if (string.IsNullOrEmpty(changedAddress))
         {
             return false;
@@ -70,25 +132,33 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
             return false;
         }
 
-        if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
+        if (!TryBuildColumnMap(table, out int[]? builtMap) || builtMap is null)
         {
             return false;
         }
 
         Microsoft.Office.Interop.Excel.Range? body = table.DataBodyRange;
-        if (body is null || !TryParseRange(cellRange, out int firstRow, out int lastRow, out int firstColumn, out int lastColumn))
+        if (body is null
+            || !TryParseRange(cellRange, out int firstRow, out int lastRow, out int rangeFirstColumn, out int rangeLastColumn))
         {
             return false;
         }
 
         int bodyFirstRow = body.Row;
         int bodyLastRow = bodyFirstRow + body.Rows.Count - 1;
-        int bodyFirstColumn = body.Column;
+        bodyFirstColumn = body.Column;
         int bodyLastColumn = bodyFirstColumn + table.ListColumns.Count - 1;
-        return RangeIntersectsBody(firstRow, lastRow, firstColumn, lastColumn,
-                bodyFirstRow, bodyLastRow, bodyFirstColumn, bodyLastColumn)
-            && HasChartAffectingColumn(
-                GanttTableSchema.Default.Columns, columnMap, bodyFirstColumn, firstColumn, lastColumn);
+        if (!RangeIntersectsBody(
+                firstRow, lastRow, rangeFirstColumn, rangeLastColumn,
+                bodyFirstRow, bodyLastRow, bodyFirstColumn, bodyLastColumn))
+        {
+            return false;
+        }
+
+        columnMap = builtMap;
+        firstColumn = rangeFirstColumn;
+        lastColumn = rangeLastColumn;
+        return true;
     }
 
     internal static bool RangeIntersectsBody(

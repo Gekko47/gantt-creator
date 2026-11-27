@@ -435,6 +435,91 @@ public static class EntityTypeCatalog
         GetAllowedLabelPositions(type, styleKey, styleRegistry).Contains(position);
 
     /// <summary>
+    /// Returns whether a named style is one a type can render (R5.23).
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="styleKey">The candidate style key.</param>
+    /// <param name="styleRegistry">The workbook's named styles, or null when unknown.</param>
+    /// <returns>
+    /// True when the key resolves to a style that permits at least one label position
+    /// the type can render beyond the shared <see cref="GanttLabelPosition.Auto"/> and
+    /// <see cref="GanttLabelPosition.None"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Resolution is explicit.</b> <see cref="GetAllowedLabelPositions"/> falls back
+    /// to the type's default preset when the registry does not know the key, so it
+    /// cannot answer this question: a dangling key would look usable. The registry is
+    /// consulted first and only a resolved style is judged.
+    /// </para>
+    /// <para>
+    /// <b>A null registry keeps the user's choice.</b> A caller without the catalogue
+    /// cannot tell a deleted style from an unchosen one, and destroying the cell on that
+    /// uncertainty is worse than leaving it; the validator reports an unknown key
+    /// separately.
+    /// </para>
+    /// <para>
+    /// <b>Why the family is inferred, not intersected.</b> Every style permits the shared
+    /// <c>Auto</c>/<c>None</c>, so a span style and a delineator's set always intersect in
+    /// exactly those two and an intersection test would call a span style usable on a
+    /// delineator. The style's family is instead read from its NON-shared positions —
+    /// corners for a delineator, side positions for a span or milestone, plot positions
+    /// for a splitter — and must match the type's family. A style that offers only the
+    /// shared tokens is neutral and usable by any type, because <c>Auto</c> resolves to a
+    /// valid placement for every builder.
+    /// </para>
+    /// </remarks>
+    public static bool IsStyleKeyUsable(
+        GanttEntityType type,
+        string? styleKey,
+        GanttStyleRegistry? styleRegistry)
+    {
+        string? key = string.IsNullOrWhiteSpace(styleKey) ? null : styleKey.Trim();
+        if (key is null || GetDefinition(type) is not { } definition)
+        {
+            return false;
+        }
+
+        if (styleRegistry is null)
+        {
+            return true;
+        }
+
+        if (!styleRegistry.TryGet(key, out GanttStyleDefinition? style) || style is null)
+        {
+            return false;
+        }
+
+        bool hasCorner = false;
+        bool hasSide = false;
+        bool hasPlot = false;
+        foreach (GanttLabelPosition position in style.AllowedLabelPositions)
+        {
+            hasCorner |= position is GanttLabelPosition.TopLeft
+                or GanttLabelPosition.TopRight
+                or GanttLabelPosition.BottomLeft
+                or GanttLabelPosition.BottomRight;
+            hasSide |= position is GanttLabelPosition.Left
+                or GanttLabelPosition.Right
+                or GanttLabelPosition.Inside;
+            hasPlot |= position is GanttLabelPosition.DataPanelLeft
+                or GanttLabelPosition.PlotCentre
+                or GanttLabelPosition.Both;
+        }
+
+        if (!hasCorner && !hasSide && !hasPlot)
+        {
+            // Neutral: the style names only Auto and/or None, which every builder places.
+            return true;
+        }
+
+        bool typeUsesSide = definition.Kind is EntityKind.Span or EntityKind.Milestone;
+        return type == GanttEntityType.Delineator
+            ? hasCorner
+            : !typeUsesSide || hasSide;
+    }
+
+    /// <summary>
     /// Parses a ribbon label-selection identifier. <c>Default</c> parses to a
     /// null position (clear the cell to blank); otherwise the identifier must
     /// name a defined <see cref="GanttLabelPosition"/> Ordinally. Unknown text

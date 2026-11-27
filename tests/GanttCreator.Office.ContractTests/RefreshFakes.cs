@@ -841,8 +841,9 @@ internal sealed class RefreshFakes
     /// </remarks>
     private sealed class FakeTypeChangeNormaliser(RefreshFakes owner) : ITypeChangeNormaliser
     {
-        public GanttTypeChangeNormaliseOutcome Normalise()
+        public GanttTypeChangeNormaliseOutcome Normalise(GanttStyleRegistry? styles)
         {
+            _ = styles;
             owner.Steps.Add("Normalise");
             owner.NormaliseCount++;
             return new GanttTypeChangeNormaliseOutcome(owner.TypeCellsWritten);

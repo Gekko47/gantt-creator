@@ -358,6 +358,14 @@ internal static class RibbonSnapshotFactory
                 ? parsed
                 : null;
 
+            // R5.23: a stored token outside the offered set is not a selection the
+            // dropdown can show — after a Type change it is the previous type's value.
+            // Read it as Default rather than presenting an item that is not in the list.
+            if (selected is GanttLabelPosition storedLabel && !options.Contains(storedLabel))
+            {
+                selected = null;
+            }
+
             return new DescriptionLabelContext(true, selected, options);
         }
         catch
@@ -538,6 +546,13 @@ internal static class RibbonSnapshotFactory
                 ? parsed
                 : null;
 
+            // R5.23: same guard as the description label — a which-date choice the new
+            // type does not offer (Both after a span became a milestone) reads as Default.
+            if (selected is GanttDateLabelPosition storedChoice && !options.Contains(storedChoice))
+            {
+                selected = null;
+            }
+
             return new DateLabelContext(true, selected, options);
         }
         catch
@@ -614,6 +629,13 @@ internal static class RibbonSnapshotFactory
                 out GanttLabelPosition? parsed)
                 ? parsed
                 : null;
+
+            // R5.23: the delineator offers the full corner set, so this guard only
+            // catches a value the catalogue later narrows. It keeps the same rule.
+            if (selected is GanttLabelPosition storedPlacement && !options.Contains(storedPlacement))
+            {
+                selected = null;
+            }
 
             return new DateLabelPlacementContext(true, selected, options);
         }

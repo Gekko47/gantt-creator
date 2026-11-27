@@ -345,6 +345,17 @@ internal class RibbonStateService
     internal void SetTableReader(IGanttTableReader? reader) => _tableReader = reader;
 
     /// <summary>
+    /// Returns the rows the last pass or projection read (R5.23).
+    /// </summary>
+    /// <returns>The cached rows; empty before the first read.</returns>
+    /// <remarks>
+    /// The change-path type heal uses this as its pre-edit baseline: the sheet no longer
+    /// holds the previous <c>Type</c>, and a selection change never moves this cache, so
+    /// it still describes the rows as the last render saw them when the heal runs.
+    /// </remarks>
+    internal IReadOnlyList<GanttRowDto> GetLastTableRows() => _lastTableRows;
+
+    /// <summary>
     /// Gets the singleton instance for the current Excel session. Creates the
     /// service on first access; the ribbon handle, the application adapter, and
     /// the log source may all be absent until the host injects them.

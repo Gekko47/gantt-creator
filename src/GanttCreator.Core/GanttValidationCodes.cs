@@ -76,6 +76,9 @@ public static class GanttValidationCodes
     /// <summary>A supplied <c>StyleKey</c> is not present in the style registry.</summary>
     public const string StyleKeyUnknown = nameof(StyleKeyUnknown);
 
+    /// <summary>A supplied <c>StyleKey</c> resolves but the row's Type cannot render that style.</summary>
+    public const string StyleKeyNotAllowedForType = nameof(StyleKeyNotAllowedForType);
+
     /// <summary>A <c>LabelPosition</c> value is not a known position name.</summary>
     public const string UnknownLabelPosition = nameof(UnknownLabelPosition);
 

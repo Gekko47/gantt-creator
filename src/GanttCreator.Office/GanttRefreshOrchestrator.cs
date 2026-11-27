@@ -434,7 +434,7 @@ public sealed class GanttRefreshOrchestrator(
         // repair does — so validation sees the corrected values.
         if (_typeChangeNormaliser is { } normaliser)
         {
-            GanttTypeChangeNormaliseOutcome normalised = normaliser.Normalise();
+            GanttTypeChangeNormaliseOutcome normalised = normaliser.Normalise(config.Styles);
 
             // Same rule as identity repair: re-read only when cells were written. The
             // normaliser walks every row to decide, so a no-op is the common case and

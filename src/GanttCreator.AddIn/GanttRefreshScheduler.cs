@@ -138,6 +138,15 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// </remarks>
     private readonly Action? _stateRefresh;
 
+    /// <summary>
+    /// Heals a Type edit's row before the burst's action, or null when nothing tracks it
+    /// (R5.23). It runs even when the render is suspended.
+    /// </summary>
+    private readonly Action? _typeHeal;
+
+    /// <summary>Whether the current burst touched the <c>Type</c> column.</summary>
+    private int _burstTouchesType;
+
     internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
         : this(
             adapter,
@@ -147,7 +156,8 @@ internal sealed class GanttRefreshScheduler : IDisposable
             ProtectionPreferences.Shared,
             AutoRefreshPreferences.Shared,
             CommandBoundary.Instance.WriteTechnicalRecord,
-            stateRefresh: () => RibbonStateService.Instance.RefreshAfterTableChange())
+            stateRefresh: () => RibbonStateService.Instance.RefreshAfterTableChange(),
+            typeHeal: TypeChangeHealCommand.RunForExcel)
     {
     }
 
@@ -160,7 +170,8 @@ internal sealed class GanttRefreshScheduler : IDisposable
         IAutoRefreshPreferenceSource? autoRefresh = null,
         Action<string>? trace = null,
         Func<int, Action, System.Threading.Timer>? timerFactory = null,
-        Action? stateRefresh = null)
+        Action? stateRefresh = null,
+        Action? typeHeal = null)
     {
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
@@ -171,6 +182,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
         _trace = trace;
         _timerFactory = timerFactory;
         _stateRefresh = stateRefresh;
+        _typeHeal = typeHeal;
     }
 
     /// <summary>
@@ -272,6 +284,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
     {
         _ = Interlocked.Increment(ref _timerGeneration);
         _commandRefreshPending = false;
+        _ = Interlocked.Exchange(ref _burstTouchesType, 0);
         DisposeTimer();
     }
 
@@ -301,6 +314,11 @@ internal sealed class GanttRefreshScheduler : IDisposable
         if (!chartAffecting)
         {
             return;
+        }
+
+        if (_analyzer.IsTypeColumnChange(changedAddress))
+        {
+            _ = Interlocked.Exchange(ref _burstTouchesType, 1);
         }
 
         _ = Interlocked.Increment(ref _burstEvents);
@@ -405,6 +423,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
         // window again. Reset before the guards below, so a pass suppressed while suspended does
         // not leave the next genuine edit using the burst window.
         Volatile.Write(ref _cellBurstLength, 0);
+        bool touchesType = Interlocked.Exchange(ref _burstTouchesType, 0) == 1;
         int burstEvents = Interlocked.Exchange(ref _burstEvents, 0);
         long analyzerTicks = Interlocked.Exchange(ref _burstAnalyzerTicks, 0);
         string source = Volatile.Read(ref _pendingSource);
@@ -451,6 +470,11 @@ internal sealed class GanttRefreshScheduler : IDisposable
                 // Clear before the action so an edit made during it still schedules the next
                 // burst rather than being swallowed as the command's own write.
                 _commandRefreshPending = false;
+
+                if (touchesType)
+                {
+                    _typeHeal?.Invoke();
+                }
 
                 if (suspended)
                 {

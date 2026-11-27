@@ -358,6 +358,59 @@ public sealed class GanttRefreshSchedulerTests
     }
 
     /// <summary>
+    /// R5.23: a burst that touched the Type column heals before the projection, and the heal
+    /// runs while the render is suspended. A burst that did not touch Type projects only.
+    /// </summary>
+    [Fact]
+    public void A_type_change_heals_before_the_projection_while_suspended()
+    {
+        var autoRefresh = new AutoRefreshPreferences();
+        var order = new List<string>();
+        ConcurrentQueue<ExcelAction> macros = new();
+        Mock<IExcelApplicationAdapter> adapter = new();
+        Action<string?>? onChanged = null;
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+        _ = analyzer
+            .Setup(a => a.IsTypeColumnChange(It.IsAny<string?>()))
+            .Returns((string? address) =>
+                address is not null && address.EndsWith("C5", StringComparison.Ordinal));
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            macro => macros.Enqueue(macro),
+            () => order.Add("render"),
+            preferences: null,
+            autoRefresh,
+            stateRefresh: () => order.Add("project"),
+            typeHeal: () => order.Add("heal"));
+        scheduler.Activate();
+        autoRefresh.AutoRefreshEnabled = false;
+
+        onChanged!("\"book|Sheet\"!C5");
+        Assert.True(
+            SpinWait.SpinUntil(() => !macros.IsEmpty, TimeSpan.FromSeconds(5)),
+            "The Type burst queued nothing.");
+        Assert.True(macros.TryDequeue(out ExcelAction? typeMacro));
+        typeMacro!();
+
+        Assert.Equal(["heal", "project"], order);
+
+        onChanged!("\"book|Sheet\"!D5");
+        Assert.True(
+            SpinWait.SpinUntil(() => !macros.IsEmpty, TimeSpan.FromSeconds(5)),
+            "The non-Type burst queued nothing.");
+        Assert.True(macros.TryDequeue(out ExcelAction? plainMacro));
+        plainMacro!();
+
+        Assert.Equal(["heal", "project", "project"], order);
+    }
+
+    /// <summary>
     /// R5.20: the production constructor must hand the process-wide switch to the pipeline, or the
     /// ribbon's toggle writes a value the scheduler never reads and every other test still passes.
     /// </summary>
