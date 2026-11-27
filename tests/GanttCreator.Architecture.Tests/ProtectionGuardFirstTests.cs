@@ -228,6 +228,11 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelSheetChangeAnalyzer.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
+        // The repair scope composes WorksheetProtectionWindow over the visible Gantt sheet and
+        // the configuration sheet. It mutates no data: it releases protection before the Fix
+        // sequence and restores it afterwards, so there is no mutation for a guard-first rule to
+        // precede.
+        "src/GanttCreator.Office/WorkbookRepairProtectionScope.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
         // Refactor Phase 3: the shared single-cell write path. It holds no COM proxy
         // and performs no direct mutation of its own: every read and write goes through

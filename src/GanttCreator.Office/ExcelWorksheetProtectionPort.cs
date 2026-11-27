@@ -47,15 +47,29 @@ namespace GanttCreator.Office;
 /// <see cref="ProtectionPreferences.Shared"/>. Read-only here: the port applies whatever state the
 /// ribbon has set, so a refresh re-applies the user's choice instead of the default.
 /// </param>
+/// <param name="target">
+/// The worksheet this port protects and releases, or <see langword="null"/> to resolve the
+/// worksheet carrying the Gantt table. The Fix command needs a port bound to
+/// <c>_GanttCreatorConfig</c>: the repair writes that sheet, and the default resolution would
+/// otherwise release the visible sheet and leave the configuration sheet protected, which the
+/// catalogue writer refuses (owner report 2026-11-27).
+/// </param>
 /// </remarks>
 public class ExcelWorksheetProtectionPort(
     object? application,
     Action<string>? trace = null,
-    IProtectionPreferenceSource? preferences = null)
+    IProtectionPreferenceSource? preferences = null,
+    object? target = null)
     : IWorksheetProtectionPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly Action<string>? _trace = trace;
+
+    /// <summary>
+    /// The worksheet this port is bound to, or <see langword="null"/> to resolve the Gantt
+    /// worksheet by contract name.
+    /// </summary>
+    private readonly object? _target = target;
 
     /// <summary>
     /// The user's two protection toggles (owner ruling 2026-11-09). Read, never written: the port
@@ -139,6 +153,11 @@ public class ExcelWorksheetProtectionPort(
         {
             refusal = ProtectionWriteRefusal.NoActiveWorkbook;
             return null;
+        }
+
+        if (_target is Excel._Worksheet targeted)
+        {
+            return targeted;
         }
 
         Excel.Sheets? sheets = GetSheets(workbook);

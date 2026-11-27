@@ -18,6 +18,14 @@ internal static class RepairConfigCommand
     internal static void RunForExcel()
     {
         object application = ExcelDna.Integration.ExcelDnaUtil.Application;
+        Action<string> trace = CommandBoundary.Instance.WriteTechnicalRecord;
+
+        // One protection window for the whole sequence (owner report 2026-11-27). Recovery, the
+        // column-visibility re-apply, the catalogue write and the anchor repair each refuse a
+        // protected target instead of writing through it, so a window opened inside one adapter
+        // only moved the wall: the user had to unlock, unhide, then press Fix two or three times.
+        // The window covers the visible Gantt sheet and the configuration sheet, and is restored
+        // on every exit path.
         Run(
             new ExcelConfigIntegrityChecker(application),
             // The port carries the live log sink, so a repair that had to release the sheet's
@@ -34,11 +42,10 @@ internal static class RepairConfigCommand
                     CommandBoundary.Instance.WriteTechnicalRecord)),
             CommandErrorDialog.Confirm,
             CommandErrorDialog.Show,
-            new ExcelWorkbookRecovery(
-                application,
-                trace: CommandBoundary.Instance.WriteTechnicalRecord),
+            new ExcelWorkbookRecovery(application, trace: trace),
             RibbonStateService.Instance.ScheduleAutomaticRefresh,
-            CommandBoundary.Instance.WriteTechnicalRecord
+            trace,
+            () => WorkbookRepairProtectionScope.Open(application, trace)
         );
     }
 
@@ -54,6 +61,12 @@ internal static class RepairConfigCommand
     /// that presents a refusal leaves no log line, which is what made the live 2026-11-24 Fix
     /// failure undiagnosable.
     /// </param>
+    /// <param name="openProtectionScope">
+    /// Opens the one protection window the whole sequence runs inside, or null when the caller
+    /// owns no worksheets. Disposed on every exit path, including "nothing to repair" and every
+    /// refusal: the stages refuse a protected target rather than writing through it, so the
+    /// release has to cover the sequence rather than one adapter.
+    /// </param>
     internal static void Run(
         IConfigIntegrityChecker checker,
         IConfigRepairer repairer,
@@ -61,7 +74,8 @@ internal static class RepairConfigCommand
         Action<string> presenter,
         IWorkbookRecovery? recovery = null,
         Action? onChanged = null,
-        Action<string>? trace = null
+        Action<string>? trace = null,
+        Func<IDisposable?>? openProtectionScope = null
     )
     {
         ArgumentNullException.ThrowIfNull(checker);
@@ -69,6 +83,20 @@ internal static class RepairConfigCommand
         ArgumentNullException.ThrowIfNull(confirm);
         ArgumentNullException.ThrowIfNull(presenter);
 
+        using IDisposable? protectionScope = openProtectionScope?.Invoke();
+        RunWithinScope(checker, repairer, confirm, presenter, recovery, onChanged, trace);
+    }
+
+    private static void RunWithinScope(
+        IConfigIntegrityChecker checker,
+        IConfigRepairer repairer,
+        Func<string, bool> confirm,
+        Action<string> presenter,
+        IWorkbookRecovery? recovery,
+        Action? onChanged,
+        Action<string>? trace
+    )
+    {
         WorkbookRecoveryInspection? inspection = null;
         WorkbookRecoveryOutcome? recoveryOutcome = null;
         if (recovery is not null)

@@ -263,6 +263,113 @@ public sealed class RepairConfigCommandTests
         Assert.Contains("safely write", Assert.Single(messages), StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The whole sequence runs inside one protection window, which closes once - including on
+    /// the "nothing to repair" path, which returns before any write.
+    /// </summary>
+    /// <remarks>
+    /// Owner report 2026-11-27: a workbook with locked cells and hidden columns needed Fix two or
+    /// three times, because each stage refuses a protected target rather than writing through it.
+    /// The open-before-check and close-last order is the whole fix, so it is pinned rather than
+    /// inferred from the adapters.
+    /// </remarks>
+    [Fact]
+    public void Run_holds_the_protection_window_for_the_whole_sequence()
+    {
+        List<string> order = [];
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(() =>
+        {
+            order.Add("check");
+            return Check();
+        });
+        var repairer = new Mock<IConfigRepairer>(MockBehavior.Strict);
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            _ => order.Add("present"),
+            openProtectionScope: () =>
+            {
+                order.Add("open");
+                return new FlagScope(() => order.Add("close"));
+            });
+
+        Assert.Equal(["open", "check", "present", "close"], order);
+        repairer.Verify(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    /// <summary>
+    /// A repairer refusal still restores protection, so a failed Fix cannot leave the workbook
+    /// unlocked.
+    /// </summary>
+    [Fact]
+    public void Run_restores_protection_when_the_repairer_refuses()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true))
+            .Returns(ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused));
+        int closes = 0;
+        var messages = new List<string>();
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            messages.Add,
+            openProtectionScope: () => new FlagScope(() => closes++));
+
+        Assert.Equal(1, closes);
+        Assert.Single(messages);
+    }
+
+    /// <summary>
+    /// One activation repairs while the window is open, and the refresh that follows sees a
+    /// restored workbook.
+    /// </summary>
+    [Fact]
+    public void Run_repairs_in_one_pass_while_the_protection_window_is_open()
+    {
+        bool released = false;
+        int repairCalls = 0;
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true)).Returns(() =>
+        {
+            Assert.True(released, "the repair must run with the protection window open");
+            repairCalls++;
+            return ConfigRepairOutcome.Ok(1, 0, 0);
+        });
+        int refreshes = 0;
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            _ => { },
+            onChanged: () => refreshes++,
+            openProtectionScope: () =>
+            {
+                released = true;
+                return new FlagScope(() => released = false);
+            });
+
+        Assert.Equal(1, repairCalls);
+        Assert.Equal(1, refreshes);
+        Assert.False(released);
+    }
+
+    private sealed class FlagScope(Action onDispose) : IDisposable
+    {
+        public void Dispose() => onDispose();
+    }
+
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
