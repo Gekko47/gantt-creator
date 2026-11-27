@@ -52,8 +52,8 @@
       copies it, R10.7 records the MIT notice). SKPath.MoveTo/LineTo/Close
       are obsolete in this version; SKPathBuilder is the probed replacement.
     -->
-    <PackageVersion Include="SkiaSharp" Version="4.157.0" />
-    <PackageVersion Include="SkiaSharp.NativeAssets.Win32" Version="4.157.0" />
+    <PackageVersion Include="SkiaSharp" Version="4.158.0" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Win32" Version="4.158.0" />
 
     <!-- xUnit. The unit / contract / addin test projects use these. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk"           Version="18.12.0" />
