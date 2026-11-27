@@ -83,6 +83,38 @@ move. No column, type, style, or metric changes.
 - The plan's ADR-0029 D6 policy is amended for additive, one-step settings
   bumps only; every other schema change keeps the existing rule.
 
+## Amendment — 2026-11-27: prove the other tables before claiming additive
+
+A live upgrade needed two Fixes. The user saw the `RowCountMismatch` sentence, pressed
+Fix, was told "1 repaired", and saw the same refusal on the next Refresh; only a second
+Fix cleared it.
+
+**Cause.** The additive plan was chosen from the schema version alone. Any
+`RowCountMismatch` became `SchemaVersionOlderAdditive` whenever `ObserveSchema` found a
+version exactly one step behind, and that observation proved only the types and metrics
+row counts. The reader's other `RowCountMismatch` arms — a styles table short of a
+built-in preset, or a ragged style, settings or config row — were invisible to it. The
+narrow write then rewrote `tblGanttSettings` and `tblGanttConfig`, which cannot reach a
+styles table, so the fault survived and the next Refresh refused verbatim. The second Fix
+found the version already current, fell through to the structural rewrite, and worked.
+
+**Rule now enforced.** `ObserveSchema` returns an observation only when the settings row
+set, the stored version or the stored hash is the *only* thing that can be wrong:
+types and metrics counts match, the styles table carries at least every built-in preset,
+and no style, settings or config row is ragged. Anything else returns `null` and leaves
+Fix on the confirm-required structural path, which regenerates the table that actually
+refused.
+
+**Evidence gap closed.** The reader also records one technical record per refusal naming
+the table and its actual and expected body rows, because the user-facing sentence names
+only the reason and the log could not attribute the loop at all.
+
+**Proof.** `ConfigCatalogueReaderTests` pins the additive case (one narrow repair leaves
+the workbook readable), the regression (a short styles table is refused as non-additive),
+the one-Fix guarantee (one structural rewrite repairs it) and the refusal record. The
+regression was proved non-vacuous by disabling the styles count guard, which restored the
+misclassification `StoredVersion = 28` for a short styles table.
+
 ## Evidence
 
 - Full writer metric reset: `ExcelConfigCatalogueWriter.WriteContractTables`

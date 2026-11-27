@@ -445,7 +445,9 @@ internal static class RefreshSheetCommand
         return new GanttRefreshOrchestrator(
             new GanttRefreshDependencies(
                 new ExcelGanttTableReader(application),
-                new ExcelConfigCatalogueReader(application),
+                // The same sink the pass already uses: a configuration refusal now
+                // records its table and counts, not just the reason.
+                new ExcelConfigCatalogueReader(application, trace),
                 new ExcelWorksheetProtectionGuard(application),
                 new ExcelPanelGridMeasurement(application),
                 new ExcelDurationWriter(application),

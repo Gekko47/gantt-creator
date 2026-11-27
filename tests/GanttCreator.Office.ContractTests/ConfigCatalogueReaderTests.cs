@@ -154,6 +154,125 @@ public class ConfigCatalogueReaderTests
     }
 
     /// <summary>
+    /// ADR-0073's narrow path: a one-step settings-only bump is the only state
+    /// that may be repaired without a full rewrite, and one narrow repair must
+    /// leave the workbook readable.
+    /// </summary>
+    [Fact]
+    public void One_additive_repair_leaves_a_settings_only_bump_readable()
+    {
+        ConfigSheetFake fake = WrittenSheet();
+        MakeOneSchemaStepOlder(fake);
+
+        ConfigSchemaObservation? observation = ConfigGraph.BuildReader(fake).ObserveSchema();
+        Assert.NotNull(observation);
+        Assert.Equal(GanttCatalogues.Settings.Count - 2, observation!.SettingsKeys.Count);
+
+        ConfigWriteOutcome repair = ConfigGraph.BuildWriter(fake).UpgradeAdditiveSchema();
+
+        Assert.True(repair.Succeeded);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    /// <summary>
+    /// Regression (live repair loop 2026-11-27): a row-count refusal is not
+    /// provably additive merely because the stored version is one step behind.
+    /// </summary>
+    /// <remarks>
+    /// A styles table short of a built-in preset refuses with the same
+    /// <c>RowCountMismatch</c> as a short settings table, but the narrow write
+    /// rewrites only settings and config, so the styles fault survives it and the
+    /// next Refresh refuses verbatim. The owner needed two Fixes for exactly that
+    /// reason. The observation must therefore prove that no other table can be the
+    /// fault, which this fact pins by returning <see langword="null"/> and so
+    /// leaving Fix on the confirm-required structural path.
+    /// </remarks>
+    [Fact]
+    public void ObserveSchema_refuses_a_short_styles_table_as_non_additive()
+    {
+        ConfigSheetFake fake = WrittenSheet();
+        MakeOneSchemaStepOlder(fake);
+        ConfigSheetFake.TableFake styles = Table(fake, GanttCatalogues.StylesTableName);
+        styles.Body.RemoveAt(styles.Body.Count - 1);
+
+        Assert.Equal(
+            ConfigReadOutcome.Refused(ConfigReadRefusalReason.RowCountMismatch),
+            ConfigGraph.BuildReader(fake).Read());
+        Assert.Null(ConfigGraph.BuildReader(fake).ObserveSchema());
+    }
+
+    /// <summary>
+    /// The one-Fix guarantee: the structural rewrite repairs the table that
+    /// actually refused, in one pass.
+    /// </summary>
+    [Fact]
+    public void One_structural_repair_leaves_a_short_styles_table_readable()
+    {
+        ConfigSheetFake fake = WrittenSheet();
+        MakeOneSchemaStepOlder(fake);
+        ConfigSheetFake.TableFake styles = Table(fake, GanttCatalogues.StylesTableName);
+        styles.Body.RemoveAt(styles.Body.Count - 1);
+
+        ConfigWriteOutcome repair = ConfigGraph.BuildWriter(fake).Write();
+
+        Assert.True(repair.Succeeded);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    /// <summary>
+    /// The refusal record names the table and the counts, which is the evidence
+    /// the 2026-11-27 loop could not produce from the log.
+    /// </summary>
+    [Fact]
+    public void Read_records_the_refusing_table_and_its_counts()
+    {
+        ConfigSheetFake fake = WrittenSheet();
+        ConfigSheetFake.TableFake styles = Table(fake, GanttCatalogues.StylesTableName);
+        styles.Body.RemoveAt(styles.Body.Count - 1);
+        List<string> trace = [];
+
+        _ = ConfigGraph.BuildReader(fake, trace.Add).Read();
+
+        string record = Assert.Single(trace);
+        Assert.Contains("table=" + GanttCatalogues.StylesTableName, record, StringComparison.Ordinal);
+        Assert.Contains(
+            "rows=" + (GanttCatalogues.StylePresets.Count - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            record,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "expected=" + GanttCatalogues.StylePresets.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            record,
+            StringComparison.Ordinal);
+    }
+
+    private static ConfigSheetFake WrittenSheet()
+    {
+        var fake = new ConfigSheetFake();
+        Assert.True(ConfigGraph.BuildWriter(fake).Write().Succeeded);
+        return fake;
+    }
+
+    private static ConfigSheetFake.TableFake Table(ConfigSheetFake fake, string tableName) =>
+        Assert.Single(fake.Tables, table => string.Equals(table.CurrentName, tableName, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Turns the written workbook into the one state ADR-0073 can repair
+    /// narrowly: the version one step behind and the two appended settings rows
+    /// absent, so the stored keys are an exact prefix of the catalogue.
+    /// </summary>
+    private static void MakeOneSchemaStepOlder(ConfigSheetFake fake)
+    {
+        ConfigSheetFake.TableFake settings = Table(fake, GanttCatalogues.SettingsTableName);
+        settings.Body.RemoveRange(GanttCatalogues.Settings.Count - 2, 2);
+
+        ConfigSheetFake.TableFake config = Table(fake, GanttCatalogues.ConfigTableName);
+        int versionRow = config.Body.FindIndex(
+            row => string.Equals((string?)row[0], GanttCatalogues.ConfigSchemaVersionKey, StringComparison.Ordinal));
+        config.Body[versionRow][1] = (GanttSchemaVersion.CurrentSchemaVersion - 1)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
     /// Returns the index of a built-in style's row in the written styles
     /// table.
     /// </summary>

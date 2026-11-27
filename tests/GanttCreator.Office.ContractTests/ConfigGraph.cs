@@ -70,8 +70,8 @@ internal static class ConfigGraph
 
     private sealed class TestableReader : ExcelConfigCatalogueReader
     {
-        public TestableReader(object? application, ConfigSheetFake fake)
-            : base(application)
+        public TestableReader(object? application, ConfigSheetFake fake, Action<string>? trace = null)
+            : base(application, trace)
         {
             Fake = fake;
         }
@@ -129,8 +129,9 @@ internal static class ConfigGraph
     /// sheet fake (at <c>Sheets[1]</c>).
     /// </summary>
     /// <param name="fake">The config sheet fake.</param>
+    /// <param name="trace">Optional refusal-evidence sink.</param>
     /// <returns>The reader under test.</returns>
-    public static ExcelConfigCatalogueReader BuildReader(ConfigSheetFake fake)
+    public static ExcelConfigCatalogueReader BuildReader(ConfigSheetFake fake, Action<string>? trace = null)
     {
         var application = new Mock<Excel.Application>();
         var workbook = new Mock<Excel.Workbook>();
@@ -138,7 +139,7 @@ internal static class ConfigGraph
         _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
         _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
         _ = sheets.SetupGet(s => s.Count).Returns(1);
-        return new TestableReader(application.Object, fake);
+        return new TestableReader(application.Object, fake, trace);
     }
 
     /// <summary>

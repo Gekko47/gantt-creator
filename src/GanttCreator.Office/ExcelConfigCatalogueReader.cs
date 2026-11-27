@@ -19,6 +19,11 @@ namespace GanttCreator.Office;
 /// host). A foreign object fails the interface cast and degrades to the
 /// no-active-workbook refusal with no mutation.
 /// </param>
+/// <param name="trace">
+/// Optional technical-record sink that receives one record naming the refusing
+/// table and its actual and expected row counts. Absent (or failed) tracing
+/// degrades to no record, never to a thrown error.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: every proxy is held in a local and used without chained
@@ -35,9 +40,21 @@ namespace GanttCreator.Office;
 /// exact typed refusal.
 /// </para>
 /// </remarks>
-public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueReader
+public class ExcelConfigCatalogueReader(object? application, Action<string>? trace = null) : IConfigCatalogueReader
 {
     private readonly Application? _application = application as Application;
+
+    // A refusal is one sentence to the user, and before this sink existed the
+    // diagnostics log carried only "refused=RowCountMismatch" - no table, no
+    // counts. That is exactly what made the 2026-11-27 repair loop ("Fix says 1
+    // repaired, Refresh refuses again") impossible to attribute from the log, so
+    // the reader now records the table it refused on.
+    private readonly Action<string>? _trace = trace;
+
+    /// <summary>
+    /// The body-row count <c>tblGanttConfig</c> must carry (ADR-0007 D6).
+    /// </summary>
+    private const int _configRowCount = 4;
 
     /// <inheritdoc />
     public ConfigReadOutcome Read()
@@ -65,8 +82,6 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
 
         // Bulk-read every table first through the seams; validation below
         // is pure (no COM) and short-circuits on the first mismatch.
-        Dictionary<string, string>? settings = null;
-        string? workbookId = null;
         if (ReadTable(config, GanttCatalogues.TypesTableName, GanttCatalogues.TypesHeaders, out List<object?[]> typeRows) is { } found)
         {
             return ConfigReadOutcome.Refused(found);
@@ -92,15 +107,31 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadOutcome.Refused(configFound);
         }
 
-        GanttStyleRegistry? styles = null;
-        ConfigReadRefusalReason? refusal = ValidateTypes(typeRows)
-            ?? ValidateStyles(styleRows, out styles)
-            ?? ValidateMetrics(metricRows)
-            ?? ValidateSettings(settingRows, out settings)
-            ?? ValidateConfig(configRows, out workbookId);
-        if (refusal is not null)
+        // Validated in contract order, one step at a time rather than as a
+        // chain, so every refusal can name the table and the counts behind it.
+        if (ValidateTypes(typeRows) is { } typesRefusal)
         {
-            return ConfigReadOutcome.Refused(refusal.Value);
+            return RefuseWithEvidence(typesRefusal, GanttCatalogues.TypesTableName, typeRows.Count, GanttCatalogues.TypeRows.Count);
+        }
+
+        if (ValidateStyles(styleRows, out GanttStyleRegistry? styles) is { } stylesRefusal)
+        {
+            return RefuseWithEvidence(stylesRefusal, GanttCatalogues.StylesTableName, styleRows.Count, GanttCatalogues.StylePresets.Count);
+        }
+
+        if (ValidateMetrics(metricRows) is { } metricsRefusal)
+        {
+            return RefuseWithEvidence(metricsRefusal, GanttCatalogues.MetricsTableName, metricRows.Count, GanttCatalogues.Metrics.Count);
+        }
+
+        if (ValidateSettings(settingRows, out Dictionary<string, string>? settings) is { } settingsRefusal)
+        {
+            return RefuseWithEvidence(settingsRefusal, GanttCatalogues.SettingsTableName, settingRows.Count, GanttCatalogues.Settings.Count);
+        }
+
+        if (ValidateConfig(configRows, out string? workbookId) is { } configRefusal)
+        {
+            return RefuseWithEvidence(configRefusal, GanttCatalogues.ConfigTableName, configRows.Count, _configRowCount);
         }
 
         // Project themed metric DefaultValues from the validated sheet rows.
@@ -141,11 +172,11 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return null;
         }
 
-        // A header fault or a changed types/metrics shape is not a settings-only
-        // bump. Returning null keeps the checker on the structural repair path
-        // rather than letting an additive rewrite mask another table's damage.
+        // A header fault is not a settings-only bump, so every table must read.
+        // Returning null keeps the checker on the structural repair path rather
+        // than letting an additive rewrite mask another table's damage.
         if (ReadTable(config, GanttCatalogues.TypesTableName, GanttCatalogues.TypesHeaders, out List<object?[]> typeRows) is not null
-            || ReadTable(config, GanttCatalogues.StylesTableName, GanttCatalogues.StylesHeaders, out _) is not null
+            || ReadTable(config, GanttCatalogues.StylesTableName, GanttCatalogues.StylesHeaders, out List<object?[]> styleRows) is not null
             || ReadTable(config, GanttCatalogues.MetricsTableName, GanttCatalogues.MetricsHeaders, out List<object?[]> metricRows) is not null
             || ReadTable(config, GanttCatalogues.SettingsTableName, GanttCatalogues.SettingsHeaders, out List<object?[]> settingRows) is not null
             || ReadTable(config, GanttCatalogues.ConfigTableName, GanttCatalogues.ConfigHeaders, out List<object?[]> configRows) is not null)
@@ -153,8 +184,22 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return null;
         }
 
+        // ADR-0073's additive write rewrites tblGanttSettings and tblGanttConfig
+        // only. An observation therefore has to prove that the settings row set -
+        // or the stored version and hash - is the ONLY thing that can be wrong.
+        // Every other RowCountMismatch arm this reader owns would survive that
+        // write untouched: a styles table short of a built-in preset, a ragged
+        // style, settings or config row. Claiming "additive" for one of those is
+        // what made a live one-step-older workbook need two Fixes - the first
+        // repaired the settings rows and the refusal came back verbatim, because
+        // the fault had never been in the settings table (owner report
+        // 2026-11-27).
         if (typeRows.Count != GanttCatalogues.TypeRows.Count
-            || metricRows.Count != GanttCatalogues.Metrics.Count)
+            || metricRows.Count != GanttCatalogues.Metrics.Count
+            || styleRows.Count < GanttCatalogues.StylePresets.Count
+            || !EveryRowHasAtLeast(styleRows, GanttCatalogues.StylesHeaders.Length)
+            || !EveryRowHasAtLeast(settingRows, GanttCatalogues.SettingsHeaders.Length)
+            || !EveryRowHasAtLeast(configRows, GanttCatalogues.ConfigHeaders.Length))
         {
             return null;
         }
@@ -820,7 +865,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         out string? workbookId)
     {
         workbookId = null;
-        if (rows.Count != 4)
+        if (rows.Count != _configRowCount)
         {
             return ConfigReadRefusalReason.RowCountMismatch;
         }
@@ -882,6 +927,51 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Records one refusal with the table and the counts behind it, then returns
+    /// the typed refusal unchanged.
+    /// </summary>
+    /// <remarks>
+    /// The user-facing message names only the reason, so without this record a
+    /// repair loop could not be attributed: "config refused=RowCountMismatch"
+    /// was the whole log for a fault that had never been in the settings table.
+    /// </remarks>
+    /// <param name="refusal">The refusal reason the validation produced.</param>
+    /// <param name="tableName">The catalogue table that was refused.</param>
+    /// <param name="actualRows">The body rows the table actually carried.</param>
+    /// <param name="expectedRows">The body rows the contract requires.</param>
+    /// <returns>The refusal outcome, unchanged.</returns>
+    private ConfigReadOutcome RefuseWithEvidence(
+        ConfigReadRefusalReason refusal,
+        string tableName,
+        int actualRows,
+        int expectedRows)
+    {
+        _trace?.Invoke(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.config refused={refusal} table={tableName} rows={actualRows} expected={expectedRows}"));
+        return ConfigReadOutcome.Refused(refusal);
+    }
+
+    /// <summary>
+    /// Determines whether every row carries at least the contract's cells.
+    /// </summary>
+    /// <param name="rows">The body rows.</param>
+    /// <param name="width">The number of cells the contract defines.</param>
+    /// <returns><see langword="true"/> when no row is ragged.</returns>
+    private static bool EveryRowHasAtLeast(List<object?[]> rows, int width)
+    {
+        foreach (object?[] row in rows)
+        {
+            if (row.Length < width)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

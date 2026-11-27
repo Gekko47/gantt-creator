@@ -162,8 +162,14 @@ public sealed class AddInHost(
             // record, never to a failed write).
             RibbonStateService.Instance.SetCatalogueWriter(
                 new ExcelConfigCatalogueWriter(ExcelDnaUtil.Application, log: _log));
+            // R8.9 repair-loop evidence: the reader records which catalogue table
+            // refused and with what row counts, because the user-facing sentence
+            // names only the reason and a settings-only repair could not otherwise
+            // be told apart from a repair aimed at the wrong table.
             RibbonStateService.Instance.SetCatalogueReader(
-                new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
+                new ExcelConfigCatalogueReader(
+                    ExcelDnaUtil.Application,
+                    CommandBoundary.Instance.WriteTechnicalRecord));
             // R5.18h: the column dropdown applies its choice to the live table through
             // this port, so the ribbon and the repair paths write the same columns.
             RibbonStateService.Instance.SetColumnVisibilityPort(
