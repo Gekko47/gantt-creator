@@ -453,10 +453,12 @@ public sealed class GanttRibbonXmlTests
                 RibbonControlIds.PlotFinishDate,
                 // R8.9: the custom width box is gated on the same workbook +
                 // initialised fact plus Custom mode itself, so it joins the pinned
-                // set in document order before the margin box. The height box was
-                // withdrawn with the width-only ruling.
-                RibbonControlIds.SizeWidthCm,
+                // set. The owner ruling of 2026-11-27 puts the width box below the
+                // margin row and below the live W/H measures, so it is now last in
+                // document order. The height box was withdrawn with the
+                // width-only ruling.
                 RibbonControlIds.MarginCm,
+                RibbonControlIds.SizeWidthCm,
             ],
             gatedIds);
     }

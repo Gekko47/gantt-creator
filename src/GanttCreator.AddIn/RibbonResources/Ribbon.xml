@@ -198,11 +198,6 @@
               <item id="SizeCustom" label="Custom"/>
             </dropDown>
           </box>
-          <box id="boxCustomSize" boxStyle="horizontal">
-            <labelControl id="lblSizeWidth" label="W"/>
-            <editBox id="edtSizeWidthCm" keytip="SW" screentip="Custom width in centimetres" supertip="The chart width in centimetres. Applies when the size is Custom. The data table keeps its column widths and the plot takes the rest; page presets and margins are ignored." getText="GetSizeWidthCm" getEnabled="GetSizeWidthCmEnabled" onChange="OnSizeWidthCmChange" sizeString="00.00"/>
-            <labelControl id="lblSizeWidthUnit" label="cm"/>
-          </box>
           <box id="boxMargin" boxStyle="horizontal">
             <labelControl id="lblMargin" label="Margin"/>
             <dropDown id="ddnMargin" keytip="M" screentip="Page margin" supertip="Chooses the chart page margin. Custom uses the centimetre value beside it. Disabled while the size is Custom, because a custom size ignores page margins." getSelectedItemIndex="GetMargin" getEnabled="GetMarginEnabled" onAction="OnMarginChange">
@@ -214,9 +209,18 @@
             <editBox id="edtMarginCm" keytip="MC" screentip="Custom margin in centimetres" supertip="The custom page margin in centimetres. It applies when the margin choice is Custom and is disabled while the size is Custom." getText="GetMarginCm" getEnabled="GetMarginCmEnabled" onChange="OnMarginCmChange" sizeString="0.00"/>
             <labelControl id="lblMarginUnit" label="cm"/>
           </box>
+          <!-- Owner ruling 2026-11-27: the rows are Size, Margin, the live W/H
+               measures, then the W box. The edit box sits below the margin and
+               below the measures, and the height reads from the plot beside the
+               measured width rather than the typed one. -->
           <box id="boxPlotDimensions" boxStyle="horizontal">
             <labelControl id="lblPlotWidth" getLabel="GetPlotWidthLabel"/>
             <labelControl id="lblPlotHeight" getLabel="GetPlotHeightLabel"/>
+          </box>
+          <box id="boxCustomSize" boxStyle="horizontal">
+            <labelControl id="lblSizeWidth" label="W"/>
+            <editBox id="edtSizeWidthCm" keytip="SW" screentip="Custom width in centimetres" supertip="The chart width in centimetres. Applies when the size is Custom. The data table keeps its column widths and the plot takes the rest; page presets and margins are ignored." getText="GetSizeWidthCm" getEnabled="GetSizeWidthCmEnabled" onChange="OnSizeWidthCmChange" sizeString="00.00"/>
+            <labelControl id="lblSizeWidthUnit" label="cm"/>
           </box>
         </group>
         <!-- R5.16a: the group previously labelled "Gantt Creator" (id

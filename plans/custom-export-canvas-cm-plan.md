@@ -241,15 +241,17 @@ the limit, which replaces the withdrawn pixel-budget clamp.
 ```text
 Size
   Size      [ A4 landscape (custom) v ]   SZ
-  Width     [ 29.70 ] cm                  SW
-  Live      W 29.70 cm   H 24.00 cm       (measured, read-only)
   Margin    [ Normal v ]  [ 1.78 ] cm     (disabled while Custom)
+  Live      W 29.70 cm   H 24.00 cm       (measured, read-only)
+  Width     [ 29.70 ] cm                  SW
 ```
 
 One width box, not a pair, and every number is centimetres — the ribbon shows no points at
 all (D12). The live line is present for presets and Custom: the W is the composition width
 and the H is the measured composition height, not an input. The margin row stays in place but
-greys out, so the user can see why it no longer applies.
+greys out, so the user can see why it no longer applies. Owner ruling 2026-11-27 puts the
+width box below the margin and below the live measures, because the W it edits is already
+shown live above it and the H belongs beside that measured W, not beside the typed one.
 
 ## Edge cases and refusals
 
