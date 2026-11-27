@@ -14,9 +14,9 @@
       },
       "SkiaSharp.NativeAssets.Win32": {
         "type": "Direct",
-        "requested": "[4.157.0, )",
-        "resolved": "4.157.0",
-        "contentHash": "tP54cTnPqGrzf2pBcyupMZWdIUjV34ELdKuh3/c329kRQF4UCVLZvilQZrDMqPJ9P/+AUJC8kDRMBgT/jBvYug=="
+        "requested": "[4.158.0, )",
+        "resolved": "4.158.0",
+        "contentHash": "7+7mqPOFD8oINjuVHS358PpOX2yERNnBZbQDFhPeHxEYLpOmMEaO+k7XzKdhPEUiPRZtLvf3RmG1xJRaAaEUZw=="
       },
       "SkiaSharp.NativeAssets.macOS": {
         "type": "Transitive",
