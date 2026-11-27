@@ -168,16 +168,21 @@ public sealed class GanttRefreshSchedulerTests
     }
 
     /// <summary>
-    /// ADR-0055 clause 7: while the CHART toggle is off, neither a cell edit nor a command may
-    /// schedule a refresh, because either would rebuild the chart over a manual drag. Locking the
-    /// chart again re-enables both. Unlocking the sheet's CELLS is deliberately not a suspension:
-    /// a cell edit is the input an automatic refresh exists to consume.
+    /// ADR-0055 clause 7: while the CHART toggle is off, the RENDER is suspended for both a cell
+    /// edit and a command, because either would rebuild the chart over a manual drag. The ribbon
+    /// projection is a read of the table, not a rebuild, and is never suspended (owner ruling
+    /// 2026-11-27), so the same edit still queues one projection. Unlocking the sheet's CELLS is
+    /// deliberately not a suspension: a cell edit is the input an automatic refresh exists to
+    /// consume.
     /// </summary>
     [Fact]
-    public void An_unlocked_chart_suspends_both_scheduling_paths()
+    public void An_unlocked_chart_suspends_the_render_but_not_the_projection()
     {
         var preferences = new ProtectionPreferences();
         int queued = 0;
+        int rendered = 0;
+        int projected = 0;
+        ConcurrentQueue<ExcelAction> macros = new();
         Mock<IExcelApplicationAdapter> adapter = new();
         Action<string?>? onChanged = null;
         _ = adapter
@@ -189,36 +194,50 @@ public sealed class GanttRefreshSchedulerTests
         using GanttRefreshScheduler scheduler = new(
             adapter.Object,
             analyzer.Object,
-            _ => Interlocked.Increment(ref queued),
-            () => { },
-            preferences);
+            macro =>
+            {
+                macros.Enqueue(macro);
+                _ = Interlocked.Increment(ref queued);
+            },
+            () => Interlocked.Increment(ref rendered),
+            preferences,
+            stateRefresh: () => Interlocked.Increment(ref projected));
         scheduler.Activate();
 
-        // Positive control first: with the chart locked both paths queue, so the negative assertion
-        // below cannot pass on a harness that simply never queues anything.
+        // Positive control first: with the chart locked both paths render, so the assertions below
+        // cannot pass on a harness that simply never queues anything.
         scheduler.ScheduleCommandRefresh();
         Assert.True(
             SpinWait.SpinUntil(() => Volatile.Read(ref queued) == 1, TimeSpan.FromSeconds(5)),
             "With the chart locked, a command did not schedule a refresh.");
+        Assert.True(macros.TryDequeue(out ExcelAction? first));
+        first!();
+        Assert.Equal(1, Volatile.Read(ref rendered));
 
+        // Unlocked: a command schedules nothing, and a cell edit projects without rendering.
         preferences.ChartLocked = false;
         int before = Volatile.Read(ref queued);
         scheduler.ScheduleCommandRefresh();
         onChanged!("\"book|Sheet\"!D5");
 
-        // A negative assertion needs a bound. The command window is 50 ms, so spinning for 400 ms is
-        // longer than any timer could hide behind, and SpinUntil does not sleep the thread.
-        Assert.False(
-            SpinWait.SpinUntil(
-                () => Volatile.Read(ref queued) > before,
-                TimeSpan.FromMilliseconds(400)),
-            "A suspended scheduler queued a refresh while the chart was unlocked.");
-
-        preferences.ChartLocked = true;
-        scheduler.ScheduleCommandRefresh();
         Assert.True(
             SpinWait.SpinUntil(() => Volatile.Read(ref queued) > before, TimeSpan.FromSeconds(5)),
+            "An unlocked chart queued nothing for the edit; the projection must still run.");
+        Assert.True(macros.TryDequeue(out ExcelAction? projection));
+        projection!();
+        Assert.Equal(1, Volatile.Read(ref rendered));
+        Assert.Equal(1, Volatile.Read(ref projected));
+
+        // Locking the chart again restores the render.
+        preferences.ChartLocked = true;
+        int beforeRelock = Volatile.Read(ref queued);
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > beforeRelock, TimeSpan.FromSeconds(5)),
             "Locking the chart again did not re-enable scheduling.");
+        Assert.True(macros.TryDequeue(out ExcelAction? relocked));
+        relocked!();
+        Assert.Equal(2, Volatile.Read(ref rendered));
 
         // The cell toggle is not a suspension: the user unlocking cells is choosing to type, and the
         // automatic refresh is exactly what should consume that edit.
@@ -231,15 +250,19 @@ public sealed class GanttRefreshSchedulerTests
     }
 
     /// <summary>
-    /// R5.20: the persisted switch suspends both scheduling paths, and turning it back on
-    /// re-enables them. Mirrors the chart-unlock fact beside it, with the same positive control
-    /// first so the negative assertion cannot pass on a harness that never queues anything.
+    /// R5.20: the persisted switch suspends the RENDER for both scheduling paths, and turning it
+    /// back on re-enables them. The ribbon projection is never suspended, so an edit while the
+    /// switch is off still queues one projection (owner ruling 2026-11-27). Mirrors the chart-unlock
+    /// fact beside it, with the same positive control first.
     /// </summary>
     [Fact]
-    public void An_off_switch_suspends_both_scheduling_paths()
+    public void An_off_switch_suspends_the_render_but_not_the_projection()
     {
         var autoRefresh = new AutoRefreshPreferences();
         int queued = 0;
+        int rendered = 0;
+        int projected = 0;
+        ConcurrentQueue<ExcelAction> macros = new();
         Mock<IExcelApplicationAdapter> adapter = new();
         Action<string?>? onChanged = null;
         _ = adapter
@@ -251,34 +274,47 @@ public sealed class GanttRefreshSchedulerTests
         using GanttRefreshScheduler scheduler = new(
             adapter.Object,
             analyzer.Object,
-            _ => Interlocked.Increment(ref queued),
-            () => { },
+            macro =>
+            {
+                macros.Enqueue(macro);
+                _ = Interlocked.Increment(ref queued);
+            },
+            () => Interlocked.Increment(ref rendered),
             preferences: null,
-            autoRefresh);
+            autoRefresh,
+            stateRefresh: () => Interlocked.Increment(ref projected));
         scheduler.Activate();
 
         scheduler.ScheduleCommandRefresh();
         Assert.True(
             SpinWait.SpinUntil(() => Volatile.Read(ref queued) == 1, TimeSpan.FromSeconds(5)),
             "With the switch on, a command did not schedule a refresh.");
+        Assert.True(macros.TryDequeue(out ExcelAction? first));
+        first!();
+        Assert.Equal(1, Volatile.Read(ref rendered));
 
         autoRefresh.AutoRefreshEnabled = false;
         int before = Volatile.Read(ref queued);
         scheduler.ScheduleCommandRefresh();
         onChanged!("\"book|Sheet\"!D5");
 
-        // A negative assertion needs a bound: 400 ms is longer than any timer could hide behind.
-        Assert.False(
-            SpinWait.SpinUntil(
-                () => Volatile.Read(ref queued) > before,
-                TimeSpan.FromMilliseconds(400)),
-            "The scheduler queued a refresh while the switch was off.");
-
-        autoRefresh.AutoRefreshEnabled = true;
-        scheduler.ScheduleCommandRefresh();
         Assert.True(
             SpinWait.SpinUntil(() => Volatile.Read(ref queued) > before, TimeSpan.FromSeconds(5)),
+            "The switch-off edit queued nothing; the projection must still run.");
+        Assert.True(macros.TryDequeue(out ExcelAction? projection));
+        projection!();
+        Assert.Equal(1, Volatile.Read(ref rendered));
+        Assert.Equal(1, Volatile.Read(ref projected));
+
+        autoRefresh.AutoRefreshEnabled = true;
+        int beforeOn = Volatile.Read(ref queued);
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > beforeOn, TimeSpan.FromSeconds(5)),
             "Turning the switch back on did not re-enable scheduling.");
+        Assert.True(macros.TryDequeue(out ExcelAction? backOn));
+        backOn!();
+        Assert.Equal(2, Volatile.Read(ref rendered));
     }
 
     /// <summary>
@@ -521,10 +557,14 @@ public sealed class GanttRefreshSchedulerTests
         Assert.Contains("scheduled=\"\"", line, StringComparison.Ordinal);
     }
 
-    private static GanttRefreshScheduler CreateScheduler(Action<ExcelAction> queue, Action refresh) =>
+    private static GanttRefreshScheduler CreateScheduler(
+        Action<ExcelAction> queue,
+        Action refresh,
+        Action? stateRefresh = null) =>
         new(
             Mock.Of<IExcelApplicationAdapter>(),
             Mock.Of<ISheetChangeAnalyzer>(),
             queue,
-            refresh);
+            refresh,
+            stateRefresh: stateRefresh);
 }

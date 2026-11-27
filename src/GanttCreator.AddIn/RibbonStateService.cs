@@ -1997,12 +1997,86 @@ internal class RibbonStateService
     {
         LoadPlotSettingsFromWorkbook();
 
-        // Probe the two workbook facts the mode needs (R5.16). Succeeded is the
-        // sheet-initialised fact: the previous `refusal != TableMissing` test
-        // counted a workbook-less host as initialised. ConfigurationPresent
-        // separates a first run from a damaged workbook that needs repair.
-        // Both stay nullable so a transient probe failure keeps the last known
-        // values instead of flipping the ribbon to FirstRun.
+        _state = CaptureSnapshot(_state, ReadSnapshotFacts());
+
+        // Re-measure on every refresh so the plot width and height displays are the live
+        // numbers whatever the size mode is (R8.9 D10). A refusal keeps the previous value.
+        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
+
+        Invalidate();
+
+        // Owner ruling D-4: every chart refresh restores the add-in tab, so a
+        // refresh cannot leave the user looking at the Table Design tab.
+        ActivateGanttTab();
+    }
+
+    /// <summary>
+    /// Republishes the snapshot after a table change, without reloading the plot settings
+    /// and without re-deriving the plot range. Never throws.
+    /// </summary>
+    /// <param name="plotStart">
+    /// The inclusive plot start the pass rendered, or null when unknown or when the
+    /// projection is not driven by a pass.
+    /// </param>
+    /// <param name="plotFinish">
+    /// The inclusive plot finish the pass rendered, or null when unknown or when the
+    /// projection is not driven by a pass.
+    /// </param>
+    /// <param name="measurePlot">
+    /// Whether to re-read the hidden-column set and re-measure the plot. The explicit
+    /// Refresh did both through <see cref="Refresh"/> and keeps them; the automatic and
+    /// suspended paths never did.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the ribbon's projection of the table, not of the render.</b> The
+    /// scheduled pass and the scheduler's suspended path both call it, so the cell-aware
+    /// controls follow the sheet whether or not a chart is rebuilt (owner ruling
+    /// 2026-11-27).
+    /// </para>
+    /// <para>
+    /// <b>No plot-settings reload.</b> <see cref="LoadPlotSettingsFromWorkbook"/> re-derives
+    /// the AUTO dates from its own table read, which is the second derivation the refresh
+    /// outcome's plot fields exist to prevent; the caller supplies the range the pass
+    /// actually used.
+    /// </para>
+    /// </remarks>
+    internal void RefreshAfterTableChange(
+        DateOnly? plotStart = null,
+        DateOnly? plotFinish = null,
+        bool measurePlot = false)
+    {
+        _state = CaptureSnapshot(_state, ReadSnapshotFacts());
+
+        if (measurePlot)
+        {
+            // The explicit Refresh re-asks the sheet the same two questions the full
+            // Refresh asks, so a manually unhidden managed column and a live geometry
+            // change are both reflected. The automatic and suspended paths never measured.
+            LoadColumnVisibilityFromWorksheet();
+            _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
+        }
+
+        UpdateEffectivePlotDates(plotStart, plotFinish);
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Reads the workbook facts one snapshot needs and refreshes the cached rows the
+    /// row-action context reads. Never throws.
+    /// </summary>
+    /// <returns>
+    /// The freshly probed facts. A failed read leaves every fact null, which keeps the
+    /// published value (the sticky-snapshot policy).
+    /// </returns>
+    private SnapshotProbeFacts ReadSnapshotFacts()
+    {
+        // Probe the workbook facts the mode and the data-gated controls need (R5.16).
+        // Succeeded is the sheet-initialised fact: the previous `refusal != TableMissing`
+        // test counted a workbook-less host as initialised. ConfigurationPresent
+        // separates a first run from a damaged workbook that needs repair. Every value
+        // stays nullable so a transient probe failure keeps the last known values instead
+        // of flipping the ribbon to FirstRun.
         bool? sheetInitialised = null;
         bool? configurationPresent = null;
         bool? ganttSheetPresent = null;
@@ -2035,25 +2109,13 @@ internal class RibbonStateService
 #pragma warning restore CA1031
         }
 
-        SnapshotProbeFacts facts = new(
+        return new SnapshotProbeFacts(
             SheetInitialised: sheetInitialised,
             ConfigurationPresent: configurationPresent,
             GanttSheetPresent: ganttSheetPresent,
             CriticalIntervalParentAvailable: criticalIntervalParentAvailable,
             ActiveSheetIsGanttSheet: activeSheetIsGanttSheet,
             HasGroups: hasGroups);
-
-        _state = CaptureSnapshot(_state, facts);
-
-        // Re-measure on every refresh so the plot width and height displays are the live
-        // numbers whatever the size mode is (R8.9 D10). A refusal keeps the previous value.
-        _state = WithMeasurement(_state, MeasurePlot(_hiddenColumns));
-
-        Invalidate();
-
-        // Owner ruling D-4: every chart refresh restores the add-in tab, so a
-        // refresh cannot leave the user looking at the Table Design tab.
-        ActivateGanttTab();
     }
 
     /// <summary>
@@ -2556,6 +2618,11 @@ internal class RibbonStateService
         }
 
         InvalidateControl(RibbonControlIds.ToggleAutoRefresh);
+
+        // The ribbon is a projection of the table and is never suspended. Cancelling the
+        // pending timer above can therefore discard a projection queued by the last edit,
+        // so flush one here; the settings write may also have moved the selection.
+        RefreshAfterTableChange();
 
         // The settings write moves Excel's selection, which activates the contextual Table Design
         // tab and leaves the user looking at it (reported from the host 2026-11-16). Every refresh

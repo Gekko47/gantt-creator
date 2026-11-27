@@ -127,6 +127,17 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// </summary>
     private volatile bool _commandRefreshPending;
 
+    /// <summary>
+    /// Republishes the ribbon snapshot when a burst's render is suspended, or
+    /// <see langword="null"/> when nothing tracks it.
+    /// </summary>
+    /// <remarks>
+    /// The ribbon is a projection of the table, not of the render, so it is never suspended
+    /// (owner ruling 2026-11-27). This is the action the debounce runs when the chart must stay
+    /// still; the pass republishes through its own postlude when it is allowed to run.
+    /// </remarks>
+    private readonly Action? _stateRefresh;
+
     internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
         : this(
             adapter,
@@ -135,7 +146,8 @@ internal sealed class GanttRefreshScheduler : IDisposable
             RefreshSheetCommand.RunSilentForExcel,
             ProtectionPreferences.Shared,
             AutoRefreshPreferences.Shared,
-            CommandBoundary.Instance.WriteTechnicalRecord)
+            CommandBoundary.Instance.WriteTechnicalRecord,
+            stateRefresh: () => RibbonStateService.Instance.RefreshAfterTableChange())
     {
     }
 
@@ -147,7 +159,8 @@ internal sealed class GanttRefreshScheduler : IDisposable
         IProtectionPreferenceSource? preferences = null,
         IAutoRefreshPreferenceSource? autoRefresh = null,
         Action<string>? trace = null,
-        Func<int, Action, System.Threading.Timer>? timerFactory = null)
+        Func<int, Action, System.Threading.Timer>? timerFactory = null,
+        Action? stateRefresh = null)
     {
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
@@ -157,6 +170,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
         _autoRefresh = autoRefresh;
         _trace = trace;
         _timerFactory = timerFactory;
+        _stateRefresh = stateRefresh;
     }
 
     /// <summary>
@@ -164,11 +178,11 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// </summary>
     /// <remarks>
     /// While the chart is unlocked an automatic refresh would rebuild the chart underneath a manual
-    /// drag, so both the cell-change path and the command path stay quiet. An explicit Refresh is
-    /// unaffected: that is the user asking for the rebuild. Unlocking the sheet's CELLS is
-    /// deliberately not a suspension — a cell edit is the input an automatic refresh exists to
-    /// consume, and suppressing it would leave the chart stale for as long as the user keeps cells
-    /// unlocked.
+    /// drag, so the RENDER stays quiet. The ribbon projection is not a rebuild and is never
+    /// suspended. An explicit Refresh is unaffected: that is the user asking for the rebuild.
+    /// Unlocking the sheet's CELLS is deliberately not a suspension — a cell edit is the input an
+    /// automatic refresh exists to consume, and suppressing it would leave the chart stale for as
+    /// long as the user keeps cells unlocked.
     /// </remarks>
     private readonly IProtectionPreferenceSource? _preferences;
 
@@ -183,13 +197,14 @@ internal sealed class GanttRefreshScheduler : IDisposable
     private bool IsSuspendedByUnlock => _preferences?.ChartLocked == false;
 
     /// <summary>
-    /// Gets whether an automatic pass may be scheduled at all.
+    /// Gets whether an automatic render may be scheduled at all.
     /// </summary>
     /// <remarks>
-    /// Two independent reasons suspend it, and they compose: an unlocked chart is a manual edit in
-    /// progress, and the persisted switch is the user asking for the explicit Refresh to be the only
-    /// rebuild. Either keeps both scheduling paths quiet. An explicit Refresh is never affected by
-    /// this predicate — it does not come through this class.
+    /// Two independent reasons suspend the render, and they compose: an unlocked chart is a manual
+    /// edit in progress, and the persisted switch is the user asking for the explicit Refresh to be
+    /// the only rebuild. Neither suspends the ribbon projection, which is a read of the table and a
+    /// UI invalidation. An explicit Refresh is never affected by this predicate — it does not come
+    /// through this class.
     /// </remarks>
     private bool IsSuspended => IsSuspendedByUnlock || _autoRefresh?.AutoRefreshEnabled == false;
 
@@ -267,18 +282,16 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// <param name="changedAddress">The Excel-style address of the changed range.</param>
     private void OnSheetChanged(string? changedAddress)
     {
-        if (IsSuspended)
-        {
-            // Either the chart is unlocked for manual editing — any rebuild now would undo the
-            // edit — or the user has switched the automatic refresh off. Neither queues a pass.
-            return;
-        }
-
         if (_commandRefreshPending)
         {
             // This is the command's own write, already covered by its pending refresh.
             return;
         }
+
+        // The render suspension is NOT consulted here. The ribbon snapshot is a projection of
+        // the table and is never suspended, so an accepted change still has to reach it while
+        // the chart stays put. Which action the burst runs is chosen when the debounce fires,
+        // because the switch or the lock can change inside the window.
 
         // The analyzer cost is paid per changed cell, before the debounce, so it is invisible in the
         // pipeline's own timings. Accumulate it for the burst and report it with the pass.
@@ -398,9 +411,13 @@ internal sealed class GanttRefreshScheduler : IDisposable
         string target = Volatile.Read(ref _burstTarget);
 
         // Re-check at the last moment: the chart can be unlocked, or the switch turned off,
-        // between the debounce and this callback.
-        if (IsSuspended)
+        // between the debounce and this callback. That suspends the RENDER only. The ribbon is a
+        // projection of the table and is never suspended, so the burst still reaches it.
+        bool suspended = IsSuspended;
+        if (suspended && _stateRefresh is null)
         {
+            // Nothing tracks the projection in this composition (a harness, or a host that never
+            // wired the state service), so a suspended burst keeps the old no-op behaviour.
             return;
         }
 
@@ -413,6 +430,10 @@ internal sealed class GanttRefreshScheduler : IDisposable
             ? 0d
             : analyzerTicks * 1000d / Stopwatch.Frequency;
 
+        // The detect line names the action this burst produced: "state" when the render was
+        // suspended, the original source otherwise.
+        string traceSource = suspended ? "state" : source;
+
         // Marshal to the Excel main STA thread before touching COM.
         _queueAsMacro(() =>
         {
@@ -421,15 +442,22 @@ internal sealed class GanttRefreshScheduler : IDisposable
                 // Emitted before the pipeline's own lines so a reader can attribute the wait that
                 // preceded them: the debounce, the analyzer cost and the macro-queue turn.
                 TraceDetect(
-                    source,
+                    traceSource,
                     burstEvents,
                     analyzerMilliseconds,
                     Stopwatch.GetElapsedTime(firedTicks).TotalMilliseconds,
                     target);
 
-                // Clear before the refresh so an edit made during it still schedules the
-                // next pass rather than being swallowed as the command's own write.
+                // Clear before the action so an edit made during it still schedules the next
+                // burst rather than being swallowed as the command's own write.
                 _commandRefreshPending = false;
+
+                if (suspended)
+                {
+                    _stateRefresh?.Invoke();
+                    return;
+                }
+
                 _refresh();
             }
         });

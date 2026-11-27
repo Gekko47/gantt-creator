@@ -217,12 +217,14 @@ public class RefreshSheetCommandTests
 
     /// <summary>
     /// A completed pass marks the chart current for Export PNG, clears the status bar and
-    /// re-asks the selection gates (R8.8).
+    /// republishes the snapshot with one full invalidation (R8.8, owner ruling 2026-11-27).
     /// </summary>
     /// <remarks>
     /// This replaces a source-text fact that grepped the postlude for
     /// <c>MarkChartRenderCurrent</c>. That pin proved the strings existed, not that the pass ran:
-    /// the postlude body had no coverage at all. These facts execute it.
+    /// the postlude body had no coverage at all. These facts execute it. The seven-control
+    /// invalidation list is gone, so the observable is one full <c>Invalidate</c>; a partial
+    /// list could never re-ask the data-gated controls (Critical Interval, Expand all).
     /// </remarks>
     [Fact]
     public void A_completed_pass_marks_the_chart_current_and_clears_the_status_bar()
@@ -240,13 +242,12 @@ public class RefreshSheetCommandTests
                 started,
                 Stopwatch.GetTimestamp(),
                 _ => { },
-                automatic: true,
-                updateEffectivePlotDates: true,
-                invalidateSelectionGates: true);
+                automatic: true);
 
             Assert.True(service.ChartRenderCurrent);
             Assert.Equal(1, adapter.ClearStatusBarCount);
-            Assert.Equal(7, InvalidationCount(ribbon));
+            Assert.Equal(0, InvalidationCount(ribbon));
+            Assert.Equal(1, FullInvalidationCount(ribbon));
         }
         finally
         {
@@ -255,9 +256,14 @@ public class RefreshSheetCommandTests
     }
 
     /// <summary>
-    /// A refused pass presents the orchestrator's own sentence exactly once and leaves the chart
-    /// not current, so Export PNG keeps refusing until a pass succeeds.
+    /// A refused pass presents the orchestrator's own sentence exactly once, leaves the chart
+    /// not current, and still republishes the snapshot (owner ruling 2026-11-27).
     /// </summary>
+    /// <remarks>
+    /// The refusal is the case the republish exists for: a Type edit that blocks the render
+    /// still changed the sheet, so the cell-aware controls must describe the new Type even
+    /// though the chart keeps its last state.
+    /// </remarks>
     [Fact]
     public void A_refused_pass_presents_once_and_leaves_the_chart_not_current()
     {
@@ -275,14 +281,13 @@ public class RefreshSheetCommandTests
                 started,
                 Stopwatch.GetTimestamp(),
                 presented.Add,
-                automatic: true,
-                updateEffectivePlotDates: true,
-                invalidateSelectionGates: true);
+                automatic: true);
 
             Assert.False(service.ChartRenderCurrent);
             Assert.Equal("the chart could not be refreshed", Assert.Single(presented));
             Assert.Equal(0, adapter.ClearStatusBarCount);
             Assert.Equal(0, InvalidationCount(ribbon));
+            Assert.Equal(1, FullInvalidationCount(ribbon));
         }
         finally
         {
@@ -305,12 +310,19 @@ public class RefreshSheetCommandTests
         return service;
     }
 
-    /// <summary>Counts the selection-gate invalidations the postlude requested.</summary>
+    /// <summary>Counts the targeted invalidations the postlude requested.</summary>
     /// <param name="ribbon">The ribbon substitute.</param>
     /// <returns>The number of <see cref="IRibbonUI.InvalidateControl"/> calls.</returns>
     private static int InvalidationCount(Mock<IRibbonUI> ribbon) =>
         ribbon.Invocations.Count(invocation =>
             invocation.Method.Name == nameof(IRibbonUI.InvalidateControl));
+
+    /// <summary>Counts the full ribbon invalidations the republish requested.</summary>
+    /// <param name="ribbon">The ribbon substitute.</param>
+    /// <returns>The number of <see cref="IRibbonUI.Invalidate"/> calls.</returns>
+    private static int FullInvalidationCount(Mock<IRibbonUI> ribbon) =>
+        ribbon.Invocations.Count(invocation =>
+            invocation.Method.Name == nameof(IRibbonUI.Invalidate));
 
     private static string FindRepositoryRoot()
     {

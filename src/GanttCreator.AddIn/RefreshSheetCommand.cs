@@ -188,18 +188,29 @@ internal static class RefreshSheetCommand
         // sheet refuses shape creation and movement (measured; see ProtectionArmingIntegrationTests).
         // The window is scoped to the pipeline ONLY: closing it restores the user's selection with
         // Range.Select(), and that restore has to happen before the tab restore below.
-        GanttRefreshOutcome outcome;
-        long refreshCompleted;
+        GanttRefreshOutcome? outcome = null;
+        long refreshCompleted = Stopwatch.GetTimestamp();
         // The explicit Refresh repairs everything it is given: the classification and the table's
         // cell locks. That is what makes the automatic pass's declining of both safe.
-        using (IDisposable window = ProtectionWindowFor(application).Open(repairCells: true))
+        try
         {
+            using IDisposable window = ProtectionWindowFor(application).Open(repairCells: true);
             GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
                 application,
                 useDeltaCache: false,
                 repairColumnClassification: true);
             outcome = orchestrator.Refresh();
             refreshCompleted = Stopwatch.GetTimestamp();
+        }
+        finally
+        {
+            // The pass writes cells (notes, Duration, repaired cells) before it can return, so a
+            // throw must not leave the ribbon describing a sheet that has moved. A completed pass
+            // is republished by FinishRefresh below; this covers the path that never gets there.
+            if (outcome is null)
+            {
+                RibbonStateService.Instance.RefreshAfterTableChange();
+            }
         }
 
         FinishRefresh(
@@ -208,23 +219,16 @@ internal static class RefreshSheetCommand
             commandStarted,
             refreshCompleted,
             CommandErrorDialog.Show,
-            automatic: false,
-            updateEffectivePlotDates: false,
-            invalidateSelectionGates: false);
+            automatic: false);
     }
 
     /// <summary>
     /// Runs a silent production refresh: status bar only, no modal dialogs.
     /// Used by the on-change refresh scheduler so an automatic refresh never
     /// interrupts the user with a dialog. Follows the same sequencing as the
-    /// manual refresh: orchestrator pipeline, warning capture, then targeted
-    /// ribbon control invalidation so selection-gated controls
-    /// (MoveUp/MoveDown/PromoteToParent/DemoteToChild) re-evaluate
-    /// against the live selection after the auto-refresh rewrites the sheet.
-    /// Does <b>not</b> call <see cref="RibbonStateService.Refresh"/> or
-    /// RibbonStateService.Invalidate — those re-read every table row and
-    /// re-query every ribbon getter, which is unnecessary when the selection
-    /// has not changed.
+    /// manual refresh: orchestrator pipeline, warning capture, then the ribbon
+    /// republish so the cell-aware controls resolve against the sheet the pass
+    /// just left.
     /// </summary>
     internal static void RunSilentForExcel()
     {
@@ -235,19 +239,30 @@ internal static class RefreshSheetCommand
         // ADR-0055: same window as the manual path, so a scheduled refresh can create and move
         // shapes on a sheet the add-in owns. Scoped to the pipeline only, for the reason given on
         // the tab restore below.
-        GanttRefreshOutcome outcome;
-        long refreshCompleted;
+        GanttRefreshOutcome? outcome = null;
+        long refreshCompleted = Stopwatch.GetTimestamp();
         // The automatic pass declines both repairs it can safely decline (owner ruling 2026-11-20):
         // the column classification (19-45 ms) and the table's cell unlock (7.3 ms median of a 9.7 ms
         // close). The explicit Refresh owns them, and the chart reads whichever state it finds.
-        using (IDisposable window = ProtectionWindowFor(application).Open(repairCells: false))
+        try
         {
+            using IDisposable window = ProtectionWindowFor(application).Open(repairCells: false);
             GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
                 application,
                 useDeltaCache: true,
                 repairColumnClassification: false);
             outcome = orchestrator.Refresh();
             refreshCompleted = Stopwatch.GetTimestamp();
+        }
+        finally
+        {
+            // The pass writes cells (notes, Duration, repaired cells) before it can return, so a
+            // throw must not leave the ribbon describing a sheet that has moved. A completed pass
+            // is republished by FinishRefresh below; this covers the path that never gets there.
+            if (outcome is null)
+            {
+                RibbonStateService.Instance.RefreshAfterTableChange();
+            }
         }
 
         FinishRefresh(
@@ -256,16 +271,15 @@ internal static class RefreshSheetCommand
             commandStarted,
             refreshCompleted,
             RibbonStatusBar.Warn,
-            automatic: true,
-            updateEffectivePlotDates: true,
-            invalidateSelectionGates: true);
+            automatic: true);
     }
 
     /// <summary>
     /// Runs the post-pipeline sequence both refresh paths share: the ribbon-state
-    /// writes, the one presentation of a non-success outcome, the tab restore, and
-    /// the three trace records. The two paths differ only in the presenter, the
-    /// AUTO date repaint, and whether the selection-gated controls are re-asked.
+    /// writes, the one presentation of a non-success outcome, the snapshot
+    /// republish, the tab restore, and the three trace records. The two paths
+    /// differ only in the presenter and in whether the explicit readouts are
+    /// re-measured.
     /// </summary>
     /// <param name="stateService">
     /// The ribbon state that receives the outcome. Passed rather than read from the singleton so a
@@ -276,8 +290,6 @@ internal static class RefreshSheetCommand
     /// <param name="refreshCompleted">The timestamp taken when the pipeline returned.</param>
     /// <param name="failurePresenter">The channel a non-success outcome is presented on.</param>
     /// <param name="automatic">Whether this was a scheduled pass rather than a click.</param>
-    /// <param name="updateEffectivePlotDates">Whether the AUTO date row is repainted from the outcome.</param>
-    /// <param name="invalidateSelectionGates">Whether the selection-gated controls are re-asked.</param>
     /// <exception cref="ArgumentNullException"><paramref name="stateService"/> is <see langword="null"/>.</exception>
     internal static void FinishRefresh(
         RibbonStateService stateService,
@@ -285,9 +297,7 @@ internal static class RefreshSheetCommand
         long commandStarted,
         long refreshCompleted,
         Action<string> failurePresenter,
-        bool automatic,
-        bool updateEffectivePlotDates,
-        bool invalidateSelectionGates)
+        bool automatic)
     {
         ArgumentNullException.ThrowIfNull(stateService);
 
@@ -301,29 +311,7 @@ internal static class RefreshSheetCommand
         {
             stateService.UpdateWarnings(outcome.Warnings);
             stateService.MarkChartRenderCurrent();
-
-            // R5.1a: an AUTO end's displayed date comes from the range the chart just
-            // used. Reading it off the outcome costs two comparisons and only invalidates
-            // the boxes whose text actually moved.
-            if (updateEffectivePlotDates)
-            {
-                stateService.UpdateEffectivePlotDates(outcome.PlotStart, outcome.PlotFinish);
-            }
-
             RibbonStateService.ClearStatusBar();
-
-            // Invalidate only the selection-dependent controls so their enabled state
-            // re-evaluates against the post-refresh sheet state.
-            if (invalidateSelectionGates)
-            {
-                stateService.InvalidateControl(RibbonControlIds.DescriptionLabel);
-                stateService.InvalidateControl(RibbonControlIds.DateLabel);
-                stateService.InvalidateControl(RibbonControlIds.CustomStyle);
-                stateService.InvalidateControl(RibbonControlIds.MoveUp);
-                stateService.InvalidateControl(RibbonControlIds.MoveDown);
-                stateService.InvalidateControl(RibbonControlIds.PromoteToParent);
-                stateService.InvalidateControl(RibbonControlIds.DemoteToChild);
-            }
         }
         else
         {
@@ -331,6 +319,15 @@ internal static class RefreshSheetCommand
                 failurePresenter,
                 outcome.Message ?? "The chart could not be refreshed.");
         }
+
+        // The ribbon is a projection of the table, not of the render: every terminal outcome
+        // republishes it, refusal included. Only the render facts above are success-only.
+        // The explicit path re-measures so it keeps the readouts the full Refresh produced;
+        // the automatic path never did.
+        stateService.RefreshAfterTableChange(
+            outcome.PlotStart,
+            outcome.PlotFinish,
+            measurePlot: !automatic);
 
         // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on the Table
         // Design tab, so the tab restore runs after the protection window closed (its

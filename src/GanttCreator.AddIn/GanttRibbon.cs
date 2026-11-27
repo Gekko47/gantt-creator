@@ -235,12 +235,13 @@ public class GanttRibbon : ExcelRibbon
     /// <summary>
     /// Called when the user clicks the Refresh chart button. The callback is a thin
     /// error boundary exactly like the Validate one: the refresh command runs across
-    /// the project-wide <see cref="CommandBoundary"/> and the ribbon state is
-    /// refreshed afterwards (R4.9 D3).
+    /// the project-wide <see cref="CommandBoundary"/>. The ribbon state is not refreshed
+    /// here: the command's own postlude republishes the snapshot for every terminal
+    /// outcome, so doing it again would be a second capture of the same sheet.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnRefreshSheetClick(IRibbonControl control)
-        => OnRefreshSheetClick(control, CommandBoundary.Instance, RunRefreshSheet, NotifyRibbonStateChanged);
+        => OnRefreshSheetClick(control, CommandBoundary.Instance, RunRefreshSheet);
 
     /// <summary>
     /// Runs the Refresh-sheet command across an injected boundary. Internal so
