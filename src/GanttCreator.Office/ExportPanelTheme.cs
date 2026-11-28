@@ -25,9 +25,9 @@ public static class ExportPanelTheme
     /// <summary>Builds the resolved export panel style set.</summary>
     /// <param name="themedMetrics">
     /// The workbook's themed metrics, or <see langword="null"/> to use the catalogue defaults.
-    /// The panel's border WIDTH comes from the same <c>GridLinePt</c> metric the live chart's
-    /// grid uses (owner ruling 2026-11-19); a catalogue default would leave a user who changed
-    /// "Grid line width" with a live grid and a copied panel of two different weights.
+    /// The panel's border WIDTH comes from <c>MajorBoundaryPt</c> (owner ruling 2026-11-27,
+    /// superseding ADR-0068 D5's use of <c>GridLinePt</c>): it is the width every border on
+    /// the chart takes, and the grid metric it used to read no longer exists.
     /// </param>
     /// <returns>The panel theme <see cref="ExportBoundsResolver"/> and the panel builder consume.</returns>
     public static PanelTheme Resolve(IReadOnlyDictionary<string, double>? themedMetrics = null) =>
@@ -50,7 +50,7 @@ public static class ExportPanelTheme
                 strokeColour: GanttTableAppearance.BorderColour,
                 outlineWidthPt: BorderWidthFrom(themedMetrics)));
 
-    /// <summary>The panel border width: the workbook's grid-line metric, or the default.</summary>
+    /// <summary>The panel border width: the workbook's major-boundary metric, or the default.</summary>
     /// <param name="themedMetrics">The workbook's themed metrics, or <see langword="null"/>.</param>
     /// <returns>The width in points.</returns>
     /// <remarks>
@@ -61,9 +61,9 @@ public static class ExportPanelTheme
     /// </remarks>
     private static double BorderWidthFrom(IReadOnlyDictionary<string, double>? themedMetrics) =>
         themedMetrics is not null
-        && themedMetrics.TryGetValue("GridLinePt", out double gridLinePt)
-        && double.IsFinite(gridLinePt)
-        && gridLinePt > 0
-            ? gridLinePt
-            : GanttCatalogues.MetricDefault("GridLinePt");
+        && themedMetrics.TryGetValue("MajorBoundaryPt", out double majorBoundaryPt)
+        && double.IsFinite(majorBoundaryPt)
+        && majorBoundaryPt > 0
+            ? majorBoundaryPt
+            : GanttCatalogues.MetricDefault("MajorBoundaryPt");
 }

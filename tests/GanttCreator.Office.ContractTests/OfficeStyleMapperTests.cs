@@ -200,14 +200,14 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
     /// <remarks>
     /// <c>CriticalLinePt</c> is deliberately absent: ADR-0027 D4 retired it from
     /// <c>GanttCatalogues.Metrics</c> when the overlay became a filled rectangle, since
-    /// a line thickness is no longer an input to anything. Leaving it here would assert
-    /// that a retired token still maps to a host property.
+    /// a line thickness is no longer an input to anything. <c>GridLinePt</c> is absent for
+    /// the same reason: ADR-0075 retired it with the plot grid. Leaving either here would
+    /// assert that a retired token still maps to a host property.
     /// </remarks>
     public static TheoryData<string, double> GuideStrokeWidths =>
         new()
         {
             { "StandardOutlinePt", 0.75 },
-            { "GridLinePt", 0.5 },
             { "MajorBoundaryPt", 1.0 },
             { "DelineatorLinePt", 0.75 },
         };

@@ -3,29 +3,21 @@ namespace GanttCreator.Core.Scene;
 /// <summary>One splitter request.</summary>
 /// <param name="Event">The validated Splitter event. No date geometry is read.</param>
 /// <param name="Style">The resolved named style, supplying <c>SplitterFill</c> (§10).</param>
-/// <param name="BorderStyle">
-/// The resolved major-boundary style supplying the borders' stroke token. Its own width is
-/// deliberately not read; see <see cref="BorderWidthPt"/>.
-/// </param>
 /// <param name="Lane">The fixed-height lane the splitter occupies.</param>
-/// <param name="PanelLeftPt">The data panel's left edge, so the band spans panel and plot.</param>
-/// <param name="PlotBounds">The plot rectangle; the band's right edge is its right edge.</param>
-/// <param name="BorderWidthPt">
-/// The major top/bottom border width, from <c>MajorBoundaryPt</c>. §10's border is a
-/// <em>major</em> boundary, so this is a structural token rather than a style-derived width
-/// (ADR-0022 D4), and it is the value written to the borders' <c>OutlineWidthPt</c>.
+/// <param name="PanelLeftPt">
+/// The data panel's left edge, which the <c>DataPanelLeft</c> label position is measured in.
+/// The band itself spans the plot (ADR-0068 D1).
 /// </param>
+/// <param name="PlotBounds">The plot rectangle; the band's left and right edges are its edges.</param>
 /// <param name="LabelStyle">The resolved label style, or <see langword="null"/> for no label.</param>
 /// <param name="LabelMetrics">The injected deterministic text-measuring seam.</param>
 /// <param name="LabelPosition">The resolved label position, or <c>None</c> for no label.</param>
 public sealed record SplitterRequest(
     GanttEvent Event,
     SceneStyle Style,
-    SceneStyle BorderStyle,
     LaneGeometry Lane,
     double PanelLeftPt,
     RectD PlotBounds,
-    double BorderWidthPt,
     SceneStyle? LabelStyle,
     ITextMetrics LabelMetrics,
     GanttLabelPosition LabelPosition = GanttLabelPosition.PlotCentre
@@ -33,7 +25,7 @@ public sealed record SplitterRequest(
 
 /// <summary>The result of building one splitter.</summary>
 /// <param name="Primitives">
-/// The band, its two borders, and zero, one, or two labels in deterministic order.
+/// The band and zero, one, or two labels in deterministic order.
 /// </param>
 /// <param name="BandBounds">The resolved band rectangle.</param>
 /// <param name="LabelPosition">The position actually used, after the <c>None</c> collapse.</param>
@@ -52,7 +44,7 @@ public enum SplitterRefusal
     /// <summary>The event, style, lane, or text-metrics seam was null.</summary>
     NullDependency = 1,
 
-    /// <summary>A bound, the border width, or the lane height was not usable.</summary>
+    /// <summary>A bound or the lane height was not usable.</summary>
     InvalidGeometry = 2,
 
     /// <summary>The event is not a splitter type.</summary>
@@ -72,31 +64,26 @@ public sealed record SplitterCreationOutcome(SplitterResult? Result, SplitterRef
 }
 
 /// <summary>
-/// Builds the §10 splitter band, its major borders, and its label(s), with no
-/// Office dependency.
+/// Builds the §10 splitter band and its label(s), with no Office dependency.
 /// </summary>
 /// <remarks>
 /// <para>
 /// §10 geometry, owner ruling 2026-11-19: the splitter occupies a complete lane across
-/// the PLOT. The band and its two borders span the plot's left edge to its right edge;
+/// the PLOT. The band spans the plot's left edge to its right edge;
 /// <c>PanelLeftPt</c> remains the field the <c>DataPanelLeft</c> label position is
-/// measured in, and the two coincided until the export composition began drawing the
-/// data panel. It has no date geometry, so no date is read and the horizontal extent is
+/// measured in. It has no date geometry, so no date is read and the horizontal extent is
 /// structural rather than time-scaled.
 /// </para>
 /// <para>
 /// The band sits at <see cref="ZLayer.Section"/> (30), which the guide's z-order table
-/// already assigns to "splitter/section backgrounds", and the two major borders sit at
-/// <see cref="ZLayer.Frame"/> so they frame the band rather than being covered by it.
+/// already assigns to "splitter/section backgrounds".
 /// </para>
 /// <para>
-/// The band and the borders take their styles from different sources, because §10
-/// specifies them differently. The band is a <em>fill</em> and takes the resolved
-/// <c>SplitterFill</c> preset; each border is a <em>stroke</em> whose width is the
-/// structural <c>MajorBoundaryPt</c> token (ADR-0022 D4), so the border takes its colour
-/// from the supplied <c>BorderStyle</c> and its width from <c>BorderWidthPt</c>. Carrying
-/// one style across both would have forced the border to be either unfillable or wrongly
-/// filled, and would have left the structural width unused.
+/// <b>The band is a fill and nothing else (owner ruling 2026-11-27).</b> It previously
+/// emitted two major-boundary rules at <see cref="ZLayer.Frame"/> along its top and
+/// bottom edges, so a section header read as a framed stripe rather than as a filled
+/// band. The rules are removed: the entity emits exactly one rectangle, plus zero, one,
+/// or two labels. §10 now says the same.
 /// </para>
 /// <para>
 /// The label positions belong to this builder rather than to <see cref="LabelPlanner"/>:
@@ -130,7 +117,6 @@ public static class SplitterBuilder
 
         if (request.Event is null
             || request.Style is null
-            || request.BorderStyle is null
             || request.Lane is null
             || request.LabelMetrics is null)
         {
@@ -151,8 +137,6 @@ public static class SplitterBuilder
 
         LaneGeometry lane = request.Lane;
         if (!double.IsFinite(request.PanelLeftPt)
-            || !double.IsFinite(request.BorderWidthPt)
-            || request.BorderWidthPt < 0
             || !double.IsFinite(lane.Top)
             || !double.IsFinite(lane.Height)
             || lane.Height <= 0
@@ -167,7 +151,7 @@ public static class SplitterBuilder
         // The band started at the data panel's left edge, which is invisible on the live
         // sheet — the panel there is the worksheet's own cells — and became a visible fault
         // the moment the export composition drew the panel: every splitter painted a
-        // full-width stripe across the table. The band and its two borders span the plot.
+        // full-width stripe across the table.
         RectD bandBounds = new RectD(
             request.PlotBounds.Left,
             lane.Top,
@@ -175,28 +159,18 @@ public static class SplitterBuilder
             lane.Height);
 
         // The LABEL field keeps the panel's left edge, because the `DataPanelLeft` position
-        // is defined against the panel's own edge. It is the band's rectangle only while the
-        // composition carries no panel, which is why the two coexisted unnoticed.
+        // is defined against the panel's own edge. It is not the band's rectangle, which is
+        // why the two are separate fields rather than one.
         RectD bounds = new RectD(
             request.PanelLeftPt,
             lane.Top,
             request.PlotBounds.Right - request.PanelLeftPt,
             lane.Height);
 
-        // The border is a *stroke*, not the band's fill. Reusing `request.Style` gave both
-        // border lines the Splitter preset's fill with `StrokeColour` and `OutlineWidthPt`
-        // both null, so the scene described a §10 major boundary that no renderer could draw
-        // and silently discarded the `BorderWidthPt` the caller had already supplied and this
-        // method had already validated. The style now supplies the stroke token and the
-        // structural `BorderWidthPt` supplies the width, which is exactly the split ADR-0022
-        // D4 draws: the colour is a style decision, the width is a structural measurement.
-        // Only the stroke members are carried across; a line has no fill, and copying the
-        // band's fill onto it would re-introduce the same dual meaning.
-        SceneStyle borderStyle = new(
-            request.BorderStyle.StyleKey,
-            strokeColour: request.BorderStyle.StrokeColour,
-            outlineWidthPt: request.BorderWidthPt);
-
+        // §10 is a fill only (owner ruling 2026-11-27). The band used to be accompanied by
+        // two major-boundary rules at ZLayer.Frame, which made a section header read as a
+        // framed stripe. The entity now emits exactly one rectangle; the label pass below
+        // may add text.
         List<ScenePrimitive> primitives =
         [
             new SceneRect(
@@ -205,24 +179,6 @@ public static class SplitterBuilder
                 ZLayer.Section,
                 bandBounds,
                 request.Style),
-            new SceneLine(
-                ScenePrimitive.CreateId(owner, $"{BandRole}:top"),
-                owner,
-                ZLayer.Frame,
-                new PointD(bounds.X, bounds.Y),
-                new PointD(bounds.Right, bounds.Y),
-                borderStyle,
-                request.Event.Type,
-                lane.LaneOrder),
-            new SceneLine(
-                ScenePrimitive.CreateId(owner, $"{BandRole}:bottom"),
-                owner,
-                ZLayer.Frame,
-                new PointD(bandBounds.X, bandBounds.Bottom),
-                new PointD(bandBounds.Right, bandBounds.Bottom),
-                borderStyle,
-                request.Event.Type,
-                lane.LaneOrder),
         ];
 
         GanttLabelPosition position = AddLabels(request, owner, lane, bounds, primitives);

@@ -1243,7 +1243,9 @@ public class ExcelSceneBuildRequestFactoryTests
     /// back to 0.5. That contract is withdrawn: the key was never read in the first
     /// place, so the test was passing over dead code and gave false assurance that the
     /// settings path was live. The behaviour now asserted is the real one — a garbage
-    /// value under a metric name is ignored, and the catalogue default survives.
+    /// value under a metric name is ignored, and the catalogue default survives. The
+    /// metric named is <c>MajorBoundaryPt</c> because <c>GridLinePt</c> is retired
+    /// (owner ruling 2026-11-27).
     /// </remarks>
     [Fact]
     public void A_malformed_metric_setting_is_ignored_rather_than_applied()
@@ -1252,13 +1254,13 @@ public class ExcelSceneBuildRequestFactoryTests
 
         SceneBuildRequestOutcome outcome = factory.Create(
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
-            new Dictionary<string, string> { ["GridLinePt"] = "not-a-number" },
+            new Dictionary<string, string> { ["MajorBoundaryPt"] = "not-a-number" },
             StyleRegistry(),
             Grid(), new Dictionary<string, double>()
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
-        Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), outcome.Request!.GridLinePt);
+        Assert.Equal(GanttCatalogues.MetricDefault("MajorBoundaryPt"), outcome.Request!.MajorBoundaryPt);
     }
 
     /// <summary>
@@ -1294,7 +1296,6 @@ public class ExcelSceneBuildRequestFactoryTests
             {
                 ["ChartBackgroundColour"] = "#F0F0F0",
                 ["AlternateBandColour"] = "#E0E0E0",
-                ["MinorGridColour"] = "#D0D0D0",
                 ["MajorGridColour"] = "#C0C0C0",
                 ["YearHeaderColour"] = "#B0B0B0",
                 ["PeriodHeaderColour"] = "#A0A0A0",
@@ -1307,7 +1308,6 @@ public class ExcelSceneBuildRequestFactoryTests
 
         Assert.Equal("#F0F0F0", theme.Background.FillColour?.ToString());
         Assert.Equal("#E0E0E0", theme.AlternateBand.FillColour?.ToString());
-        Assert.Equal("#D0D0D0", theme.MinorGrid.StrokeColour?.ToString());
         Assert.Equal("#C0C0C0", theme.MajorGrid.StrokeColour?.ToString());
         Assert.Equal("#B0B0B0", theme.YearHeader.FillColour?.ToString());
         Assert.Equal("#A0A0A0", theme.PeriodHeader.FillColour?.ToString());
@@ -1334,20 +1334,20 @@ public class ExcelSceneBuildRequestFactoryTests
             GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background),
             theme.Background.FillColour?.ToString());
         Assert.Equal(
-            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid),
-            theme.MinorGrid.StrokeColour?.ToString());
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid),
+            theme.MajorGrid.StrokeColour?.ToString());
     }
 
     [Fact]
     public void Every_chart_border_is_one_uniform_soft_grey()
     {
-        // Owner ruling 2026-10-20: the chart's borders are one uniform soft
-        // grey. The minor grid, the year boundary and the plot frame all draw
-        // from the two grid roles, so the two must default to the SAME colour
-        // — the year boundary keeps its own MajorBoundaryPt width, which is how
-        // it reads as a boundary without needing a second colour.
+        // Owner ruling 2026-10-20: the chart's borders are one uniform soft grey. The
+        // plot frame, the plot's four sides, the header cell edges and the table's own
+        // borders all read the same token, so the two authorities must agree. The
+        // minor-grid role is retired (owner ruling 2026-11-27), so the comparison is
+        // between the major-grid token and the table-border token.
         Assert.Equal(
-            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid),
+            GanttTableAppearance.BorderColour.ToString(),
             GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid));
 
         ExcelSceneBuildRequestFactory factory = new(Metrics());
@@ -1361,15 +1361,17 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         FrameBandsTheme theme = outcome.Request!.FrameTheme!;
 
-        Assert.Equal(theme.MinorGrid.StrokeColour, theme.MajorGrid.StrokeColour);
+        Assert.Equal(
+            GanttTableAppearance.BorderColour.ToString(),
+            theme.MajorGrid.StrokeColour?.ToString());
     }
 
     [Fact]
-    public void The_grid_line_widths_come_from_the_themed_metrics()
+    public void The_major_boundary_width_comes_from_the_themed_metric()
     {
-        // The "Grid line width" and "Major boundary width" controls named
-        // metrics that nothing consumed: the widths were literals in the
-        // frame theme. They now reach the render.
+        // The "Major boundary width" control named a metric that nothing consumed:
+        // the width was a literal in the frame theme. It now reaches the render, and
+        // it is the only width metric left now that the plot grid is retired.
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
         SceneBuildRequestOutcome outcome = factory.Create(
@@ -1379,14 +1381,12 @@ public class ExcelSceneBuildRequestFactoryTests
             Grid(),
             new Dictionary<string, double>
             {
-                ["GridLinePt"] = 1.25,
                 ["MajorBoundaryPt"] = 2.5,
             });
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         FrameBandsTheme theme = outcome.Request!.FrameTheme!;
 
-        Assert.Equal(1.25, theme.MinorGrid.OutlineWidthPt);
         Assert.Equal(2.5, theme.MajorGrid.OutlineWidthPt);
     }
 
@@ -1411,7 +1411,6 @@ public class ExcelSceneBuildRequestFactoryTests
             ("YearBandHeightPt", request.YearBandHeightPt),
             ("PeriodBandHeightPt", request.PeriodBandHeightPt),
             ("MinimumHeaderLabelWidthPt", request.MinimumHeaderLabelWidthPt),
-            ("GridLinePt", request.GridLinePt),
             ("MajorBoundaryPt", request.MajorBoundaryPt),
             ("MilestoneSizePt", request.MilestoneSizePt),
             ("DelineatorLinePt", request.DelineatorLinePt),
@@ -1454,7 +1453,6 @@ public class ExcelSceneBuildRequestFactoryTests
 
         var themedMetrics = new Dictionary<string, double>(StringComparer.Ordinal)
         {
-            ["GridLinePt"] = 3.0,
             ["MajorBoundaryPt"] = 2.0,
             ["SplitterHeightPt"] = 9.0,
         };
@@ -1469,7 +1467,6 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         SceneBuildRequest request = outcome.Request!;
 
-        Assert.Equal(3.0, request.GridLinePt);
         Assert.Equal(2.0, request.MajorBoundaryPt);
         Assert.Equal(9.0, request.LaneMetrics!.SplitterHeightPt);
 
@@ -1567,8 +1564,6 @@ public class ExcelSceneBuildRequestFactoryTests
         [
             "ChartTitle",
             "AlternateBanding",
-            "ShowMinorGrid",
-            "ShowMajorGrid",
             "TimeScale",
             "PeriodLabelFormat",
             "DateDisplayFormat",
@@ -1977,23 +1972,24 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.Equal(GanttTableAppearance.HeaderTextColour, theme.HeaderText.TextColour);
 
         Assert.Equal(GanttTableAppearance.BorderColour, theme.Border.StrokeColour);
-        Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), theme.Border.OutlineWidthPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("MajorBoundaryPt"), theme.Border.OutlineWidthPt);
     }
 
     /// <summary>
-    /// The copied panel's border takes the workbook's grid-line width, so a themed chart and
-    /// its copy carry one weight (owner ruling 2026-11-19).
+    /// The copied panel's border takes the workbook's major-boundary width, so a themed chart
+    /// and its copy carry one weight (owner ruling 2026-11-19; the former grid-line width was
+    /// retired in ADR-0075 and the label-matched weight moved to `MajorBoundaryPt`).
     /// </summary>
     [Fact]
-    public void The_export_panel_border_takes_the_workbooks_grid_line_width()
+    public void The_export_panel_border_takes_the_workbooks_major_boundary_width()
     {
         PanelTheme themed = ExportPanelTheme.Resolve(
-            new Dictionary<string, double> { ["GridLinePt"] = 1.5 });
+            new Dictionary<string, double> { ["MajorBoundaryPt"] = 1.5 });
         PanelTheme unusable = ExportPanelTheme.Resolve(
-            new Dictionary<string, double> { ["GridLinePt"] = 0 });
+            new Dictionary<string, double> { ["MajorBoundaryPt"] = 0 });
 
         Assert.Equal(1.5, themed.Border.OutlineWidthPt!.Value, 6);
-        Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), unusable.Border.OutlineWidthPt!.Value, 6);
+        Assert.Equal(GanttCatalogues.MetricDefault("MajorBoundaryPt"), unusable.Border.OutlineWidthPt!.Value, 6);
     }
 
     /// <summary>

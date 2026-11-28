@@ -109,7 +109,6 @@ public sealed class ExportBoundsResolverTests
             DateFormat = GanttDateDisplayFormat.DdMMyyyy,
             Title = title,
             ChartPadding = ChartPaddingPt.Uniform(Padding),
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
             TitleBandHeightPt = TitleBandHeight,

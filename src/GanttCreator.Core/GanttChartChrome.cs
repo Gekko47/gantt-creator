@@ -26,10 +26,11 @@ public enum GanttChartChromeRole
     /// <summary>The band drawn behind alternate plot periods.</summary>
     AlternateBand = 1,
 
-    /// <summary>The minor grid lines and lane separators.</summary>
-    MinorGrid = 2,
-
-    /// <summary>The major grid lines and the plot frame boundary.</summary>
+    /// <summary>
+    /// The major grid lines and the plot frame boundary — the plot's four sides and the
+    /// header cell edges. The former <c>MinorGrid</c> role is retired: the plot draws no
+    /// interior lines (owner ruling 2026-11-27).
+    /// </summary>
     MajorGrid = 3,
 
     /// <summary>The year header band.</summary>
@@ -67,7 +68,6 @@ public static class GanttChartChrome
     [
         GanttChartChromeRole.Background,
         GanttChartChromeRole.AlternateBand,
-        GanttChartChromeRole.MinorGrid,
         GanttChartChromeRole.MajorGrid,
         GanttChartChromeRole.YearHeader,
         GanttChartChromeRole.PeriodHeader,
@@ -84,7 +84,6 @@ public static class GanttChartChrome
         {
             GanttChartChromeRole.Background => "ChartBackground",
             GanttChartChromeRole.AlternateBand => "AlternateBandFill",
-            GanttChartChromeRole.MinorGrid => "MinorGridStroke",
             GanttChartChromeRole.MajorGrid => "MajorGridStroke",
             GanttChartChromeRole.YearHeader => "YearHeaderFill",
             GanttChartChromeRole.PeriodHeader => "AlternateBandFill",
@@ -102,7 +101,6 @@ public static class GanttChartChrome
         {
             GanttChartChromeRole.Background => "ChartBackgroundColour",
             GanttChartChromeRole.AlternateBand => "AlternateBandColour",
-            GanttChartChromeRole.MinorGrid => "MinorGridColour",
             GanttChartChromeRole.MajorGrid => "MajorGridColour",
             GanttChartChromeRole.YearHeader => "YearHeaderColour",
             GanttChartChromeRole.PeriodHeader => "PeriodHeaderColour",
@@ -159,7 +157,6 @@ public static class GanttChartChrome
         {
             GanttChartChromeRole.Background => "Background",
             GanttChartChromeRole.AlternateBand => "Alternate band",
-            GanttChartChromeRole.MinorGrid => "Minor grid",
             GanttChartChromeRole.MajorGrid => "Major grid",
             GanttChartChromeRole.YearHeader => "Year header",
             GanttChartChromeRole.PeriodHeader => "Period header",

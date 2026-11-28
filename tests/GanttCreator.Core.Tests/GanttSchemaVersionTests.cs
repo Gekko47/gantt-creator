@@ -102,7 +102,13 @@ public class GanttSchemaVersionTests
         // existing keys so a version-28 workbook's list is an exact prefix. That
         // prefix is what lets the additive repair upgrade it in place (ADR-0073)
         // without Initialise and without rewriting tblGanttMetrics.
-        Assert.Equal(29, GanttSchemaVersion.CurrentSchemaVersion);
+        // 30 RETIRES the plot grid and its controls (R11.2): tblGanttSettings loses
+        // `ShowMinorGrid`, `ShowMajorGrid` and `MinorGridColour`, and tblGanttMetrics
+        // loses `GridLinePt`. A stored list longer than the approved one is refused by
+        // AdditiveSchemaUpgrade as ExtraKey, so the workbook reports the
+        // confirmation-required SchemaVersionOlder and Repair rewrites the catalogues
+        // (ADR-0029 D6: no migration).
+        Assert.Equal(30, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

@@ -254,7 +254,6 @@ public static class GanttCatalogues
         // Owner ruling 2026-11-15: the chart's lines are hairlines. 1pt and 0.5pt both
         // render as one pixel at 100 %, so the earlier "one weight" pass was invisible on
         // the sheet; 0.25pt is Excel's thinnest line and is what actually reads differently.
-        new("GridLinePt", 0.25, 0.25, 3),
         new("MajorBoundaryPt", 0.25, 0.25, 6),
         new("DelineatorLinePt", 0.75, 0.25, 6),
         new("HatchPitchPt", 4, 2, 18),
@@ -341,8 +340,6 @@ public static class GanttCatalogues
         new("PlotStartDate", string.Empty),
         new("PlotFinishDate", string.Empty),
         new("AlternateBanding", "TRUE"),
-        new("ShowMinorGrid", "TRUE"),
-        new("ShowMajorGrid", "TRUE"),
         new("DateDisplayFormat", nameof(GanttDateDisplayFormat.DdMMMyy)),
 
         // Schema version 7. These two were read by the scene-request factory from the
@@ -382,7 +379,6 @@ public static class GanttCatalogues
         // and the token table cannot disagree; a test pins that equality.
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.Background), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background)),
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.AlternateBand), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.AlternateBand)),
-        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MinorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid)),
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MajorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid)),
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.YearHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.YearHeader)),
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.PeriodHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.PeriodHeader)),

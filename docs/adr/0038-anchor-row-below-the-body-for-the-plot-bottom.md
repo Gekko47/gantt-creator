@@ -63,7 +63,7 @@ A consequence worth recording: this makes `The_padding_row_default_matches_the_c
 
 ## Consequences
 
-- **Bands, vertical grid lines and delineators are fixed together.** They share the plot's vertical span and fail as one class; leaving delineators out would leave a full-height line that stops at the old footer.
+- **Bands, vertical grid lines and delineators are fixed together.** They share the plot's vertical span and fail as one class; leaving delineators out would leave a full-height line that stops at the old footer. *(Amended 2026-11-27 by ADR-0075: the vertical grid lines are retired; the bands, the delineators and the plot's own edges remain the fixed class.)*
 - **The chart background is untouched**, for ADR-0037 D2's reason: it spans the whole chart and its top and bottom already sit outside the body.
 - **The inserter is unchanged.** It already targets one row past the **body**, which is now the anchor row — so this decision makes the existing insert correct for the bottom rather than changing it.
 - **The overhang must be asserted, not eyeballed.** A test computes that the band bottom never passes the closing line. The probe's own `covered=False` output is an **artefact**, not a finding: it measured line coverage with `Top + Height`, and an Excel `AddLine` has a degenerate bounding box. Coverage comes from `Line.Weight`, so the test must do the arithmetic.

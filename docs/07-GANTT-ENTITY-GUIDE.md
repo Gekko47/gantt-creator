@@ -231,7 +231,7 @@ All dimensions are points. Store them once in a versioned workbook style configu
 | ~~`MaximumExternalLabelWidthPt`~~ | — | — | **Retired in revision 9** (ADR-0035 D1). A label's length is bounded **only by the free space beside its shape**. The absolute 144pt cap truncated a description while the gap next to it was wide enough to hold the text whole |
 | `StandardOutlinePt` | 0.75 | 0–6 | Activity/milestone outline width |
 | ~~`CriticalLinePt`~~ | — | — | **Retired in revision 8** (ADR-0027). The critical bar's height is **half the predetermined `ActivityHeightPt`**, not a separate absolute token, and it is not derived from the parent's resolved height either |
-| `GridLinePt` | 0.5 | 0.25–3 | Minor grid line width |
+
 | `MajorBoundaryPt` | 1 | 0.25–6 | Year/plot/frame boundary width |
 | `DelineatorLinePt` | 0.75 | 0.25–6 | Vertical delineator width |
 | `HatchPitchPt` | 4 | 2–18 | Procurement hatch spacing |
@@ -262,7 +262,7 @@ Hex values are initial defaults. Colours include an explicit alpha of `FF` unles
 | `YearHeaderFill` | `#D9D9D9` | Year band |
 | `SplitterFill` | `#FFE699` | Section/splitter band |
 | `AlternateBandFill` | `#F2F2F2` | Alternating period band |
-| `MinorGridStroke` | `#D9D9D9` | Minor grid/lane separator |
+| `MinorGridStroke` | `#D9D9D9` | Table and export-panel border colour (the former minor grid; the plot draws no grid lines) |
 | `MajorGridStroke` | `#D9D9D9` | Year/plot/frame boundary — **one uniform soft grey** (owner ruling 2026-10-20; the year boundary keeps its own `MajorBoundaryPt` width, so it reads as a boundary without a second colour) |
 | `DelineatorStroke` | `#404040` | Default delineator |
 | `WarningFill` | `#FFF2CC` | Non-exported validation indication |
@@ -297,7 +297,7 @@ The style dialog must show a contrast warning when text/fill combinations are di
 | ---: | --- |
 | 0 | chart/data-panel background |
 | 10 | alternate time bands |
-| 20 | minor and major grid lines, lane separators |
+| 20 | lane separators (reserved; the plot draws no grid lines) |
 | 25 | delineator lines |
 | 30 | splitter/section backgrounds |
 | 40 | baseline, planned, actual, procurement, delay, and custom activity bodies |
@@ -439,9 +439,9 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Source:** selected plot start/finish and the closed `TimeScale` (`Month`, `Quarter`, `Week`) plus `PeriodLabelFormat` settings.
 
-**Geometry:** one clipped cell per period below the year band. Height is `PeriodBandHeightPt`; period boundaries continue into the plot as grid lines.
+**Geometry:** one clipped cell per period below the year band. Height is `PeriodBandHeightPt`. The plot draws no interior lines: the period boundaries above the plot are the header cell edges, and inside the plot the alternating bands carry the period separation (owner ruling 2026-11-27).
 
-**Style:** alternating neutral fills may follow plot bands; every period cell is **boxed at the major weight** (0.25pt) by `AddHeaderBorder`, and period boundaries continue into the plot as grid lines. Owner ruling 2026-11-15: a 0.25pt border around each period and each year, so the label cells separate like the table's own header cells and the header reads as a heading rather than a wash of fill.
+**Style:** alternating neutral fills may follow plot bands. The header cell edges are drawn at the **major weight** (0.25pt) by `AddHeaderBorder`, and **each edge has exactly one owner** (owner ruling 2026-11-27): a cell always draws its LEFT edge and only the last cell in a row draws a RIGHT edge; the year row draws its TOP and BOTTOM (the bottom being the period row's top), and the period row draws no horizontal edge because `chart:plot:top` is its bottom. The header therefore reads as a heading without any edge being drawn twice.
 
 **Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. The selected form is emitted **verbatim** — there is no width-driven substitution of any kind, so the whole band carries one form and the choice is the user's, made from the two `Month` rows of the Plot Time Scale dropdown (revision 11, ADR-0040). A period label is shown only when its interval is at least as wide as the label **measures** at the shared text seam, so `MM` survives on narrower intervals than `MMM`; a period whose measurement is unavailable falls back to the `MinimumHeaderLabelWidthPt` floor (revision 12, ADR-0041). Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
 
@@ -457,7 +457,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Geometry:** each band spans `PlotBounds.Top` through `PlotBounds.Bottom`; it never extends through the title or data panel.
 
-**Live anchoring at both edges (ADR-0037 D1, ADR-0038 D2/D3).** In a live worksheet the shared vertical span of the bands, the vertical grid lines, and the delineators is deliberately **not** exactly `PlotBounds`:
+**Live anchoring at both edges (ADR-0037 D1, ADR-0038 D2/D3).** In a live worksheet the shared vertical span of the bands, the plot's edge lines, and the delineators is deliberately **not** exactly `PlotBounds`:
 
 - The **top** is lifted `PlotBandHeaderOverlapPt` **up** into the header row, so its cell anchor resolves to the header and a row added at the top stretches the shape instead of sliding it.
 - The **bottom** is extended `ChartAnchorRowHeightPt + MajorBoundaryPt / 2` **down** through the reserved anchor row, so its cell anchor resolves *below* the row every insert targets. The bottom fix is **not** the mirror of the top fix: the top is a sub-row overlap because a reserved row above the plot would paint over user content, whereas the bottom cannot be an overlap at all — no overlap can create the row an edge needs to anchor into. A change that "symmetrises" the two edges re-breaks the bottom.
@@ -479,17 +479,17 @@ Export compositions carry no worksheet rows to anchor to, so they pass `0` and p
 
 **Source:** period/year boundaries and show/hide settings.
 
-**Geometry:** vertical lines use exact `TimeScale` X positions. Interior lines use `GridLinePt`. The plot's own border - its left and right edges, its bottom edge `chart:plot:bottom`, and its top edge (both added 2026-11-15) - takes the **major** weight, the same 0.25pt hairline as the table's lines, the header cells and the frame (owner ruling 2026-11-15: borders are one weight, only the grid between periods is minor). The bottom edge is emitted in **every** composition: inset half a stroke inside the last body row on the live sheet, where the cell fills would clip it, and exactly on `PlotBounds.Bottom` in an export, where there are no cells and the copied panel ends on the same edge, so one rule closes both (owner report 2026-11-19). The closing line `chart:plot-closing` is a **separate** primitive: it terminates the anchor-row band overhang and exists only while `ChartAnchorRowHeightPt` is non-zero (ADR-0038 D3), so an anchor-less export has the bottom border and no closing line. Horizontal lane separators span the data panel and plot only when configured.
+**Geometry:** vertical lines use exact `TimeScale` X positions. The plot draws **no interior lines** (owner ruling 2026-11-27): the alternating bands and the header cells carry the period boundaries. The plot's own border - its left and right edges, its bottom edge `chart:plot:bottom`, and its top edge (both added 2026-11-15) - takes the **major** weight, the same 0.25pt hairline as the table's lines, the header cells and the frame (owner ruling 2026-11-15: borders are one weight, only the grid between periods is minor). The bottom edge is emitted in **every** composition: inset half a stroke inside the last body row on the live sheet, where the cell fills would clip it, and exactly on `PlotBounds.Bottom` in an export, where there are no cells and the copied panel ends on the same edge, so one rule closes both (owner report 2026-11-19). The closing line `chart:plot-closing` is a **separate** primitive: it terminates the anchor-row band overhang and exists only while `ChartAnchorRowHeightPt` is non-zero (ADR-0038 D3), so an anchor-less export has the bottom border and no closing line. Horizontal lane separators span the data panel and plot only when configured.
 
 **Style:** `MinorGridStroke` or `MajorGridStroke`; solid unless an approved style specifies a dash pattern.
 
-**Layer:** a line **between** periods sits at the grid layer (20). The two lines that **close the plot** — its left and right edge — sit at the frame layer (80), because the period band is a filled rectangle at that layer which begins exactly on the plot's left edge; a grid-layer edge line is painted over inside the header row and the table-to-plot boundary disappears (owner report 2026-11-14, when the plot was moved onto the column edge).
+**Layer:** the two lines that **close the plot** — its left and right edge — sit at the frame layer (80), because the period band is a filled rectangle at that layer which begins exactly on the plot's left edge; a grid-layer edge line is painted over inside the header row and the table-to-plot boundary disappears (owner report 2026-11-14, when the plot was moved onto the column edge).
 
 **Placement on the live sheet:** the two edge lines are drawn **inside** the plot, each shifted inwards from its boundary by half its own stroke ([ADR-0061](adr/0061-initialise-presents-the-chart-surface.md) D4). The plot's left edge is the table's right edge, and the panel's last cell fill covers everything to its left, so a line centred on that boundary lost its left half and read as no separator at all (live report 2026-11-15). Interior period lines are unaffected: nothing abuts them. Export compositions keep their geometry.
 
 **Labels:** none.
 
-**Validation/tests:** no duplicate coincident minor/major lines, year line wins at shared X, plot frame closes cleanly, common zoom/DPI point tolerance.
+**Validation/tests:** no duplicate coincident header lines, the plot frame closes cleanly on all four sides, each header edge drawn exactly once, common zoom/DPI point tolerance.
 
 ## 9. Lane
 
@@ -531,9 +531,9 @@ A **projected child creates no lane and consumes no lane height.** It renders on
 
 **Source:** `Type=Splitter`, `Description`, ordering, optional parent relationship.
 
-**Geometry (owner ruling 2026-11-19, [ADR-0068](adr/0068-the-copy-composes-with-the-live-geometry-rules.md)):** occupies a complete lane across the **plot**. It has no date geometry. Height is `SplitterHeightPt`. The band and its two borders span the plot's left edge to its right edge and the full `SplitterHeightPt` of the lane, at `ZLayer.Section` (30); the band never paints the data panel, which is the table rather than the lane. Its top and bottom borders are `MajorBoundaryPt` lines at `ZLayer.Frame` (80), so they frame the band rather than sitting beneath it. A `Splitter` occupies its own lane: a shared `LaneId` does not merge it into a neighbouring activity's lane.
+**Geometry (owner ruling 2026-11-19, [ADR-0068](adr/0068-the-copy-composes-with-the-live-geometry-rules.md)):** occupies a complete lane across the **plot**. It has no date geometry. Height is `SplitterHeightPt`. The band spans the plot's left edge to its right edge and the full `SplitterHeightPt` of the lane, at `ZLayer.Section` (30); the band never paints the data panel, which is the table rather than the lane. The band is a fill only: it draws no border and no rule (owner ruling 2026-11-27, ADR-0074). A `Splitter` occupies its own lane: a shared `LaneId` does not merge it into a neighbouring activity's lane.
 
-**Style:** `SplitterFill` with major top/bottom border; no activity fill. The style is the code-owned `Splitter` preset, so a change to the `SplitterFill` token changes the rendered band.
+**Style:** `SplitterFill`, fill only; no border, no outline, no activity fill. The style is the code-owned `Splitter` preset, so a change to the `SplitterFill` token changes the rendered band.
 
 **Labels:** supported positions are `PlotCentre`, `Both`, and `None`; the default is `PlotCentre` (owner ruling 2026-11-13, R5.18l). `DataPanelLeft` is **not** offered: a section heading tucked into the data panel's left edge reads as a cell value rather than as a band over the chart, and `Both` is the supported way to have a label on both sides. The builder refuses `DataPanelLeft` for a splitter with its typed `UnsupportedLabelPosition` rather than drawing the band and silently dropping the label, and the row's blank position resolves to the type's own preset default — never to a literal in the scene builder, which is what kept asking for a position the catalogue had stopped offering. `Both` deliberately creates two scene text entities with stable role-derived IDs (`splitter-label` and `splitter-label-plot`); the panel-side one is suppressed rather than emitted at zero width when there is no panel. A blank `Description` renders the band and no label.
 
@@ -760,7 +760,7 @@ Placement priority is: explicit manual positions first; then critical milestones
 
 **Geometry:** X is the exact date position. The line runs from `PlotBounds.Top` **lifted `PlotBandHeaderOverlapPt` up into the header row** (ADR-0037 D1) to the plot's **closing boundary** — `PlotBounds.Bottom` plus the live-anchoring overhang of §7 (ADR-0038 D2), which is zero when `ChartAnchorRowHeightPt` is `0`. The title, data and time-header bands are excluded: the line reaches only a sub-row amount into the header, never through the title or period bands. Width is `StandardOutlinePt` from the resolved named style; the chart-wide `DelineatorLinePt` metric is the fallback when the style names none. The built-in `DefaultDelineator` preset resolves its `StandardOutlinePt` from the `DelineatorLinePt` token, so the built-in path is unchanged.
 
-A delineator is a **plot-spanning shape** and shares the bands' and grid lines' vertical span at BOTH ends, so that all of them stretch together on a row insert at either end. Measured live 2026-10-04 (`scripts/probe-delineator-top.ps1`): with its top exactly on the header/body boundary, a row added at the top of the body moved the line by `TopDelta +15.75` with `HeightDelta 0` — it **slid**, while the bands beside it stretched correctly.
+A delineator is a **plot-spanning shape** and shares the bands' and the plot edge lines' vertical span at BOTH ends, so that all of them stretch together on a row insert at either end. Measured live 2026-10-04 (`scripts/probe-delineator-top.ps1`): with its top exactly on the header/body boundary, a row added at the top of the body moved the line by `TopDelta +15.75` with `HeightDelta 0` — it **slid**, while the bands beside it stretched correctly.
 
 **The two ends are deliberately independent and must not be "symmetrised."** The top lift is **unconditional**: it reaches into an existing row, needs no reservation, and works with no anchor row at all. The bottom extension is **conditional on the anchor row**, because only a reserved row can create the cell anchor below the insert point. Tying the top to the anchor row would leave the line sliding again whenever the anchor row is configured to `0` — the opposite of what that token is for.
 

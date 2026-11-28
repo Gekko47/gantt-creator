@@ -248,11 +248,12 @@ public sealed class PanelBuilderTests
     [Fact]
     public void Adjacent_cells_share_one_border_and_none_is_doubled()
     {
-        // Shared borders, not per-cell borders: with N columns there are N+1
-        // vertical edges. Horizontally the edges are the panel top, the
-        // header/body boundary, and each row's bottom, so N rows give N+2. A
-        // per-cell implementation would emit N*(N+1) lines and a visibly
-        // doubled grid.
+        // Shared borders, not per-cell borders: with N columns the panel emits N
+        // vertical edges — one per column's LEFT edge. The outer right edge is the
+        // plot's left edge and is closed by the chart's own edge line, so drawing it
+        // here would put two coincident primitives on the table-to-chart seam
+        // (owner ruling 2026-11-27). Horizontally the edges are the panel top, the
+        // header/body boundary, and each row's bottom, so N rows give N+2.
         PanelBuildResult result = Build().Result!;
         SceneLine[] verticals = [.. result.Primitives.OfType<SceneLine>()
             .Where(line => line.PrimitiveId.Contains("panel-border-v:", StringComparison.Ordinal))];
@@ -262,7 +263,7 @@ public sealed class PanelBuilderTests
         var columns = Grid().Columns.Count;
         var rows = TwoRows().Length;
 
-        Assert.Equal(columns + 1, verticals.Length);
+        Assert.Equal(columns, verticals.Length);
         Assert.Equal(rows + 2, horizontals.Length);
         Assert.Equal(verticals.Length, verticals.Select(line => line.PrimitiveId).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(horizontals.Length, horizontals.Select(line => line.PrimitiveId).Distinct(StringComparer.Ordinal).Count());

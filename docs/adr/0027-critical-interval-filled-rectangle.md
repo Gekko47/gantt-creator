@@ -110,8 +110,8 @@ none was false, and is corrected in the Amendment above.
   entity. This is the substantive win: the rule that was unimplementable-as-written
   becomes a rule that needs no renderer cooperation.
 - `SceneLine` remains in use and is unaffected — it is already the live path for
-  grid lines (5 sites in `FrameBandsBuilder`), delineators, panel borders and
-  splitter bands.
+  the plot's edge lines and its top/bottom borders, delineators and panel borders. The
+  interior grid and the splitter's rules were retired in R11.2 (ADR-0074, ADR-0075).
 - The R3.16 equivalence field table's critical row must be re-transcribed: the
   fields a renderer reads change from *Style stroke + width* to *Style fill*. This
   is a cell correction, not a primitive change, and the table's keying

@@ -283,7 +283,7 @@ public static class FrameBandsBuilder
         AddBands(primitives, request, sequence, plotSpanBounds);
         AddHeaders(primitives, request, sequence, geometry);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
-        AddGrid(primitives, request, sequence, plotSpanBounds);
+        AddGrid(primitives, request, plotSpanBounds);
         AddClosingLine(primitives, request);
         AddOuterFrame(primitives, request, chartBounds);
         if (sequence.Periods.Count > 0 && sequence.Periods.All(period => !period.ShowLabel))
@@ -370,7 +370,16 @@ public static class FrameBandsBuilder
             primitives.Add(
                 new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
             );
-            AddHeaderBorder(primitives, request, id, bounds);
+            // The year row owns the top edge and the year/period seam, and only the last
+            // cell draws a right edge (owner ruling 2026-11-27).
+            AddHeaderBorder(
+                primitives,
+                request,
+                id,
+                bounds,
+                drawRight: index == sequence.Years.Count - 1,
+                drawTop: true,
+                drawBottom: true);
             if (year.ShowLabel)
             {
                 primitives.Add(
@@ -405,7 +414,17 @@ public static class FrameBandsBuilder
                 geometry.PeriodBounds.Height
             );
             primitives.Add(new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.PeriodHeader));
-            AddHeaderBorder(primitives, request, id, bounds);
+            // A period cell owns its left edge and, if it is the last, its right edge. Its
+            // top is the year row's bottom and its bottom is chart:plot:top, so drawing
+            // either here would put two coincident lines in the scene (D8).
+            AddHeaderBorder(
+                primitives,
+                request,
+                id,
+                bounds,
+                drawRight: index == sequence.Periods.Count - 1,
+                drawTop: false,
+                drawBottom: false);
             if (period.ShowLabel)
             {
                 primitives.Add(
@@ -424,39 +443,67 @@ public static class FrameBandsBuilder
     }
 
     /// <summary>
-    /// Draws the 1pt border around one header band, so each year and each period is a
-    /// visibly separate label cell.
+    /// Draws the edges one header band owns, so each year and each period reads as a
+    /// separate label cell without any edge being drawn twice.
     /// </summary>
     /// <param name="primitives">The primitive list to append to.</param>
     /// <param name="request">The frame/band request.</param>
     /// <param name="id">The band rect's identifier; each border line appends its own suffix.</param>
     /// <param name="bounds">The band cell's rectangle.</param>
+    /// <param name="drawRight">Whether this is the last cell in its row, which owns the row's right edge.</param>
+    /// <param name="drawTop">Whether this row owns its top edge.</param>
+    /// <param name="drawBottom">Whether this row owns its bottom edge.</param>
     /// <remarks>
-    /// The label cells are boxes, not just fill (owner ruling 2026-11-15). Two adjacent
+    /// <para>
+    /// The label cells are boxed, not just filled (owner ruling 2026-11-15). Two adjacent
     /// month labels on a neutral fill ran together, while the table's own header row beside
     /// them is a grid of cells. The border takes the MAJOR weight and colour - the same
-    /// line the table's outside edge takes - so a label separator is visibly stronger than
-    /// the plot's minor grid: the header reads as a heading and the plot as its body.
+    /// line the table's outside edge takes.
+    /// </para>
+    /// <para>
+    /// <b>Each edge is drawn by exactly one band (owner ruling 2026-11-27).</b> The old
+    /// implementation boxed every cell, so each shared vertical edge was emitted twice and
+    /// the year/period seam was emitted once per period cell plus the year's own bottom.
+    /// Now a cell always draws its left edge, only the last cell draws a right edge, and
+    /// the caller decides whether the row owns its top and bottom. A shared edge with
+    /// another band is that band's, which is the same rule <c>PanelBuilder</c> applies to
+    /// its cell grid.
+    /// </para>
     /// </remarks>
     private static void AddHeaderBorder(
         List<ScenePrimitive> primitives,
         FrameBandsRequest request,
         string id,
-        RectD bounds)
+        RectD bounds,
+        bool drawRight,
+        bool drawTop,
+        bool drawBottom)
     {
         SceneStyle style = request.Theme.MajorGrid;
-        primitives.Add(
-            new SceneLine($"{id}:border:top", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Right, bounds.Top), style)
-        );
-        primitives.Add(
-            new SceneLine($"{id}:border:bottom", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Bottom), new PointD(bounds.Right, bounds.Bottom), style)
-        );
+        if (drawTop)
+        {
+            primitives.Add(
+                new SceneLine($"{id}:border:top", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Right, bounds.Top), style)
+            );
+        }
+
+        if (drawBottom)
+        {
+            primitives.Add(
+                new SceneLine($"{id}:border:bottom", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Bottom), new PointD(bounds.Right, bounds.Bottom), style)
+            );
+        }
+
         primitives.Add(
             new SceneLine($"{id}:border:left", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Left, bounds.Top), new PointD(bounds.Left, bounds.Bottom), style)
         );
-        primitives.Add(
-            new SceneLine($"{id}:border:right", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Right, bounds.Top), new PointD(bounds.Right, bounds.Bottom), style)
-        );
+
+        if (drawRight)
+        {
+            primitives.Add(
+                new SceneLine($"{id}:border:right", SceneOwnerId.Chart, ZLayer.Frame, new PointD(bounds.Right, bounds.Top), new PointD(bounds.Right, bounds.Bottom), style)
+            );
+        }
     }
 
     private static void AddTitle(
@@ -488,35 +535,8 @@ public static class FrameBandsBuilder
     private static void AddGrid(
         List<ScenePrimitive> primitives,
         FrameBandsRequest request,
-        BandSequence sequence,
         RectD plotSpan)
     {
-        // KEYED BY WHAT THE LINE MEANS, NOT BY WHERE IT LANDS. The key used to be the x position, so any
-        // change to the panel width renamed every interior line and reconciliation deleted and
-        // re-created the whole grid instead of moving it: the owner's 22:0x trace shows a column toggle
-        // producing ten `chart:grid:<x>` deletions and ten creations, 446-1325 ms for a control that is
-        // only supposed to change the plot's width. A period is identified by the date its band ends on,
-        // which is stable across a width change and still distinguishes every line; the two plot edges
-        // are identified by which edge they are, which is stable by definition.
-        Dictionary<string, (double X, bool Major)> lines = [];
-        if (request.ShowMajorGrid)
-        {
-            AddGridLine(lines, "edge:left", request.PlotBounds.Left, major: true);
-            AddGridLine(lines, "edge:right", request.PlotBounds.Right, major: true);
-        }
-
-        foreach (BandInterval period in sequence.Periods)
-        {
-            if (period.Right < request.PlotBounds.Right - GeometryMath.Epsilon)
-            {
-                bool major = request.ShowMajorGrid && period.Finish.Month == 12;
-                if (request.ShowMinorGrid || major)
-                {
-                    AddGridLine(lines, PeriodKey(period), period.Right, major);
-                }
-            }
-        }
-
         // On the LIVE sheet a stroke is drawn INSIDE the rectangle it closes. The plot's
         // left edge is the table's right edge, and the panel's last cell fill covers
         // everything to the left of it, so a line centred on the boundary lost its left
@@ -524,43 +544,41 @@ public static class FrameBandsBuilder
         // separating line between the table and the chart"). The two edge lines therefore
         // move inwards by half their own stroke. The export compositions are unaffected:
         // nothing there abuts the plot, so their geometry stays exactly as specified.
-        //
-        // The edges take the MAJOR weight (owner ruling 2026-11-15, second pass): every
-        // BORDER on the sheet is one weight - the table's lines, the year and period cells,
-        // this plot's rectangle, and the frame - while the interior grid between periods
-        // stays minor. The first pass made these minor to stop them reading as a second
-        // frame, but that left the plot's border visibly lighter than the table beside it.
         double halfStroke = request.SheetCoordinates
             ? (request.Theme.MajorGrid.OutlineWidthPt ?? request.MajorBoundaryPt) / 2d
             : 0d;
 
-        foreach (KeyValuePair<string, (double X, bool Major)> line in lines.OrderBy(pair => pair.Value.X))
-        {
-            bool isLeftEdge = string.Equals(line.Key, "edge:left", StringComparison.Ordinal);
-            bool isEdge = isLeftEdge || string.Equals(line.Key, "edge:right", StringComparison.Ordinal);
-            double x = line.Value.X;
-            if (isEdge && halfStroke > 0d)
-            {
-                x = isLeftEdge ? x + halfStroke : x - halfStroke;
-            }
-
-            // The two EDGE lines close the plot, so they belong to the frame's layer, not
-            // the grid's. The period band is a FILLED rect at Frame (80) that begins
-            // exactly on the plot's left edge, so a Grid-layer (20) edge line is painted
-            // over inside the header row and the table-to-plot boundary disappears
-            // (reported 2026-11-14, when the plot was moved onto the column edge). The
-            // interior lines stay at Grid: they sit between bands, never over them.
-            primitives.Add(
-                new SceneLine(
-                    isEdge ? $"chart:grid:edge:{(isLeftEdge ? "left" : "right")}" : $"chart:grid:{line.Key}",
-                    SceneOwnerId.Chart,
-                    isEdge ? ZLayer.Frame : ZLayer.Grid,
-                    new PointD(x, plotSpan.Y),
-                    new PointD(x, plotSpan.Bottom),
-                    line.Value.Major || isEdge ? request.Theme.MajorGrid : request.Theme.MinorGrid
-                )
-            );
-        }
+        // The plot's two edge lines are the ONLY vertical lines in the plot (owner ruling
+        // 2026-11-27). The interior period grid and the December year boundaries are gone:
+        // the alternating bands are the period separation, and the header cells carry the
+        // period boundaries above the plot. Both edges are emitted unconditionally, so the
+        // plot's rectangle is complete on all four sides in every composition - the old
+        // `ShowMajorGrid` gate could leave it open at the sides while its top and bottom
+        // were still drawn.
+        //
+        // They take the MAJOR weight (owner ruling 2026-11-15): every BORDER on the sheet
+        // is one weight - the table's lines, the year and period cells, this plot's
+        // rectangle, and the frame.
+        primitives.Add(
+            new SceneLine(
+                "chart:grid:edge:left",
+                SceneOwnerId.Chart,
+                ZLayer.Frame,
+                new PointD(request.PlotBounds.Left + halfStroke, plotSpan.Y),
+                new PointD(request.PlotBounds.Left + halfStroke, plotSpan.Bottom),
+                request.Theme.MajorGrid
+            )
+        );
+        primitives.Add(
+            new SceneLine(
+                "chart:grid:edge:right",
+                SceneOwnerId.Chart,
+                ZLayer.Frame,
+                new PointD(request.PlotBounds.Right - halfStroke, plotSpan.Y),
+                new PointD(request.PlotBounds.Right - halfStroke, plotSpan.Bottom),
+                request.Theme.MajorGrid
+            )
+        );
 
         // The plot's BOTTOM border (owner report 2026-11-15: "there is an edge line at the
         // bottom and left of the plot which is not plotting"). The closing line below the
@@ -659,33 +677,6 @@ public static class FrameBandsBuilder
         );
     }
 
-    private static void AddGridLine(
-        Dictionary<string, (double X, bool Major)> lines,
-        string key,
-        double x,
-        bool major)
-    {
-        if (lines.TryGetValue(key, out (double X, bool Major) existing))
-        {
-            lines[key] = (existing.X, existing.Major || major);
-        }
-        else
-        {
-            lines.Add(key, (x, major));
-        }
-    }
-
-    /// <summary>Identifies one interior grid line by the date its band ends on.</summary>
-    /// <param name="period">The band interval the line closes.</param>
-    /// <returns>The identifier fragment, for example <c>2026-11-30</c>.</returns>
-    /// <remarks>
-    /// A date, not a position. The position changes with the panel width, so a width change used to
-    /// rename every line and force a delete-and-create cycle across the whole grid; the date is stable
-    /// across a width change and still unique within a band sequence (each period ends on its own date).
-    /// </remarks>
-    private static string PeriodKey(BandInterval period) =>
-        period.Finish.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-
     private static void AddOuterFrame(List<ScenePrimitive> primitives, FrameBandsRequest request, RectD bounds)
     {
         // ADR-0048: a LIVE chart's border encloses the visible data table as well as
@@ -780,7 +771,6 @@ public static class FrameBandsBuilder
         && IsFiniteNonNegative(request.PeriodLabelReferencePlotWidthPt)
         && IsFiniteNonNegative(request.PlotBandHeaderOverlapPt)
         && IsFiniteNonNegative(request.ChartAnchorRowHeightPt)
-        && IsFinitePositive(request.GridLinePt)
         && IsFinitePositive(request.MajorBoundaryPt);
 
     /// <summary>
@@ -802,7 +792,6 @@ public static class FrameBandsBuilder
     private static bool ValidTheme(FrameBandsTheme theme) =>
         theme.Background is not null
         && theme.AlternateBand is not null
-        && theme.MinorGrid is not null
         && theme.MajorGrid is not null
         && theme.YearHeader is not null
         && theme.PeriodHeader is not null

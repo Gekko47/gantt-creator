@@ -6,6 +6,9 @@
   R3.10; R3.11; R3.12; ADR-0021
 - **Depends on:** ADR-0021
 
+> **Superseded in part (owner ruling 2026-11-27, ADR-0074):** D3 and D4 are withdrawn — the
+> splitter's two `MajorBoundaryPt` rules are removed and §10 is a fill only.
+
 ## Context
 
 Entity guide §10 describes a `Splitter` as occupying "a complete lane across the

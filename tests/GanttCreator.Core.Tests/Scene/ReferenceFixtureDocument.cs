@@ -39,12 +39,6 @@ public sealed record ReferenceFixtureDocument
     /// <summary>Gets whether alternating plot bands are emitted.</summary>
     public bool AlternateBanding { get; init; }
 
-    /// <summary>Gets whether minor period grid lines are emitted.</summary>
-    public bool ShowMinorGrid { get; init; }
-
-    /// <summary>Gets whether major year/plot grid lines are emitted.</summary>
-    public bool ShowMajorGrid { get; init; }
-
     /// <summary>Gets the body rows in file order.</summary>
     public List<ReferenceFixtureRow>? Rows { get; init; }
 }

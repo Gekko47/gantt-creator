@@ -556,6 +556,7 @@ Exit demonstration: a non-developer installs on a clean supported machine, build
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
 | R11.1 | Close the eight ranked `GanttCreator.Core` review findings with behaviour-preserving refactors, plus the owner-ruled `#RRGGBBAA` acceptance for per-row colour overrides | `GanttCreator.Core.Tests` green; no golden baseline change | Not required: Core only, no COM path or rendered-pixel change |
+| R11.2 | Chart framing cleanup: splitter is a fill only, the plot grid and its three controls are retired (schema 30), the plot's four sides are unconditional, one rule at the table/chart seam, and each header edge has one owner | Core, Office contract, AddIn, Architecture and Raster suites green; scene golden regenerated with a printed delta; schema-30 repair path covered | Required: inspect a live chart and an editable copy for the splitter band, the plot's four sides, the single seam, the header edges and the band contrast |
 
 ## Cross-phase compatibility matrix
 

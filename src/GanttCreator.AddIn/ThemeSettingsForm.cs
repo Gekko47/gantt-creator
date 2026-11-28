@@ -1405,7 +1405,7 @@ internal sealed partial class ThemeSettingsForm : Form
         // properties: it belongs to that object, not to the chart.
         int y = 8;
         y = AddMetricGroup(panel, "Rows and lanes", y, "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt");
-        y = AddMetricGroup(panel, "Grid", y, "GridLinePt", "MajorBoundaryPt");
+        y = AddMetricGroup(panel, "Borders", y, "MajorBoundaryPt");
         y = AddMetricGroup(panel, "Milestones", y, "MilestoneSizePt");
         _ = AddChromeColourGroup(panel, y);
     }
@@ -1590,7 +1590,6 @@ internal sealed partial class ThemeSettingsForm : Form
         "MilestoneSizePt" => "Milestone size",
         "StandardOutlinePt" => "Outline width",
         "DelineatorLinePt" => "Delineator width",
-        "GridLinePt" => "Grid line width",
         "MajorBoundaryPt" => "Major boundary width",
         "HatchPitchPt" => "Hatch spacing",
         "HatchLinePt" => "Hatch line width",

@@ -186,7 +186,6 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
     private const string _periodBandToken = "PeriodBandHeightPt";
     private const string _minHeaderLabelWidthToken = "MinimumHeaderLabelWidthPt";
     private const string _periodLabelReferenceWidthToken = "PeriodLabelReferencePlotWidthPt";
-    private const string _gridLineToken = "GridLinePt";
     private const string _majorBoundaryToken = "MajorBoundaryPt";
     private const string _delineatorLineToken = "DelineatorLinePt";
     private const string _stackGapToken = "StackGapPt";
@@ -622,8 +621,6 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             DateFormat = dateFormat,
             Title = ReadString(settings, "ChartTitle"),
             AlternateBanding = ReadBool(settings, "AlternateBanding", fallback: true),
-            ShowMinorGrid = ReadBool(settings, "ShowMinorGrid", fallback: true),
-            ShowMajorGrid = ReadBool(settings, "ShowMajorGrid", fallback: true),
             YearBandHeightPt = themedMetrics.GetValueOrDefault(
                 _yearBandToken, GanttCatalogues.MetricDefault(_yearBandToken)),
             PeriodBandHeightPt = themedMetrics.GetValueOrDefault(
@@ -684,8 +681,6 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             // reference means fewer, roomier labels.
             PeriodLabelReferencePlotWidthPt = themedMetrics.GetValueOrDefault(
                 _periodLabelReferenceWidthToken, GanttCatalogues.MetricDefault(_periodLabelReferenceWidthToken)),
-            GridLinePt = themedMetrics.GetValueOrDefault(
-                _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken)),
             MajorBoundaryPt = themedMetrics.GetValueOrDefault(
                 _majorBoundaryToken, GanttCatalogues.MetricDefault(_majorBoundaryToken)),
             MilestoneSizePt = themedMetrics.GetValueOrDefault(
@@ -754,8 +749,6 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
         IReadOnlyDictionary<string, string> settings,
         IReadOnlyDictionary<string, double> themedMetrics)
     {
-        double minorGridWidth = themedMetrics.GetValueOrDefault(
-            _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken));
         double majorGridWidth = themedMetrics.GetValueOrDefault(
             _majorBoundaryToken, GanttCatalogues.MetricDefault(_majorBoundaryToken));
 
@@ -766,10 +759,6 @@ public class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) : IScen
             AlternateBand: new SceneStyle(
                 "AlternateBand",
                 fillColour: ChromeColour(settings, GanttChartChromeRole.AlternateBand)),
-            MinorGrid: new SceneStyle(
-                "MinorGrid",
-                strokeColour: ChromeColour(settings, GanttChartChromeRole.MinorGrid),
-                outlineWidthPt: minorGridWidth),
             MajorGrid: new SceneStyle(
                 "MajorGrid",
                 strokeColour: ChromeColour(settings, GanttChartChromeRole.MajorGrid),

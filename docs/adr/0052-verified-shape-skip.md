@@ -157,7 +157,9 @@ horizontal rule cannot follow a column width change under any placement except
 now classifies a `SceneLine` whose two endpoints share a y (within the geometry tolerance) and
 whose horizontal extent *covers* the plot's, using the same coverage-not-equality rule D6
 already needed for bands and delineators. The members are `chart:frame:top`,
-`chart:frame:bottom`, `chart:plot-closing`, and the splitter's two horizontal rules. A
+`chart:frame:bottom`, `chart:plot-closing`, `chart:plot:top`, `chart:plot:bottom`,
+`chart:grid:edge:left`, `chart:grid:edge:right` and the header cell edges; the splitter's two
+rules are retired (ADR-0074) and the interior grid lines are retired (ADR-0075). A
 bar-length rule, a label-width rule, and a rule that stops short of the plot stay on `xlMove`:
 none of them has an extent the sheet can stretch. Rects are unchanged on this axis — the host
 never resizes a band's width, so admitting width-covering rects would accept a real

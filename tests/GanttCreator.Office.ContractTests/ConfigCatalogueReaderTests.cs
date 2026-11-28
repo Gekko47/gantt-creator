@@ -347,16 +347,18 @@ public class ConfigCatalogueReaderTests
         var fake = new ConfigSheetFake();
         _ = ConfigGraph.BuildWriter(fake).Write();
 
-        // Change GridLinePt's DefaultValue from its catalogue default.
+        // Change MajorBoundaryPt's DefaultValue from its catalogue default.
+        // (`GridLinePt` is retired with the plot grid; this test needs any surviving editable
+        // metric, and `MajorBoundaryPt` is the one that now carries the chart's border weight.)
         var index = GanttCatalogues.Metrics.ToList()
-            .FindIndex(metric => metric.Name == "GridLinePt");
-        Assert.True(index >= 0, "GridLinePt must be present to project its DefaultValue.");
+            .FindIndex(metric => metric.Name == "MajorBoundaryPt");
+        Assert.True(index >= 0, "MajorBoundaryPt must be present to project its DefaultValue.");
         fake.Tables[2].Body[index][1] = 3.0;
 
         var outcome = ConfigGraph.BuildReader(fake).Read();
 
         Assert.True(outcome.Succeeded);
-        Assert.True(outcome.Metrics.TryGetValue("GridLinePt", out var themedValue));
+        Assert.True(outcome.Metrics.TryGetValue("MajorBoundaryPt", out var themedValue));
         Assert.Equal(3.0, themedValue);
 
         // Non-edited metrics still report their catalogue defaults.

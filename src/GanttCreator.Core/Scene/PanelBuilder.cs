@@ -359,6 +359,14 @@ public static class PanelBuilder
     /// a border (section 3) and the grid is not one line thicker than the tokens
     /// imply.
     /// </summary>
+    /// <remarks>
+    /// <b>The outer right edge is not drawn here (owner ruling 2026-11-27).</b> A panel's
+    /// right edge IS the plot's left edge by construction, and the chart emits
+    /// <c>chart:grid:edge:left</c> there in every composition. Drawing both put two
+    /// coincident vertical primitives on the table-to-chart seam. The panel now closes
+    /// every shared edge it owns and leaves that one to the plot, which is the same
+    /// rule this method applies to a hidden row's coincident horizontal edge.
+    /// </remarks>
     private static void AddBorders(
         List<ScenePrimitive> primitives,
         PanelBuildRequest request,
@@ -368,27 +376,32 @@ public static class PanelBuilder
         double bodyTop,
         double panelBottom)
     {
-        // One vertical line per column boundary, including both outer edges, each
-        // spanning the whole panel so no cell edge is drawn twice.
-        double right = panelLeft;
+        // One vertical line per column boundary EXCEPT the panel's right edge, which is
+        // the plot's left edge and is closed by the chart's own edge line.
         double x = panelLeft;
         for (int index = 0; index <= grid.Columns.Count; index++)
         {
-            primitives.Add(
-                new SceneLine(
-                    ScenePrimitive.CreateId(SceneOwnerId.Chart, $"panel-border-v:{index}"),
-                    SceneOwnerId.Chart,
-                    ZLayer.Frame,
-                    new PointD(x, headerTop),
-                    new PointD(x, panelBottom),
-                    request.Theme.Border));
+            if (index < grid.Columns.Count || grid.Columns.Count == 0)
+            {
+                primitives.Add(
+                    new SceneLine(
+                        ScenePrimitive.CreateId(SceneOwnerId.Chart, $"panel-border-v:{index}"),
+                        SceneOwnerId.Chart,
+                        ZLayer.Frame,
+                        new PointD(x, headerTop),
+                        new PointD(x, panelBottom),
+                        request.Theme.Border));
+            }
 
             if (index < grid.Columns.Count)
             {
                 x += grid.Columns[index].WidthPt;
-                right = x;
             }
         }
+
+        // The horizontal edges still span the whole panel, right edge included, so the
+        // table's bottom and top rules reach the plot's corner.
+        double right = x;
 
         // The panel's top edge, then the header/body boundary, then each row's
         // bottom edge. The boundary is a distinct shared edge: section 3 requires

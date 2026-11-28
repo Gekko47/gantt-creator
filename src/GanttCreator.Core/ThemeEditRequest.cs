@@ -190,7 +190,7 @@ public sealed record ThemeEditRequest(
         {
             "MilestoneSizePt",
             "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt",
-            "GridLinePt", "MajorBoundaryPt", "DelineatorLinePt",
+            "MajorBoundaryPt", "DelineatorLinePt",
         };
 
     /// <summary>

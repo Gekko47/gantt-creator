@@ -187,12 +187,6 @@ public sealed record SceneBuildRequest
     /// <summary>Gets whether alternating plot bands are emitted.</summary>
     public bool AlternateBanding { get; init; } = true;
 
-    /// <summary>Gets whether minor period grid lines are emitted.</summary>
-    public bool ShowMinorGrid { get; init; } = true;
-
-    /// <summary>Gets whether major year/plot grid lines are emitted.</summary>
-    public bool ShowMajorGrid { get; init; } = true;
-
     /// <summary>Gets the year-header band height.</summary>
     public double YearBandHeightPt { get; init; }
 
@@ -227,9 +221,6 @@ public sealed record SceneBuildRequest
     /// edge (ADR-0041 amendment).
     /// </remarks>
     public double PeriodLabelReferencePlotWidthPt { get; init; }
-
-    /// <summary>Gets the minor grid line width.</summary>
-    public double GridLinePt { get; init; }
 
     /// <summary>Gets the major boundary/frame line width.</summary>
     public double MajorBoundaryPt { get; init; }
@@ -1056,13 +1047,10 @@ public static class SceneBuilder
                 request.YearBandHeightPt,
                 request.PeriodBandHeightPt,
                 request.MinimumHeaderLabelWidthPt,
-                request.GridLinePt,
                 request.MajorBoundaryPt,
                 showTitle,
                 request.Title ?? string.Empty,
                 request.AlternateBanding,
-                request.ShowMinorGrid,
-                request.ShowMajorGrid,
                 request.PlotBandHeaderOverlapPt,
                 request.ChartAnchorRowHeightPt,
                 frameTheme,
@@ -1111,8 +1099,8 @@ public static class SceneBuilder
             primitives,
             warnings);
 
-        // §10's band spans the data panel and the plot, so it needs the panel's left
-        // edge. That edge is only known once the panel has been built, which is why
+        // §10's band spans the PLOT (ADR-0068 D1) and its label field needs the panel's
+        // left edge. That edge is only known once the panel has been built, which is why
         // this pass moved after the panel rather than with the other lane passes.
         BuildSplitters(
             request,
@@ -1121,7 +1109,6 @@ public static class SceneBuilder
             framePanelBounds,
             plotBounds,
             laneParticipants,
-            frameTheme.MajorGrid,
             primitives,
             warnings);
 
@@ -1766,19 +1753,14 @@ public static class SceneBuilder
             textColour: string.IsNullOrEmpty(preset.TextColour) ? null : ColourHex.Parse(preset.TextColour));
 
     /// <summary>
-    /// Builds the §10 splitter band, borders, and labels for every splitter lane.
+    /// Builds the §10 splitter band and its labels for every splitter lane.
     /// </summary>
-    /// <param name="request">The build request, supplying the border width and label style.</param>
+    /// <param name="request">The build request, supplying the label style.</param>
     /// <param name="laneLayout">The lane layout, whose fixed lanes are the input.</param>
     /// <param name="styles">The resolved style per row, read for the splitter rows.</param>
-    /// <param name="panelBounds">The data panel bounds; the band starts at its left edge.</param>
-    /// <param name="plotBounds">The plot rectangle; the band ends at its right edge.</param>
+    /// <param name="panelBounds">The data panel bounds; its left edge is the label field.</param>
+    /// <param name="plotBounds">The plot rectangle; the band spans its left to right edge.</param>
     /// <param name="laneParticipants">The lane participants, read for the Splitter rows.</param>
-    /// <param name="borderStyle">
-    /// The chart's major-boundary style, supplying the §10 borders' stroke token. It is the
-    /// frame theme's <c>MajorGrid</c> style, so a splitter border is stroked by the same
-    /// authority as the chart frame lines rather than by a second, literal colour.
-    /// </param>
     /// <param name="primitives">The primitive list to append to.</param>
     /// <param name="warnings">The scene warnings to append to.</param>
     /// <remarks>
@@ -1794,7 +1776,6 @@ public static class SceneBuilder
         RectD panelBounds,
         RectD plotBounds,
         IReadOnlyList<GanttEvent> laneParticipants,
-        SceneStyle borderStyle,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
@@ -1814,12 +1795,8 @@ public static class SceneBuilder
                     continue;
                 }
 
-                // §10's border is a *major* boundary, so its width is the
-                // MajorBoundaryPt token rather than the row's own outline width: the
-                // splitter preset carries no outline, and borrowing one would make the
-                // border width a function of a style the guide never defined it from. The
-                // stroke colour comes from the major-boundary style, because a line is a
-                // stroke and the band preset has no stroke token to contribute.
+                // §10 is a fill only (owner ruling 2026-11-27), so this pass supplies no
+                // border style or width.
                 // The row's blank position means "the type's default", and the default is
                 // owned by the type's own preset (R5.18l). Writing a literal here was a
                 // second authority: it kept asking for `DataPanelLeft` after the catalogue
@@ -1837,11 +1814,9 @@ public static class SceneBuilder
                     new SplitterRequest(
                         @event,
                         style.Style,
-                        borderStyle,
                         chartLane,
                         panelBounds.X,
                         plotBounds,
-                        request.MajorBoundaryPt,
                         request.LabelStyle,
                         request.Metrics!,
                         position));

@@ -98,7 +98,6 @@ public sealed class SceneProjectionTests
         new(
             new SceneStyle("Background"),
             new SceneStyle("AlternateBand"),
-            new SceneStyle("MinorGrid"),
             new SceneStyle("MajorGrid"),
             new SceneStyle("YearHeader"),
             new SceneStyle("PeriodHeader"),
@@ -116,7 +115,6 @@ public sealed class SceneProjectionTests
             FrameTheme = FrameTheme(),
             PlotStart = PlotStart,
             PlotFinish = PlotFinish,
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
 

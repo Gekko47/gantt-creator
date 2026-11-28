@@ -45,7 +45,9 @@ public class GanttConfigCatalogueTests
         // ADR-0041's 2026-11-20 amendment added PeriodLabelReferencePlotWidthPt, taking
         // 24 to 25. It is the plot width a period label's fit is judged against, so the
         // visible column set stops deciding whether every period label exists.
-        Assert.Equal(25, GanttCatalogues.Metrics.Count);
+        // R11.2 RETIRED GridLinePt (owner ruling 2026-11-27), taking 25 back to 24: the
+        // plot draws no interior lines, so the metric had no consumer left.
+        Assert.Equal(24, GanttCatalogues.Metrics.Count);
 
     /// <summary>
     /// Every contract anchor must leave at least one blank row between the
@@ -368,8 +370,11 @@ public class GanttConfigCatalogueTests
         // taking 26 to 27. R5.20 added AutoRefreshEnabled (schema version 25),
         // taking 27 to 28. R8.8 added PngExportTarget and LastPngExportFolder
         // (schema version 28), taking 28 to 30. R8.9 added SizeWidthCm and
-        // SizeHeightCm (schema version 29), taking 30 to 32.
-        Assert.Equal(32, GanttCatalogues.Settings.Count);
+        // SizeHeightCm (schema version 29), taking 30 to 32. R11.2 retired
+        // ShowMinorGrid, ShowMajorGrid and MinorGridColour (schema version 30),
+        // taking 32 back to 29: the plot draws no interior lines and the controls had
+        // no consumer left.
+        Assert.Equal(29, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -390,8 +395,6 @@ public class GanttConfigCatalogueTests
         "PlotStartDate",
         "PlotFinishDate",
         "AlternateBanding",
-        "ShowMinorGrid",
-        "ShowMajorGrid",
         "DateDisplayFormat",
         "SizePreset",
         "RangePaddingDays",
@@ -399,7 +402,6 @@ public class GanttConfigCatalogueTests
         "MarginCm",
         "ChartBackgroundColour",
         "AlternateBandColour",
-        "MinorGridColour",
         "MajorGridColour",
         "YearHeaderColour",
         "PeriodHeaderColour",
@@ -997,9 +999,19 @@ public class GanttConfigCatalogueTests
     /// in place (ADR-0073); structural damage still needs the confirmation-required
     /// catalogue rewrite.
     /// </para>
+    /// <para>
+    /// <b>Advanced to the R11.2 hash</b>: schema version 30 retires
+    /// <c>ShowMinorGrid</c>, <c>ShowMajorGrid</c> and <c>MinorGridColour</c> from
+    /// <c>tblGanttSettings</c> and <c>GridLinePt</c> from <c>tblGanttMetrics</c>
+    /// (owner ruling 2026-11-27). Both the seed line and two catalogue bodies move,
+    /// so the hash moves. A version-29 workbook carries the older hash and the older
+    /// key lists; <c>AdditiveSchemaUpgrade</c> refuses the longer settings list as
+    /// <c>ExtraKey</c>, so the finding is the confirmation-required
+    /// <c>SchemaVersionOlder</c> and Repair is the remedy (ADR-0029 D6).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "079097b47976c18fe6f7ee1aa6499e3df66b7c9782baa48080269d06cd2fe6b9";
+        "26490dba61ef6af9c18d7a0a50c0c59829bcecf0e29969224de9da051abd56f8";
 
     /// <remarks>
     /// Asserted with the full hash in the failure message rather than through

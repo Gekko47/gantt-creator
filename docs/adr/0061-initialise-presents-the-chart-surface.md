@@ -29,6 +29,10 @@
 > line and the hairline widths, with this note as the stated reason; no golden image
 > is involved.
 >
+> *(Amended 2026-11-27 by ADR-0075: the interior grid and its `GridLinePt` metric are
+> retired, so the "grid between periods" clause has no line left to describe. The frame,
+> the plot's rectangle and the header cell edges keep the 0.25pt hairline described here.)*
+>
 > **D9 — the live frame closes on the table's column edge, and the gutter is now an
 > OUTER margin (2026-11-15).** The frame's left edge used to be the leading gutter's
 > outer edge, which is the worksheet's own left edge at x = 0. Excel clips a shape at

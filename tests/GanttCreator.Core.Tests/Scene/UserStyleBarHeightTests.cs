@@ -81,7 +81,6 @@ public sealed class UserStyleBarHeightTests
     private static FrameBandsTheme FrameTheme() => new(
         new SceneStyle("Background"),
         new SceneStyle("AlternateBand"),
-        new SceneStyle("MinorGrid"),
         new SceneStyle("MajorGrid"),
         new SceneStyle("YearHeader"),
         new SceneStyle("PeriodHeader"),
@@ -102,7 +101,6 @@ public sealed class UserStyleBarHeightTests
             LabelStyle = new SceneStyle("DefaultText"),
             PlotStart = new DateOnly(2024, 1, 1),
             PlotFinish = new DateOnly(2024, 12, 31),
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
             TitleBandHeightPt = 14,

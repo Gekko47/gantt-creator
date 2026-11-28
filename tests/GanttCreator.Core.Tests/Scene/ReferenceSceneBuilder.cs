@@ -42,7 +42,6 @@ internal static class ReferenceSceneBuilder
         new(
             new SceneStyle("Background", fillColour: ColourHex.Parse("#FFFFFF")),
             new SceneStyle("AlternateBand", fillColour: ColourHex.Parse("#F2F2F2")),
-            new SceneStyle("MinorGrid", strokeColour: ColourHex.Parse("#D9D9D9"), outlineWidthPt: 0.5),
             new SceneStyle("MajorGrid", strokeColour: ColourHex.Parse("#808080"), outlineWidthPt: 1),
             new SceneStyle(
                 "YearHeader",

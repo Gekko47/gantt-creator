@@ -33,6 +33,10 @@ The canonical doc wins on any disagreement; it is the implementation contract, t
 - Renderers consume the resolved scene and never reinterpret a primitive: the critical interval
   is a filled rectangle everywhere, z-order follows the layer table exactly, and every
   renderer's output matches the guide's per-entity field contract.
+- The plot draws **no interior vertical lines**: the alternating bands are the period separation.
+  Its own four sides are drawn unconditionally, and `ShowMinorGrid` / `ShowMajorGrid` /
+  `MinorGridColour` / `GridLinePt` no longer exist (schema 30; ADR-0075, ADR-0076).
+- A `Splitter` is a fill band only — it draws no top or bottom rule (ADR-0074).
 
 ## Tools here
 

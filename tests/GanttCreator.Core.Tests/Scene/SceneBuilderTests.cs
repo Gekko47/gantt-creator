@@ -119,7 +119,6 @@ public sealed class SceneBuilderTests
     private static FrameBandsTheme FrameTheme() => new(
         new SceneStyle("Background"),
         new SceneStyle("AlternateBand"),
-        new SceneStyle("MinorGrid"),
         new SceneStyle("MajorGrid"),
         new SceneStyle("YearHeader"),
         new SceneStyle("PeriodHeader"),
@@ -349,7 +348,6 @@ public sealed class SceneBuilderTests
             FrameTheme = FrameTheme(),
             PlotStart = _plotStart,
             PlotFinish = _plotFinish,
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
             // Every band height must be strictly positive, and the three bands must
@@ -481,7 +479,6 @@ public sealed class SceneBuilderTests
             FrameTheme = request.FrameTheme,
             PlotStart = request.PlotStart,
             PlotFinish = request.PlotFinish,
-            GridLinePt = request.GridLinePt,
             MajorBoundaryPt = request.MajorBoundaryPt,
             MilestoneSizePt = request.MilestoneSizePt,
             TitleBandHeightPt = request.TitleBandHeightPt,
@@ -1335,11 +1332,15 @@ public sealed class SceneBuilderTests
                 Event(2, GanttEntityType.Spacer, styleKey: null)));
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        // §10: the band, plus its two major borders.
-        Assert.Equal(
-            3,
-            outcome.Result!.Scene.Primitives.Count(
-                candidate => candidate.PrimitiveId.Contains(SplitterBuilder.BandRole, StringComparison.Ordinal)));
+        // §10: the band, and nothing else (owner ruling 2026-11-27 — no border rules).
+        ScenePrimitive band = Assert.Single(
+            outcome.Result!.Scene.Primitives,
+            candidate => candidate.PrimitiveId.Contains(SplitterBuilder.BandRole, StringComparison.Ordinal));
+        _ = Assert.IsType<SceneRect>(band);
+        Assert.DoesNotContain(
+            outcome.Result.Scene.Primitives,
+            candidate => candidate.PrimitiveId.EndsWith(":splitter-band:top", StringComparison.Ordinal)
+                || candidate.PrimitiveId.EndsWith(":splitter-band:bottom", StringComparison.Ordinal));
         // §11: "no foreground fill, border, or label" — a Spacer owns no primitive.
         Assert.DoesNotContain(
             outcome.Result.Scene.Primitives,
@@ -2593,7 +2594,6 @@ public sealed class SceneBuilderTests
             PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
             DateFormat = GanttDateDisplayFormat.DdMMyyyy,
             Title = ReferenceSceneFixture.Title,
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
             TitleBandHeightPt = 14,
@@ -2669,7 +2669,6 @@ public sealed class SceneBuilderTests
             PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
             DateFormat = GanttDateDisplayFormat.DdMMyyyy,
             Title = ReferenceSceneFixture.Title,
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
             // The three header bands total 50pt and stack above the plot, which
@@ -2743,6 +2742,27 @@ public sealed class SceneBuilderTests
     /// both contributing rows joined by the pipe that no row id can contain.
     /// </summary>
     internal static string SharedDelineatorPrimitiveId { get; } = $"{GanttRowId.Parse("G-000000000000000000000000000000a2")}|{GanttRowId.Parse("G-000000000000000000000000000000a3")}:delineator";
+
+    [Fact]
+    public void A_panel_bearing_scene_draws_one_vertical_rule_at_the_table_chart_seam()
+    {
+        // The panel's right edge is the plot's left edge by construction, so the plot's
+        // edge line closes it. The panel used to draw its own border at the same x,
+        // putting two coincident vertical primitives on the seam (owner ruling 2026-11-27).
+        GanttScene scene = BuildSceneWithPanel();
+
+        SceneLine[] seam =
+        [
+            .. scene.Primitives.OfType<SceneLine>()
+                .Where(line => Math.Abs(line.From!.X - line.To!.X) < 1e-9)
+                .Where(line => Math.Abs(line.From!.X - scene.PlotBounds.Left) < 1e-9)
+                .Where(line => line.From!.Y <= scene.PlotBounds.Top + 1e-6
+                    && line.To!.Y >= scene.PlotBounds.Bottom - 1e-6),
+        ];
+
+        SceneLine rule = Assert.Single(seam);
+        Assert.Equal("chart:grid:edge:left", rule.PrimitiveId);
+    }
 
     /// <summary>
     /// Gets the row whose panel cells the R3.16 data-panel row asserts against.

@@ -24,7 +24,7 @@ The owner ruling (2026-10-20): **the chart's borders must be one uniform soft gr
 
 `MajorGridStroke` changes from `#000000` to `#D9D9D9`, the value `MinorGridStroke` already carries. One colour, one authority, no second grey to reconcile.
 
-The **year boundary keeps its own `MajorBoundaryPt` width** (1.0pt against the minor grid's 0.5pt), so it still reads as a boundary. The hierarchy is carried by weight rather than by a second colour — the same way a good chart does it, and the reason the earlier black value was never needed.
+The **year boundary keeps its own `MajorBoundaryPt` width** (1.0pt against the minor grid's 0.5pt), so it still reads as a boundary. *(Retired 2026-11-27: the interior grid and the December year boundary are gone, so this weight hierarchy has no line left to express — ADR-0075.)* The hierarchy is carried by weight rather than by a second colour — the same way a good chart does it, and the reason the earlier black value was never needed.
 
 ### D2 — The guide's token table is amended, not worked around
 

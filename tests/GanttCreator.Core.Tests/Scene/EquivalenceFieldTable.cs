@@ -140,19 +140,24 @@ internal static class EquivalenceFields
                 EquivalenceFieldChecks.ChartOwned("label", $"{EquivalenceFieldChecks.Identity}: the period label is chart furniture"),
             ]);
 
-    /// <summary>The band, grid, and frame row. The background carries the derived chart bounds.</summary>
+    /// <summary>
+    /// The band, grid and frame row. The background carries the derived chart bounds; the
+    /// "grid" sample is the plot's own left edge line, because the interior grid is retired
+    /// (owner ruling 2026-11-27).
+    /// </summary>
     public static EquivalenceRow BandsGridFrame { get; } =
         new(
             "bands, grid and frame",
             "Bands/grid/frame",
-            $"{_fieldTable}, row 'Bands/grid/frame' (line 721); geometry from §2 'Chart bounds' and §6-§8",
+            $"{_fieldTable}, row 'Bands/grid/frame' (line 721); geometry from §2 'Chart bounds' and §7-§8",
             [
                 new("background", ScenePrimitive.CreateId(SceneOwnerId.Chart, "background")),
                 new("band", ScenePrimitive.CreateId(SceneOwnerId.Chart, "band:1")),
-                // The sample is one interior line of the reference band sequence, named by the date
-                // its band ends on. A position here would be the very thing the identifier stopped
-                // being on 2026-11-20, and it would change again with the panel width.
-                new("grid", ScenePrimitive.CreateId(SceneOwnerId.Chart, "grid:2026-02-28")),
+                // The sample is the plot's LEFT EDGE, the only vertical line the plot draws
+                // since the interior grid was retired (owner ruling 2026-11-27). Its
+                // identifier names the edge, not a position, so it is stable across a
+                // panel-width change.
+                new("grid", ScenePrimitive.CreateId(SceneOwnerId.Chart, "grid:edge:left")),
                 new("frame", ScenePrimitive.CreateId(SceneOwnerId.Chart, "frame:top")),
             ],
             [
@@ -167,8 +172,8 @@ internal static class EquivalenceFields
                 EquivalenceFieldChecks.Extents("band", "Entity guide §6: an alternating time band spans its time slice"),
                 EquivalenceFieldChecks.AtLayer("band", ZLayer.AlternateBand, "Entity guide §6 and the Z-order table: alternating time bands sit at AlternateBand (10)"),
                 EquivalenceFieldChecks.Kind("grid", "line", $"{EquivalenceFieldChecks.Shared} - point-based geometry"),
-                EquivalenceFieldChecks.AtLayer("grid", ZLayer.Grid, "Entity guide §7 and the Z-order table: grid lines sit at Grid (20)"),
-                EquivalenceFieldChecks.LineEndpoints("grid", "Entity guide §7: a grid line spans the plot height at its time-slice boundary"),
+                EquivalenceFieldChecks.AtLayer("grid", ZLayer.Frame, "Entity guide §8: the plot's own edge lines sit at Frame (80) so the period band cannot paint over them"),
+                EquivalenceFieldChecks.LineEndpoints("grid", "Entity guide §8: a plot edge spans the plot's shared vertical extent"),
                 EquivalenceFieldChecks.Kind("frame", "line", $"{EquivalenceFieldChecks.Shared} - point-based geometry"),
                 EquivalenceFieldChecks.AtLayer("frame", ZLayer.Frame, "Entity guide §8 and the Z-order table: the plot frame sits at Frame (80)"),
                 EquivalenceFieldChecks.LineEndpoints("frame", "Entity guide §8: a frame edge spans its side of the plot"),

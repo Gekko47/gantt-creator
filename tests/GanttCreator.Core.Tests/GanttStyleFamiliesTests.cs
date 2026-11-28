@@ -149,7 +149,7 @@ public class GanttStyleFamiliesTests
         {
             "MilestoneSizePt",
             "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt",
-            "GridLinePt", "MajorBoundaryPt", "DelineatorLinePt",
+            "MajorBoundaryPt", "DelineatorLinePt",
         };
 
         Assert.Equal(

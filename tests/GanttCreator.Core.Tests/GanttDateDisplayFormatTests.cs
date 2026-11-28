@@ -36,12 +36,13 @@ public class GanttDateDisplayFormatTests
         // "a key inserted before it renumbered the table" — which is the property the
         // original test actually protected. Asserting the absolute index instead
         // preserves that intent across future appends: `DateDisplayFormat` must still
-        // sit at index 14 (the four R5.1 mode keys were inserted immediately
-        // before it), with the two v7 keys following it.
-        Assert.Equal(14, GanttCatalogues.Settings.ToList().FindIndex(s => s.Key == "DateDisplayFormat"));
+        // sit at index 12 (the four R5.1 mode keys were inserted immediately before it),
+        // with the two v7 keys following it. The index moved from 14 to 12 when R11.1
+        // retired the two grid switches ahead of it (owner ruling 2026-11-27).
+        Assert.Equal(12, GanttCatalogues.Settings.ToList().FindIndex(s => s.Key == "DateDisplayFormat"));
         Assert.Equal(
             ["SizePreset", "RangePaddingDays", "Margin", "MarginCm"],
-            GanttCatalogues.Settings.Skip(15).Take(4).Select(s => s.Key).ToArray());
+            GanttCatalogues.Settings.Skip(13).Take(4).Select(s => s.Key).ToArray());
     }
 
     [Theory]

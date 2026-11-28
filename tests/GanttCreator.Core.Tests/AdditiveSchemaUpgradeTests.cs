@@ -88,6 +88,33 @@ public sealed class AdditiveSchemaUpgradeTests
         Assert.Equal(AdditiveSchemaUpgradeRefusal.ExtraKey, outcome.Refusal);
     }
 
+    /// <summary>
+    /// The R11.1 retirement lands the version-29 workbook in this refusal: its stored
+    /// settings list still carries the retired grid switches and colour, so it is
+    /// longer than the approved list and the repair must be the confirmation-required
+    /// catalogue rewrite rather than the additive append.
+    /// </summary>
+    [Fact]
+    public void The_retired_grid_settings_make_a_version_29_workbook_non_additive()
+    {
+        string[] approved = ApprovedKeys;
+        string[] stored =
+        [
+            .. approved,
+            "ShowMinorGrid",
+            "ShowMajorGrid",
+            "MinorGridColour",
+        ];
+
+        AdditiveSchemaUpgradeOutcome outcome = AdditiveSchemaUpgrade.TryPlan(
+            GanttSchemaVersion.CurrentSchemaVersion - 1,
+            stored,
+            GanttSchemaVersion.CurrentSchemaVersion,
+            approved);
+
+        Assert.Equal(AdditiveSchemaUpgradeRefusal.ExtraKey, outcome.Refusal);
+    }
+
     [Fact]
     public void An_empty_stored_set_is_refused()
     {

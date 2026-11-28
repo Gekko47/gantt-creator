@@ -12,8 +12,6 @@ public sealed class SplitterBuilderTests
     private static readonly ITextMetrics _metrics = new FakeTextMetrics(_ => 4.0, 10.0);
     private static readonly LaneGeometry _lane = new("row:splitter", 0, 0, 18, [], [], true, false);
     private static readonly SceneStyle _style = new("Splitter", fillColour: ColourHex.Parse("#FFE699"));
-    private static readonly SceneStyle _borderStyle =
-        new("MajorGrid", strokeColour: ColourHex.Parse("#808080"), outlineWidthPt: 99);
     private static readonly SceneStyle _labelStyle = new("DefaultText", strokeColour: ColourHex.Parse("#000000"));
 
     private static GanttEvent Splitter(string description = "Work Package A") =>
@@ -36,9 +34,8 @@ public sealed class SplitterBuilderTests
 
     private static SplitterRequest Request(
         GanttLabelPosition position = GanttLabelPosition.PlotCentre,
-        double panelLeft = 0,
-        double borderWidthPt = 1) =>
-        new(Splitter(), _style, _borderStyle, _lane, panelLeft, _plot, borderWidthPt, _labelStyle, _metrics, position);
+        double panelLeft = 0) =>
+        new(Splitter(), _style, _lane, panelLeft, _plot, _labelStyle, _metrics, position);
 
     private static SplitterResult Build(SplitterRequest request)
     {
@@ -62,55 +59,17 @@ public sealed class SplitterBuilderTests
     }
 
     [Fact]
-    public void The_band_sits_at_the_section_layer_with_its_borders_at_the_frame_layer()
+    public void The_band_is_the_only_primitive_and_sits_at_the_section_layer()
     {
+        // Owner ruling 2026-11-27: §10 is a fill only. The band used to be accompanied by
+        // two major-boundary rules at ZLayer.Frame, which made a section header read as a
+        // framed stripe rather than as a filled band.
         SplitterResult result = Build(Request());
 
-        SceneRect band = Assert.IsType<SceneRect>(result.Primitives[0]);
+        SceneRect band = Assert.IsType<SceneRect>(Assert.Single(result.Primitives.OfType<SceneRect>()));
         Assert.Equal(ZLayer.Section, band.ZLayer);
         Assert.Equal(ColourHex.Parse("#FFE699"), band.Style.FillColour);
-
-        SceneLine[] borders = [.. result.Primitives.OfType<SceneLine>()];
-        Assert.Equal(2, borders.Length);
-        Assert.All(borders, border => Assert.Equal(ZLayer.Frame, border.ZLayer));
-        Assert.Equal(result.BandBounds.Y, borders[0].From.Y);
-        Assert.Equal(result.BandBounds.Bottom, borders[1].From.Y);
-    }
-
-    [Fact]
-    public void Both_borders_are_stroked_with_the_border_style_at_the_major_boundary_width()
-    {
-        // §10: "Its top and bottom borders are `MajorBoundaryPt` lines". The border style
-        // supplies only the stroke token, so a line carries a colour and a width but no
-        // fill. `_borderStyle` deliberately declares a width of 99 to prove the structural
-        // `BorderWidthPt` wins over whatever the style happens to carry - reusing the
-        // style wholesale would silently render a 99pt border.
-        SplitterResult result = Build(Request(borderWidthPt: 1.5));
-
-        SceneLine[] borders = [.. result.Primitives.OfType<SceneLine>()];
-        Assert.Equal(2, borders.Length);
-        Assert.All(borders, border =>
-        {
-            Assert.Equal(1.5, border.Style.OutlineWidthPt);
-            Assert.NotNull(border.Style.StrokeColour);
-            Assert.Equal(ColourHex.Parse("#808080"), border.Style.StrokeColour);
-        });
-
-        // The band is a fill and keeps the Splitter preset; the border is a stroke and must
-        // not have inherited it. Sharing one style across both is what this asserts against.
-        SceneRect band = Assert.IsType<SceneRect>(result.Primitives[0]);
-        Assert.Equal(ColourHex.Parse("#FFE699"), band.Style.FillColour);
-        Assert.All(borders, border => Assert.NotEqual(band.Style, border.Style));
-    }
-
-    [Fact]
-    public void A_null_border_style_is_refused_rather_than_defaulting_the_stroke()
-    {
-        // Without a stroke token the builder would have to invent a colour, which is the
-        // exact dual-source problem the band preset caused. It refuses instead.
-        Assert.Equal(
-            SplitterRefusal.NullDependency,
-            SplitterBuilder.TryBuild(Request() with { BorderStyle = null! }).Refusal);
+        Assert.Empty(result.Primitives.OfType<SceneLine>());
     }
 
     [Fact]
@@ -124,11 +83,9 @@ public sealed class SplitterBuilderTests
             new SplitterRequest(
                 Splitter(),
                 _style,
-                _borderStyle,
                 _lane,
                 200,   // PanelLeftPt == Plot.Left: no panel to its left
                 _plot,
-                1,
                 _labelStyle,
                 _metrics,
                 GanttLabelPosition.Both));
@@ -148,11 +105,9 @@ public sealed class SplitterBuilderTests
             new SplitterRequest(
                 Splitter(),
                 _style,
-                _borderStyle,
                 _lane,
                 0,
                 _plot,
-                1,
                 _labelStyle,
                 _metrics,
                 GanttLabelPosition.DataPanelLeft));
@@ -165,7 +120,7 @@ public sealed class SplitterBuilderTests
     [InlineData(GanttLabelPosition.PlotCentre, 1)]
     [InlineData(GanttLabelPosition.Both, 2)]
     [InlineData(GanttLabelPosition.None, 0)]
-    public void Each_permitted_label_position_emits_the_guide_s_primitive_count(
+    public void Each_permitted_label_position_emits_the_guide_s_text_count(
         GanttLabelPosition position,
         int expected)
     {
@@ -209,6 +164,9 @@ public sealed class SplitterBuilderTests
             SplitterRefusal.NullDependency,
             SplitterBuilder.TryBuild(Request() with { Event = null! }).Refusal);
         Assert.Equal(
+            SplitterRefusal.NullDependency,
+            SplitterBuilder.TryBuild(Request() with { Style = null! }).Refusal);
+        Assert.Equal(
             SplitterRefusal.NotASplitter,
             SplitterBuilder.TryBuild(
                 Request() with { Event = Splitter() with { Type = GanttEntityType.AsPlannedActivity } }).Refusal);
@@ -222,14 +180,11 @@ public sealed class SplitterBuilderTests
             SplitterRefusal.UnsupportedLabelPosition,
             SplitterBuilder.TryBuild(Request((GanttLabelPosition)99)).Refusal);
 
-        // A non-finite edge, a negative border, and a zero-height lane are all refused
-        // before any primitive is emitted.
+        // A non-finite label edge and a zero-height lane are both refused before any
+        // primitive is emitted.
         Assert.Equal(
             SplitterRefusal.InvalidGeometry,
             SplitterBuilder.TryBuild(Request(panelLeft: double.NaN)).Refusal);
-        Assert.Equal(
-            SplitterRefusal.InvalidGeometry,
-            SplitterBuilder.TryBuild(Request(borderWidthPt: -1)).Refusal);
         Assert.Equal(
             SplitterRefusal.InvalidGeometry,
             SplitterBuilder.TryBuild(Request() with { Lane = _lane with { Height = 0 } }).Refusal);

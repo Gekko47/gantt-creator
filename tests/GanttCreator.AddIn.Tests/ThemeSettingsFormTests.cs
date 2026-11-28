@@ -662,14 +662,16 @@ public class ThemeSettingsFormTests
                     .Select(group => group.Text)
                     .ToList();
 
-                // Rows and lanes, grid, and milestones are different objects
+                // Rows and lanes, borders, and milestones are different objects
                 // on the chart. The bar height and the outline width are gone
-                // because the scene resolves them from the STYLE row, and the
-                // hatch spacing is gone because the host's pattern cannot
-                // express it.
+                // because the scene resolves them from the STYLE row, the hatch
+                // spacing is gone because the host's pattern cannot express it,
+                // and the grid group became "Borders" with a single width when
+                // `GridLinePt` retired with the plot grid (ADR-0075).
                 Assert.Contains("Rows and lanes", groups);
-                Assert.Contains("Grid", groups);
+                Assert.Contains("Borders", groups);
                 Assert.Contains("Milestones", groups);
+                Assert.DoesNotContain("Grid", groups);
                 Assert.DoesNotContain("Entity defaults", groups);
                 Assert.DoesNotContain("Hatch spacing", groups);
 

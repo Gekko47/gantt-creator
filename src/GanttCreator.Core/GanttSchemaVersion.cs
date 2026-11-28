@@ -22,9 +22,26 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 28 for the PNG-export settings.
+    /// monotonically, and is currently 30 for the plot-grid retirement.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 30 retires the plot grid and its controls (R11.1, owner ruling 2026-11-27).</b>
+    /// Two tables move. <c>tblGanttSettings</c> loses <c>ShowMinorGrid</c>,
+    /// <c>ShowMajorGrid</c> and <c>MinorGridColour</c>, so a version-29 workbook's settings
+    /// table carries three rows the running add-in no longer knows. <c>tblGanttMetrics</c>
+    /// loses <c>GridLinePt</c>, so it carries one row the add-in no longer reads.
+    /// <c>AdditiveSchemaUpgrade</c> inspects settings keys only and refuses a stored list
+    /// longer than the approved one as <c>ExtraKey</c>, so the workbook reports the
+    /// confirmation-required <c>SchemaVersionOlder</c>; the metrics removal reports as a
+    /// <c>CatalogueHashMismatch</c>. Both are repaired by Repair, which rewrites the
+    /// catalogues from the code-owned definitions (ADR-0029 D6: no migration).
+    /// </para>
+    /// <para>
+    /// <b>Version 29 is R8.9's custom export canvas.</b> <c>tblGanttSettings</c>
+    /// gains <c>SizeWidthCm</c> and <c>SizeHeightCm</c>, appended after the existing
+    /// keys so a version-28 workbook's key list is an exact prefix.
+    /// </para>
     /// <para>
     /// <b>Version 28 is R8.8's PNG-export settings.</b> <c>tblGanttSettings</c> gains
     /// <c>PngExportTarget</c> and <c>LastPngExportFolder</c>, so a version-27 workbook's
@@ -284,16 +301,6 @@ public static class GanttSchemaVersion
     /// catalogue hash no longer matches and it reports a mismatch; the remedy
     /// is Initialise (ADR-0029 D6, no migration).
     /// </para>
-    /// <para>
-    /// <b>Version 29 is R8.9's custom export canvas.</b> <c>tblGanttSettings</c>
-    /// gains <c>SizeWidthCm</c> and <c>SizeHeightCm</c>, appended after the existing
-    /// keys so a version-28 workbook's key list is an exact prefix. That prefix is
-    /// what lets <c>AdditiveSchemaUpgrade</c> prove the change is a one-step,
-    /// settings-only append and repair it in place (ADR-0073): the two rows are
-    /// added with their defaults, every present value is preserved, and the version
-    /// and catalogue hash are rewritten. No column, type, style or metric changes,
-    /// and the user does not run Initialise.
-    /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 29;
+    public const int CurrentSchemaVersion = 30;
 }

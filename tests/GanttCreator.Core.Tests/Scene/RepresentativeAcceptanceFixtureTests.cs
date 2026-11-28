@@ -91,7 +91,6 @@ public sealed class RepresentativeAcceptanceFixtureTests
         new(
             new SceneStyle("Background"),
             new SceneStyle("AlternateBand"),
-            new SceneStyle("MinorGrid"),
             new SceneStyle("MajorGrid"),
             new SceneStyle("YearHeader"),
             new SceneStyle("PeriodHeader"),
@@ -133,7 +132,6 @@ public sealed class RepresentativeAcceptanceFixtureTests
                 FrameTheme = FrameTheme(),
                 PlotStart = Day(1),
                 PlotFinish = Day(30),
-                GridLinePt = 0.5,
                 MajorBoundaryPt = 1,
                 MilestoneSizePt = 8,
                 TitleBandHeightPt = 14,
@@ -436,7 +434,6 @@ public sealed class RepresentativeAcceptanceFixtureTests
                 FrameTheme = FrameTheme(),
                 PlotStart = Day(1),
                 PlotFinish = Day(30),
-                GridLinePt = 0.5,
                 MajorBoundaryPt = 1,
                 MilestoneSizePt = 8,
                 TitleBandHeightPt = 14,

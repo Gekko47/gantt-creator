@@ -171,7 +171,6 @@ public sealed class SceneBenchmarkTests
             PlotFinish = new DateOnly(2026, 12, 31),
             Scale = GanttTimeScale.Month,
             PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
-            GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
 

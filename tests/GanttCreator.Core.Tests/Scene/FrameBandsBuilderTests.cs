@@ -8,7 +8,6 @@ public sealed class FrameBandsBuilderTests
     private static readonly FrameBandsTheme _theme = new(
         new SceneStyle("Background"),
         new SceneStyle("AlternateBand"),
-        new SceneStyle("MinorGrid", strokeColour: ColourHex.Parse("#D9D9D9"), outlineWidthPt: 0.5),
         new SceneStyle("MajorGrid", strokeColour: ColourHex.Parse("#000000"), outlineWidthPt: 1),
         new SceneStyle("YearHeader"),
         new SceneStyle("PeriodHeader"),
@@ -528,39 +527,107 @@ public sealed class FrameBandsBuilderTests
         Assert.All(outcome.Result.Primitives, primitive => Assert.Equal(SceneOwnerId.Chart, primitive.OwnerId));
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Background);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.AlternateBand);
-        Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Grid);
+        // No primitive sits on the grid layer: the plot draws no interior lines.
+        Assert.DoesNotContain(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Grid);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Frame);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Title);
     }
 
     [Fact]
-    public void The_plot_edge_lines_sit_on_the_frame_layer_while_interior_lines_stay_on_the_grid_layer()
+    public void The_plot_edges_sit_on_the_frame_layer_and_the_plot_has_no_interior_lines()
     {
         // The period band is a FILLED rect at Frame (80) that begins exactly on the
         // plot's left edge, so a Grid-layer (20) edge line is painted over inside the
         // header row and the table-to-plot boundary disappears — reported live on
-        // 2026-11-14, once the plot was moved onto the column edge. The two edge lines
-        // therefore belong to the frame's layer; interior lines stay at Grid, because
-        // they sit BETWEEN bands and never over them.
+        // 2026-11-14, once the plot was moved onto the column edge. The edge lines
+        // therefore belong to the frame's layer.
+        //
+        // The interior grid is retired (owner ruling 2026-11-27): the alternating bands
+        // are the period separation, so `chart:grid:` names exactly the two edges.
         FrameBandsCreationOutcome outcome = Build(CreateRequest());
         Assert.True(outcome.Succeeded);
 
         SceneLine[] lines = [.. outcome.Result!.Primitives.OfType<SceneLine>()];
         SceneLine[] edges =
         [
-            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)),
+            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)),
         ];
         Assert.Equal(2, edges.Length);
         Assert.All(edges, edge => Assert.Equal(ZLayer.Frame, edge.ZLayer));
-
-        SceneLine[] interior =
-        [
-            .. lines.Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
-                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal)),
-        ];
-        Assert.NotEmpty(interior);
-        Assert.All(interior, line => Assert.Equal(ZLayer.Grid, line.ZLayer));
+        Assert.All(edges, edge => Assert.StartsWith("chart:grid:edge:", edge.PrimitiveId, StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void The_plot_rectangle_is_closed_on_all_four_sides_in_both_coordinate_modes()
+    {
+        // Owner ruling 2026-11-27: the plot's border is a complete rectangle on all four
+        // sides. The two vertical edges used to be gated by the retired `ShowMajorGrid`
+        // setting, which could leave the plot open at the sides while its top and bottom
+        // were still drawn.
+        foreach (bool sheetCoordinates in new[] { false, true })
+        {
+            FrameBandsResult result = Build(CreateRequest(sheetCoordinates: sheetCoordinates)).Result!;
+            SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+            _ = Assert.Single(lines, line => line.PrimitiveId == "chart:grid:edge:left");
+            _ = Assert.Single(lines, line => line.PrimitiveId == "chart:grid:edge:right");
+            _ = Assert.Single(lines, line => line.PrimitiveId == "chart:plot:top");
+            _ = Assert.Single(lines, line => line.PrimitiveId == "chart:plot:bottom");
+        }
+    }
+
+    [Fact]
+    public void Each_header_cell_owns_its_left_edge_and_only_the_last_owns_a_right_edge()
+    {
+        // Owner ruling 2026-11-27: a cell always draws its left edge and only the last
+        // cell in a row draws a right edge, so N cells produce N+1 vertical lines and no
+        // two share an x.
+        FrameBandsResult result = Build(CreateRequest()).Result!;
+
+        int periods = result.Primitives.OfType<SceneRect>()
+            .Count(rect => rect.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal));
+        int years = result.Primitives.OfType<SceneRect>()
+            .Count(rect => rect.PrimitiveId.StartsWith("chart:year:", StringComparison.Ordinal));
+
+        double[] periodXs = Verticals(result, "chart:period:");
+        double[] yearXs = Verticals(result, "chart:year:");
+
+        Assert.Equal(periods + 1, periodXs.Length);
+        Assert.Equal(periodXs.Length, periodXs.Distinct().Count());
+        Assert.Equal(years + 1, yearXs.Length);
+        Assert.Equal(yearXs.Length, yearXs.Distinct().Count());
+    }
+
+    [Fact]
+    public void The_period_row_owns_no_horizontal_edge_because_its_neighbours_do()
+    {
+        // D8: the period row's top is the year row's bottom and its bottom is
+        // chart:plot:top, so drawing either here would put two coincident lines in the
+        // scene. Each horizontal header seam is therefore drawn exactly once.
+        FrameBandsResult result = Build(CreateRequest()).Result!;
+        SceneLine[] lines = [.. result.Primitives.OfType<SceneLine>()];
+
+        Assert.DoesNotContain(
+            lines,
+            line => line.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal)
+                && (line.PrimitiveId.EndsWith(":border:top", StringComparison.Ordinal)
+                    || line.PrimitiveId.EndsWith(":border:bottom", StringComparison.Ordinal)));
+
+        double[] horizontalSeams = [.. lines
+            .Where(line => line.PrimitiveId.Contains(":border:", StringComparison.Ordinal))
+            .Where(line => line.From!.Y == line.To!.Y)
+            .Select(line => line.From!.Y)];
+        Assert.Equal(horizontalSeams.Length, horizontalSeams.Distinct().Count());
+
+        _ = Assert.Single(lines, line => line.PrimitiveId == "chart:plot:top");
+    }
+
+    private static double[] Verticals(FrameBandsResult result, string prefix) =>
+        [.. result.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.StartsWith(prefix, StringComparison.Ordinal))
+            .Where(line => line.PrimitiveId.Contains(":border:", StringComparison.Ordinal))
+            .Where(line => line.From!.X == line.To!.X)
+            .Select(line => line.From!.X)];
 
     [Fact]
     public void The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides()
@@ -860,8 +927,10 @@ public sealed class FrameBandsBuilderTests
     }
 
     [Fact]
-    public void Chart_owner_snapshot_round_trips_and_deduplicates_grid_boundaries()
+    public void Chart_owner_snapshot_round_trips_and_emits_only_the_two_plot_edges()
     {
+        // The interior grid is retired (owner ruling 2026-11-27), so the only `chart:grid:`
+        // primitives left are the plot's two edge lines. The round trip still has to hold.
         FrameBandsResult result = Build(CreateRequest()).Result!;
         GanttScene scene = GanttScene
             .TryCreate(result.Geometry.ChartBounds, result.Geometry.ChartBounds, result.Primitives, result.Warnings)
@@ -872,7 +941,7 @@ public sealed class FrameBandsBuilderTests
         Assert.Equal(json, SceneSnapshot.Serialize(roundTripped));
         Assert.All(roundTripped.Primitives, primitive => Assert.Equal(SceneOwnerId.Chart, primitive.OwnerId));
         Assert.Equal(
-            4,
+            2,
             roundTripped.Primitives.OfType<SceneLine>().Count(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal))
         );
     }
@@ -933,12 +1002,9 @@ public sealed class FrameBandsBuilderTests
             18,
             16,
             18,
-            0.5,
             1,
             true,
             "Gantt Chart",
-            true,
-            true,
             true,
             plotBandHeaderOverlapPt,
             chartAnchorRowHeightPt,
@@ -947,46 +1013,6 @@ public sealed class FrameBandsBuilderTests
             DataPanelBounds: dataPanelBounds
         );
     }
-
-    /// <summary>
-    /// A panel width change moves the grid lines instead of renaming them.
-    /// </summary>
-    /// <remarks>
-    /// The identifier used to be the line's x position, so a column toggle renamed every interior line
-    /// and reconciliation deleted and re-created the whole grid: the owner's 2026-11-20 trace shows ten
-    /// `chart:grid:<x>` deletions and ten creations per toggle, 446-1325 ms for a control that only
-    /// changes the plot's width. Keyed by the date each band ends on, the same months keep their ids
-    /// across a width change, so reconciliation moves them. The geometry assertion is what stops this
-    /// passing on a request where the width never changed.
-    /// </remarks>
-    [Fact]
-    public void A_width_change_moves_the_grid_lines_without_renaming_them()
-    {
-        FrameBandsResult wide = Build(CreateRequest(plotWidthPt: 300)).Result!;
-        FrameBandsResult narrow = Build(CreateRequest(plotWidthPt: 180)).Result!;
-
-        string[] wideIds = InteriorGridIds(wide);
-        string[] narrowIds = InteriorGridIds(narrow);
-
-        Assert.NotEmpty(wideIds);
-        Assert.Equal(wideIds, narrowIds);
-        Assert.False(
-            wideIds.Length == 0 || InteriorGridXs(wide).SequenceEqual(InteriorGridXs(narrow)),
-            "The width did not change the geometry, so the identifier assertion proves nothing.");
-    }
-
-    private static string[] InteriorGridIds(FrameBandsResult result) =>
-        [.. result.Primitives.OfType<SceneLine>()
-            .Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
-                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal))
-            .Select(line => line.PrimitiveId)
-            .OrderBy(id => id, StringComparer.Ordinal)];
-
-    private static double[] InteriorGridXs(FrameBandsResult result) =>
-        [.. result.Primitives.OfType<SceneLine>()
-            .Where(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal)
-                && !line.PrimitiveId.StartsWith("chart:grid:edge:", StringComparison.Ordinal))
-            .Select(line => line.From.X)];
 
     /// <summary>
     /// The period-label gate answers to the reference width, not to the measured plot.

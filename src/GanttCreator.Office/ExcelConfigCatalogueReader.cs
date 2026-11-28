@@ -987,9 +987,7 @@ public class ExcelConfigCatalogueReader(object? application, Action<string>? tra
         key is "ShowTitle"
             or "ExportIncludeDataPanel"
             or "ExportIncludeLegend"
-            or "AlternateBanding"
-            or "ShowMinorGrid"
-            or "ShowMajorGrid";
+            or "AlternateBanding";
 
     /// <summary>
     /// Determines whether a row matches the expected cells exactly

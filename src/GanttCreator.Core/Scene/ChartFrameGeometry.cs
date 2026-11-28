@@ -24,15 +24,17 @@ public sealed record ChartFrameGeometry(RectD ChartBounds, RectD ContentBounds, 
 /// <summary>Resolved scene styles consumed by the frame/band builder.</summary>
 /// <param name="Background">The chart background style.</param>
 /// <param name="AlternateBand">The alternate-band style.</param>
-/// <param name="MinorGrid">The minor-grid style.</param>
-/// <param name="MajorGrid">The major-grid/frame style.</param>
+/// <param name="MajorGrid">The major-grid/frame style, shared by the plot's four sides and the header cell edges.</param>
 /// <param name="YearHeader">The year-header style.</param>
 /// <param name="PeriodHeader">The period-header style.</param>
 /// <param name="Title">The title style.</param>
+/// <remarks>
+/// There is no minor-grid style: the plot draws no interior lines (owner ruling 2026-11-27).
+/// The period structure is carried by <paramref name="AlternateBand"/> alone.
+/// </remarks>
 public sealed record FrameBandsTheme(
     SceneStyle Background,
     SceneStyle AlternateBand,
-    SceneStyle MinorGrid,
     SceneStyle MajorGrid,
     SceneStyle YearHeader,
     SceneStyle PeriodHeader,
@@ -54,13 +56,10 @@ public sealed record FrameBandsTheme(
 /// <param name="YearBandHeightPt">The year-header height.</param>
 /// <param name="PeriodBandHeightPt">The period-header height.</param>
 /// <param name="MinimumHeaderLabelWidthPt">Minimum visible label width.</param>
-/// <param name="GridLinePt">Minor grid width.</param>
 /// <param name="MajorBoundaryPt">Major boundary/frame width.</param>
 /// <param name="ShowTitle">Whether the populated title band is visible.</param>
 /// <param name="ChartTitle">The nonblank stored title when visible.</param>
 /// <param name="AlternateBanding">Whether alternating plot bands are emitted.</param>
-/// <param name="ShowMinorGrid">Whether minor period grid lines are emitted.</param>
-/// <param name="ShowMajorGrid">Whether major year/plot grid lines are emitted.</param>
 /// <param name="PlotBandHeaderOverlapPt">
 /// How far the plot-spanning shapes extend UP into the header row, from the
 /// <c>PlotBandHeaderOverlapPt</c> token (ADR-0037 D1). Zero restores the prior
@@ -123,8 +122,8 @@ public sealed record FrameBandsTheme(
 /// table's first column.
 /// </para>
 /// <para>
-/// <b>Only the border uses it.</b> The background, the bands, the grid lines
-/// and the closing line keep the plot's own rectangle: a background over the
+/// <b>Only the border uses it.</b> The background, the bands, the plot's edge
+/// lines and the closing line keep the plot's own rectangle: a background over the
 /// table would paint the user's own cells. The EXPORT compositions draw their
 /// own panel, so they pass no rectangle and their border is unchanged.
 /// </para>
@@ -140,13 +139,10 @@ public sealed record FrameBandsRequest(
     double YearBandHeightPt,
     double PeriodBandHeightPt,
     double MinimumHeaderLabelWidthPt,
-    double GridLinePt,
     double MajorBoundaryPt,
     bool ShowTitle,
     string ChartTitle,
     bool AlternateBanding,
-    bool ShowMinorGrid,
-    bool ShowMajorGrid,
     double PlotBandHeaderOverlapPt,
     double ChartAnchorRowHeightPt,
     FrameBandsTheme Theme,

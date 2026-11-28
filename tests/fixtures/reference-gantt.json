@@ -8,8 +8,6 @@
   "dateFormat": "DdMMyyyy",
   "title": "Site Enabling Works",
   "alternateBanding": true,
-  "showMinorGrid": true,
-  "showMajorGrid": true,
   "rows": [
     {
       "labelPosition": null,
