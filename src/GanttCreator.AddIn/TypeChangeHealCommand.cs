@@ -68,7 +68,8 @@ internal static class TypeChangeHealCommand
             scope.SuppressScreenUpdating();
             scope.SuppressEvents();
             scope.SuppressAlerts();
-            scope.SuppressStatusBar();
+            // Bar visibility is the user's Excel setting (ADR-0020 D4), so it is not
+            // hidden here: doing so was the only DisplayStatusBar write in the product.
 
             outcome = new ExcelTypeChangeNormaliser(
                 application,
