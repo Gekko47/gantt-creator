@@ -105,3 +105,21 @@ The window now closes around the **pipeline only** (`Refresh()` and its timing),
 refresh succeeded or refused. D-4's guarantee is unchanged; it is now the last word rather
 than the second-to-last, and a refused refresh no longer strands the user on Table Design
 either.
+
+## Amendment — 2026-11-28: a settings-only command does not restore the tab
+
+The 2026-11-16 report added a tab restore to the automatic-refresh toggle because the settings
+write moved Excel's selection. The cause of that move was the write itself: it deleted and
+re-created `tblGanttSettings` on every commit. `WriteSettings` and `WriteTheme` now rewrite their
+tables in place whenever the live table matches the contract shape ([ADR-0007](0007-config-sheet-catalogues.md)
+D4a), so no `ListObject` is deleted, the host's selection context is unchanged, and Table Design is
+never activated by a settings command.
+
+An unconditional `ActivateTab` on such a command therefore refocuses a tab that never lost focus,
+which is a flicker the owner reported for the Columns menu (2026-11-14) and the theme dialog's OK
+(2026-11-28). `SetAutoRefresh` and `ApplyHiddenColumns` no longer call `ActivateGanttTab`. The
+restore remains after every completed refresh (`FinishRefresh`, whose protection window restores
+the selection with `Range.Select()`) and after the commands whose own selection restore can
+re-activate Table Design (Copy editable, Send to PowerPoint, Export PNG) — the cases this ADR's
+first amendment was written for. A settings command that later grows a selection restore or a
+table structural change must bring the restore back with the live evidence that requires it.

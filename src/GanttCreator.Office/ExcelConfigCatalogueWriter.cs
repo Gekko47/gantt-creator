@@ -271,49 +271,87 @@ public class ExcelConfigCatalogueWriter(
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
         }
 
+        List<object?[]> styleRows = BuildThemedStyleRows(request, preservation);
+        List<object?[]> metricRows = BuildThemedMetricRows(request);
+        List<object?[]> settingRows = BuildThemedSettingRows(request, preservation);
+        List<object?[]> configRows = BuildConfigRows(preservation.WorkbookId);
+        ListObject? settingsTable = FindTable(config, GanttCatalogues.SettingsTableName);
+
         Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
         bool original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
-            _ = WriteOrReplaceTable(
-                config,
-                GanttCatalogues.StylesAnchor,
-                GanttCatalogues.StylesTableName,
-                GanttCatalogues.StylesHeaders,
-                BuildThemedStyleRows(request, preservation),
-                written);
-            _ = WriteOrReplaceTable(
-                config,
-                GanttCatalogues.MetricsAnchor,
-                GanttCatalogues.MetricsTableName,
-                GanttCatalogues.MetricsHeaders,
-                BuildThemedMetricRows(request),
-                written);
+            if (!TryRewriteTableInPlace(
+                    stylesTable,
+                    GanttCatalogues.StylesAnchor,
+                    GanttCatalogues.StylesHeaders,
+                    styleRows,
+                    formatValueColumnAsText: false))
+            {
+                _ = WriteOrReplaceTable(
+                    config,
+                    GanttCatalogues.StylesAnchor,
+                    GanttCatalogues.StylesTableName,
+                    GanttCatalogues.StylesHeaders,
+                    styleRows,
+                    written);
+            }
+
+            if (!TryRewriteTableInPlace(
+                    metricsTable,
+                    GanttCatalogues.MetricsAnchor,
+                    GanttCatalogues.MetricsHeaders,
+                    metricRows,
+                    formatValueColumnAsText: false))
+            {
+                _ = WriteOrReplaceTable(
+                    config,
+                    GanttCatalogues.MetricsAnchor,
+                    GanttCatalogues.MetricsTableName,
+                    GanttCatalogues.MetricsHeaders,
+                    metricRows,
+                    written);
+            }
 
             // The chart-chrome colours are settings, so they are written to
             // the settings table alongside the themed styles and metrics.
-            // The write is a whole-table rewrite, so the unedited settings
-            // are preserved from the sheet rather than regenerated: the
-            // chart title and the scale the user set must survive a colour
-            // change.
-            _ = WriteOrReplaceTable(
-                config,
-                GanttCatalogues.SettingsAnchor,
-                GanttCatalogues.SettingsTableName,
-                GanttCatalogues.SettingsHeaders,
-                BuildThemedSettingRows(request, preservation),
-                written);
+            // The unedited settings are preserved from the sheet rather than
+            // regenerated: the chart title and the scale the user set must
+            // survive a colour change.
+            if (!TryRewriteTableInPlace(
+                    settingsTable,
+                    GanttCatalogues.SettingsAnchor,
+                    GanttCatalogues.SettingsHeaders,
+                    settingRows,
+                    formatValueColumnAsText: true))
+            {
+                _ = WriteOrReplaceTable(
+                    config,
+                    GanttCatalogues.SettingsAnchor,
+                    GanttCatalogues.SettingsTableName,
+                    GanttCatalogues.SettingsHeaders,
+                    settingRows,
+                    written);
+            }
 
             // Recompute and persist the catalogue hash so the next Read()
             // validates against the updated Styles and Metrics content.
-            _ = WriteOrReplaceTable(
-                config,
-                GanttCatalogues.ConfigAnchor,
-                GanttCatalogues.ConfigTableName,
-                GanttCatalogues.ConfigHeaders,
-                BuildConfigRows(preservation.WorkbookId),
-                written);
+            if (!TryRewriteTableInPlace(
+                    configTable,
+                    GanttCatalogues.ConfigAnchor,
+                    GanttCatalogues.ConfigHeaders,
+                    configRows,
+                    formatValueColumnAsText: false))
+            {
+                _ = WriteOrReplaceTable(
+                    config,
+                    GanttCatalogues.ConfigAnchor,
+                    GanttCatalogues.ConfigTableName,
+                    GanttCatalogues.ConfigHeaders,
+                    configRows,
+                    written);
+            }
         }
 #pragma warning disable CA1031 // Deliberately broad: see the Write catch body.
         catch (Exception exception)
@@ -422,6 +460,7 @@ public class ExcelConfigCatalogueWriter(
                 true,
                 [.. ReadHeaders(priorTable)],
                 ReadBodyRows(priorTable));
+        List<object?[]> settingRows = BuildSettingRows(merged);
         List<TableSnapshot> snapshots = [snapshot];
         Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
 
@@ -429,13 +468,21 @@ public class ExcelConfigCatalogueWriter(
         try
         {
             _application.DisplayAlerts = false;
-            _ = WriteOrReplaceTable(
-                config,
-                GanttCatalogues.SettingsAnchor,
-                GanttCatalogues.SettingsTableName,
-                GanttCatalogues.SettingsHeaders,
-                BuildSettingRows(merged),
-                written);
+            if (!TryRewriteTableInPlace(
+                    priorTable,
+                    GanttCatalogues.SettingsAnchor,
+                    GanttCatalogues.SettingsHeaders,
+                    settingRows,
+                    formatValueColumnAsText: true))
+            {
+                _ = WriteOrReplaceTable(
+                    config,
+                    GanttCatalogues.SettingsAnchor,
+                    GanttCatalogues.SettingsTableName,
+                    GanttCatalogues.SettingsHeaders,
+                    settingRows,
+                    written);
+            }
         }
 #pragma warning disable CA1031
         catch (Exception)
@@ -452,6 +499,95 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return ConfigWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Rewrites a contract table's body in place when the live table already
+    /// matches the contract shape: the approved headers in order, exactly one
+    /// row per contract row, a data body, and the contract anchor. Returns
+    /// <see langword="false"/> when any of that is untrue, and the caller then
+    /// takes the delete-and-recreate path, which restores the shape, the
+    /// anchor and the Text format together.
+    /// </summary>
+    /// <param name="table">The live table, or null when absent.</param>
+    /// <param name="anchor">The contract anchor address.</param>
+    /// <param name="headers">The contract header row, in order.</param>
+    /// <param name="rows">The rows to write.</param>
+    /// <param name="formatValueColumnAsText">
+    /// Whether the last column holds free text that must be formatted as Text
+    /// before the write (the settings table's Value column).
+    /// </param>
+    /// <returns>Whether the body was rewritten in place.</returns>
+    /// <remarks>
+    /// The in-place path exists because deleting and re-adding a table
+    /// perturbs the host's selection context, and a full ribbon rebuild that
+    /// follows such a write activates Excel's contextual Table Design tab
+    /// (ADR-0007 D4a; ADR-0058 amendment). The observable contract, including
+    /// the exact approved key set, is unchanged: <paramref name="rows"/> is the
+    /// same payload the delete-and-recreate path would write.
+    /// </remarks>
+    private bool TryRewriteTableInPlace(
+        ListObject? table,
+        string anchor,
+        string[] headers,
+        List<object?[]> rows,
+        bool formatValueColumnAsText)
+    {
+        if (table is null || rows.Count == 0)
+        {
+            return false;
+        }
+
+        List<string> liveHeaders = ReadHeaders(table);
+        if (liveHeaders.Count != headers.Length || rows[0].Length != liveHeaders.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < liveHeaders.Count; index++)
+        {
+            if (!string.Equals(liveHeaders[index], headers[index], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        if (ReadBodyRows(table).Count != rows.Count)
+        {
+            return false;
+        }
+
+        (int anchorRow, int anchorColumn) = ParseAnchor(anchor);
+        if (GetTableOrigin(table) != (anchorRow, anchorColumn))
+        {
+            return false;
+        }
+
+        Excel.Range? body = GetTableBody(table);
+        if (body is null)
+        {
+            return false;
+        }
+
+        if (formatValueColumnAsText)
+        {
+            // Format BEFORE writing: a General-format cell re-reads
+            // "10/01/2025" under the host locale and stores a serial, which is
+            // the defect the recreate path avoids by formatting after the
+            // table is added (R5.6d).
+            ListColumns columns = table.ListColumns;
+            if (columns.Count >= headers.Length)
+            {
+                ListColumn? valueColumn = GetColumnAt(columns, headers.Length);
+                if (valueColumn is not null)
+                {
+                    ApplyTextFormat(valueColumn);
+                }
+            }
+        }
+
+        SetBodyValues(body, rows);
+        return true;
     }
 
     /// <inheritdoc />
@@ -1652,4 +1788,46 @@ public class ExcelConfigCatalogueWriter(
     /// <param name="body">The range.</param>
     /// <returns>The <c>Value2</c> payload.</returns>
     internal virtual object? GetBodyValues(Excel.Range body) => body.Value2;
+
+    /// <summary>
+    /// Writes a table's body as one <c>Value2</c> assignment. Test seam over the
+    /// COM property, so the in-place settings path can be exercised, and made to
+    /// fail after applying the write, without COM. The rectangular payload is
+    /// built here, at the interop boundary, so the seam carries rows rather than
+    /// a multidimensional array.
+    /// </summary>
+    /// <param name="body">The data body range.</param>
+    /// <param name="rows">The body rows, in contract column order.</param>
+    internal virtual void SetBodyValues(Excel.Range body, IReadOnlyList<object?[]> rows)
+    {
+        int columnCount = rows.Count > 0 ? rows[0].Length : 0;
+        // CA1814: Excel's Range.Value2 accepts only a rectangular object
+        // array (a COM SAFEARRAY of VARIANT); the multidimensional form is
+        // the requirement, not a style choice.
+#pragma warning disable CA1814
+        object[,] matrix = new object[rows.Count, columnCount];
+#pragma warning restore CA1814
+        for (int row = 0; row < rows.Count; row++)
+        {
+            for (int column = 0; column < columnCount; column++)
+            {
+                matrix[row, column] = rows[row][column] ?? string.Empty;
+            }
+        }
+
+        body.Value2 = matrix;
+    }
+
+    /// <summary>
+    /// Returns a table's top-left origin, one-based. Test seam over the COM
+    /// <c>ListObject.Range</c> and <c>Range.Row</c>/<c>Range.Column</c> reads;
+    /// the range proxy is held in a local.
+    /// </summary>
+    /// <param name="table">The table.</param>
+    /// <returns>The one-based row and column.</returns>
+    internal virtual (int Row, int Column) GetTableOrigin(ListObject table)
+    {
+        Excel.Range range = table.Range;
+        return (range.Row, range.Column);
+    }
 }

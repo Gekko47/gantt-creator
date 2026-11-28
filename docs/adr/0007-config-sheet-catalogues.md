@@ -71,6 +71,24 @@
     leave the workbook unreadable after every regeneration. Dialog-authored
     keys therefore require a schema-version and catalogue-hash decision
     (D5/D6) owned by the settings-dialog work item, not a silent row.
+  - **D4a — In-place catalogue rewrite (R5.24, 2026-11-28).** `WriteSettings`
+    and `WriteTheme` rewrite a contract table in place when the live table
+    already matches its approved shape: the contract anchor, the approved
+    headers in order, and exactly one row per contract row. `WriteSettings`
+    covers `tblGanttSettings`; `WriteTheme` covers `tblGanttStyles`,
+    `tblGanttMetrics`, `tblGanttSettings` and `tblGanttConfig`. Anything else —
+    an absent table, a moved anchor, an edited header, or a row-count change
+    such as a newly created custom style — regenerates by delete-and-recreate
+    as before. Both paths write the same payload, preserve present values and
+    keep D4's exact approved key set, so the observable contract is unchanged;
+    the settings Value column is formatted as Text before the body is written,
+    and the header row is never written. The in-place path exists because
+    deleting and re-adding a `ListObject` perturbs the host's selection
+    context, and a full ribbon rebuild after such a write activates Excel's
+    contextual Table Design tab ([ADR-0058](0058-ribbon-tab-context-and-active-sheet-gating.md)
+    amendment). A refused in-place write still rolls back from the pre-write
+    snapshot through the same delete-and-recreate restore, so the
+    no-mutation guarantee is unchanged.
   - **D5 — Schema version stays 1.** v1 never shipped config tables;
     materialising them completes v1's definition. Future catalogue changes
     bump `GanttSchemaVersion.CurrentSchemaVersion` per its remarks.

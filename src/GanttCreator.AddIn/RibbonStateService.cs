@@ -2632,14 +2632,13 @@ internal class RibbonStateService
 
         // The ribbon is a projection of the table and is never suspended. Cancelling the
         // pending timer above can therefore discard a projection queued by the last edit,
-        // so flush one here; the settings write may also have moved the selection.
+        // so flush one here to publish the switch's own state.
         RefreshAfterTableChange();
 
-        // The settings write moves Excel's selection, which activates the contextual Table Design
-        // tab and leaves the user looking at it (reported from the host 2026-11-16). Every refresh
-        // already restores the add-in tab for exactly this reason (ADR-0058, owner ruling D-4), so
-        // the toggle does the same. It is a no-op unless the surface is Ready on the Gantt sheet.
-        ActivateGanttTab();
+        // Deliberately no tab restore. The settings write rewrites the table in place
+        // (ADR-0007 D4a), so it does not perturb the host's selection context and does not
+        // activate the contextual Table Design tab; an unconditional ActivateTab here would
+        // refocus a tab that never moved (owner report 2026-11-28).
     }
 
     /// <summary>
@@ -2754,11 +2753,10 @@ internal class RibbonStateService
         // hiding a column changes the measured width that box reports.
         InvalidateControl(RibbonControlIds.SizeWidthCm);
 
-        // The settings write moves Excel's selection and activates Table Design. A refresh
-        // restores the Gantt tab, but with the automatic refresh off no refresh follows, so
-        // the toggle restores it itself (the R5.20 rule).
-        ActivateGanttTab();
-
+        // Deliberately no tab restore: the settings write is in place (ADR-0007 D4a) and the
+        // hide/unhide does not move the active tab. The restore was itself the reported
+        // flicker (owner report 2026-11-28), so it is removed rather than fired
+        // unconditionally.
         ScheduleAutomaticRefresh();
     }
 

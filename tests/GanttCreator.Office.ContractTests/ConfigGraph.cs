@@ -47,6 +47,7 @@ internal static class ConfigGraph
         internal override void ApplyTextFormat(Excel.ListColumn column)
         {
             Fake.TextFormattedColumns.Add(column.Name);
+            Fake.Operations.Add("format:" + column.Name);
         }
 
         internal override void ClearContents(Excel.Range range)
@@ -59,13 +60,19 @@ internal static class ConfigGraph
             Fake.CellAt(ToAddress(row, column));
 
         internal override Excel.Range GetResizedRange(Excel.Range range, int rows, int columns) =>
-            ConfigSheetFake.CreateExtent(rows, columns);
+            Fake.ResizeFrom(range, rows, columns);
 
         internal override Excel.Range? GetTableBody(Excel.ListObject table) =>
             Fake.BodyOf(table);
 
         internal override object? GetBodyValues(Excel.Range body) =>
             ConfigSheetFake.ValuesOf(body);
+
+        internal override void SetBodyValues(Excel.Range body, IReadOnlyList<object?[]> rows) =>
+            Fake.WriteBody(body, rows);
+
+        internal override (int Row, int Column) GetTableOrigin(Excel.ListObject table) =>
+            Fake.OriginOf(table);
     }
 
     private sealed class TestableReader : ExcelConfigCatalogueReader

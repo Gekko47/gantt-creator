@@ -440,13 +440,13 @@ public sealed class RibbonStateSnapshotTests : IDisposable
     }
 
     /// <summary>
-    /// R5.20: pressing the automatic-refresh toggle restores the add-in tab, for the same reason a
-    /// refresh does. Reported from the host on 2026-11-16 — the settings write moves Excel's
-    /// selection, which activates the contextual Table Design tab — so the toggle runs the same
-    /// ADR-0058 restore rather than leaving the user looking at another tab.
+    /// R5.24: the toggle no longer restores the tab. Its settings write rewrites the table in
+    /// place (ADR-0007 D4a), so the contextual Table Design tab is never activated; the restore
+    /// that cured the 2026-11-16 takeover became an unconditional refocus of a tab that had not
+    /// moved (owner report 2026-11-28).
     /// </summary>
     [Fact]
-    public void The_auto_refresh_toggle_restores_the_add_in_tab()
+    public void The_auto_refresh_toggle_does_not_activate_the_add_in_tab()
     {
         var ribbon = new Mock<IRibbonUI>();
         var service = Arm(new TestExcelApplicationAdapter { ActiveWorkbook = true }, ribbon: ribbon.Object);
@@ -456,13 +456,13 @@ public sealed class RibbonStateSnapshotTests : IDisposable
         service.SetTableReader(reader.Object);
         service.Refresh();
 
-        // The refresh that brings the surface to Ready restores the tab itself, so the calls are
-        // cleared: what is asserted is the toggle's own restore.
+        // The refresh that brings the surface to Ready activates the tab itself, so the calls are
+        // cleared: what is asserted is the toggle's own behaviour.
         ribbon.Invocations.Clear();
 
         service.SetAutoRefresh(false);
 
-        ribbon.Verify(r => r.ActivateTab(RibbonControlIds.Tab), Times.Once);
+        ribbon.Verify(r => r.ActivateTab(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

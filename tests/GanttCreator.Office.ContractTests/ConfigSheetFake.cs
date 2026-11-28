@@ -1,3 +1,4 @@
+using System.Globalization;
 using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
 using Moq;
@@ -61,8 +62,10 @@ internal sealed class ConfigSheetFake
                 .Callback<string>(value => _name = value);
             _ = TableMock.SetupGet(t => t.ListColumns).Returns(ColumnsMock.Object);
             _ = TableMock.SetupGet(t => t.DataBodyRange).Returns(BodyMock.Object);
-            // ListObject.Delete unregisters the table, so the writer's
-            // delete-then-recreate regeneration does not accumulate tables.
+            // ListObject.Delete unregisters the table, so the catalogue write's
+            // delete-then-recreate regeneration (and the settings fallback)
+            // does not accumulate tables. The in-place settings path never
+            // reaches this callback, which is what its contract test asserts.
             _ = TableMock.Setup(t => t.Delete()).Callback(() => owner.Remove(this));
         }
 
@@ -84,6 +87,35 @@ internal sealed class ConfigSheetFake
         public string[] Headers { get; }
 
         public List<object?[]> Body { get; }
+
+        /// <summary>
+        /// The table's top-left origin, one-based. Set when the writer's
+        /// <c>AddTable</c> seam registers the table through the extent the
+        /// resize seam produced, so the anchor check reads the same address
+        /// the production call used. A table built directly by a fixture keeps
+        /// the default <c>(0, 0)</c>, which is off every contract anchor.
+        /// </summary>
+        public (int Row, int Column) Origin { get; private set; }
+
+        /// <summary>Moves the table's recorded origin, for the off-anchor case.</summary>
+        /// <param name="row">The one-based row.</param>
+        /// <param name="column">The one-based column.</param>
+        public void MoveTo(int row, int column) => Origin = (row, column);
+
+        /// <summary>
+        /// Replaces the body rows from the rows the writer handed the seam. Each
+        /// row is copied, so a fixture that keeps its own row arrays cannot
+        /// alias the table's stored state.
+        /// </summary>
+        /// <param name="rows">The body rows, in contract column order.</param>
+        public void ReplaceRows(IReadOnlyList<object?[]> rows)
+        {
+            Body.Clear();
+            foreach (object?[] row in rows)
+            {
+                Body.Add([.. row]);
+            }
+        }
 
         public List<Mock<Excel.ListColumn>> Columns { get; } = [];
 
@@ -109,6 +141,12 @@ internal sealed class ConfigSheetFake
     private int _failAddAt = -1;
 
     private int _addCallCount;
+
+    private bool _failBodyWrite;
+
+    private readonly List<(Excel.Range Range, string Address)> _cellAddresses = [];
+
+    private readonly List<(Excel.Range Range, string Address)> _extentAddresses = [];
 
     private readonly List<Excel.Range> _clearedRanges = [];
 
@@ -142,6 +180,14 @@ internal sealed class ConfigSheetFake
     }
 
     /// <summary>
+    /// Makes the next in-place settings body write mutate the body and then
+    /// fail, so a test can prove the rollback restores the prior rows. The
+    /// mutation before the throw models a host that refused the call after
+    /// applying it, which is the case the pre-write snapshot exists for.
+    /// </summary>
+    public void FailBodyWrite() => _failBodyWrite = true;
+
+    /// <summary>
     /// The cell ranges whose contents were cleared through the writer's
     /// rollback seam, in call order.
     /// </summary>
@@ -153,6 +199,15 @@ internal sealed class ConfigSheetFake
     /// free text (the plot dates) must survive Excel's locale coercion.
     /// </summary>
     public List<string> TextFormattedColumns { get; } = [];
+
+    /// <summary>
+    /// The ordered evidence of the settings write path: one
+    /// <c>format:<column></c> entry per Text-format call, and
+    /// <c>body:write</c> when the body payload is applied. A test asserts the
+    /// format precedes the write, which is the ordering that keeps free-text
+    /// dates such as <c>10/01/2025</c> verbatim.
+    /// </summary>
+    public List<string> Operations { get; } = [];
 
     /// <summary>How many times a table was created through the add seam.</summary>
     public int AddCallCount => _addCallCount;
@@ -208,9 +263,44 @@ internal sealed class ConfigSheetFake
         }
 
         var table = new TableFake($"pending-{_tables.Count + 1}", headers, body, _tables);
+        if (TryParseAddress(AddressOf(extent), out var originRow, out var originColumn))
+        {
+            table.MoveTo(originRow, originColumn);
+        }
+
         _tables.Add(table);
         return table.TableMock.Object;
     }
+
+    /// <summary>
+    /// Writes the settings body in place, through the writer's
+    /// <c>SetBodyValues</c> seam. Mutates the owning table's body rows so the
+    /// next read sees the write, exactly as a live <c>Value2</c> assignment
+    /// would. When <see cref="FailBodyWrite"/> is armed it applies the write
+    /// and then refuses, which is what the rollback must recover from.
+    /// </summary>
+    /// <param name="body">The table's data body range.</param>
+    /// <param name="rows">The body rows the writer assigned.</param>
+    public void WriteBody(Excel.Range body, IReadOnlyList<object?[]> rows)
+    {
+        Operations.Add("body:write");
+        TableFake match = _tables.Single(candidate => ReferenceEquals(candidate.BodyMock.Object, body));
+        match.ReplaceRows(rows);
+        if (_failBodyWrite)
+        {
+            // Same exception shape as the add seam: a refused COM call
+            // crossing the interop boundary, never an ArgumentException.
+            throw new InvalidOperationException("The host refused the in-place settings write.");
+        }
+    }
+
+    /// <summary>
+    /// Returns a table's recorded origin, one-based.
+    /// </summary>
+    /// <param name="table">The table object.</param>
+    /// <returns>The one-based row and column.</returns>
+    public (int Row, int Column) OriginOf(Excel.ListObject table) =>
+        _tables.Single(candidate => ReferenceEquals(candidate.TableMock.Object, table)).Origin;
 
     /// <summary>
     /// One shared cell-range mock per anchor address. The cell mock carries
@@ -226,9 +316,84 @@ internal sealed class ConfigSheetFake
         {
             range = new Mock<Excel.Range>();
             _cellRanges[address] = range;
+            _cellAddresses.Add((range.Object, address));
         }
 
         return range.Object;
+    }
+
+    /// <summary>
+    /// Creates the extent the writer writes into and records the anchor
+    /// address it was resized from, so the table registered by
+    /// <see cref="Add"/> carries the origin the production call used. The
+    /// address is what the writer's anchor check reads back, because the
+    /// COM <c>Resize</c> indexer cannot appear in a Moq expression tree.
+    /// </summary>
+    /// <param name="source">The anchor cell range.</param>
+    /// <param name="rows">The row count.</param>
+    /// <param name="columns">The column count.</param>
+    /// <returns>The extent mock.</returns>
+    public Excel.Range ResizeFrom(Excel.Range source, int rows, int columns)
+    {
+        string address = _cellAddresses
+            .Where(entry => ReferenceEquals(entry.Range, source))
+            .Select(entry => entry.Address)
+            .FirstOrDefault() ?? string.Empty;
+        Excel.Range extent = CreateExtent(rows, columns);
+        if (address.Length > 0)
+        {
+            _extentAddresses.Add((extent, address));
+        }
+
+        return extent;
+    }
+
+    /// <summary>The anchor address a resize produced the given extent from.</summary>
+    /// <param name="extent">The extent mock.</param>
+    /// <returns>The address, or an empty string when the extent has none.</returns>
+    private string AddressOf(Excel.Range extent) =>
+        _extentAddresses
+            .Where(entry => ReferenceEquals(entry.Range, extent))
+            .Select(entry => entry.Address)
+            .FirstOrDefault() ?? string.Empty;
+
+    /// <summary>Parses an A1 address into a one-based row and column.</summary>
+    /// <param name="address">The address (e.g. <c>"A70"</c>).</param>
+    /// <param name="row">The one-based row.</param>
+    /// <param name="column">The one-based column.</param>
+    /// <returns><see langword="true"/> when the address parses.</returns>
+    private static bool TryParseAddress(string address, out int row, out int column)
+    {
+        row = 0;
+        column = 0;
+        if (address.Length == 0)
+        {
+            return false;
+        }
+
+        int index = 0;
+        int parsedColumn = 0;
+        while (index < address.Length && char.IsLetter(address[index]))
+        {
+            parsedColumn = (parsedColumn * 26) + (char.ToUpperInvariant(address[index]) - 'A' + 1);
+            index++;
+        }
+
+        if (index == 0 || index == address.Length)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(address[index..], NumberStyles.None, CultureInfo.InvariantCulture, out int parsedRow)
+            || parsedRow <= 0
+            || parsedColumn <= 0)
+        {
+            return false;
+        }
+
+        row = parsedRow;
+        column = parsedColumn;
+        return true;
     }
 
     /// <summary>

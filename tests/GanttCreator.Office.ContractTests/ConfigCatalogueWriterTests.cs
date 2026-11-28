@@ -716,15 +716,18 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
-    public void WriteSettings_restores_the_settings_table_when_the_host_fails()
+    public void WriteSettings_restores_the_settings_table_when_the_in_place_write_fails()
     {
-        // Rollback validator: the settings write is delete-and-recreate, so
-        // a host refusal after the delete must restore the prior rows and
-        // report a typed refusal, not a vanished table.
+        // Rollback validator: the in-place path mutates only the body, so the
+        // failure is injected at that seam. A host refusal after the body has
+        // been applied must restore the prior rows from the pre-write snapshot
+        // and report a typed refusal, not leave the half-applied values in
+        // place. (Before R5.24 this test armed the AddTable seam, which the
+        // in-place path never calls.)
         var fake = new ConfigSheetFake();
         _ = ConfigGraph.BuildWriter(fake).Write();
         var before = fake.Tables[3].Body.Select(row => row.ToArray()).ToList();
-        fake.FailAddAt(1);
+        fake.FailBodyWrite();
 
         var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
             new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
@@ -1000,6 +1003,206 @@ public class ConfigCatalogueWriterTests
         Assert.Equal("Inside", row[11]);
         Assert.Equal("Auto Inside", row[12]);
         Assert.Equal("StyleDefined", row[13]);
+    }
+
+    [Fact]
+    public void WriteSettings_rewrites_the_settings_body_in_place()
+    {
+        // R5.24: a settings commit against a table that already matches the
+        // contract shape must not delete and re-add it. That churn is what
+        // perturbs the host's selection context, so a following full ribbon
+        // rebuild activates Excel's contextual Table Design tab. The write is
+        // still visible to the reader.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        int addsBefore = fake.AddCallCount;
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["LegendPosition"] = "Bottom" });
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(addsBefore, fake.AddCallCount);
+        settings.TableMock.Verify(t => t.Delete(), Times.Never);
+        Assert.Equal("Bottom", SettingValue(settings, "LegendPosition"));
+        Assert.Equal(GanttCatalogues.Settings.Count, settings.Body.Count);
+        Assert.Contains(GanttCatalogues.SettingsHeaders[1], fake.TextFormattedColumns);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
+    public void WriteSettings_falls_back_when_the_settings_shape_differs()
+    {
+        // A hand-edited table (here a renamed header) is not the contract
+        // shape, so the writer must take the delete-and-recreate path rather
+        // than writing into a table the reader would refuse.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake original = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        original.Headers[0] = "Key";
+        int addsBefore = fake.AddCallCount;
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["LegendPosition"] = "Bottom" });
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(addsBefore + 1, fake.AddCallCount);
+        original.TableMock.Verify(t => t.Delete(), Times.Once);
+        ConfigSheetFake.TableFake rewritten = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal(GanttCatalogues.SettingsHeaders, rewritten.Headers);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
+    public void WriteSettings_falls_back_when_the_settings_table_is_off_anchor()
+    {
+        // The delete-and-recreate path always writes at the contract anchor, so
+        // a table that drifted must take that path to return to it. The in-place
+        // path must not silently preserve a moved table.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake original = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        original.MoveTo(71, 1);
+        int addsBefore = fake.AddCallCount;
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["LegendPosition"] = "Bottom" });
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(addsBefore + 1, fake.AddCallCount);
+        original.TableMock.Verify(t => t.Delete(), Times.Once);
+        ConfigSheetFake.TableFake rewritten = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal((70, 1), rewritten.Origin);
+    }
+
+    [Fact]
+    public void WriteSettings_preserves_a_locale_sensitive_date_string()
+    {
+        // R5.6d: free-text settings live in a Text-formatted Value column so
+        // Excel cannot re-read them under the host locale. The in-place path
+        // must format BEFORE the strings land, so the value round-trips
+        // verbatim and the format precedes the body write in call order.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Operations.Clear();
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "Explicit",
+                ["PlotStartDate"] = "10/01/2025",
+            });
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal("10/01/2025", SettingValue(settings, "PlotStartDate"));
+
+        int formatIndex = fake.Operations.IndexOf("format:" + GanttCatalogues.SettingsHeaders[1]);
+        int writeIndex = fake.Operations.IndexOf("body:write");
+        Assert.True(
+            formatIndex >= 0 && writeIndex >= 0 && formatIndex < writeIndex,
+            "The Value column must be formatted as Text before the body is written.");
+
+        ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
+        Assert.True(read.Succeeded, $"Read() refused: {read.Refusal}");
+        Assert.Equal("10/01/2025", read.Settings["PlotStartDate"]);
+    }
+
+    [Fact]
+    public void WriteTheme_rewrites_the_themed_tables_in_place()
+    {
+        // R5.24 follow-up: the theme dialog's OK was the last settings flow that
+        // re-created its tables, so it still perturbed the host context and
+        // refocused the ribbon. Every table it rewrites now takes the in-place
+        // path when the live table matches its shape.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        ConfigSheetFake.TableFake metrics = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.MetricsTableName);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        ConfigSheetFake.TableFake config = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.ConfigTableName);
+        int addsBefore = fake.AddCallCount;
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+            });
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(addsBefore, fake.AddCallCount);
+        foreach (ConfigSheetFake.TableFake table in new[] { styles, metrics, settings, config })
+        {
+            table.TableMock.Verify(t => t.Delete(), Times.Never);
+        }
+
+        Assert.Equal("#F0F0F0", SettingValue(settings, "ChartBackgroundColour"));
+        Assert.Contains(GanttCatalogues.SettingsHeaders[1], fake.TextFormattedColumns);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
+    public void WriteTheme_falls_back_for_the_styles_table_when_a_style_is_added()
+    {
+        // A create in the dialog changes the styles row count, so that table
+        // cannot be rewritten in place; the other three still are, and the
+        // snapshot covers the replaced styles table.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake originalStyles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        int addsBefore = fake.AddCallCount;
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            CustomStyleEdits:
+            [
+                new CustomStyleEdit(
+                    CustomStyleOperation.Create,
+                    "UserStyle",
+                    DisplayName: "User Style",
+                    FillColour: "#112233",
+                    StrokeColour: "#445566",
+                    TextColour: "#FFFFFF",
+                    HatchPattern: GanttHatchPattern.ForwardDiagonal,
+                    StandardOutlinePt: 1.25,
+                    ActivityHeightPt: 9.5,
+                    MilestoneSizePt: 11,
+                    DefaultLabelPosition: GanttLabelPosition.Inside,
+                    AllowedLabelPositions: new HashSet<GanttLabelPosition>
+                    {
+                        GanttLabelPosition.Auto,
+                        GanttLabelPosition.Inside,
+                    }),
+            ]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(addsBefore + 1, fake.AddCallCount);
+        originalStyles.TableMock.Verify(t => t.Delete(), Times.Once);
+        settings.TableMock.Verify(t => t.Delete(), Times.Never);
+        ConfigSheetFake.TableFake rewrittenStyles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        Assert.Equal(GanttCatalogues.StylePresets.Count + 1, rewrittenStyles.Body.Count);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
     }
 
     private static void AssertContractTable(

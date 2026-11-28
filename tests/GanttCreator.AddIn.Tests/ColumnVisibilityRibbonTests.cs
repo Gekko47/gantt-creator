@@ -1,3 +1,4 @@
+using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
@@ -295,5 +296,35 @@ public sealed class ColumnVisibilityRibbonTests : IDisposable
 
         Assert.Null(LastWritten(writer));
         Assert.Equal("Type (shown)", service.GetColumnVisibilityLabel("colType"));
+    }
+
+    /// <summary>
+    /// R5.24: a column toggle writes its setting in place and does not move the active tab, so it
+    /// must not fire an unconditional <c>ActivateTab</c>. That restore was the reported flicker:
+    /// it refocused a tab that had never lost focus (owner report 2026-11-28).
+    /// </summary>
+    [Fact]
+    public void A_column_toggle_does_not_activate_the_tab()
+    {
+        var adapter = new TestExcelApplicationAdapter { ActiveWorkbook = true };
+        var ribbon = new Mock<IRibbonUI>();
+        RibbonStateService service = RibbonStateTestSupport.Arm(adapter, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        service.SetTableReader(reader.Object);
+        service.SetColumnVisibilityPort(new FakeColumnVisibilityPort());
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+        service.Refresh();
+
+        // The refresh that brings the surface to Ready activates the tab itself.
+        ribbon.Invocations.Clear();
+
+        service.ToggleAllColumnVisibility();
+
+        ribbon.Verify(r => r.ActivateTab(It.IsAny<string>()), Times.Never);
     }
 }
